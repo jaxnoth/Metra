@@ -1,0 +1,15 @@
+# Local / machine-specific
+*.log
+*.tmp
+.DS_Store
+Thumbs.db
+
+# Editor
+.vs/
+.vscode/*
+!.vscode/extensions.json
+!.vscode/settings.json
+*.code-workspace
+
+# PowerShell
+*.ps1xml.bak
