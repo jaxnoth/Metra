@@ -1,0 +1,15 @@
+{
+  "projectsRoot": "..",
+  "exclude": [
+    "_meta"
+  ],
+  "excludeNamePatterns": [
+    "node_modules",
+    ".git",
+    "bin",
+    "obj"
+  ],
+  "skipFilesAtRoot": true,
+  "defaultTemplate": "basic",
+  "templatesDir": "templates"
+}

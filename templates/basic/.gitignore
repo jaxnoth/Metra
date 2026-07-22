@@ -1,0 +1,20 @@
+# OS / editor
+.DS_Store
+Thumbs.db
+*.log
+*.tmp
+.vs/
+.vscode/
+*.user
+*.suo
+
+# Build / deps
+bin/
+obj/
+node_modules/
+dist/
+out/
+__pycache__/
+*.pyc
+.venv/
+venv/
