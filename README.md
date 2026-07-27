@@ -34,6 +34,10 @@ New-MetaProject -Name DemoOps -Description 'scratch'
 | `run <cmd>` | Run any shell command in each matching project |
 | `new <Name>` | Create a new sibling project from a template + `git init` |
 | `apply <file>` | Copy a shared file into matching projects |
+| `workspace` | Rebuild multi-root workspace from recent activity |
+| `audit` | Context/token audit + optional `-DriftOnly` vs `projects.json` |
+| `snapshot` | Write `docs/canvas-snapshot.json` and refresh Ops canvas embed |
+| `chats` | Search local Cursor agent transcripts for ticket/keyword clues (bounded) |
 
 ### Filters
 
@@ -48,7 +52,10 @@ New-MetaProject -Name DemoOps -Description 'scratch'
 _meta/
   meta.ps1              CLI entrypoint
   meta.config.json      projects root + excludes
+  projects.json         agent routing registry
+  AGENTS.md             meta agent entry
   scripts/Meta.psm1     PowerShell helpers
+  docs/                 context routing + audit cadence
   templates/basic/      default new-project template
   shared/               files to push into other projects via apply
 ```
@@ -87,8 +94,22 @@ Invoke-AcrossProjects -Filter 'Colleague*' -ScriptBlock {
 }
 ```
 
+## Agent routing
+
+Agents should classify work, consult [`projects.json`](projects.json), and load one project `AGENTS.md` before scanning siblings. Ticket work starts in TicketTracker. Details: [docs/Context-Routing.md](docs/Context-Routing.md). Visual board: ask Cursor to open the Meta Ops canvas, then refresh with:
+
+```powershell
+.\meta.ps1 audit
+.\meta.ps1 audit -DriftOnly
+.\meta.ps1 snapshot
+.\meta.ps1 chats -Name Solarwinds -Query "disk alert"
+```
+
+Ticket triage can also run `.\TicketTracker.ps1 chats <id>` to search related Cursor chats, then promote durable findings with `note -Tags chat`. Details: [docs/Context-Routing.md](docs/Context-Routing.md).
+
 ## Notes
 
 - Nested git repos stay independent; this meta repo only tracks its own scripts/config.
 - Do not commit secrets into `shared/` and then `apply` them into every project.
 - `_meta` is excluded from discovery via `meta.config.json`.
+- Solarwinds and TicketTracker are pinned via `workspace.alwaysInclude`.
