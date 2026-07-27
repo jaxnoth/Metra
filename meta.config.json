@@ -1,7 +1,8 @@
 {
   "projectsRoot": "..",
   "exclude": [
-    "_meta"
+    "_meta",
+    "iSupport"
   ],
   "excludeNamePatterns": [
     "node_modules",
@@ -11,5 +12,50 @@
   ],
   "skipFilesAtRoot": true,
   "defaultTemplate": "basic",
-  "templatesDir": "templates"
+  "templatesDir": "templates",
+  "workspace": {
+    "months": 6,
+    "alwaysInclude": [
+      "Solarwinds",
+      "TicketTracker"
+    ],
+    "scanDepth": 2,
+    "outputs": [
+      {
+        "path": "Meta.code-workspace",
+        "metaFolderPath": ".",
+        "projectPathPrefix": "../"
+      },
+      {
+        "path": "../Meta.code-workspace",
+        "metaFolderPath": "_meta",
+        "projectPathPrefix": ""
+      }
+    ],
+    "settings": {
+      "git.autoRepositoryDetection": true,
+      "git.repositoryScanMaxDepth": 1,
+      "files.exclude": {
+        "**/.git": true
+      },
+      "search.exclude": {
+        "**/bin": true,
+        "**/obj": true,
+        "**/node_modules": true,
+        "**/browser/node_modules": true,
+        "**/inventory/20*/**": true,
+        "**/catalog/index.json": true,
+        "**/catalog/index.yaml": true,
+        "**/artifacts/**/*.apm-template": true,
+        "**/TicketTracker/data/**": true,
+        "**/tests/results/**": true
+      },
+      "terminal.integrated.cwd": "${workspaceFolder:meta}"
+    },
+    "extensions": {
+      "recommendations": [
+        "ms-vscode.powershell"
+      ]
+    }
+  }
 }

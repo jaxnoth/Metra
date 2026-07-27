@@ -1,0 +1,813 @@
+{
+  "version": 1,
+  "updated": "2026-07-27",
+  "routing": {
+    "ticketFirst": true,
+    "defaultEntry": "TicketTracker",
+    "rules": [
+      "Classify the request before searching sibling repos.",
+      "For helpdesk/ticket work, start in TicketTracker CLI, then route to one technical project.",
+      "Load only that project's AGENTS.md / README before broad search.",
+      "Broaden to relatedProjects only when evidence requires it."
+    ]
+  },
+  "projects": [
+    {
+      "name": "TicketTracker",
+      "purpose": "Local ticket assistant for iSupport and future helpdesk systems - sync, search, notes, recommendations.",
+      "triggers": [
+        "ticket",
+        "isupport",
+        "helpdesk",
+        "incident",
+        "work item",
+        "AI Recommendation"
+      ],
+      "entry": "AGENTS.md",
+      "preferredPaths": [
+        "README.md",
+        "AGENTS.md",
+        "providers/isupport",
+        "documentation/isupport-schema.md",
+        "solutions"
+      ],
+      "excludePaths": [
+        "data",
+        "config/settings.json",
+        "imports"
+      ],
+      "related": [
+        "Solarwinds",
+        "Colleague",
+        "Reporting",
+        "Schema-Tracking",
+        "Datamart"
+      ]
+    },
+    {
+      "name": "Solarwinds",
+      "purpose": "Orion platform-as-code - alerts, monitors, templates, dashboards, dependencies.",
+      "triggers": [
+        "solarwinds",
+        "orion",
+        "alert",
+        "sam",
+        "monitor",
+        "npm",
+        "swql",
+        "responsibleteam"
+      ],
+      "entry": "AGENTS.md",
+      "preferredPaths": [
+        "README.md",
+        "AGENTS.md",
+        "docs/Developer-Guide.md",
+        "docs/Ticket-Triage.md",
+        "catalog/types.yaml",
+        "module/public",
+        "src"
+      ],
+      "excludePaths": [
+        "inventory",
+        "artifacts",
+        "catalog/index.json",
+        "catalog/index.yaml",
+        "browser/node_modules",
+        "runtime",
+        "tests/results"
+      ],
+      "related": [
+        "TicketTracker",
+        "Colleague",
+        "Jitterbit",
+        "pki"
+      ]
+    },
+    {
+      "name": "Colleague",
+      "purpose": "PowerShell module for Ellucian Colleague admin - WAGC, WAFM, PRQM, EDQM, listeners, sessions.",
+      "triggers": [
+        "colleague",
+        "ellucian",
+        "wagc",
+        "wafm",
+        "prqm",
+        "edqm",
+        "unidata"
+      ],
+      "entry": "AGENTS.md",
+      "preferredPaths": [
+        "README.md",
+        "AGENTS.md"
+      ],
+      "excludePaths": [
+        "bin",
+        "obj"
+      ],
+      "related": [
+        "ColleagueDataMover",
+        "Colleague Migration",
+        "EllucianWebService",
+        "Jitterbit"
+      ]
+    },
+    {
+      "name": "Colleague Migration",
+      "purpose": "Azure DevOps repo workspace for ColleagueDataMover Chef tool and cookbook branches.",
+      "triggers": [
+        "colleague migration",
+        "chef",
+        "cookbook",
+        "datamover"
+      ],
+      "entry": "AGENTS.md",
+      "preferredPaths": [
+        "README.md",
+        "AGENTS.md"
+      ],
+      "excludePaths": [],
+      "related": [
+        "ColleagueDataMover",
+        "Colleague"
+      ]
+    },
+    {
+      "name": "ColleagueDataMover",
+      "purpose": "Local workspace with Chef/cookbook worktrees for Colleague data movement.",
+      "triggers": [
+        "colleague data mover",
+        "datamover",
+        "chef worktree"
+      ],
+      "entry": "AGENTS.md",
+      "preferredPaths": [
+        "README.md",
+        "AGENTS.md"
+      ],
+      "excludePaths": [],
+      "related": [
+        "Colleague Migration",
+        "Colleague"
+      ]
+    },
+    {
+      "name": "EllucianWebService",
+      "purpose": "Ellucian / Colleague web service integrations and clients.",
+      "triggers": [
+        "ellucian web",
+        "colleague api",
+        "ethos",
+        "colleague web service"
+      ],
+      "entry": "AGENTS.md",
+      "preferredPaths": [
+        "README.md",
+        "AGENTS.md"
+      ],
+      "excludePaths": [
+        "bin",
+        "obj",
+        "node_modules"
+      ],
+      "related": [
+        "Colleague",
+        "Jitterbit"
+      ]
+    },
+    {
+      "name": "Jitterbit",
+      "purpose": "Jitterbit integration projects and related automation.",
+      "triggers": [
+        "jitterbit",
+        "harmony",
+        "integration studio",
+        "jb"
+      ],
+      "entry": "AGENTS.md",
+      "preferredPaths": [
+        "README.md",
+        "AGENTS.md"
+      ],
+      "excludePaths": [
+        "node_modules"
+      ],
+      "related": [
+        "Colleague",
+        "EllucianWebService",
+        "Solarwinds"
+      ]
+    },
+    {
+      "name": "Datamart",
+      "purpose": "Datamart SQL and related warehouse reporting objects.",
+      "triggers": [
+        "datamart",
+        "dm-",
+        "warehouse report"
+      ],
+      "entry": "AGENTS.md",
+      "preferredPaths": [
+        "README.md",
+        "AGENTS.md"
+      ],
+      "excludePaths": [
+        "bin",
+        "obj",
+        "*.csv",
+        "visit_data.json"
+      ],
+      "related": [
+        "IWUDATA-SQL",
+        "IWUDATA-Automation",
+        "LegacyWarehouse",
+        "Reporting",
+        "SQL"
+      ]
+    },
+    {
+      "name": "IWUDATA-Automation",
+      "purpose": "PowerShell automation that populates IWUDATA warehouse databases.",
+      "triggers": [
+        "iwudata automation",
+        "warehouse load",
+        "run.ps1",
+        "etl"
+      ],
+      "entry": "AGENTS.md",
+      "preferredPaths": [
+        "README.md",
+        "AGENTS.md",
+        "run.ps1"
+      ],
+      "excludePaths": [
+        "bin",
+        "obj",
+        "logs"
+      ],
+      "related": [
+        "IWUDATA-SQL",
+        "Datamart",
+        "LegacyWarehouse"
+      ]
+    },
+    {
+      "name": "IWUDATA-SQL",
+      "purpose": "IWUDATA warehouse SQL scripts and objects.",
+      "triggers": [
+        "iwudata sql",
+        "warehouse sql",
+        "iwudata"
+      ],
+      "entry": "AGENTS.md",
+      "preferredPaths": [
+        "README.md",
+        "AGENTS.md"
+      ],
+      "excludePaths": [
+        "bin",
+        "obj"
+      ],
+      "related": [
+        "IWUDATA-Automation",
+        "Datamart",
+        "SQL"
+      ]
+    },
+    {
+      "name": "IWUSql",
+      "purpose": "General IWU SQL utilities and scripts.",
+      "triggers": [
+        "iwusql",
+        "sql util"
+      ],
+      "entry": "AGENTS.md",
+      "preferredPaths": [
+        "README.md",
+        "AGENTS.md"
+      ],
+      "excludePaths": [
+        "bin",
+        "obj"
+      ],
+      "related": [
+        "SQL",
+        "Schema-Tracking"
+      ]
+    },
+    {
+      "name": "SQL",
+      "purpose": "Shared SQL scripts and database work.",
+      "triggers": [
+        "sql script",
+        "database",
+        "ssms",
+        "tsql"
+      ],
+      "entry": "AGENTS.md",
+      "preferredPaths": [
+        "README.md",
+        "AGENTS.md"
+      ],
+      "excludePaths": [
+        "bin",
+        "obj"
+      ],
+      "related": [
+        "IWUSql",
+        "Schema-Tracking",
+        "Datamart",
+        "Reporting"
+      ]
+    },
+    {
+      "name": "Schema-Tracking",
+      "purpose": "Database schema change tracking and comparison.",
+      "triggers": [
+        "schema",
+        "schema tracking",
+        "ddl",
+        "sqldump"
+      ],
+      "entry": "AGENTS.md",
+      "preferredPaths": [
+        "README.md",
+        "AGENTS.md"
+      ],
+      "excludePaths": [
+        "bin",
+        "obj"
+      ],
+      "related": [
+        "SQL",
+        "IWUSql",
+        "Reporting"
+      ]
+    },
+    {
+      "name": "LegacyWarehouse",
+      "purpose": "Legacy data warehouse artifacts and references.",
+      "triggers": [
+        "legacy warehouse",
+        "old warehouse"
+      ],
+      "entry": "AGENTS.md",
+      "preferredPaths": [
+        "README.md",
+        "AGENTS.md"
+      ],
+      "excludePaths": [
+        "bin",
+        "obj"
+      ],
+      "related": [
+        "IWUDATA-Automation",
+        "Datamart",
+        "Reporting"
+      ]
+    },
+    {
+      "name": "Reporting",
+      "purpose": "Reporting assets, SSRS/related report work, and ops scripts.",
+      "triggers": [
+        "reporting",
+        "ssrs",
+        "report",
+        "rdl"
+      ],
+      "entry": "AGENTS.md",
+      "preferredPaths": [
+        "README.md",
+        "AGENTS.md"
+      ],
+      "excludePaths": [
+        "bin",
+        "obj"
+      ],
+      "related": [
+        "Datamart",
+        "SQL",
+        "PBI",
+        "TicketTracker"
+      ]
+    },
+    {
+      "name": "PBI",
+      "purpose": "Power BI gateway inventory PowerShell module.",
+      "triggers": [
+        "power bi",
+        "pbi",
+        "gateway",
+        "msal"
+      ],
+      "entry": "AGENTS.md",
+      "preferredPaths": [
+        "README.md",
+        "AGENTS.md"
+      ],
+      "excludePaths": [
+        "bin",
+        "obj"
+      ],
+      "related": [
+        "Reporting",
+        "Datamart"
+      ]
+    },
+    {
+      "name": "Brightspace",
+      "purpose": "D2L Brightspace LMS related scripts and integrations.",
+      "triggers": [
+        "brightspace",
+        "d2l",
+        "lms"
+      ],
+      "entry": "AGENTS.md",
+      "preferredPaths": [
+        "README.md",
+        "AGENTS.md"
+      ],
+      "excludePaths": [
+        "bin",
+        "obj",
+        "node_modules"
+      ],
+      "related": [
+        "Reporting",
+        "Jitterbit"
+      ]
+    },
+    {
+      "name": "CredentialHelper",
+      "purpose": "PowerShell credential store and optional CredSSP remoting helpers.",
+      "triggers": [
+        "credential",
+        "set-mycredential",
+        "credssp",
+        "pscredential"
+      ],
+      "entry": "AGENTS.md",
+      "preferredPaths": [
+        "README.md",
+        "AGENTS.md"
+      ],
+      "excludePaths": [
+        "bin",
+        "obj"
+      ],
+      "related": [
+        "Powershell",
+        "Solarwinds"
+      ]
+    },
+    {
+      "name": "Powershell",
+      "purpose": "Shared PowerShell utilities and modules.",
+      "triggers": [
+        "powershell module",
+        "ps1 shared",
+        "iwu powershell"
+      ],
+      "entry": "AGENTS.md",
+      "preferredPaths": [
+        "README.md",
+        "AGENTS.md"
+      ],
+      "excludePaths": [
+        "bin",
+        "obj"
+      ],
+      "related": [
+        "CredentialHelper"
+      ]
+    },
+    {
+      "name": "pki",
+      "purpose": "PKI / certificate tooling and related automation.",
+      "triggers": [
+        "pki",
+        "certificate",
+        "cert",
+        "tls",
+        "ssl"
+      ],
+      "entry": "AGENTS.md",
+      "preferredPaths": [
+        "README.md",
+        "AGENTS.md"
+      ],
+      "excludePaths": [
+        "bin",
+        "obj",
+        "tools/Servers"
+      ],
+      "related": [
+        "Solarwinds",
+        "CredentialHelper"
+      ]
+    },
+    {
+      "name": "Church",
+      "purpose": "Church-related project assets.",
+      "triggers": [
+        "church"
+      ],
+      "entry": "AGENTS.md",
+      "preferredPaths": [
+        "README.md",
+        "AGENTS.md"
+      ],
+      "excludePaths": [
+        "bin",
+        "obj",
+        "node_modules"
+      ],
+      "related": []
+    },
+    {
+      "name": "BuildingCheckin",
+      "purpose": ".NET WinForms building check-in desktop application.",
+      "triggers": [
+        "building checkin",
+        "check-in",
+        "checkin"
+      ],
+      "entry": "AGENTS.md",
+      "preferredPaths": [
+        "README.md",
+        "AGENTS.md"
+      ],
+      "excludePaths": [
+        "bin",
+        "obj",
+        "node_modules"
+      ],
+      "related": []
+    },
+    {
+      "name": "Certificates",
+      "purpose": "IWU.Certificates - certificate authority interfaces, deployment automation, validation.",
+      "triggers": [
+        "certificates module",
+        "certificate authority",
+        "iwu.certificates"
+      ],
+      "entry": "AGENTS.md",
+      "preferredPaths": [
+        "README.md",
+        "AGENTS.md"
+      ],
+      "excludePaths": [
+        "bin",
+        "obj",
+        "node_modules"
+      ],
+      "related": [
+        "pki",
+        "Certs"
+      ]
+    },
+    {
+      "name": "Certs",
+      "purpose": "Certificate-related assets and notes.",
+      "triggers": [
+        "certs folder"
+      ],
+      "entry": "AGENTS.md",
+      "preferredPaths": [
+        "README.md",
+        "AGENTS.md"
+      ],
+      "excludePaths": [
+        "bin",
+        "obj",
+        "node_modules"
+      ],
+      "related": [
+        "Certificates",
+        "pki"
+      ]
+    },
+    {
+      "name": "Crons",
+      "purpose": "Scheduled/cron-style automation projects.",
+      "triggers": [
+        "cron",
+        "crohnnect",
+        "scheduled job"
+      ],
+      "entry": "AGENTS.md",
+      "preferredPaths": [
+        "README.md",
+        "AGENTS.md"
+      ],
+      "excludePaths": [
+        "bin",
+        "obj",
+        "node_modules"
+      ],
+      "related": [
+        "IWUDATA-Automation"
+      ]
+    },
+    {
+      "name": "EngagementEmail",
+      "purpose": "Engagement email related scripts or assets.",
+      "triggers": [
+        "engagement email"
+      ],
+      "entry": "AGENTS.md",
+      "preferredPaths": [
+        "README.md",
+        "AGENTS.md"
+      ],
+      "excludePaths": [
+        "bin",
+        "obj",
+        "node_modules"
+      ],
+      "related": [
+        "Reporting"
+      ]
+    },
+    {
+      "name": "LogForwarder",
+      "purpose": "High-performance log forwarding service to Elasticsearch/Kafka/HTTP/files.",
+      "triggers": [
+        "log forwarder",
+        "syslog",
+        "log shipper"
+      ],
+      "entry": "AGENTS.md",
+      "preferredPaths": [
+        "README.md",
+        "AGENTS.md"
+      ],
+      "excludePaths": [
+        "bin",
+        "obj",
+        "node_modules"
+      ],
+      "related": [
+        "Solarwinds"
+      ]
+    },
+    {
+      "name": "OpenEMR",
+      "purpose": "OpenEMR related integration or ops assets.",
+      "triggers": [
+        "openemr",
+        "emr"
+      ],
+      "entry": "AGENTS.md",
+      "preferredPaths": [
+        "README.md",
+        "AGENTS.md"
+      ],
+      "excludePaths": [
+        "bin",
+        "obj",
+        "node_modules"
+      ],
+      "related": []
+    },
+    {
+      "name": "PDF2Cal",
+      "purpose": "PDF basketball schedule to ICS converter (Azure Static Web Apps).",
+      "triggers": [
+        "pdf2cal",
+        "ics",
+        "basketball schedule"
+      ],
+      "entry": "AGENTS.md",
+      "preferredPaths": [
+        "README.md",
+        "AGENTS.md"
+      ],
+      "excludePaths": [
+        "bin",
+        "obj",
+        "node_modules"
+      ],
+      "related": [
+        "pdf2ics"
+      ]
+    },
+    {
+      "name": "pdf2ics",
+      "purpose": "PDF to ICS calendar converter for basketball schedules.",
+      "triggers": [
+        "pdf2ics",
+        "ics calendar"
+      ],
+      "entry": "AGENTS.md",
+      "preferredPaths": [
+        "README.md",
+        "AGENTS.md"
+      ],
+      "excludePaths": [
+        "bin",
+        "obj",
+        "node_modules"
+      ],
+      "related": [
+        "PDF2Cal"
+      ]
+    },
+    {
+      "name": "RP-Brightspace",
+      "purpose": "Brightspace / D2L related reporting or RP environment assets.",
+      "triggers": [
+        "rp-brightspace",
+        "brightspace rp"
+      ],
+      "entry": "AGENTS.md",
+      "preferredPaths": [
+        "README.md",
+        "AGENTS.md"
+      ],
+      "excludePaths": [
+        "bin",
+        "obj",
+        "node_modules"
+      ],
+      "related": [
+        "Brightspace"
+      ]
+    },
+    {
+      "name": "SqlDump",
+      "purpose": "IWU.SqlDump - helpers for tracking SQL changes.",
+      "triggers": [
+        "sqldump",
+        "sql dump",
+        "sql change tracking"
+      ],
+      "entry": "AGENTS.md",
+      "preferredPaths": [
+        "README.md",
+        "AGENTS.md"
+      ],
+      "excludePaths": [
+        "bin",
+        "obj",
+        "node_modules"
+      ],
+      "related": [
+        "Schema-Tracking",
+        "SQL"
+      ]
+    },
+    {
+      "name": "AutoHotkey",
+      "purpose": "AutoHotkey scripts and helpers.",
+      "triggers": [
+        "autohotkey",
+        "ahk"
+      ],
+      "entry": "AGENTS.md",
+      "preferredPaths": [
+        "README.md",
+        "AGENTS.md"
+      ],
+      "excludePaths": [
+        "bin",
+        "obj",
+        "node_modules"
+      ],
+      "related": []
+    },
+    {
+      "name": "Browser",
+      "purpose": "Browser automation / local browser tooling (heavy node_modules - avoid indexing).",
+      "triggers": [
+        "browser tooling",
+        "playwright local"
+      ],
+      "entry": "AGENTS.md",
+      "preferredPaths": [
+        "README.md",
+        "AGENTS.md"
+      ],
+      "excludePaths": "node_modules",
+      "related": []
+    },
+    {
+      "name": "CursorTraining",
+      "purpose": "Cursor training / scratch workspace.",
+      "triggers": [
+        "cursor training"
+      ],
+      "entry": "AGENTS.md",
+      "preferredPaths": [
+        "README.md",
+        "AGENTS.md"
+      ],
+      "excludePaths": [
+        "bin",
+        "obj",
+        "node_modules"
+      ],
+      "related": []
+    }
+  ]
+}

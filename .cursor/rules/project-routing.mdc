@@ -1,0 +1,15 @@
+---
+description: Route to one project before searching the multi-root workspace
+alwaysApply: true
+---
+
+# Project routing
+
+Before searching sibling repositories:
+
+1. Classify the request (ticket, Orion/alert, Colleague, SQL/warehouse, reporting, certs, other).
+2. Consult `_meta/projects.json` and pick **one** primary project from triggers.
+3. Ticket / iSupport / helpdesk work starts in **TicketTracker**, then routes to one technical project.
+4. Load that project's `AGENTS.md` (fallback: README). Prefer its `preferredPaths`; avoid its `excludePaths`.
+5. Do not glob or grep across all workspace folders first.
+6. Open related projects only when the primary project evidence requires it.
