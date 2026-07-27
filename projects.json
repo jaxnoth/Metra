@@ -176,20 +176,28 @@
     },
     {
       "name": "Jitterbit",
-      "purpose": "Jitterbit integration projects and related automation.",
+      "purpose": "Harmony Studio exports, private agents, and IWU.Jitterbit operation-log monitoring module.",
       "triggers": [
         "jitterbit",
         "harmony",
         "integration studio",
-        "jb"
+        "jb",
+        "iwu.jitterbit",
+        "jitterbit log",
+        "operation log"
       ],
       "entry": "AGENTS.md",
       "preferredPaths": [
         "README.md",
-        "AGENTS.md"
+        "AGENTS.md",
+        "IWU.Jitterbit",
+        "Agent"
       ],
       "excludePaths": [
-        "node_modules"
+        "node_modules",
+        "agent-hosts",
+        "IWU.Jitterbit/bin",
+        "IWU.Jitterbit/obj"
       ],
       "related": [
         "Colleague",
@@ -231,13 +239,18 @@
         "iwudata automation",
         "warehouse load",
         "run.ps1",
-        "etl"
+        "etl",
+        "start-automation",
+        "etsnc",
+        "datamanager"
       ],
       "entry": "AGENTS.md",
       "preferredPaths": [
         "README.md",
         "AGENTS.md",
-        "run.ps1"
+        "run.ps1",
+        "Jobs",
+        ".cursor/rules"
       ],
       "excludePaths": [
         "bin",
@@ -455,29 +468,7 @@
         "obj"
       ],
       "related": [
-        "Powershell",
         "Solarwinds"
-      ]
-    },
-    {
-      "name": "Powershell",
-      "purpose": "Shared PowerShell utilities and modules.",
-      "triggers": [
-        "powershell module",
-        "ps1 shared",
-        "iwu powershell"
-      ],
-      "entry": "AGENTS.md",
-      "preferredPaths": [
-        "README.md",
-        "AGENTS.md"
-      ],
-      "excludePaths": [
-        "bin",
-        "obj"
-      ],
-      "related": [
-        "CredentialHelper"
       ]
     },
     {
