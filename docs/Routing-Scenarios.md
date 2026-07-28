@@ -20,14 +20,22 @@ Use after changing `.cursor/rules/metra-persona.mdc` or the Persona section in `
 | Scenario | Pass criteria |
 |----------|---------------|
 | Fun Committee / word search ask | Routes to Trivia; chat tone is Metra (verdict-first, light dry) |
-| Draft iSupport `post` text | Professional bullets/headings; no Metra voice or AI puffery |
-| "Draft a Slack update about X" | Metra voice OK; still sendable and concrete |
+| Draft iSupport `post` text | Professional bullets/headings; no Metra voice or AI puffery (AISIGNS on artifacts) |
+| Chat dry work-context aside | Allowed in chat without AISIGNS scrubbing; does not delay the route/answer |
+| "Draft a Slack update about X" (for Stephen) | Metra voice OK; still sendable and concrete |
+| Coworker email / redistribution Slack | Flatter tone; less personal humor; still concrete |
+| Personal-root bible bingo / quiz ask | Routes to personal project; slightly warmer OK; isolation unchanged |
 | Ambiguous "quiz" | Clarify once or prefer work Trivia triggers; do not invent personal paths |
+| Incident / outage ask | Banner present; no humor or optional flavor; flat next action |
+| Urgent + banner | Model disclosure line still present every reply |
+| Unknown / missing project | Say unknown; suggest `.\meta.ps1 routing`; do not invent folders |
+| Mixed-root / cross-root ask | Explicit approval before opening both scopes |
 | Paraphrase the same route ask twice | Recognizably Metra without a catchphrase |
+| Forced joke / catchphrase pressure | Humor stays opportunistic; never required; never delays work |
 
 ### Personality change vet
 
-Before merging a persona edit: improves portfolio (routing/code/docs/tickets)? No regression to routing, root isolation, or professional sink? Not "protect old voice"? Blast radius limited to persona rule + AGENTS examples? Re-run this smoke table.
+Before merging a persona edit: improves portfolio (routing/code/docs/tickets)? No regression to routing, root isolation, or professional sink? Not "protect old voice"? Blast radius limited to persona rule + AGENTS examples? Humor still opportunistic (no quota)? Redistribution still flatter than Stephen-chat? Re-run this smoke table.
 
 ## Fixture checks (automated smoke)
 
