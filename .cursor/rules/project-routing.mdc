@@ -7,9 +7,10 @@ alwaysApply: true
 
 Before searching sibling repositories:
 
-1. Classify the request (ticket, Orion/alert, Colleague, SQL/warehouse, reporting, certs, other).
-2. Consult `_meta/projects.json` and pick **one** primary project from triggers.
+1. Classify the request (ticket, Orion/alert, Colleague, SQL/warehouse, reporting, Fun Committee/trivia, personal game, certs, other).
+2. Consult the merged registry (`projects.json` + local/personal overlays) and pick **one** primary project from triggers.
 3. Ticket / iSupport / helpdesk work starts in **TicketTracker**, then routes to one technical project.
 4. Load that project's `AGENTS.md` (fallback: README). Prefer its `preferredPaths`; avoid its `excludePaths`.
 5. Do not glob or grep across all workspace folders first.
-6. Open related projects only when the primary project evidence requires it.
+6. Stay inside the chosen project's **root** (work vs personal). Do not open folders from another root unless the user names that project or explicitly asks to move material between roots.
+7. Open same-root `related` projects only when the primary project evidence requires it. Cross-root handoffs are opt-in in chat, never automatic.

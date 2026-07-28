@@ -8,25 +8,42 @@ Keep agent response time and token use low by routing to one project, then loadi
 
 | Path | Role |
 |------|------|
-| `projects.json` | Machine-readable registry (purpose, triggers, paths) |
+| `projects.json` | Shared routing registry (coworkers) |
+| `projects.local.json` | Machine-private work entries (gitignored) |
+| Root `registryFile` | Optional per-root overlay (e.g. personal iCloud) |
 | `AGENTS.md` | Short human/agent fallback for `_meta` |
 | `.cursor/rules/project-routing.mdc` | Always-on routing rule |
 | Project `AGENTS.md` | Local entry playbook |
 | Project `.cursorignore` | Hide generated/cache/binary noise |
 
+## Multi-root isolation
+
+Configured roots (see `meta.config.json` `roots`) stay separate:
+
+- Work asks stay under the work root (`C:\Projects`).
+- Personal asks stay under the personal root when present.
+- Do not open another root unless the user names that project or asks to move material between them.
+- `related` lists must stay same-root. Cross-root ideas (for example Misc scratch sheets into Trivia, or a personal bible game borrowing a work printable) are chat opt-in only.
+
+`.\meta.ps1 routing` shows which registry entries resolved to a real folder. Optional shared stubs (TicketTracker, Solarwinds) return `whenMissing` advice when absent instead of counting as drift.
+
 ## Audit command
 
 ```powershell
 .\meta.ps1 audit
-.\meta.ps1 audit -Name Solarwinds
+.\meta.ps1 audit -Name Solarwinds,Trivia
+.\meta.ps1 audit -Root personal
 .\meta.ps1 audit -DriftOnly
+.\meta.ps1 routing
+.\meta.ps1 routing -MissingOnly
 ```
 
-The audit is a **re-runnable probe**. Do not rewrite it for routine project changes. Re-run it; update curated files when it reports drift.
+The audit is a **re-runnable probe**. Do not rewrite it for routine project changes. Re-run it; update curated files when it reports drift. Cloud/personal roots use light audit (no deep recursive scan).
 
 ## When to re-audit
 
 - After adding a sibling project
+- After adding or changing a project root
 - After a major layout rename or new generated/cache tree
 - Periodically across the portfolio (for example monthly)
 - Before investigating unexplained high token use
@@ -35,10 +52,11 @@ The audit is a **re-runnable probe**. Do not rewrite it for routine project chan
 
 | Finding | Action |
 |---------|--------|
-| Project on disk missing from registry | Add a row to `projects.json` |
+| Work project on disk missing from local/shared registry | Add a row to `projects.local.json` (or `projects.json` only if coworkers should see it) |
+| Personal project missing from personal registry | Update that root's `registryFile` |
 | Missing `AGENTS.md` / `.cursorignore` where recommended | Add compact local files |
 | New large/generated path not excluded | Extend `.cursorignore` and registry `excludePaths` |
-| Stale trigger terms | Update `projects.json` triggers from current README/entry docs |
+| Stale trigger terms | Update the owning registry from current README/entry docs |
 | Routine edits inside existing paths | No registry work |
 
 ## Cadence principle

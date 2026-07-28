@@ -16,23 +16,140 @@ function Get-MetaConfig {
     return Get-Content -Raw -Path $configPath | ConvertFrom-Json
 }
 
-function Get-ProjectsRoot {
+function Get-MetaProp {
+    <#
+    .SYNOPSIS
+        Reads an optional property from a JSON-derived object without tripping StrictMode.
+    #>
+    param(
+        $Object,
+        [Parameter(Mandatory)][string]$Name,
+        $Default = $null
+    )
+
+    if ($null -eq $Object) { return $Default }
+    $prop = $Object.PSObject.Properties[$Name]
+    if (-not $prop) { return $Default }
+    if ($null -eq $prop.Value) { return $Default }
+    return $prop.Value
+}
+
+function Get-MetaRoots {
+    <#
+    .SYNOPSIS
+        Resolves the configured project roots (multi-root aware, env vars expanded).
+    .DESCRIPTION
+        Reads config.roots when present, else falls back to the legacy single projectsRoot.
+        Roots marked optional may be absent (for example a cloud-synced folder that is not
+        set up on this machine); they are reported with Exists = $false instead of throwing.
+    #>
+    [CmdletBinding()]
+    param(
+        [string[]]$Name,
+        [switch]$IncludeMissing
+    )
+
     $cfg = Get-MetaConfig
     $metaRoot = Get-MetaRoot
-    $root = Join-Path $metaRoot $cfg.projectsRoot
-    return (Resolve-Path $root).Path
+
+    $defs = @(Get-MetaProp -Object $cfg -Name 'roots' -Default @())
+    if ($defs.Count -eq 0) {
+        $legacy = Get-MetaProp -Object $cfg -Name 'projectsRoot'
+        if ($legacy) {
+            $defs = @([PSCustomObject]@{ name = 'projects'; path = $legacy; primary = $true })
+        }
+    }
+    if ($defs.Count -eq 0) {
+        throw 'meta.config.json defines no project roots (expected a roots array or projectsRoot).'
+    }
+
+    $primarySeen = $false
+    $results = foreach ($def in $defs) {
+        $rootName = [string](Get-MetaProp -Object $def -Name 'name' -Default 'projects')
+        $rawPath = [string](Get-MetaProp -Object $def -Name 'path' -Default '..')
+        $expanded = [System.Environment]::ExpandEnvironmentVariables($rawPath)
+        if (-not [System.IO.Path]::IsPathRooted($expanded)) {
+            $expanded = Join-Path $metaRoot $expanded
+        }
+
+        $exists = Test-Path -LiteralPath $expanded
+        $fullPath = if ($exists) {
+            (Resolve-Path -LiteralPath $expanded).Path
+        }
+        else {
+            [System.IO.Path]::GetFullPath($expanded)
+        }
+
+        $isPrimary = [bool](Get-MetaProp -Object $def -Name 'primary' -Default $false)
+        if ($isPrimary) { $primarySeen = $true }
+
+        [PSCustomObject]@{
+            Name      = $rootName
+            Path      = $fullPath
+            RawPath   = $rawPath
+            Primary   = $isPrimary
+            Optional  = [bool](Get-MetaProp -Object $def -Name 'optional' -Default $false)
+            Cloud     = [bool](Get-MetaProp -Object $def -Name 'cloud' -Default $false)
+            ScanDepth = Get-MetaProp -Object $def -Name 'scanDepth'
+            Audit     = [string](Get-MetaProp -Object $def -Name 'audit' -Default 'full')
+            Registry  = [string](Get-MetaProp -Object $def -Name 'registry' -Default 'shared')
+            RegistryFile = [string](Get-MetaProp -Object $def -Name 'registryFile' -Default '')
+            Exclude   = @(Get-MetaProp -Object $def -Name 'exclude' -Default @())
+            Exists    = $exists
+        }
+    }
+
+    $results = @($results)
+    if (-not $primarySeen -and $results.Count -gt 0) {
+        $results[0].Primary = $true
+    }
+
+    foreach ($r in $results) {
+        if (-not $r.Exists -and -not $r.Optional) {
+            throw ("Project root '{0}' not found: {1}" -f $r.Name, $r.Path)
+        }
+    }
+
+    if ($Name -and $Name.Count -gt 0) {
+        $wanted = @($Name | ForEach-Object { $_.ToLowerInvariant() })
+        $results = @($results | Where-Object { $wanted -contains $_.Name.ToLowerInvariant() })
+        if ($results.Count -eq 0) {
+            throw ("No configured root matches: {0}" -f ($Name -join ', '))
+        }
+    }
+
+    if ($IncludeMissing) { return @($results) }
+    return @($results | Where-Object { $_.Exists })
+}
+
+function Get-ProjectsRoot {
+    <#
+    .SYNOPSIS
+        Returns the primary project root (creation target and legacy single-root callers).
+    #>
+    $roots = @(Get-MetaRoots -IncludeMissing)
+    $primary = @($roots | Where-Object { $_.Primary }) | Select-Object -First 1
+    if (-not $primary) { $primary = $roots[0] }
+    return $primary.Path
 }
 
 function Test-ExcludedProjectName {
     param(
         [Parameter(Mandatory)][string]$Name,
-        [Parameter(Mandatory)]$Config
+        [Parameter(Mandatory)]$Config,
+        $Root
     )
 
-    $exclude = @($Config.exclude)
+    $exclude = @(Get-MetaProp -Object $Config -Name 'exclude' -Default @())
     if ($exclude -contains $Name) { return $true }
 
-    foreach ($pattern in @($Config.excludeNamePatterns)) {
+    if ($Root) {
+        foreach ($rootExclude in @($Root.Exclude)) {
+            if ([string]$rootExclude -eq $Name) { return $true }
+        }
+    }
+
+    foreach ($pattern in @(Get-MetaProp -Object $Config -Name 'excludeNamePatterns' -Default @())) {
         if ($Name -like $pattern) { return $true }
     }
     return $false
@@ -41,46 +158,66 @@ function Test-ExcludedProjectName {
 function Get-MetaProjects {
     <#
     .SYNOPSIS
-        Lists project directories under the configured projects root.
+        Lists project directories across every configured root.
+    .DESCRIPTION
+        Roots are scanned in configuration order. When the same folder name appears in more
+        than one root, the earlier root wins and the later one is marked Shadowed (surfaced
+        only with -IncludeShadowed) so a duplicate never silently replaces the primary copy.
     #>
     [CmdletBinding()]
     param(
         [string]$Filter = '*',
+        [string[]]$Root,
         [switch]$GitOnly,
-        [switch]$IncludeNonGit
+        [switch]$IncludeNonGit,
+        [switch]$IncludeShadowed
     )
 
     $cfg = Get-MetaConfig
-    $projectsRoot = Get-ProjectsRoot
+    $roots = @(Get-MetaRoots -Name $Root)
+    $seen = @{}
 
-    Get-ChildItem -Path $projectsRoot -Directory -Force |
-        Where-Object {
-            -not (Test-ExcludedProjectName -Name $_.Name -Config $cfg) -and
-            ($_.Name -like $Filter)
-        } |
-        ForEach-Object {
-            $isGit = Test-Path (Join-Path $_.FullName '.git')
-            if ($GitOnly -and -not $isGit) { return }
-            if (-not $IncludeNonGit -and -not $GitOnly -and -not $isGit) {
-                # default: include both; caller can filter
+    $items = foreach ($projectRoot in $roots) {
+        Get-ChildItem -Path $projectRoot.Path -Directory -Force -ErrorAction SilentlyContinue |
+            Where-Object {
+                -not (Test-ExcludedProjectName -Name $_.Name -Config $cfg -Root $projectRoot) -and
+                ($_.Name -like $Filter)
+            } |
+            ForEach-Object {
+                $isGit = Test-Path (Join-Path $_.FullName '.git')
+                if ($GitOnly -and -not $isGit) { return }
+
+                $key = $_.Name.ToLowerInvariant()
+                $shadowed = $seen.ContainsKey($key)
+                if (-not $shadowed) { $seen[$key] = $projectRoot.Name }
+                if ($shadowed -and -not $IncludeShadowed) {
+                    Write-Verbose ("Shadowed duplicate ignored: {0} in root '{1}' (already provided by '{2}')" -f $_.Name, $projectRoot.Name, $seen[$key])
+                    return
+                }
+
+                [PSCustomObject]@{
+                    Name     = $_.Name
+                    Path     = $_.FullName
+                    IsGit    = $isGit
+                    Root     = $projectRoot.Name
+                    Primary  = $projectRoot.Primary
+                    Shadowed = $shadowed
+                }
             }
-            [PSCustomObject]@{
-                Name   = $_.Name
-                Path   = $_.FullName
-                IsGit  = $isGit
-            }
-        } |
-        Sort-Object Name
+    }
+
+    return @($items | Sort-Object Name, Root)
 }
 
 function Resolve-MetaProjectSet {
     param(
         [string]$Filter = '*',
         [string[]]$Name,
+        [string[]]$Root,
         [switch]$GitOnly
     )
 
-    $projects = Get-MetaProjects -Filter $Filter -GitOnly:$GitOnly
+    $projects = Get-MetaProjects -Filter $Filter -Root $Root -GitOnly:$GitOnly
     if ($Name -and $Name.Count -gt 0) {
         $wanted = $Name | ForEach-Object { $_.ToLowerInvariant() }
         $projects = $projects | Where-Object { $wanted -contains $_.Name.ToLowerInvariant() }
@@ -103,12 +240,13 @@ function Invoke-AcrossProjects {
 
         [string]$Filter = '*',
         [string[]]$Name,
+        [string[]]$Root,
         [switch]$GitOnly,
         [switch]$ContinueOnError,
         [switch]$Quiet
     )
 
-    $projects = Resolve-MetaProjectSet -Filter $Filter -Name $Name -GitOnly:$GitOnly
+    $projects = Resolve-MetaProjectSet -Filter $Filter -Name $Name -Root $Root -GitOnly:$GitOnly
     if ($projects.Count -eq 0) {
         Write-Warning 'No matching projects.'
         return @()
@@ -140,6 +278,7 @@ function Invoke-AcrossProjects {
             [PSCustomObject]@{
                 Name       = $project.Name
                 Path       = $project.Path
+                Root       = $project.Root
                 ExitCode   = $exit
                 Success    = ($exit -eq 0)
                 Output     = $output
@@ -153,6 +292,7 @@ function Invoke-AcrossProjects {
             [PSCustomObject]@{
                 Name       = $project.Name
                 Path       = $project.Path
+                Root       = $project.Root
                 ExitCode   = 1
                 Success    = $false
                 Output     = $_.Exception.Message
@@ -174,10 +314,11 @@ function Get-MetaStatus {
     [CmdletBinding()]
     param(
         [string]$Filter = '*',
-        [string[]]$Name
+        [string[]]$Name,
+        [string[]]$Root
     )
 
-    Invoke-AcrossProjects -Command 'git status -sb' -Filter $Filter -Name $Name -GitOnly -ContinueOnError
+    Invoke-AcrossProjects -Command 'git status -sb' -Filter $Filter -Name $Name -Root $Root -GitOnly -ContinueOnError
 }
 
 function Update-MetaProjects {
@@ -189,11 +330,12 @@ function Update-MetaProjects {
     param(
         [string]$Filter = '*',
         [string[]]$Name,
+        [string[]]$Root,
         [switch]$FetchOnly
     )
 
     $cmd = if ($FetchOnly) { 'git fetch --all --prune' } else { 'git pull --ff-only' }
-    Invoke-AcrossProjects -Command $cmd -Filter $Filter -Name $Name -GitOnly -ContinueOnError
+    Invoke-AcrossProjects -Command $cmd -Filter $Filter -Name $Name -Root $Root -GitOnly -ContinueOnError
 }
 
 function Copy-AcrossProjects {
@@ -207,6 +349,7 @@ function Copy-AcrossProjects {
         [string]$RelativePath,
         [string]$Filter = '*',
         [string[]]$Name,
+        [string[]]$Root,
         [switch]$Force
     )
 
@@ -215,7 +358,7 @@ function Copy-AcrossProjects {
         $RelativePath = Split-Path -Leaf $sourcePath
     }
 
-    $projects = Resolve-MetaProjectSet -Filter $Filter -Name $Name
+    $projects = Resolve-MetaProjectSet -Filter $Filter -Name $Name -Root $Root
     foreach ($project in $projects) {
         $dest = Join-Path $project.Path $RelativePath
         $destDir = Split-Path -Parent $dest
@@ -239,13 +382,24 @@ function New-MetaProject {
         [Parameter(Mandatory)][string]$Name,
         [string]$Description = '',
         [string]$Template,
+        [string]$Root,
         [switch]$NoGit,
         [switch]$Force
     )
 
     $cfg = Get-MetaConfig
-    $projectsRoot = Get-ProjectsRoot
     $metaRoot = Get-MetaRoot
+
+    if ($Root) {
+        $targetRoot = @(Get-MetaRoots -Name $Root -IncludeMissing) | Select-Object -First 1
+        if (-not $targetRoot.Exists) {
+            throw ("Root '{0}' is not available on this machine: {1}" -f $targetRoot.Name, $targetRoot.Path)
+        }
+        $projectsRoot = $targetRoot.Path
+    }
+    else {
+        $projectsRoot = Get-ProjectsRoot
+    }
 
     if ($Name -match '[\\/:*?"<>|]') {
         throw "Invalid project name: $Name"
@@ -309,6 +463,7 @@ $descLine
     return [PSCustomObject]@{
         Name = $Name
         Path = $target
+        Root = if ($Root) { $Root } else { 'primary' }
         Template = $templateName
         IsGit = (Test-Path (Join-Path $target '.git'))
     }
@@ -358,24 +513,30 @@ function Get-RecentMetaProjects {
     )
 
     $cfg = Get-MetaConfig
-    $ws = $cfg.workspace
+    $ws = Get-MetaProp -Object $cfg -Name 'workspace'
     if (-not $PSBoundParameters.ContainsKey('Months')) {
-        $Months = if ($ws -and $ws.months) { [int]$ws.months } else { 6 }
+        $Months = [int](Get-MetaProp -Object $ws -Name 'months' -Default 6)
     }
     if (-not $PSBoundParameters.ContainsKey('ScanDepth')) {
-        $ScanDepth = if ($ws -and $null -ne $ws.scanDepth) { [int]$ws.scanDepth } else { 2 }
+        $ScanDepth = [int](Get-MetaProp -Object $ws -Name 'scanDepth' -Default 2)
     }
 
     $cutoff = (Get-Date).AddMonths(-1 * $Months)
-    $always = @()
-    if ($ws -and $ws.alwaysInclude) { $always = @($ws.alwaysInclude) }
+    $always = @(Get-MetaProp -Object $ws -Name 'alwaysInclude' -Default @())
+
+    $rootDepths = @{}
+    foreach ($r in @(Get-MetaRoots)) {
+        $rootDepths[$r.Name] = if ($null -ne $r.ScanDepth) { [int]$r.ScanDepth } else { $ScanDepth }
+    }
 
     $projects = Get-MetaProjects | ForEach-Object {
-        $last = Get-ProjectLastActivity -Path $_.Path -ScanDepth $ScanDepth
+        $depth = if ($rootDepths.ContainsKey($_.Root)) { $rootDepths[$_.Root] } else { $ScanDepth }
+        $last = Get-ProjectLastActivity -Path $_.Path -ScanDepth $depth
         $forced = $always -contains $_.Name
         [PSCustomObject]@{
             Name         = $_.Name
             Path         = $_.Path
+            Root         = $_.Root
             IsGit        = $_.IsGit
             LastActivity = $last
             Recent       = ($last -ge $cutoff) -or $forced
@@ -417,14 +578,16 @@ function Update-MetaWorkspace {
     }
 
     $recent = Get-RecentMetaProjects -Months $Months -ScanDepth $ScanDepth
-    $outputs = @($ws.outputs)
+    $outputs = @(Get-MetaProp -Object $ws -Name 'outputs' -Default @())
     if ($outputs.Count -eq 0) {
         throw 'workspace.outputs is empty in meta.config.json.'
     }
 
+    $primaryRootName = (@(Get-MetaRoots -IncludeMissing) | Where-Object { $_.Primary } | Select-Object -First 1).Name
+
     Write-Host ("Lookback: {0} month(s) | {1} project(s) (+ meta)" -f $Months, $recent.Count) -ForegroundColor Cyan
     $recent | ForEach-Object {
-        Write-Host ("  {0,-24} {1:yyyy-MM-dd}" -f $_.Name, $_.LastActivity)
+        Write-Host ("  {0,-24} {1,-10} {2:yyyy-MM-dd}" -f $_.Name, $_.Root, $_.LastActivity)
     }
 
     $written = @()
@@ -438,9 +601,16 @@ function Update-MetaWorkspace {
             }
         )
         foreach ($project in $recent) {
+            # Projects outside the primary root cannot be reached by the relative prefix.
+            $folderPath = if ($project.Root -eq $primaryRootName) {
+                $prefix + $project.Name
+            }
+            else {
+                $project.Path
+            }
             $folders += [ordered]@{
                 name = $project.Name
-                path = ($prefix + $project.Name)
+                path = $folderPath
             }
         }
 
@@ -476,19 +646,180 @@ function Update-MetaWorkspace {
     }
 }
 
+function Read-MetaRegistryFile {
+    param(
+        [Parameter(Mandatory)][string]$Path,
+        [Parameter(Mandatory)][string]$Source
+    )
+
+    if (-not (Test-Path -LiteralPath $Path)) { return $null }
+    $doc = Get-Content -Raw -Path $Path | ConvertFrom-Json
+    foreach ($p in @(Get-MetaProp -Object $doc -Name 'projects' -Default @())) {
+        $p | Add-Member -NotePropertyName 'source' -NotePropertyValue $Source -Force
+    }
+    return $doc
+}
+
 function Get-MetaProjectRegistry {
     <#
     .SYNOPSIS
-        Loads _meta/projects.json agent routing registry.
+        Loads the agent routing registry: shared projects.json plus optional projects.local.json.
+    .DESCRIPTION
+        projects.json is the git-tracked, shareable subset. projects.local.json is machine or
+        person specific (personal folders, private work entries) and is not committed. Local
+        entries with the same name replace the shared entry, so a coworker clone never sees
+        them. Use -SharedOnly to inspect exactly what ships to others.
     #>
     [CmdletBinding()]
-    param()
+    param(
+        [switch]$SharedOnly
+    )
 
-    $path = Join-Path (Get-MetaRoot) 'projects.json'
-    if (-not (Test-Path -LiteralPath $path)) {
-        throw "Missing project registry: $path"
+    $metaRoot = Get-MetaRoot
+    $sharedPath = Join-Path $metaRoot 'projects.json'
+    $localPath = Join-Path $metaRoot 'projects.local.json'
+
+    $shared = Read-MetaRegistryFile -Path $sharedPath -Source 'shared'
+    if (-not $shared) {
+        throw "Missing project registry: $sharedPath"
     }
-    return Get-Content -Raw -Path $path | ConvertFrom-Json
+
+    $projects = [System.Collections.Generic.List[object]]::new()
+    $index = @{}
+    foreach ($p in @(Get-MetaProp -Object $shared -Name 'projects' -Default @())) {
+        $key = ([string]$p.name).ToLowerInvariant()
+        $index[$key] = $projects.Count
+        [void]$projects.Add($p)
+    }
+
+    $routing = Get-MetaProp -Object $shared -Name 'routing'
+    $localLoaded = $false
+    $extraSources = @()
+
+    if (-not $SharedOnly) {
+        # A root may carry its own registry file so entries travel with the folder itself
+        # (for example a cloud-synced personal root that reaches a second machine).
+        foreach ($projectRoot in @(Get-MetaRoots)) {
+            if (-not $projectRoot.RegistryFile) { continue }
+            $rootRegistryPath = [System.Environment]::ExpandEnvironmentVariables($projectRoot.RegistryFile)
+            if (-not [System.IO.Path]::IsPathRooted($rootRegistryPath)) {
+                $rootRegistryPath = Join-Path $projectRoot.Path $rootRegistryPath
+            }
+            $rootRegistry = Read-MetaRegistryFile -Path $rootRegistryPath -Source $projectRoot.Name
+            if (-not $rootRegistry) { continue }
+            $extraSources += $rootRegistryPath
+            foreach ($p in @(Get-MetaProp -Object $rootRegistry -Name 'projects' -Default @())) {
+                $key = ([string]$p.name).ToLowerInvariant()
+                if (-not (Get-MetaProp -Object $p -Name 'root')) {
+                    $p | Add-Member -NotePropertyName 'root' -NotePropertyValue $projectRoot.Name -Force
+                }
+                if ($index.ContainsKey($key)) {
+                    $projects[$index[$key]] = $p
+                }
+                else {
+                    $index[$key] = $projects.Count
+                    [void]$projects.Add($p)
+                }
+            }
+        }
+
+        $local = Read-MetaRegistryFile -Path $localPath -Source 'local'
+        if ($local) {
+            $localLoaded = $true
+            foreach ($p in @(Get-MetaProp -Object $local -Name 'projects' -Default @())) {
+                $key = ([string]$p.name).ToLowerInvariant()
+                if ($index.ContainsKey($key)) {
+                    $projects[$index[$key]] = $p
+                }
+                else {
+                    $index[$key] = $projects.Count
+                    [void]$projects.Add($p)
+                }
+            }
+            $localRouting = Get-MetaProp -Object $local -Name 'routing'
+            if ($localRouting -and $routing) {
+                foreach ($prop in $localRouting.PSObject.Properties) {
+                    $routing | Add-Member -NotePropertyName $prop.Name -NotePropertyValue $prop.Value -Force
+                }
+            }
+            elseif ($localRouting) {
+                $routing = $localRouting
+            }
+        }
+    }
+
+    return [PSCustomObject]@{
+        version      = Get-MetaProp -Object $shared -Name 'version' -Default 1
+        updated      = Get-MetaProp -Object $shared -Name 'updated' -Default ''
+        routing      = $routing
+        projects     = @($projects.ToArray())
+        sharedPath   = $sharedPath
+        localPath    = $localPath
+        localLoaded  = $localLoaded
+        rootRegistry = @($extraSources)
+    }
+}
+
+function Get-MetaRoutingTable {
+    <#
+    .SYNOPSIS
+        Resolves registry entries against what is actually on disk, with stub advice.
+    .DESCRIPTION
+        Every registry entry may declare "optional": true plus "whenPresent" / "whenMissing"
+        advice. Present projects expose their real entry file and commands; absent optional
+        projects return advice instead of counting as drift. That lets one shared registry
+        describe capabilities a coworker may or may not have installed.
+    #>
+    [CmdletBinding()]
+    param(
+        [string[]]$Name,
+        [switch]$SharedOnly,
+        [switch]$MissingOnly
+    )
+
+    $registry = Get-MetaProjectRegistry -SharedOnly:$SharedOnly
+    $disk = @{}
+    foreach ($p in @(Get-MetaProjects)) {
+        $disk[$p.Name.ToLowerInvariant()] = $p
+    }
+
+    $rows = foreach ($reg in @($registry.projects)) {
+        $regName = [string]$reg.name
+        if ($Name -and $Name.Count -gt 0) {
+            $wanted = @($Name | ForEach-Object { $_.ToLowerInvariant() })
+            if ($wanted -notcontains $regName.ToLowerInvariant()) { continue }
+        }
+
+        $onDisk = $disk[$regName.ToLowerInvariant()]
+        $present = $null -ne $onDisk
+        if ($MissingOnly -and $present) { continue }
+
+        $optional = [bool](Get-MetaProp -Object $reg -Name 'optional' -Default $false)
+        $advice = if ($present) {
+            [string](Get-MetaProp -Object $reg -Name 'whenPresent' -Default '')
+        }
+        else {
+            [string](Get-MetaProp -Object $reg -Name 'whenMissing' -Default '')
+        }
+        if (-not $advice -and -not $present) {
+            $advice = "Not on this machine. Ask the user for the details this project would have provided; do not invent them."
+        }
+
+        [PSCustomObject]@{
+            Name         = $regName
+            Source       = [string](Get-MetaProp -Object $reg -Name 'source' -Default 'shared')
+            Root         = if ($present) { [string]$onDisk.Root } else { '' }
+            Present      = $present
+            Optional     = $optional
+            Entry        = [string](Get-MetaProp -Object $reg -Name 'entry' -Default 'AGENTS.md')
+            Capabilities = @(Get-MetaProp -Object $reg -Name 'capabilities' -Default @())
+            Triggers     = @(Get-MetaProp -Object $reg -Name 'triggers' -Default @())
+            Advice       = $advice
+            Path         = if ($present) { [string]$onDisk.Path } else { '' }
+        }
+    }
+
+    return @($rows | Sort-Object @{ Expression = 'Present'; Descending = $true }, Name)
 }
 
 function Get-MetaRegistryProject {
@@ -537,6 +868,7 @@ function Invoke-MetaProjectContextAudit {
     param(
         [string]$Filter = '*',
         [string[]]$Name,
+        [string[]]$Root,
         [switch]$DriftOnly,
         [switch]$Quiet,
         [int]$LargeFileBytes = 200KB,
@@ -545,10 +877,15 @@ function Invoke-MetaProjectContextAudit {
     )
 
     $registry = Get-MetaProjectRegistry
-    $projects = @(Resolve-MetaProjectSet -Filter $Filter -Name $Name)
+    $projects = @(Resolve-MetaProjectSet -Filter $Filter -Name $Name -Root $Root)
     $generatedHints = Get-MetaGeneratedPathHints
     $driftCount = 0
     $reports = @()
+
+    $rootInfo = @{}
+    foreach ($r in @(Get-MetaRoots -IncludeMissing)) {
+        $rootInfo[$r.Name] = $r
+    }
 
     function Write-AuditHost {
         param(
@@ -573,8 +910,13 @@ function Invoke-MetaProjectContextAudit {
         $key = [string]$reg.name
         if (-not $diskNameSet.ContainsKey($key.ToLowerInvariant())) {
             if (-not $Name -or (@($Name) -contains $reg.name)) {
-                $driftCount++
-                Write-AuditHost ("DRIFT: registry project missing on disk: {0}" -f $reg.name) -ForegroundColor Yellow
+                if ([bool](Get-MetaProp -Object $reg -Name 'optional' -Default $false)) {
+                    Write-AuditHost ("optional: {0} not installed here (advice-only routing)" -f $reg.name)
+                }
+                else {
+                    $driftCount++
+                    Write-AuditHost ("DRIFT: registry project missing on disk: {0}" -f $reg.name) -ForegroundColor Yellow
+                }
             }
         }
     }
@@ -583,16 +925,22 @@ function Invoke-MetaProjectContextAudit {
         $reg = Get-MetaRegistryProject -Registry $registry -Name $project.Name
         $inRegistry = $null -ne $reg
         $findings = @()
+        $advisories = @()
         $largeFiles = @()
         $highCard = @()
         $generatedHits = @()
+
+        $projectRoot = if ($rootInfo.ContainsKey($project.Root)) { $rootInfo[$project.Root] } else { $null }
+        # Light roots (cloud-synced personal folders) get metadata checks only: a deep recursive
+        # scan would hydrate placeholder files just to measure them.
+        $lightAudit = $null -ne $projectRoot -and ($projectRoot.Audit -eq 'light')
 
         $hasAgents = Test-Path -LiteralPath (Join-Path $project.Path 'AGENTS.md')
         $hasIgnore = Test-Path -LiteralPath (Join-Path $project.Path '.cursorignore')
         $hasReadme = Test-Path -LiteralPath (Join-Path $project.Path 'README.md')
 
         if (-not $inRegistry) {
-            $findings += 'Missing from projects.json registry'
+            $findings += 'Missing from registry (projects.json or projects.local.json)'
             $driftCount++
         }
         else {
@@ -603,8 +951,13 @@ function Invoke-MetaProjectContextAudit {
             foreach ($ex in @($reg.excludePaths)) {
                 if ([string]::IsNullOrWhiteSpace([string]$ex)) { continue }
                 if ((Test-MetaPathExists -Root $project.Path -Relative ([string]$ex)) -and -not $hasIgnore) {
-                    $findings += "excludePath '$ex' exists but .cursorignore is missing"
-                    $driftCount++
+                    if ($lightAudit) {
+                        $advisories += "excludePath '$ex' exists but .cursorignore is missing"
+                    }
+                    else {
+                        $findings += "excludePath '$ex' exists but .cursorignore is missing"
+                        $driftCount++
+                    }
                     break
                 }
             }
@@ -617,15 +970,17 @@ function Invoke-MetaProjectContextAudit {
             }
         }
 
-        if (-not $hasAgents) {
-            $findings += 'Missing AGENTS.md'
-            if ($inRegistry) { $driftCount++ }
-        }
-        if (-not $hasIgnore) {
-            $findings += 'Missing .cursorignore'
-        }
-        if (-not $hasReadme) {
-            $findings += 'Missing README.md'
+        if (-not $lightAudit) {
+            if (-not $hasAgents) {
+                $findings += 'Missing AGENTS.md'
+                if ($inRegistry) { $driftCount++ }
+            }
+            if (-not $hasIgnore) {
+                $findings += 'Missing .cursorignore'
+            }
+            if (-not $hasReadme) {
+                $findings += 'Missing README.md'
+            }
         }
 
         foreach ($hint in $generatedHints) {
@@ -663,43 +1018,52 @@ function Invoke-MetaProjectContextAudit {
                     }
                 }
                 if (-not $covered -and ($hint -notin @('bin', 'obj'))) {
-                    $findings += "Generated/cache path not covered by registry exclude or .cursorignore: $hint"
-                    $driftCount++
+                    if ($lightAudit) {
+                        $advisories += "Generated/cache path not covered by registry exclude or .cursorignore: $hint"
+                    }
+                    else {
+                        $findings += "Generated/cache path not covered by registry exclude or .cursorignore: $hint"
+                        $driftCount++
+                    }
                 }
             }
         }
 
         $largeFileList = New-Object System.Collections.ArrayList
-        $null = Get-ChildItem -LiteralPath $project.Path -Recurse -File -Force -Depth $ScanDepth -ErrorAction SilentlyContinue |
-            Where-Object {
-                $_.FullName -notmatch '[\\/]\.git([\\/]|$)' -and
-                $_.FullName -notmatch '[\\/]node_modules([\\/]|$)' -and
-                $_.Length -ge $LargeFileBytes
-            } |
-            Sort-Object Length -Descending |
-            Select-Object -First 15 |
-            ForEach-Object {
-                $rel = $_.FullName.Substring($project.Path.Length).TrimStart('\')
-                [void]$largeFileList.Add([PSCustomObject]@{
-                    Path = $rel
-                    KB   = [math]::Round($_.Length / 1KB, 1)
-                })
-            }
-        $largeFiles = @($largeFileList.ToArray())
-
         $highCardList = New-Object System.Collections.ArrayList
-        $null = Get-ChildItem -LiteralPath $project.Path -Recurse -Directory -Force -Depth ([Math]::Max(1, $ScanDepth - 1)) -ErrorAction SilentlyContinue |
-            Where-Object {
-                $_.FullName -notmatch '[\\/]\.git([\\/]|$)' -and
-                $_.FullName -notmatch '[\\/]node_modules([\\/]|$)'
-            } |
-            ForEach-Object {
-                $fileCount = @(Get-ChildItem -LiteralPath $_.FullName -File -Force -ErrorAction SilentlyContinue).Count
-                if ($fileCount -ge $HighCardinalityCount) {
+
+        if (-not $lightAudit) {
+            $null = Get-ChildItem -LiteralPath $project.Path -Recurse -File -Force -Depth $ScanDepth -ErrorAction SilentlyContinue |
+                Where-Object {
+                    $_.FullName -notmatch '[\\/]\.git([\\/]|$)' -and
+                    $_.FullName -notmatch '[\\/]node_modules([\\/]|$)' -and
+                    $_.Length -ge $LargeFileBytes
+                } |
+                Sort-Object Length -Descending |
+                Select-Object -First 15 |
+                ForEach-Object {
                     $rel = $_.FullName.Substring($project.Path.Length).TrimStart('\')
-                    [void]$highCardList.Add([PSCustomObject]@{ Path = $rel; FileCount = $fileCount })
+                    [void]$largeFileList.Add([PSCustomObject]@{
+                        Path = $rel
+                        KB   = [math]::Round($_.Length / 1KB, 1)
+                    })
                 }
-            }
+
+            $null = Get-ChildItem -LiteralPath $project.Path -Recurse -Directory -Force -Depth ([Math]::Max(1, $ScanDepth - 1)) -ErrorAction SilentlyContinue |
+                Where-Object {
+                    $_.FullName -notmatch '[\\/]\.git([\\/]|$)' -and
+                    $_.FullName -notmatch '[\\/]node_modules([\\/]|$)'
+                } |
+                ForEach-Object {
+                    $fileCount = @(Get-ChildItem -LiteralPath $_.FullName -File -Force -ErrorAction SilentlyContinue).Count
+                    if ($fileCount -ge $HighCardinalityCount) {
+                        $rel = $_.FullName.Substring($project.Path.Length).TrimStart('\')
+                        [void]$highCardList.Add([PSCustomObject]@{ Path = $rel; FileCount = $fileCount })
+                    }
+                }
+        }
+
+        $largeFiles = @($largeFileList.ToArray())
         $highCard = @($highCardList.ToArray())
 
         $suggestedTriggers = @()
@@ -720,6 +1084,9 @@ function Invoke-MetaProjectContextAudit {
         $report = [PSCustomObject]@{
             Name              = $project.Name
             Path              = $project.Path
+            Root              = $project.Root
+            LightAudit        = $lightAudit
+            RegistrySource    = if ($inRegistry) { [string](Get-MetaProp -Object $reg -Name 'source' -Default 'shared') } else { '' }
             InRegistry        = $inRegistry
             HasAgentsMd       = $hasAgents
             HasCursorIgnore   = $hasIgnore
@@ -728,6 +1095,7 @@ function Invoke-MetaProjectContextAudit {
             LargeFiles        = $largeFiles
             HighCardinality   = $highCard
             Findings          = $findings
+            Advisories        = $advisories
             SuggestedTriggers = $suggestedTriggers
             Drift             = ($findings.Count -gt 0 -or -not $inRegistry)
         }
@@ -735,15 +1103,15 @@ function Invoke-MetaProjectContextAudit {
 
         if ($DriftOnly) {
             if ($report.Drift) {
-                Write-AuditHost ("DRIFT: {0}" -f $project.Name) -ForegroundColor Yellow
+                Write-AuditHost ("DRIFT: {0} ({1})" -f $project.Name, $project.Root) -ForegroundColor Yellow
                 foreach ($f in $findings) { Write-AuditHost ("  - {0}" -f $f) }
             }
             continue
         }
 
         Write-AuditHost ""
-        Write-AuditHost ("==== {0} ====" -f $project.Name) -ForegroundColor Cyan
-        Write-AuditHost ("Registry: {0} | AGENTS.md: {1} | .cursorignore: {2}" -f $inRegistry, $hasAgents, $hasIgnore)
+        Write-AuditHost ("==== {0} ({1}) ====" -f $project.Name, $project.Root) -ForegroundColor Cyan
+        Write-AuditHost ("Registry: {0} | AGENTS.md: {1} | .cursorignore: {2}{3}" -f $inRegistry, $hasAgents, $hasIgnore, $(if ($lightAudit) { ' | light scan' } else { '' }))
         if ($generatedHits.Count -gt 0) {
             Write-AuditHost ("Generated/cache: {0}" -f ($generatedHits -join ', '))
         }
@@ -765,6 +1133,10 @@ function Invoke-MetaProjectContextAudit {
         }
         else {
             Write-AuditHost 'Findings: none' -ForegroundColor Green
+        }
+        if ($advisories.Count -gt 0) {
+            Write-AuditHost 'Advisory (light root, not counted as drift):'
+            foreach ($a in $advisories) { Write-AuditHost ("  - {0}" -f $a) }
         }
         if ($suggestedTriggers.Count -gt 0 -and -not $inRegistry) {
             Write-AuditHost ("Suggested triggers: {0}" -f ($suggestedTriggers -join ', '))
@@ -903,9 +1275,11 @@ function Export-MetaCanvasSnapshot {
 
         $projectPath = if ($report) { [string]$report.Path } else { Join-Path (Get-ProjectsRoot) $name }
         $git = Get-MetaProjectGitCounts -Path $projectPath
+        $optional = [bool](Get-MetaProp -Object $reg -Name 'optional' -Default $false)
 
         $status = 'healthy'
-        if (-not $report) { $status = 'missing-audit' }
+        if (-not $report -and $optional) { $status = 'not-installed' }
+        elseif (-not $report) { $status = 'missing-audit' }
         elseif ($report.Drift -or $findings.Count -gt 0) { $status = 'drift' }
 
         if ($findings.Count -gt 0) {
@@ -929,17 +1303,22 @@ function Export-MetaCanvasSnapshot {
 
         [PSCustomObject]@{
             name            = $name
-            purpose         = [string]$reg.purpose
-            triggers        = @($reg.triggers)
-            entry           = [string]$reg.entry
-            preferredPaths  = @($reg.preferredPaths)
-            excludePaths    = @($reg.excludePaths)
-            related         = @($reg.related)
+            purpose         = [string](Get-MetaProp -Object $reg -Name 'purpose' -Default '')
+            triggers        = @(Get-MetaProp -Object $reg -Name 'triggers' -Default @())
+            entry           = [string](Get-MetaProp -Object $reg -Name 'entry' -Default 'AGENTS.md')
+            preferredPaths  = @(Get-MetaProp -Object $reg -Name 'preferredPaths' -Default @())
+            excludePaths    = @(Get-MetaProp -Object $reg -Name 'excludePaths' -Default @())
+            related         = @(Get-MetaProp -Object $reg -Name 'related' -Default @())
             inRegistry      = $true
+            registrySource  = [string](Get-MetaProp -Object $reg -Name 'source' -Default 'shared')
+            root            = if ($report) { [string]$report.Root } else { '' }
+            present         = [bool]$report
+            optional        = $optional
+            capabilities    = @(Get-MetaProp -Object $reg -Name 'capabilities' -Default @())
             hasAgentsMd     = if ($report) { [bool]$report.HasAgentsMd } else { $false }
             hasCursorIgnore = if ($report) { [bool]$report.HasCursorIgnore } else { $false }
             hasReadme       = if ($report) { [bool]$report.HasReadme } else { $false }
-            drift           = if ($report) { [bool]$report.Drift } else { $true }
+            drift           = if ($report) { [bool]$report.Drift } else { -not $optional }
             findings        = $findings
             largeFiles      = $large
             status          = $status
@@ -993,6 +1372,11 @@ function Export-MetaCanvasSnapshot {
                     excludePaths    = @()
                     related         = @()
                     inRegistry      = $false
+                    registrySource  = ''
+                    root            = [string]$r.Root
+                    present         = $true
+                    optional        = $false
+                    capabilities    = @()
                     hasAgentsMd     = [bool]$r.HasAgentsMd
                     hasCursorIgnore = [bool]$r.HasCursorIgnore
                     hasReadme       = [bool]$r.HasReadme
@@ -1012,9 +1396,10 @@ function Export-MetaCanvasSnapshot {
         }
     }
 
-    $missingAgents = @($projects | Where-Object { -not $_.hasAgentsMd }).Count
-    $missingIgnore = @($projects | Where-Object { -not $_.hasCursorIgnore }).Count
+    $missingAgents = @($projects | Where-Object { $_.present -and -not $_.hasAgentsMd }).Count
+    $missingIgnore = @($projects | Where-Object { $_.present -and -not $_.hasCursorIgnore }).Count
     $driftProjects = @($projects | Where-Object { $_.drift }).Count
+    $notInstalled = @($projects | Where-Object { -not $_.present }).Count
     $gitDirtyProjects = @($projects | Where-Object { $_.gitIsRepo -and $_.gitDirty -gt 0 }).Count
     $gitDirtyFiles = (@($projects | Where-Object { $_.gitIsRepo } | Measure-Object -Property gitDirty -Sum).Sum)
     if ($null -eq $gitDirtyFiles) { $gitDirtyFiles = 0 }
@@ -1026,8 +1411,17 @@ function Export-MetaCanvasSnapshot {
         projectCount      = @($projects).Count
         driftCount        = [int]$audit.DriftCount
         driftProjects     = $driftProjects
+        notInstalled      = $notInstalled
         missingAgents     = $missingAgents
         missingIgnore     = $missingIgnore
+        roots             = @(Get-MetaRoots -IncludeMissing | ForEach-Object {
+                [PSCustomObject]@{
+                    name    = $_.Name
+                    path    = $_.Path
+                    primary = $_.Primary
+                    exists  = $_.Exists
+                }
+            })
         gitDirtyProjects  = [int]$gitDirtyProjects
         gitDirtyFiles     = [int]$gitDirtyFiles
         gitAheadProjects  = [int]$gitAheadProjects
@@ -1078,7 +1472,31 @@ $end
 }
 
 function ConvertTo-MetaCursorProjectSlug {
-    param([Parameter(Mandatory)][string]$Name)
+    <#
+    .SYNOPSIS
+        Builds the Cursor per-project folder slug for a project name or full path.
+    .DESCRIPTION
+        Cursor names its state folder after the workspace path: C:\Projects\_meta becomes
+        c-Projects-meta. Projects outside the primary root (for example a cloud-synced
+        personal folder) therefore need the path form, not the name form.
+    #>
+    [CmdletBinding(DefaultParameterSetName = 'Name')]
+    param(
+        [Parameter(Mandatory, ParameterSetName = 'Name')][string]$Name,
+        [Parameter(Mandatory, ParameterSetName = 'Path')][string]$Path
+    )
+
+    if ($PSCmdlet.ParameterSetName -eq 'Path') {
+        $segments = @(
+            ($Path -split '[\\/:]') |
+                ForEach-Object { ($_ -replace '[^\w]+', '-').Trim('-').TrimStart('_') } |
+                Where-Object { $_ }
+        )
+        if ($segments.Count -eq 0) { return '' }
+        $segments[0] = $segments[0].ToLowerInvariant()
+        return ($segments -join '-')
+    }
+
     $trimmed = $Name.Trim()
     if ($trimmed -eq '_meta' -or $trimmed -eq 'meta') { return 'c-Projects-meta' }
     $slug = ($trimmed -replace '[^\w]+', '-').Trim('-')
@@ -1119,17 +1537,30 @@ function Get-MetaCursorTranscriptRoots {
         }
     }
 
+    $pathByName = @{}
+    foreach ($p in @(Get-MetaProjects)) {
+        $pathByName[$p.Name.ToLowerInvariant()] = $p.Path
+    }
+
     $seen = @{}
     foreach ($projectName in $wanted) {
-        $slug = ConvertTo-MetaCursorProjectSlug -Name $projectName
-        if ($seen.ContainsKey($slug)) { continue }
-        $seen[$slug] = $true
-        $transcriptRoot = Join-Path $cursorProjects (Join-Path $slug 'agent-transcripts')
-        if (-not (Test-Path -LiteralPath $transcriptRoot)) { continue }
-        [PSCustomObject]@{
-            Name           = if ($projectName -eq 'meta') { '_meta' } else { $projectName }
-            CursorSlug     = $slug
-            TranscriptRoot = $transcriptRoot
+        $candidates = [System.Collections.Generic.List[string]]::new()
+        $known = $pathByName[$projectName.ToLowerInvariant()]
+        if ($known) {
+            [void]$candidates.Add((ConvertTo-MetaCursorProjectSlug -Path $known))
+        }
+        [void]$candidates.Add((ConvertTo-MetaCursorProjectSlug -Name $projectName))
+
+        foreach ($slug in $candidates) {
+            if (-not $slug -or $seen.ContainsKey($slug)) { continue }
+            $seen[$slug] = $true
+            $transcriptRoot = Join-Path $cursorProjects (Join-Path $slug 'agent-transcripts')
+            if (-not (Test-Path -LiteralPath $transcriptRoot)) { continue }
+            [PSCustomObject]@{
+                Name           = if ($projectName -eq 'meta') { '_meta' } else { $projectName }
+                CursorSlug     = $slug
+                TranscriptRoot = $transcriptRoot
+            }
         }
     }
 }
@@ -1319,6 +1750,8 @@ function Get-MetaProjectChats {
 Export-ModuleMember -Function @(
     'Get-MetaRoot',
     'Get-MetaConfig',
+    'Get-MetaProp',
+    'Get-MetaRoots',
     'Get-ProjectsRoot',
     'Get-MetaProjects',
     'Invoke-AcrossProjects',
@@ -1330,6 +1763,7 @@ Export-ModuleMember -Function @(
     'Get-RecentMetaProjects',
     'Update-MetaWorkspace',
     'Get-MetaProjectRegistry',
+    'Get-MetaRoutingTable',
     'Invoke-MetaProjectContextAudit',
     'Get-MetaProjectGitCounts',
     'Export-MetaCanvasSnapshot',

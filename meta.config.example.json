@@ -19,8 +19,7 @@
     }
   ],
   "exclude": [
-    "_meta",
-    "iSupport"
+    "_meta"
   ],
   "excludeNamePatterns": [
     "node_modules",
@@ -33,12 +32,7 @@
   "templatesDir": "templates",
   "workspace": {
     "months": 6,
-    "alwaysInclude": [
-      "Solarwinds",
-      "TicketTracker",
-      "Misc",
-      "Trivia"
-    ],
+    "alwaysInclude": [],
     "scanDepth": 2,
     "outputs": [
       {
