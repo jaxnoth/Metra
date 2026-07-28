@@ -4,6 +4,10 @@
 .DS_Store
 Thumbs.db
 
+# Registry entries that must not reach coworkers
+projects.local.json
+!projects.local.example.json
+
 # Editor
 .vs/
 .vscode/*

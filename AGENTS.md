@@ -1,20 +1,35 @@
 # Meta agent guide
 
-Orchestration repo for sibling folders under `C:\Projects`. Prefer routing over broad multi-repo search.
+Orchestration repo for sibling folders under configured roots (work `C:\Projects` plus optional personal roots). Prefer routing over broad multi-repo search.
 
 ## Route first
 
-1. Read [`projects.json`](projects.json) and match trigger terms to one project.
+1. Match trigger terms via `.\meta.ps1 routing` / the merged registry (`projects.json` + `projects.local.json` + optional root `registryFile`).
 2. For tickets / iSupport / helpdesk: start in **TicketTracker**, then route to one technical project.
 3. Load that project's `AGENTS.md` (or README if none). Do not scan other repos yet.
-4. Broaden to `related` projects only when evidence requires it.
+4. Stay in that project's root. Do not open personal roots for work asks, or work roots for personal asks, unless the user names the other project.
+5. Broaden to same-root `related` only when evidence requires it. Cross-root handoffs are chat opt-in.
+
+## Shared vs local registry
+
+| File | Role |
+|------|------|
+| `projects.json` | Shared with coworkers (TicketTracker, Solarwinds stubs, etc.) |
+| `projects.local.json` | Machine-private work entries (gitignored) |
+| Root `registryFile` (e.g. iCloud `projects.personal.json`) | Travels with that root |
+
+Optional entries may be absent: follow `whenMissing` advice instead of inventing paths.
 
 ## Commands
 
 ```powershell
 .\meta.ps1 list
+.\meta.ps1 list -Root personal
+.\meta.ps1 roots
+.\meta.ps1 routing
+.\meta.ps1 routing -MissingOnly
 .\meta.ps1 audit
-.\meta.ps1 audit -Name Solarwinds,TicketTracker
+.\meta.ps1 audit -Name Solarwinds,TicketTracker,Trivia
 .\meta.ps1 audit -DriftOnly
 .\meta.ps1 workspace
 .\meta.ps1 chats -Name Solarwinds -Query "disk alert"
@@ -28,4 +43,4 @@ Orchestration repo for sibling folders under `C:\Projects`. Prefer routing over 
 
 ## Maintenance
 
-Re-run `.\meta.ps1 audit` after adding a project or changing layout. Update `projects.json`, project `AGENTS.md`, and `.cursorignore` only when audit reports drift. See [docs/Context-Routing.md](docs/Context-Routing.md).
+Re-run `.\meta.ps1 audit` after adding a project or changing layout. Update the appropriate registry (`projects.json` only for shared entries), project `AGENTS.md`, and `.cursorignore` only when audit reports drift. See [docs/Context-Routing.md](docs/Context-Routing.md).

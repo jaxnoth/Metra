@@ -18,11 +18,14 @@
     .\meta.ps1 snapshot
     .\meta.ps1 chats -Name Solarwinds -Query "disk alert"
     .\meta.ps1 chats -Name TicketTracker,Solarwinds -Ticket 12345
+    .\meta.ps1 roots
+    .\meta.ps1 routing
+    .\meta.ps1 list -Root personal
 #>
 [CmdletBinding()]
 param(
     [Parameter(Position = 0)]
-    [ValidateSet('list', 'status', 'pull', 'fetch', 'run', 'new', 'apply', 'workspace', 'audit', 'snapshot', 'chats', 'help')]
+    [ValidateSet('list', 'status', 'pull', 'fetch', 'run', 'new', 'apply', 'workspace', 'audit', 'snapshot', 'chats', 'roots', 'routing', 'help')]
     [string]$Command = 'help',
 
     [Parameter(Position = 1, ValueFromRemainingArguments)]
@@ -30,6 +33,7 @@ param(
 
     [string]$Filter = '*',
     [string[]]$Name,
+    [string[]]$Root,
     [string]$Description = '',
     [string]$Template,
     [string]$RelativePath,
@@ -45,7 +49,9 @@ param(
     [switch]$ContinueOnError,
     [switch]$Preview,
     [switch]$DriftOnly,
-    [switch]$IncludeMeta
+    [switch]$IncludeMeta,
+    [switch]$SharedOnly,
+    [switch]$MissingOnly
 )
 
 $ErrorActionPreference = 'Stop'
@@ -56,28 +62,43 @@ function Show-Help {
 Meta repo CLI - operate on sibling folders under the projects root.
 
 Usage:
-  .\meta.ps1 list [-Filter '*'] [-GitOnly]
-  .\meta.ps1 status [-Filter '*'] [-Name ProjA,ProjB]
-  .\meta.ps1 pull [-Filter '*']
-  .\meta.ps1 fetch [-Filter '*']
-  .\meta.ps1 run <command...> [-Filter '*'] [-Name ...] [-GitOnly] [-ContinueOnError]
-  .\meta.ps1 new <ProjectName> [-Description '...'] [-Template basic] [-NoGit] [-Force]
-  .\meta.ps1 apply <SourceFile> [-RelativePath path\in\project] [-Filter '*'] [-Force]
+  .\meta.ps1 list [-Filter '*'] [-Root work,personal] [-GitOnly]
+  .\meta.ps1 status [-Filter '*'] [-Name ProjA,ProjB] [-Root personal]
+  .\meta.ps1 pull [-Filter '*'] [-Root work]
+  .\meta.ps1 fetch [-Filter '*'] [-Root work]
+  .\meta.ps1 run <command...> [-Filter '*'] [-Name ...] [-Root ...] [-GitOnly] [-ContinueOnError]
+  .\meta.ps1 new <ProjectName> [-Description '...'] [-Template basic] [-Root personal] [-NoGit] [-Force]
+  .\meta.ps1 apply <SourceFile> [-RelativePath path\in\project] [-Filter '*'] [-Root ...] [-Force]
   .\meta.ps1 workspace [-Months 6] [-ScanDepth 2] [-Preview]
-  .\meta.ps1 audit [-Filter '*'] [-Name ProjA,ProjB] [-DriftOnly] [-ScanDepth 4]
+  .\meta.ps1 audit [-Filter '*'] [-Name ProjA,ProjB] [-Root ...] [-DriftOnly] [-ScanDepth 4]
   .\meta.ps1 snapshot [-ScanDepth 2]
   .\meta.ps1 chats [-Name ProjA,ProjB] [-Query 'terms'] [-Ticket 12345] [-Days 90] [-Limit 10] [-IncludeMeta]
+  .\meta.ps1 roots
+  .\meta.ps1 routing [-Name ProjA] [-SharedOnly] [-MissingOnly]
+
+Roots:
+  Projects can live in more than one folder (see roots in meta.config.json).
+  A name found in two roots resolves to the earlier root; the later copy is ignored.
+
+Registries:
+  projects.json              shared with coworkers (git)
+  projects.local.json        machine-private, never committed
+  <root>/projects.*.json     travels with that root (registryFile in meta.config.json)
 
 Examples:
   .\meta.ps1 list -GitOnly
+  .\meta.ps1 list -Root personal
   .\meta.ps1 status -Filter 'Colleague*'
   .\meta.ps1 run 'git remote -v' -GitOnly
   .\meta.ps1 new ReportingOps -Description 'Ops scripts for reporting'
+  .\meta.ps1 new SermonNotes -Root personal
   .\meta.ps1 apply .\shared\.gitignore -RelativePath .gitignore -Filter 'IWU*'
   .\meta.ps1 workspace
   .\meta.ps1 workspace -Months 3 -Preview
   .\meta.ps1 audit -Name Solarwinds,TicketTracker
   .\meta.ps1 audit -DriftOnly
+  .\meta.ps1 routing -MissingOnly
+  .\meta.ps1 routing -SharedOnly
   .\meta.ps1 snapshot
   .\meta.ps1 chats -Name Solarwinds -Query 'disk alert'
   .\meta.ps1 chats -Name TicketTracker,Solarwinds -Ticket 12345 -IncludeMeta
@@ -88,23 +109,51 @@ switch ($Command) {
     'help' { Show-Help }
 
     'list' {
-        $projects = Get-MetaProjects -Filter $Filter -GitOnly:$GitOnly
+        $projects = Get-MetaProjects -Filter $Filter -Root $Root -GitOnly:$GitOnly
         $projects |
-            Select-Object Name, IsGit, Path |
+            Select-Object Name, Root, IsGit, Path |
             Format-Table -AutoSize
-        Write-Host ("{0} project(s)" -f $projects.Count)
+        Write-Host ("{0} project(s) across {1} root(s)" -f $projects.Count, @($projects.Root | Sort-Object -Unique).Count)
+    }
+
+    'roots' {
+        $roots = @(Get-MetaRoots -IncludeMissing)
+        $roots |
+            Select-Object Name, Primary, Exists, Optional, Audit, ScanDepth, RegistryFile, Path |
+            Format-Table -AutoSize
+        $missing = @($roots | Where-Object { -not $_.Exists })
+        if ($missing.Count -gt 0) {
+            Write-Host ("Not present on this machine: {0}" -f (($missing.Name) -join ', ')) -ForegroundColor Yellow
+        }
+    }
+
+    'routing' {
+        $rows = @(Get-MetaRoutingTable -Name $Name -SharedOnly:$SharedOnly -MissingOnly:$MissingOnly)
+        if ($rows.Count -eq 0) {
+            Write-Host 'No registry entries matched.' -ForegroundColor Yellow
+        }
+        else {
+            $rows |
+                Select-Object Name, Source, Root, Present, Optional,
+                    @{ n = 'Triggers'; e = { ($_.Triggers -join ', ') } } |
+                Format-Table -AutoSize
+            foreach ($row in @($rows | Where-Object { -not $_.Present })) {
+                Write-Host ("{0}: {1}" -f $row.Name, $row.Advice) -ForegroundColor Yellow
+            }
+            Write-Host ("{0} entr(ies); {1} present" -f $rows.Count, @($rows | Where-Object Present).Count)
+        }
     }
 
     'status' {
-        Get-MetaStatus -Filter $Filter -Name $Name | Out-Null
+        Get-MetaStatus -Filter $Filter -Name $Name -Root $Root | Out-Null
     }
 
     'pull' {
-        Update-MetaProjects -Filter $Filter -Name $Name | Out-Null
+        Update-MetaProjects -Filter $Filter -Name $Name -Root $Root | Out-Null
     }
 
     'fetch' {
-        Update-MetaProjects -Filter $Filter -Name $Name -FetchOnly | Out-Null
+        Update-MetaProjects -Filter $Filter -Name $Name -Root $Root -FetchOnly | Out-Null
     }
 
     'run' {
@@ -114,7 +163,7 @@ switch ($Command) {
         $cmdText = ($Rest -join ' ').Trim()
         # Allow callers to pass -- then the command
         if ($cmdText.StartsWith('-- ')) { $cmdText = $cmdText.Substring(3) }
-        Invoke-AcrossProjects -Command $cmdText -Filter $Filter -Name $Name -GitOnly:$GitOnly -ContinueOnError:$ContinueOnError |
+        Invoke-AcrossProjects -Command $cmdText -Filter $Filter -Name $Name -Root $Root -GitOnly:$GitOnly -ContinueOnError:$ContinueOnError |
             Out-Null
     }
 
@@ -124,8 +173,15 @@ switch ($Command) {
         if (-not $projectName) {
             throw "new requires a project name. Example: .\meta.ps1 new MyProject"
         }
-        New-MetaProject -Name $projectName -Description $Description -Template $Template -NoGit:$NoGit -Force:$Force |
-            Format-List
+        $newParams = @{
+            Name        = $projectName
+            Description = $Description
+            Template    = $Template
+            NoGit       = [bool]$NoGit
+            Force       = [bool]$Force
+        }
+        if ($Root -and $Root.Count -gt 0) { $newParams.Root = $Root[0] }
+        New-MetaProject @newParams | Format-List
     }
 
     'apply' {
@@ -133,7 +189,7 @@ switch ($Command) {
             throw "apply requires a source file. Example: .\meta.ps1 apply .\shared\.editorconfig"
         }
         $source = $Rest[0]
-        Copy-AcrossProjects -Source $source -RelativePath $RelativePath -Filter $Filter -Name $Name -Force:$Force
+        Copy-AcrossProjects -Source $source -RelativePath $RelativePath -Filter $Filter -Name $Name -Root $Root -Force:$Force
     }
 
     'workspace' {
@@ -151,6 +207,7 @@ switch ($Command) {
             DriftOnly = [bool]$DriftOnly
         }
         if ($Name) { $params.Name = $Name }
+        if ($Root) { $params.Root = $Root }
         if ($ScanDepth -ge 0) { $params.ScanDepth = $ScanDepth }
         $result = Invoke-MetaProjectContextAudit @params | Select-Object -Last 1
         Write-Host ""
