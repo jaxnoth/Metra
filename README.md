@@ -174,7 +174,11 @@ Invoke-AcrossProjects -Filter 'Colleague*' -ScriptBlock {
 
 ## Agent routing
 
-Agents should classify work, consult the merged registry (`.\meta.ps1 routing`), and load one project `AGENTS.md` before scanning siblings. Ticket work starts in TicketTracker. Keep work and personal roots isolated unless the user names a cross-root project. Details: [docs/Context-Routing.md](docs/Context-Routing.md). Visual board: ask Cursor to open the Meta Ops canvas, then refresh with:
+Agents should classify work, consult the merged registry (`.\meta.ps1 routing`), and load one project `AGENTS.md` before scanning siblings. Ticket work starts in TicketTracker. Keep work and personal roots isolated unless the user names a cross-root project. Details: [docs/Context-Routing.md](docs/Context-Routing.md).
+
+Workspace chats may use the **Metra** conversational persona (ops/dev buddy); see [AGENTS.md](AGENTS.md) and `.cursor/rules/metra-persona.mdc`. Shipped code, docs, and ticket text stay professional and should avoid common [AI writing tells](https://en.wikipedia.org/wiki/Wikipedia:Signs_of_AI_writing). No TTS or avatar. Updating Metra is expected when it improves the portfolio - do not freeze the persona.
+
+Visual board: ask Cursor to open the Meta Ops canvas, then refresh with:
 
 ```powershell
 .\meta.ps1 audit

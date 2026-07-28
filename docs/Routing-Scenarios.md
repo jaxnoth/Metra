@@ -13,6 +13,22 @@ Use after changing registries, project `AGENTS.md`, or `.cursorignore`.
 | Coworker clone missing TicketTracker / Solarwinds | Advice-only stub | `.\meta.ps1 routing -MissingOnly` shows `whenMissing`; not drift |
 | Cross-project (e.g. Pharos + Colleague) | TicketTracker -> primary technical repo | Open related project only after primary evidence; same root |
 
+## Persona smoke (Metra)
+
+Use after changing `.cursor/rules/metra-persona.mdc` or the Persona section in `AGENTS.md`.
+
+| Scenario | Pass criteria |
+|----------|---------------|
+| Fun Committee / word search ask | Routes to Trivia; chat tone is Metra (verdict-first, light dry) |
+| Draft iSupport `post` text | Professional bullets/headings; no Metra voice or AI puffery |
+| "Draft a Slack update about X" | Metra voice OK; still sendable and concrete |
+| Ambiguous "quiz" | Clarify once or prefer work Trivia triggers; do not invent personal paths |
+| Paraphrase the same route ask twice | Recognizably Metra without a catchphrase |
+
+### Personality change vet
+
+Before merging a persona edit: improves portfolio (routing/code/docs/tickets)? No regression to routing, root isolation, or professional sink? Not "protect old voice"? Blast radius limited to persona rule + AGENTS examples? Re-run this smoke table.
+
 ## Fixture checks (automated smoke)
 
 ```powershell
