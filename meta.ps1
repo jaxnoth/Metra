@@ -23,6 +23,8 @@
     .\meta.ps1 list -Root personal
     .\meta.ps1 import-profile -Path .\profiles\sample -Preview
     .\meta.ps1 export-profile -Path $env:TEMP\my-meta-profile.zip
+    .\meta.ps1 ctx
+    .\meta.ps1 ctx -Query "ticket disk"
 #>
 [CmdletBinding()]
 param(
@@ -30,7 +32,7 @@ param(
     [ValidateSet(
         'list', 'status', 'pull', 'fetch', 'run', 'new', 'apply', 'workspace',
         'audit', 'snapshot', 'chats', 'roots', 'routing',
-        'export-profile', 'import-profile', 'help'
+        'export-profile', 'import-profile', 'ctx', 'help'
     )]
     [string]$Command = 'help',
 
@@ -50,6 +52,8 @@ param(
     [string]$Ticket,
     [int]$Days = 90,
     [int]$Limit = 10,
+    [ValidateSet('markdown', 'json')]
+    [string]$Format = 'markdown',
     [switch]$GitOnly,
     [switch]$Force,
     [switch]$NoGit,
@@ -66,7 +70,7 @@ Import-Module (Join-Path $PSScriptRoot 'scripts\Meta.psm1') -Force
 
 function Show-Help {
     @"
-Meta repo CLI - operate on sibling folders under the projects root.
+Metra CLI - operate on sibling folders under configured project roots.
 
 Usage:
   .\meta.ps1 list [-Filter '*'] [-Root work,personal] [-GitOnly]
@@ -84,6 +88,7 @@ Usage:
   .\meta.ps1 routing [-Name ProjA] [-SharedOnly] [-MissingOnly]
   .\meta.ps1 export-profile -Path <dir-or-zip>
   .\meta.ps1 import-profile -Path <dir-or-zip> [-Preview] [-Force]
+  .\meta.ps1 ctx [-Query 'terms'] [-Path <file|->] [-Format markdown|json] [-Limit 25]
 
 Roots:
   Projects can live in more than one folder (see roots in meta.config.json).
@@ -119,6 +124,9 @@ Examples:
   .\meta.ps1 import-profile -Path .\profiles\sample -Preview
   .\meta.ps1 import-profile -Path .\profiles\sample -Force
   .\meta.ps1 export-profile -Path `$env:TEMP\my-meta-profile.zip
+  .\meta.ps1 ctx
+  .\meta.ps1 ctx -Query 'ticket disk'
+  .\meta.ps1 ctx -Format json -Path `$env:TEMP\metra-ctx.json
 "@ | Write-Host
 }
 
@@ -279,5 +287,26 @@ switch ($Command) {
             throw "import-profile requires -Path <dir-or-zip>. Example: .\meta.ps1 import-profile -Path .\profiles\sample -Preview"
         }
         Import-MetaProfile -Path $importPath -Preview:$Preview -Force:$Force | Format-List
+    }
+
+    'ctx' {
+        $queryText = $Query
+        if (-not $queryText -and $Rest -and $Rest.Count -gt 0) {
+            $queryText = ($Rest -join ' ').Trim()
+        }
+        $params = @{
+            Format = $Format
+        }
+        if ($queryText) { $params.Query = $queryText }
+        if ($Path) { $params.Path = $Path }
+        if ($Limit -gt 0 -and $Limit -ne 10) { $params.Limit = $Limit }
+        # Default Limit for ctx is 25; meta.ps1 default Limit is 10 for chats.
+        if (-not $PSBoundParameters.ContainsKey('Limit')) {
+            $params.Limit = 25
+        }
+        else {
+            $params.Limit = $Limit
+        }
+        Export-MetaContextPack @params | Format-List
     }
 }

@@ -1,10 +1,36 @@
-# Meta (portfolio ops + Metra)
+# Metra
 
-Orchestration repo for project folders under one or more roots. It discovers sibling projects, runs commands across them, routes AI agents to one project at a time, and ships **Metra** - a chat persona for portfolio ops (routing wins; durable artifacts stay professional).
+Portfolio ops for multi-root Cursor workspaces. Discover sibling projects, run commands across them, route AI agents to **one project at a time**, and ship **Metra** - a chat persona that stays an ops partner (with Teaching Mode for Ask/Plan and setup).
 
-MIT licensed. Host on public GitHub or a private org fork.
+Not a monorepo build system. Not another "meta" multi-repo clone framework.
 
-## Quick start (public clone)
+MIT licensed. Host on public GitHub (repo name **Metra**) or a private org fork.
+
+## What Metra is / is not
+
+**Is:** a portfolio orchestration layer (CLI + routing registry + Cursor rules + optional persona overlay).
+
+**Not:**
+
+- a monorepo build system (Nx / Turborepo / etc.)
+- a project generator beyond lightweight `new` templates
+- a ticketing platform (optional TicketTracker stub only)
+- an MCP framework (CLI-first; `ctx` packs are files you can open or `@`)
+
+## Naming
+
+| Layer | Name |
+|-------|------|
+| Product / GitHub repo | **Metra** |
+| Recommended local folder | **`_meta`** (also accepted: `Metra`, `metra`) |
+| CLI | `meta.ps1` |
+
+```powershell
+git clone https://github.com/<you>/Metra.git _meta
+cd _meta
+```
+
+## Quick start
 
 ```powershell
 cd C:\Projects   # or your work root
@@ -14,17 +40,21 @@ cd _meta
 # Edit meta.config.json roots / workspace.alwaysInclude
 # Edit .cursor\rules\metra-persona.local.mdc operator display name (replace Alex)
 .\meta.ps1 workspace
-.\meta.ps1 audit
 .\meta.ps1 routing
+.\meta.ps1 ctx
 ```
 
-Open `Meta.code-workspace` in Cursor. Optional stubs in `projects.json` (TicketTracker, Solarwinds) teach routing; they are **not** required installs - `whenMissing` advice appears if those folders are absent.
+Open `Metra.code-workspace` (or `Meta.code-workspace` if your live config still uses that name) in Cursor. Optional stubs in `projects.json` (TicketTracker, Solarwinds) teach routing; they are **not** required installs - `whenMissing` advice appears if those folders are absent.
 
 Preview a pack without writing:
 
 ```powershell
 .\meta.ps1 import-profile -Path .\profiles\sample -Preview
 ```
+
+## Teaching Mode
+
+In Cursor **Ask** or **Plan**, and during setup/onboarding, Metra leans into a slightly humorous professional college-professor delivery: answer first, one next step, link docs instead of pasting them, stop when you can execute. Same persona as ops Metra - not a second character. Depth and pacing adapt to the conversation; Metra does not infer demographics or personal traits. Details: [docs/Customizing-Metra.md](docs/Customizing-Metra.md).
 
 ## What ships vs stays local
 
@@ -33,9 +63,11 @@ Preview a pack without writing:
 | CLI, module, templates, shared/ | `meta.config.json` |
 | `projects.json` (example stubs) | `projects.local.json` |
 | `metra-persona.mdc` (full base) | `.cursor/rules/metra-persona.local.mdc` |
-| `*.example.json` / `*.local.example.mdc` | `docs/canvas-snapshot.json` |
+| `*.example.json` / `*.local.example.mdc` | `docs/canvas-snapshot.json`, `docs/context-pack.*` |
 | `profiles/sample/` (ready-to-import pack) | regenerated workspaces |
 | MIT LICENSE, public docs | |
+
+Bindings (paths, alwaysInclude, operator name) are local facts. Canonical routing stubs and the Metra base rule are shared.
 
 Move yourself between machines:
 
@@ -45,7 +77,15 @@ Move yourself between machines:
 .\meta.ps1 import-profile -Path $env:TEMP\my-meta-profile.zip -Force
 ```
 
-Personal-root `registryFile` (e.g. `projects.personal.json` beside personal projects) is **not** auto-included in profile packs - copy it with that root. Details: [docs/Customizing-Metra.md](docs/Customizing-Metra.md), [SECURITY.md](SECURITY.md).
+Personal-root `registryFile` is **not** auto-included - copy it with that root. See [docs/Customizing-Metra.md](docs/Customizing-Metra.md), [SECURITY.md](SECURITY.md).
+
+## Versioning
+
+| Surface | Stability |
+|---------|-----------|
+| CLI commands (`list`, `routing`, `ctx`, profile import/export, ...) | Intended stable |
+| Persona rules (`.cursor/rules/metra-persona.mdc`) | Expected to evolve |
+| Sample overlays / `profiles/sample/` | Examples, not contracts |
 
 ## Commands
 
@@ -54,6 +94,7 @@ Personal-root `registryFile` (e.g. `projects.personal.json` beside personal proj
 | `list` | Show project folders (optional `-GitOnly`, `-Filter`, `-Root`) |
 | `roots` | Show configured project roots and whether each exists |
 | `routing` | Show merged registry entries vs disk (`-SharedOnly`, `-MissingOnly`) |
+| `ctx` | Bounded agent context pack (markdown/json; optional `-Query`) |
 | `status` | `git status -sb` in each git project |
 | `pull` / `fetch` | Fast-forward pull or fetch across git projects |
 | `run <cmd>` | Run any shell command in each matching project |
@@ -68,7 +109,7 @@ Personal-root `registryFile` (e.g. `projects.personal.json` beside personal proj
 
 ### Filters
 
-- `-Filter 'IWU*'` - wildcard on folder name
+- `-Filter 'Acme*'` - wildcard on folder name
 - `-Name A,B` - exact project names
 - `-Root work,personal` - limit to configured roots
 - `-GitOnly` - only folders that already have `.git`
@@ -78,12 +119,12 @@ Personal-root `registryFile` (e.g. `projects.personal.json` beside personal proj
 
 ```
 _meta/
-  meta.ps1                   CLI entrypoint
+  meta.ps1                   Metra CLI entrypoint
   meta.config.example.json   starter config (live meta.config.json is gitignored)
   projects.json              shared agent routing registry (example stubs OK)
   projects.local.example.json
   profiles/sample/           anonymized operator pack
-  AGENTS.md                  meta agent entry
+  AGENTS.md                  agent entry + Metra examples
   LICENSE                    MIT
   SECURITY.md
   scripts/Meta.psm1          PowerShell helpers
@@ -93,11 +134,11 @@ _meta/
   .cursor/rules/             routing + Metra base (+ local overlay gitignored)
 ```
 
-## Distribute / first-time layout
+## First-time layout
 
 ```text
 C:\Projects\                 (work root)
-  _meta\                     <- clone of this repo
+  _meta\                     <- clone of Metra
   Reporting\
   TicketTracker\             (optional; stub in projects.json)
   ...
@@ -107,30 +148,15 @@ C:\Projects\                 (work root)
   projects.personal.json     <- travels with the personal root
 ```
 
-```powershell
-Copy-Item .\meta.config.example.json .\meta.config.json   # if not using import-profile
-# or: .\meta.ps1 import-profile -Path .\profiles\sample -Force
-.\meta.ps1 workspace
-.\meta.ps1 audit
-```
-
 ### Shared vs local vs overlay
 
 | Layer | Role |
 |-------|------|
-| `projects.json` | Shared routing stubs (coworkers / public teaching examples) |
+| `projects.json` | Shared routing stubs (public teaching examples) |
 | `projects.local.json` | Machine-private work routing (gitignored) |
-| Root `registryFile` | Travels with that root (e.g. personal iCloud) |
+| Root `registryFile` | Travels with that root (e.g. personal cloud folder) |
 | `metra-persona.mdc` | Full base Metra personality (tracked) |
 | `metra-persona.local.mdc` | Operator name / greeting / team notes (gitignored) |
-
-TicketTracker and Solarwinds entries in `projects.json` are optional examples: routing advice when missing, not hard dependencies.
-
-### Do not package
-
-- Sibling repos inside `_meta`
-- Live `meta.config.json`, local registries, overlays, or canvas snapshots as the public source of truth (sample under `profiles/sample/` is intentional and anonymized)
-- Secrets under `shared/` then `apply` across projects
 
 ## Creating projects
 
@@ -149,23 +175,21 @@ TicketTracker and Solarwinds entries in `projects.json` are optional examples: r
 
 ## Agent routing
 
-Classify work, consult `.\meta.ps1 routing`, load one project `AGENTS.md` before scanning siblings. Ticket work starts in TicketTracker when present. Keep work and personal roots isolated unless the user names a cross-root project. Details: [docs/Context-Routing.md](docs/Context-Routing.md).
-
-Workspace chats may use **Metra** (ops/dev partner); see [AGENTS.md](AGENTS.md), [docs/Customizing-Metra.md](docs/Customizing-Metra.md), and `.cursor/rules/metra-persona.mdc`. Code, docs, and ticket text stay professional.
+Classify work, consult `.\meta.ps1 routing` or `.\meta.ps1 ctx`, load one project `AGENTS.md` before scanning siblings. Ticket work starts in TicketTracker when present. Keep work and personal roots isolated unless the user names a cross-root project. Details: [docs/Context-Routing.md](docs/Context-Routing.md).
 
 ```powershell
 .\meta.ps1 audit
 .\meta.ps1 audit -DriftOnly
-.\meta.ps1 snapshot
+.\meta.ps1 ctx -Query "disk alert"
 .\meta.ps1 chats -Name Solarwinds -Query "disk alert"
 ```
 
 ## Contributing
 
-Issues and PRs welcome on the public repo. Keep machine-local files out of commits (see [SECURITY.md](SECURITY.md)). Prefer small, focused changes to routing, CLI, or docs. Persona growth for one operator belongs in the local overlay; promote to the base rule only when the change is meant for everyone using a fork.
+Issues and PRs welcome. Keep machine-local files out of commits (see [SECURITY.md](SECURITY.md)). Prefer small, focused changes to routing, CLI, or docs. Persona growth for one operator belongs in the local overlay; promote to the base rule only when the change is meant for everyone using a fork.
 
 ## Notes
 
-- Nested git repos stay independent; this meta repo only tracks its own scripts/config.
-- `_meta` is excluded from discovery via `meta.config.json`.
+- Nested git repos stay independent; this repo only tracks its own scripts/config.
+- The orchestration folder (`_meta` / `Metra` / `metra`) is excluded from project discovery.
 - Pin folders you always want in the workspace with `workspace.alwaysInclude` in your local config.

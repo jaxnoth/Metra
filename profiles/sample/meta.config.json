@@ -19,7 +19,9 @@
     }
   ],
   "exclude": [
-    "_meta"
+    "_meta",
+    "Metra",
+    "metra"
   ],
   "excludeNamePatterns": [
     "node_modules",

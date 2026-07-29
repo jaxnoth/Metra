@@ -19,8 +19,10 @@ projects.local.json
 !.cursor/rules/metra-persona.local.example.mdc
 !profiles/sample/.cursor/rules/metra-persona.local.mdc
 
-# Generated canvas snapshot (machine paths)
+# Generated canvas snapshot / context packs (machine paths)
 docs/canvas-snapshot.json
+docs/context-pack.md
+docs/context-pack.json
 
 # Editor
 .vs/

@@ -28,7 +28,7 @@ Configured roots (see `meta.config.json` `roots`) stay separate:
 - Do not open another root unless the user names that project or asks to move material between them.
 - `related` lists must stay same-root. Cross-root ideas (for example Misc scratch sheets into Trivia, or a personal bible game borrowing a work printable) are chat opt-in only.
 
-`.\meta.ps1 routing` shows which registry entries resolved to a real folder. Optional shared stubs (TicketTracker, Solarwinds) return `whenMissing` advice when absent instead of counting as drift.
+`.\meta.ps1 routing` shows which registry entries resolved to a real folder. `.\meta.ps1 ctx` writes a bounded agent context pack (present projects + reminders). Optional shared stubs (TicketTracker, Solarwinds) return `whenMissing` advice when absent instead of counting as drift.
 
 ## Audit command
 
@@ -39,8 +39,9 @@ Configured roots (see `meta.config.json` `roots`) stay separate:
 .\meta.ps1 audit -DriftOnly
 .\meta.ps1 routing
 .\meta.ps1 routing -MissingOnly
+.\meta.ps1 ctx
+.\meta.ps1 ctx -Query "ticket disk"
 ```
-
 The audit is a **re-runnable probe**. Do not rewrite it for routine project changes. Re-run it; update curated files when it reports drift. Cloud/personal roots use light audit (no deep recursive scan).
 
 ## When to re-audit

@@ -19,7 +19,9 @@
     }
   ],
   "exclude": [
-    "_meta"
+    "_meta",
+    "Metra",
+    "metra"
   ],
   "excludeNamePatterns": [
     "node_modules",
@@ -36,12 +38,12 @@
     "scanDepth": 2,
     "outputs": [
       {
-        "path": "Meta.code-workspace",
+        "path": "Metra.code-workspace",
         "metaFolderPath": ".",
         "projectPathPrefix": "../"
       },
       {
-        "path": "../Meta.code-workspace",
+        "path": "../Metra.code-workspace",
         "metaFolderPath": "_meta",
         "projectPathPrefix": ""
       }
