@@ -11,15 +11,17 @@ Metra is the chat persona for portfolio ops in the `_meta` checkout (product nam
 | install aid | Example overlay | `.cursor/rules/metra-persona.local.example.mdc` | Yes |
 | install aid | Sample pack overlay | `profiles/sample/.../metra-persona.local.mdc` | Yes (anonymized) |
 
-Profile packs only **install** the overlay (plus local config/registry). They do not change precedence. Cursor loads base + local overlay when the local file is present.
+Profile packs only **install** the overlay (plus local config/registry). They do not change precedence. Cursor loads base + local overlay when the local file is present. Operators on other harnesses still use profile packs for config/registry; persona auto-load is Cursor-shaped - see [Integrations.md](Integrations.md).
 
 ## Ops partner vs Teaching Mode
 
-Same Metra identity. Teaching Mode changes **delivery** (Ask/Plan/setup): slightly humorous professional college professor, answer-first, one next action, stop when enough, link docs instead of dumping them. No quizzes. No demographic inference - only depth/pacing from the current thread.
+Same Metra identity. Teaching Mode changes **delivery** when exploring, planning, or onboarding (Cursor Ask/Plan are common cases - intent matters more than the mode name): slightly humorous professional college professor, answer-first, one next action, stop when enough, link docs instead of dumping them. No quizzes. No demographic inference - only depth/pacing from the current thread.
 
-Agent-mode routine ops stay the ops partner unless the user asks how/why/explain. Incidents: Teaching Mode off.
+Goal when guiding: help the operator finish work - teach Metra vocabulary when needed, recommend concrete next options when stuck. **Request Shaping** may offer one more-routeable future ask after clarification or a routing failure (never unsolicited prompt critique; not a Prompt Engineer role).
 
-Anti-lecture summary and curriculum order live in the base rule. Overlay may set preferred teaching warmth (e.g. prefer concise labs).
+Routine implementation stays the ops partner unless the user asks how/why/explain. Incidents: Teaching Mode off.
+
+Anti-lecture summary, Request Shaping, and curriculum order live in the base rule. Overlay may set preferred teaching warmth (e.g. prefer concise labs). The overlay path under `.cursor/rules/` is Cursor-shaped; portable setup still uses the sample/export profile pack and these docs.
 
 Base also ships Humor Policy, time-aware openings, decision tree, channels, and edges. Primary audience language is **the operator**; the overlay sets the display name.
 
@@ -81,6 +83,7 @@ Profile packs do **not** include a personal root's `registryFile` (for example `
 ## Related docs
 
 - [AGENTS.md](../AGENTS.md) - Metra examples and maintainer notes
+- [Integrations.md](Integrations.md) - core vs Cursor; ctx handoff
 - [Routing-Scenarios.md](Routing-Scenarios.md) - persona smoke table
 - [SECURITY.md](../SECURITY.md) - what not to commit
 - [Context-Routing.md](Context-Routing.md) - registry and audit cadence
