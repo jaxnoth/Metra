@@ -1,33 +1,51 @@
-# Projects Meta Repo
+# Meta (portfolio ops + Metra)
 
-Orchestration repo for project folders under one or more roots (default work root `C:\Projects`, optional personal roots). It does **not** absorb other repos; it discovers them and runs commands across them, and can create new project folders.
+Orchestration repo for project folders under one or more roots. It discovers sibling projects, runs commands across them, routes AI agents to one project at a time, and ships **Metra** - a chat persona for portfolio ops (routing wins; durable artifacts stay professional).
 
-## Quick start
+MIT licensed. Host on public GitHub or a private org fork.
 
-From this folder (`C:\Projects\_meta`):
+## Quick start (public clone)
 
 ```powershell
-.\meta.ps1 list
-.\meta.ps1 list -Root personal
-.\meta.ps1 roots
+cd C:\Projects   # or your work root
+git clone <this-repo-url> _meta
+cd _meta
+.\meta.ps1 import-profile -Path .\profiles\sample -Force
+# Edit meta.config.json roots / workspace.alwaysInclude
+# Edit .cursor\rules\metra-persona.local.mdc operator display name (replace Alex)
+.\meta.ps1 workspace
+.\meta.ps1 audit
 .\meta.ps1 routing
-.\meta.ps1 status
-.\meta.ps1 pull
-.\meta.ps1 new MyProject -Description "What this is for"
-.\meta.ps1 run "git status -sb" -GitOnly
-.\meta.ps1 apply .\shared\.editorconfig -RelativePath .editorconfig -Filter "IWU*"
 ```
 
-Import the module directly if you prefer:
+Open `Meta.code-workspace` in Cursor. Optional stubs in `projects.json` (TicketTracker, Solarwinds) teach routing; they are **not** required installs - `whenMissing` advice appears if those folders are absent.
+
+Preview a pack without writing:
 
 ```powershell
-Import-Module .\scripts\Meta.psm1 -Force
-Get-MetaProjects
-Get-MetaRoots
-Get-MetaRoutingTable
-Invoke-AcrossProjects -Command 'git remote -v' -GitOnly
-New-MetaProject -Name DemoOps -Description 'scratch'
+.\meta.ps1 import-profile -Path .\profiles\sample -Preview
 ```
+
+## What ships vs stays local
+
+| Ship in git | Keep local / export via profile |
+|-------------|-------------------------------|
+| CLI, module, templates, shared/ | `meta.config.json` |
+| `projects.json` (example stubs) | `projects.local.json` |
+| `metra-persona.mdc` (full base) | `.cursor/rules/metra-persona.local.mdc` |
+| `*.example.json` / `*.local.example.mdc` | `docs/canvas-snapshot.json` |
+| `profiles/sample/` (ready-to-import pack) | regenerated workspaces |
+| MIT LICENSE, public docs | |
+
+Move yourself between machines:
+
+```powershell
+.\meta.ps1 export-profile -Path $env:TEMP\my-meta-profile.zip
+# on the other machine, after clone:
+.\meta.ps1 import-profile -Path $env:TEMP\my-meta-profile.zip -Force
+```
+
+Personal-root `registryFile` (e.g. `projects.personal.json` beside personal projects) is **not** auto-included in profile packs - copy it with that root. Details: [docs/Customizing-Metra.md](docs/Customizing-Metra.md), [SECURITY.md](SECURITY.md).
 
 ## Commands
 
@@ -44,7 +62,9 @@ New-MetaProject -Name DemoOps -Description 'scratch'
 | `workspace` | Rebuild multi-root workspace from recent activity |
 | `audit` | Context/token audit + optional `-DriftOnly` vs registries |
 | `snapshot` | Write `docs/canvas-snapshot.json` and refresh Ops canvas embed |
-| `chats` | Search local Cursor agent transcripts for ticket/keyword clues (bounded) |
+| `chats` | Search local Cursor agent transcripts (bounded) |
+| `export-profile` | Pack local config / local registry / Metra overlay |
+| `import-profile` | Restore a pack (`-Preview` or `-Force`) |
 
 ### Filters
 
@@ -59,83 +79,57 @@ New-MetaProject -Name DemoOps -Description 'scratch'
 ```
 _meta/
   meta.ps1                   CLI entrypoint
-  meta.config.json           local roots + excludes (from example)
-  meta.config.example.json   starter config for new machines
-  projects.json              shared agent routing registry
-  projects.local.json        machine-private routing (gitignored)
+  meta.config.example.json   starter config (live meta.config.json is gitignored)
+  projects.json              shared agent routing registry (example stubs OK)
   projects.local.example.json
+  profiles/sample/           anonymized operator pack
   AGENTS.md                  meta agent entry
+  LICENSE                    MIT
+  SECURITY.md
   scripts/Meta.psm1          PowerShell helpers
-  docs/                      context routing + audit cadence
+  docs/                      routing + Metra customization
   templates/basic/           default new-project template
   shared/                    files to push into other projects via apply
+  .cursor/rules/             routing + Metra base (+ local overlay gitignored)
 ```
 
-Edit `meta.config.json` to change roots (or the legacy single `projectsRoot`). Start from [`meta.config.example.json`](meta.config.example.json) when setting up a new machine.
-
-## Distribute
-
-`_meta` is the shareable piece - not a zip of every sibling under `C:\Projects`. Put this repo on a private remote, then clone it beside project folders.
-
-### Layout on each machine
+## Distribute / first-time layout
 
 ```text
 C:\Projects\                 (work root)
-  _meta\                     ← clone of this repo
+  _meta\                     <- clone of this repo
   Reporting\
-  TicketTracker\
-  Trivia\
+  TicketTracker\             (optional; stub in projects.json)
   ...
 
 %USERPROFILE%\iCloudDrive\Projects\   (optional personal root)
-  BibleBingo\
-  projects.personal.json     ← travels with the personal root
+  MyPersonalApp\
+  projects.personal.json     <- travels with the personal root
 ```
-
-### First-time setup (coworkers or personal)
 
 ```powershell
-cd C:\Projects
-git clone <meta-remote-url> _meta
-cd _meta
-Copy-Item .\meta.config.example.json .\meta.config.json
-# Adjust roots / exclude / workspace.alwaysInclude if needed
-# Optionally copy projects.local.example.json -> projects.local.json for private entries
+Copy-Item .\meta.config.example.json .\meta.config.json   # if not using import-profile
+# or: .\meta.ps1 import-profile -Path .\profiles\sample -Force
 .\meta.ps1 workspace
 .\meta.ps1 audit
-.\meta.ps1 snapshot
 ```
 
-Open `Meta.code-workspace` (or the root `Meta.code-workspace` sibling) in Cursor.
+### Shared vs local vs overlay
 
-### What is shared vs local
+| Layer | Role |
+|-------|------|
+| `projects.json` | Shared routing stubs (coworkers / public teaching examples) |
+| `projects.local.json` | Machine-private work routing (gitignored) |
+| Root `registryFile` | Travels with that root (e.g. personal iCloud) |
+| `metra-persona.mdc` | Full base Metra personality (tracked) |
+| `metra-persona.local.mdc` | Operator name / greeting / team notes (gitignored) |
 
-| Ship in git | Keep local / regenerate |
-|-------------|-------------------------|
-| `meta.ps1`, `scripts/`, `templates/`, `shared/` | `meta.config.json` (from example; machine paths differ) |
-| `projects.json` (shared stubs only), `AGENTS.md`, routing docs | `projects.local.json` (private work routing) |
-| `.cursor/rules/` | Root `registryFile` beside personal projects |
-| `meta.config.example.json`, `projects.local.example.json` | `Meta.code-workspace` (`.\meta.ps1 workspace`) |
-| | `docs/canvas-snapshot.json` (`.\meta.ps1 snapshot`) |
-| | TicketTracker `data/`, secrets, Solarwinds inventory |
-
-### Coworkers (shared IWU portfolio)
-
-- Use the shared `projects.json` so agent routing matches for designated projects (TicketTracker, Solarwinds).
-- Optional stubs give advice when those folders are missing instead of failing loudly.
-- Set `workspace.alwaysInclude` to pinned folders you always want in the multi-root workspace.
-- They do not need your `projects.local.json`, ticket cache, Orion inventory dumps, or secrets.
-
-### Personal project folders
-
-- Add an optional root in `meta.config.json` pointing at the synced folder (env vars like `%USERPROFILE%` are expanded).
-- Put personal routing in that root's `registryFile` so it syncs with the projects.
-- Keep work and personal roots isolated unless a chat explicitly asks to move material between them.
+TicketTracker and Solarwinds entries in `projects.json` are optional examples: routing advice when missing, not hard dependencies.
 
 ### Do not package
 
 - Sibling repos inside `_meta`
-- Machine-specific snapshots as the source of truth
+- Live `meta.config.json`, local registries, overlays, or canvas snapshots as the public source of truth (sample under `profiles/sample/` is intentional and anonymized)
 - Secrets under `shared/` then `apply` across projects
 
 ## Creating projects
@@ -146,39 +140,18 @@ Open `Meta.code-workspace` (or the root `Meta.code-workspace` sibling) in Cursor
 .\meta.ps1 new SermonNotes -Root personal
 ```
 
-New folders are created under the primary root (or `-Root`), not inside this repo.
-
 ## Cross-project adjustments
 
-Run a one-off:
-
 ```powershell
-.\meta.ps1 run "git checkout main" -GitOnly -ContinueOnError
 .\meta.ps1 run "git status -sb" -Root work -GitOnly
-```
-
-Push a shared file:
-
-```powershell
 .\meta.ps1 apply .\shared\.editorconfig -RelativePath .editorconfig
-```
-
-Scripted batch work:
-
-```powershell
-Import-Module .\scripts\Meta.psm1 -Force
-Invoke-AcrossProjects -Filter 'Colleague*' -ScriptBlock {
-    if (Test-Path .\package.json) { npm ci }
-}
 ```
 
 ## Agent routing
 
-Agents should classify work, consult the merged registry (`.\meta.ps1 routing`), and load one project `AGENTS.md` before scanning siblings. Ticket work starts in TicketTracker. Keep work and personal roots isolated unless the user names a cross-root project. Details: [docs/Context-Routing.md](docs/Context-Routing.md).
+Classify work, consult `.\meta.ps1 routing`, load one project `AGENTS.md` before scanning siblings. Ticket work starts in TicketTracker when present. Keep work and personal roots isolated unless the user names a cross-root project. Details: [docs/Context-Routing.md](docs/Context-Routing.md).
 
-Workspace chats may use the **Metra** conversational persona (ops/dev buddy); see [AGENTS.md](AGENTS.md) and `.cursor/rules/metra-persona.mdc`. Shipped code, docs, and ticket text stay professional and should avoid common [AI writing tells](https://en.wikipedia.org/wiki/Wikipedia:Signs_of_AI_writing). No TTS or avatar. Updating Metra is expected when it improves the portfolio - do not freeze the persona.
-
-Visual board: ask Cursor to open the Meta Ops canvas, then refresh with:
+Workspace chats may use **Metra** (ops/dev partner); see [AGENTS.md](AGENTS.md), [docs/Customizing-Metra.md](docs/Customizing-Metra.md), and `.cursor/rules/metra-persona.mdc`. Code, docs, and ticket text stay professional.
 
 ```powershell
 .\meta.ps1 audit
@@ -187,11 +160,12 @@ Visual board: ask Cursor to open the Meta Ops canvas, then refresh with:
 .\meta.ps1 chats -Name Solarwinds -Query "disk alert"
 ```
 
-Ticket triage can also run `.\TicketTracker.ps1 chats <id>` to search related Cursor chats, then promote durable findings with `note -Tags chat`. Details: [docs/Context-Routing.md](docs/Context-Routing.md).
+## Contributing
+
+Issues and PRs welcome on the public repo. Keep machine-local files out of commits (see [SECURITY.md](SECURITY.md)). Prefer small, focused changes to routing, CLI, or docs. Persona growth for one operator belongs in the local overlay; promote to the base rule only when the change is meant for everyone using a fork.
 
 ## Notes
 
 - Nested git repos stay independent; this meta repo only tracks its own scripts/config.
-- Do not commit secrets into `shared/` and then `apply` them into every project.
 - `_meta` is excluded from discovery via `meta.config.json`.
-- Solarwinds, TicketTracker, Misc, and Trivia are pinned via `workspace.alwaysInclude`.
+- Pin folders you always want in the workspace with `workspace.alwaysInclude` in your local config.
