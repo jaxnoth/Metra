@@ -1,21 +1,31 @@
 # Metra
 
-Portfolio ops for multi-root Cursor workspaces. Discover sibling projects, run commands across them, route AI agents to **one project at a time**, and ship **Metra** - a chat persona that stays an ops partner (with Teaching Mode for Ask/Plan and setup).
+Portfolio ops for multi-root project folders. Discover siblings, run commands across them, route AI agents to **one project at a time**, and ship **Metra** - an ops-partner chat persona (Teaching Mode for exploring, planning, and setup).
 
 Not a monorepo build system. Not another "meta" multi-repo clone framework.
 
 MIT licensed. Host on public GitHub (repo name **Metra**) or a private org fork.
 
+**Requirements:** PowerShell. Cursor is optional for full persona auto-load - see [docs/Integrations.md](docs/Integrations.md).
+
 ## What Metra is / is not
 
-**Is:** a portfolio orchestration layer (CLI + routing registry + Cursor rules + optional persona overlay).
+**Is:** a portfolio orchestration layer (CLI + routing registry + agent guidance + optional persona overlay).
 
 **Not:**
 
 - a monorepo build system (Nx / Turborepo / etc.)
 - a project generator beyond lightweight `new` templates
 - a ticketing platform (optional TicketTracker stub only)
-- an MCP framework (CLI-first; `ctx` packs are files you can open or `@`)
+- an MCP framework (CLI-first; `ctx` packs are files you can open, paste, or `@`)
+- a Cursor-only plugin (CLI and registries work without Cursor)
+
+## Core vs Cursor
+
+| Layer | What you get |
+|-------|----------------|
+| **Core** (any shell; any agent that can read files) | `meta.ps1`, `projects.json` / local registries, `ctx` packs, profile import/export, this `AGENTS.md`, per-project `AGENTS.md` |
+| **Cursor integration** (first-class adapter) | `.cursor/rules` persona auto-load, Ask/Plan Teaching Mode hooks, `chats` transcript search, optional multi-root `.code-workspace` |
 
 ## Naming
 
@@ -30,7 +40,7 @@ git clone https://github.com/<you>/Metra.git _meta
 cd _meta
 ```
 
-## Quick start
+## Quick start (CLI first)
 
 ```powershell
 cd C:\Projects   # or your work root
@@ -38,13 +48,12 @@ git clone <this-repo-url> _meta
 cd _meta
 .\meta.ps1 import-profile -Path .\profiles\sample -Force
 # Edit meta.config.json roots / workspace.alwaysInclude
-# Edit .cursor\rules\metra-persona.local.mdc operator display name (replace Alex)
-.\meta.ps1 workspace
+# Edit .cursor\rules\metra-persona.local.mdc operator display name (replace Alex) if using Cursor
 .\meta.ps1 routing
 .\meta.ps1 ctx
 ```
 
-Open `Metra.code-workspace` (or `Meta.code-workspace` if your live config still uses that name) in Cursor. Optional stubs in `projects.json` (TicketTracker, Solarwinds) teach routing; they are **not** required installs - `whenMissing` advice appears if those folders are absent.
+Hand the context pack to any agent: open/attach/paste/`@` `docs/context-pack.md` (or JSON). Optional stubs in `projects.json` (TicketTracker, Solarwinds) teach routing; they are **not** required installs - `whenMissing` advice appears if those folders are absent.
 
 Preview a pack without writing:
 
@@ -52,9 +61,27 @@ Preview a pack without writing:
 .\meta.ps1 import-profile -Path .\profiles\sample -Preview
 ```
 
+### Optional: open in Cursor
+
+```powershell
+.\meta.ps1 workspace
+```
+
+Open `Metra.code-workspace` (or `Meta.code-workspace` if your live config still uses that name). Workspace generation helps VS Code/Cursor multi-root; it is **not** required for CLI, routing, or `ctx`.
+
 ## Teaching Mode
 
-In Cursor **Ask** or **Plan**, and during setup/onboarding, Metra leans into a slightly humorous professional college-professor delivery: answer first, one next step, link docs instead of pasting them, stop when you can execute. Same persona as ops Metra - not a second character. Depth and pacing adapt to the conversation; Metra does not infer demographics or personal traits. Details: [docs/Customizing-Metra.md](docs/Customizing-Metra.md).
+When exploring, planning, or onboarding (Cursor Ask/Plan are common cases), Metra leans into a slightly humorous professional college-professor delivery: answer first, one next step, link docs instead of pasting them, stop when you can execute. Guide the work, teach Metra vocabulary when needed, and recommend concrete options when you are stuck. After an ambiguous ask, Metra may offer one **Request Shaping** example of a more routeable future request - not prompt grades or unsolicited critique. Same persona as ops Metra - not a second character. Depth and pacing adapt to the conversation; Metra does not infer demographics or personal traits. Details: [docs/Customizing-Metra.md](docs/Customizing-Metra.md).
+
+## Context pack (universal handoff)
+
+```powershell
+.\meta.ps1 ctx
+.\meta.ps1 ctx -Query "ticket disk"
+.\meta.ps1 ctx -Format json -Path $env:TEMP\metra-ctx.json
+```
+
+Writes a bounded map of roots and present projects. Use it from Cursor, Claude Code, Codex, or any chat that accepts a file or paste. See [docs/Integrations.md](docs/Integrations.md).
 
 ## What ships vs stays local
 
@@ -100,10 +127,10 @@ Personal-root `registryFile` is **not** auto-included - copy it with that root. 
 | `run <cmd>` | Run any shell command in each matching project |
 | `new <Name>` | Create a new project under the primary root (or `-Root`) |
 | `apply <file>` | Copy a shared file into matching projects |
-| `workspace` | Rebuild multi-root workspace from recent activity |
+| `workspace` | Rebuild multi-root workspace from recent activity (optional IDE helper) |
 | `audit` | Context/token audit + optional `-DriftOnly` vs registries |
 | `snapshot` | Write `docs/canvas-snapshot.json` and refresh Ops canvas embed |
-| `chats` | Search local Cursor agent transcripts (bounded) |
+| `chats` | Search local Cursor agent transcripts (bounded; Cursor-specific) |
 | `export-profile` | Pack local config / local registry / Metra overlay |
 | `import-profile` | Restore a pack (`-Preview` or `-Force`) |
 
@@ -128,10 +155,10 @@ _meta/
   LICENSE                    MIT
   SECURITY.md
   scripts/Meta.psm1          PowerShell helpers
-  docs/                      routing + Metra customization
+  docs/                      routing + Metra customization + Integrations
   templates/basic/           default new-project template
   shared/                    files to push into other projects via apply
-  .cursor/rules/             routing + Metra base (+ local overlay gitignored)
+  .cursor/rules/             Cursor adapter: routing + Metra base (+ local overlay gitignored)
 ```
 
 ## First-time layout
@@ -155,7 +182,7 @@ C:\Projects\                 (work root)
 | `projects.json` | Shared routing stubs (public teaching examples) |
 | `projects.local.json` | Machine-private work routing (gitignored) |
 | Root `registryFile` | Travels with that root (e.g. personal cloud folder) |
-| `metra-persona.mdc` | Full base Metra personality (tracked) |
+| `metra-persona.mdc` | Full base Metra personality (tracked; Cursor auto-loads) |
 | `metra-persona.local.mdc` | Operator name / greeting / team notes (gitignored) |
 
 ## Creating projects
@@ -175,7 +202,7 @@ C:\Projects\                 (work root)
 
 ## Agent routing
 
-Classify work, consult `.\meta.ps1 routing` or `.\meta.ps1 ctx`, load one project `AGENTS.md` before scanning siblings. Ticket work starts in TicketTracker when present. Keep work and personal roots isolated unless the user names a cross-root project. Details: [docs/Context-Routing.md](docs/Context-Routing.md).
+Classify work, consult `.\meta.ps1 routing` or `.\meta.ps1 ctx`, load one project `AGENTS.md` before scanning siblings. Ticket work starts in TicketTracker when present. Keep work and personal roots isolated unless the user names a cross-root project. Details: [docs/Context-Routing.md](docs/Context-Routing.md), [docs/Integrations.md](docs/Integrations.md).
 
 ```powershell
 .\meta.ps1 audit
