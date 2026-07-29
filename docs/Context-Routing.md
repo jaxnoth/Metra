@@ -8,11 +8,14 @@ Keep agent response time and token use low by routing to one project, then loadi
 
 | Path | Role |
 |------|------|
-| `projects.json` | Shared routing registry (coworkers) |
+| `projects.json` | Shared / public routing registry (example stubs OK) |
 | `projects.local.json` | Machine-private work entries (gitignored) |
 | Root `registryFile` | Optional per-root overlay (e.g. personal iCloud) |
+| `profiles/sample/` | Anonymized operator pack for `import-profile` |
 | `AGENTS.md` | Short human/agent fallback for `_meta` |
 | `.cursor/rules/project-routing.mdc` | Always-on routing rule |
+| `.cursor/rules/metra-persona.mdc` | Base Metra personality (tracked) |
+| `.cursor/rules/metra-persona.local.mdc` | Operator overlay (gitignored) |
 | Project `AGENTS.md` | Local entry playbook |
 | Project `.cursorignore` | Hide generated/cache/binary noise |
 
@@ -65,7 +68,7 @@ Usually re-run; rarely rewrite. Treat drift as a manual review signal rather tha
 
 ## Canvas Ops board
 
-Open the Cursor Canvas [meta-ops-board](C:/Users/admin.sswan/.cursor/projects/c-Projects-meta/canvases/meta-ops-board.canvas.tsx) beside chat for visual health + routing (Ops tab = health + recommender; Triage tab = session checklist).
+Open the Cursor Canvas `meta-ops-board` beside chat for visual health + routing (Ops tab = health + recommender; Triage tab = session checklist). Typical local path: `%USERPROFILE%\.cursor\projects\c-Projects-meta\canvases\meta-ops-board.canvas.tsx` (folder name may vary by machine).
 
 Refresh data after audits or layout changes:
 

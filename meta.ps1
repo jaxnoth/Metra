@@ -1,6 +1,6 @@
 <#
 .SYNOPSIS
-    Meta CLI for managing sibling projects under C:\Projects.
+    Meta CLI for managing sibling projects under configured roots.
 
 .EXAMPLE
     .\meta.ps1 list
@@ -21,11 +21,17 @@
     .\meta.ps1 roots
     .\meta.ps1 routing
     .\meta.ps1 list -Root personal
+    .\meta.ps1 import-profile -Path .\profiles\sample -Preview
+    .\meta.ps1 export-profile -Path $env:TEMP\my-meta-profile.zip
 #>
 [CmdletBinding()]
 param(
     [Parameter(Position = 0)]
-    [ValidateSet('list', 'status', 'pull', 'fetch', 'run', 'new', 'apply', 'workspace', 'audit', 'snapshot', 'chats', 'roots', 'routing', 'help')]
+    [ValidateSet(
+        'list', 'status', 'pull', 'fetch', 'run', 'new', 'apply', 'workspace',
+        'audit', 'snapshot', 'chats', 'roots', 'routing',
+        'export-profile', 'import-profile', 'help'
+    )]
     [string]$Command = 'help',
 
     [Parameter(Position = 1, ValueFromRemainingArguments)]
@@ -37,6 +43,7 @@ param(
     [string]$Description = '',
     [string]$Template,
     [string]$RelativePath,
+    [string]$Path,
     [int]$Months = -1,
     [int]$ScanDepth = -1,
     [string]$Query,
@@ -75,6 +82,8 @@ Usage:
   .\meta.ps1 chats [-Name ProjA,ProjB] [-Query 'terms'] [-Ticket 12345] [-Days 90] [-Limit 10] [-IncludeMeta]
   .\meta.ps1 roots
   .\meta.ps1 routing [-Name ProjA] [-SharedOnly] [-MissingOnly]
+  .\meta.ps1 export-profile -Path <dir-or-zip>
+  .\meta.ps1 import-profile -Path <dir-or-zip> [-Preview] [-Force]
 
 Roots:
   Projects can live in more than one folder (see roots in meta.config.json).
@@ -84,6 +93,11 @@ Registries:
   projects.json              shared with coworkers (git)
   projects.local.json        machine-private, never committed
   <root>/projects.*.json     travels with that root (registryFile in meta.config.json)
+
+Operator profile:
+  profiles/sample/           anonymized pack to import on a new machine
+  export-profile             pack local meta.config / projects.local / Metra overlay
+  import-profile             restore a pack (refuse overwrite unless -Force)
 
 Examples:
   .\meta.ps1 list -GitOnly
@@ -102,6 +116,9 @@ Examples:
   .\meta.ps1 snapshot
   .\meta.ps1 chats -Name Solarwinds -Query 'disk alert'
   .\meta.ps1 chats -Name TicketTracker,Solarwinds -Ticket 12345 -IncludeMeta
+  .\meta.ps1 import-profile -Path .\profiles\sample -Preview
+  .\meta.ps1 import-profile -Path .\profiles\sample -Force
+  .\meta.ps1 export-profile -Path `$env:TEMP\my-meta-profile.zip
 "@ | Write-Host
 }
 
@@ -244,5 +261,23 @@ switch ($Command) {
                 Format-List
             Write-Host ("{0} chat(s). Cite with [title](ChatId); promote useful findings via TicketTracker note -Tags chat." -f $rows.Count)
         }
+    }
+
+    'export-profile' {
+        $exportPath = $Path
+        if (-not $exportPath -and $Rest -and $Rest.Count -gt 0) { $exportPath = $Rest[0] }
+        if (-not $exportPath) {
+            throw "export-profile requires -Path <dir-or-zip>. Example: .\meta.ps1 export-profile -Path `$env:TEMP\my-meta-profile.zip"
+        }
+        Export-MetaProfile -Path $exportPath | Format-List
+    }
+
+    'import-profile' {
+        $importPath = $Path
+        if (-not $importPath -and $Rest -and $Rest.Count -gt 0) { $importPath = $Rest[0] }
+        if (-not $importPath) {
+            throw "import-profile requires -Path <dir-or-zip>. Example: .\meta.ps1 import-profile -Path .\profiles\sample -Preview"
+        }
+        Import-MetaProfile -Path $importPath -Preview:$Preview -Force:$Force | Format-List
     }
 }

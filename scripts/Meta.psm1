@@ -1747,6 +1747,294 @@ function Get-MetaProjectChats {
     return [object[]]$results.ToArray()
 }
 
+function Get-MetaProfileFileMap {
+    <#
+    .SYNOPSIS
+        Relative paths that make up an operator profile pack (same layout as profiles/sample).
+    #>
+    return @(
+        'meta.config.json',
+        'projects.local.json',
+        '.cursor/rules/metra-persona.local.mdc'
+    )
+}
+
+function Resolve-MetaProfileSourceDir {
+    <#
+    .SYNOPSIS
+        Resolves a profile pack path to an unpacked directory (extracts zip to temp when needed).
+    #>
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory)][string]$Path
+    )
+
+    $expanded = [System.Environment]::ExpandEnvironmentVariables($Path)
+    if (-not [System.IO.Path]::IsPathRooted($expanded)) {
+        $expanded = Join-Path (Get-Location).Path $expanded
+    }
+    $full = [System.IO.Path]::GetFullPath($expanded)
+
+    if (-not (Test-Path -LiteralPath $full)) {
+        throw "Profile path not found: $full"
+    }
+
+    $item = Get-Item -LiteralPath $full
+    if ($item.PSIsContainer) {
+        return [PSCustomObject]@{
+            Directory = $item.FullName
+            TempDir   = $null
+            Source    = $item.FullName
+            IsZip     = $false
+        }
+    }
+
+    if ($item.Extension -ne '.zip') {
+        throw "Profile path must be a directory or .zip file: $full"
+    }
+
+    $tempRoot = Join-Path ([System.IO.Path]::GetTempPath()) ('meta-profile-' + [guid]::NewGuid().ToString('N'))
+    New-Item -ItemType Directory -Path $tempRoot -Force | Out-Null
+    Expand-Archive -LiteralPath $item.FullName -DestinationPath $tempRoot -Force
+
+    $manifest = Get-ChildItem -LiteralPath $tempRoot -Filter 'meta-profile.json' -Recurse -File -ErrorAction SilentlyContinue |
+        Select-Object -First 1
+    $dir = if ($manifest) {
+        $manifest.Directory.FullName
+    }
+    else {
+        $children = @(Get-ChildItem -LiteralPath $tempRoot -Directory)
+        if ($children.Count -eq 1 -and (Test-Path (Join-Path $children[0].FullName 'meta-profile.json'))) {
+            $children[0].FullName
+        }
+        else {
+            $tempRoot
+        }
+    }
+
+    return [PSCustomObject]@{
+        Directory = $dir
+        TempDir   = $tempRoot
+        Source    = $item.FullName
+        IsZip     = $true
+    }
+}
+
+function Export-MetaProfile {
+    <#
+    .SYNOPSIS
+        Pack local operator customizations into a portable folder (or zip if path ends in .zip).
+    .DESCRIPTION
+        Same layout as profiles/sample/. Does not include secrets, ticket caches, canvas snapshots,
+        or personal-root registryFile (copy that with the personal root separately).
+    #>
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory)][string]$Path
+    )
+
+    $metaRoot = Get-MetaRoot
+    $fileMap = @(Get-MetaProfileFileMap)
+    $present = New-Object System.Collections.Generic.List[string]
+    foreach ($rel in $fileMap) {
+        $src = Join-Path $metaRoot ($rel -replace '/', [IO.Path]::DirectorySeparatorChar)
+        if (Test-Path -LiteralPath $src) {
+            [void]$present.Add($rel)
+        }
+    }
+    if ($present.Count -eq 0) {
+        throw 'Nothing to export: no meta.config.json, projects.local.json, or metra-persona.local.mdc found.'
+    }
+
+    $expanded = [System.Environment]::ExpandEnvironmentVariables($Path)
+    if (-not [System.IO.Path]::IsPathRooted($expanded)) {
+        $expanded = Join-Path (Get-Location).Path $expanded
+    }
+    $destFull = [System.IO.Path]::GetFullPath($expanded)
+    $asZip = $destFull.EndsWith('.zip', [StringComparison]::OrdinalIgnoreCase)
+
+    $staging = if ($asZip) {
+        Join-Path ([System.IO.Path]::GetTempPath()) ('meta-profile-export-' + [guid]::NewGuid().ToString('N'))
+    }
+    else {
+        $destFull
+    }
+    New-Item -ItemType Directory -Path $staging -Force | Out-Null
+
+    foreach ($rel in $present) {
+        $src = Join-Path $metaRoot ($rel -replace '/', [IO.Path]::DirectorySeparatorChar)
+        $dst = Join-Path $staging ($rel -replace '/', [IO.Path]::DirectorySeparatorChar)
+        $dstDir = Split-Path -Parent $dst
+        if (-not (Test-Path -LiteralPath $dstDir)) {
+            New-Item -ItemType Directory -Path $dstDir -Force | Out-Null
+        }
+        Copy-Item -LiteralPath $src -Destination $dst -Force
+    }
+
+    $manifest = [ordered]@{
+        version     = 1
+        id          = 'export'
+        description = 'Operator profile exported from local _meta customizations.'
+        exportedUtc = [DateTime]::UtcNow.ToString('o')
+        files       = @($present.ToArray())
+        notes       = @(
+            'Personal-root registryFile (e.g. projects.personal.json beside personal projects) is not included; copy it with that root separately.',
+            'Do not pack secrets, ticket caches, or canvas snapshots.'
+        )
+    }
+    $manifestPath = Join-Path $staging 'meta-profile.json'
+    ($manifest | ConvertTo-Json -Depth 6) | Set-Content -Path $manifestPath -Encoding utf8
+
+    $readmePath = Join-Path $staging 'README.md'
+    @"
+# Exported Meta operator profile
+
+Created: $($manifest.exportedUtc)
+
+Import into another `_meta` clone:
+
+``````powershell
+.\meta.ps1 import-profile -Path <this-folder-or-zip> -Force
+# Then edit meta.config.json roots / operator name in metra-persona.local.mdc
+``````
+
+Personal-root ``registryFile`` is not included in this pack.
+"@ | Set-Content -Path $readmePath -Encoding utf8
+
+    $resultPath = $destFull
+    $manifestOut = $manifestPath
+    if ($asZip) {
+        $zipDir = Split-Path -Parent $destFull
+        if ($zipDir -and -not (Test-Path -LiteralPath $zipDir)) {
+            New-Item -ItemType Directory -Path $zipDir -Force | Out-Null
+        }
+        if (Test-Path -LiteralPath $destFull) {
+            Remove-Item -LiteralPath $destFull -Force
+        }
+        Compress-Archive -Path (Join-Path $staging '*') -DestinationPath $destFull -Force
+        Remove-Item -LiteralPath $staging -Recurse -Force
+        $manifestOut = 'meta-profile.json (inside zip)'
+    }
+
+    return [PSCustomObject]@{
+        Path      = $resultPath
+        Files     = @($present.ToArray())
+        IsZip     = $asZip
+        Manifest  = $manifestOut
+    }
+}
+
+function Import-MetaProfile {
+    <#
+    .SYNOPSIS
+        Restore an operator profile pack into _meta (same layout as profiles/sample).
+    .PARAMETER Preview
+        List what would copy; do not write.
+    .PARAMETER Force
+        Overwrite existing local files. Without -Force, refuse if any target already exists.
+    #>
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory)][string]$Path,
+        [switch]$Preview,
+        [switch]$Force
+    )
+
+    $metaRoot = Get-MetaRoot
+    $resolved = Resolve-MetaProfileSourceDir -Path $Path
+    try {
+        $srcDir = $resolved.Directory
+        $manifestPath = Join-Path $srcDir 'meta-profile.json'
+        $fileMap = @(Get-MetaProfileFileMap)
+        $fromManifest = @()
+        if (Test-Path -LiteralPath $manifestPath) {
+            $manifest = Get-Content -Raw -Path $manifestPath | ConvertFrom-Json
+            $fromManifest = @(Get-MetaProp -Object $manifest -Name 'files' -Default @())
+        }
+        $candidates = if ($fromManifest.Count -gt 0) { $fromManifest } else { $fileMap }
+
+        $plan = New-Object System.Collections.Generic.List[object]
+        foreach ($rel in $candidates) {
+            $relNorm = [string]$rel -replace '\\', '/'
+            if ($fileMap -notcontains $relNorm -and $fileMap -notcontains ($relNorm -replace '/', '\')) {
+                # Still allow known map paths only
+                $allowed = $false
+                foreach ($known in $fileMap) {
+                    if ($known -eq $relNorm) { $allowed = $true; break }
+                }
+                if (-not $allowed) { continue }
+            }
+            $src = Join-Path $srcDir ($relNorm -replace '/', [IO.Path]::DirectorySeparatorChar)
+            if (-not (Test-Path -LiteralPath $src)) { continue }
+            $dst = Join-Path $metaRoot ($relNorm -replace '/', [IO.Path]::DirectorySeparatorChar)
+            $exists = Test-Path -LiteralPath $dst
+            [void]$plan.Add([PSCustomObject]@{
+                Relative = $relNorm
+                Source   = $src
+                Dest     = $dst
+                Exists   = $exists
+            })
+        }
+
+        if ($plan.Count -eq 0) {
+            throw "No importable profile files found under: $srcDir"
+        }
+
+        if ($Preview) {
+            Write-Host 'Preview import (no writes):' -ForegroundColor Cyan
+            foreach ($row in $plan) {
+                $flag = if ($row.Exists) { 'OVERWRITE' } else { 'NEW' }
+                Write-Host ("  [{0}] {1}" -f $flag, $row.Relative)
+            }
+            Write-Host ''
+            Write-Host 'Post-import checklist (after a real import):'
+            Write-Host '  - Edit meta.config.json roots / workspace.alwaysInclude for this machine'
+            Write-Host '  - Edit .cursor/rules/metra-persona.local.mdc operator display name'
+            Write-Host '  - Personal-root registryFile is not in the pack; copy separately if needed'
+            Write-Host '  - Run .\meta.ps1 workspace and .\meta.ps1 audit'
+            return [PSCustomObject]@{
+                Preview = $true
+                Files   = @($plan | ForEach-Object { $_.Relative })
+                Source  = $resolved.Source
+            }
+        }
+
+        $blocked = @($plan | Where-Object { $_.Exists })
+        if ($blocked.Count -gt 0 -and -not $Force) {
+            $names = ($blocked | ForEach-Object { $_.Relative }) -join ', '
+            throw "Refusing to overwrite existing files without -Force: $names"
+        }
+
+        foreach ($row in $plan) {
+            $dstDir = Split-Path -Parent $row.Dest
+            if (-not (Test-Path -LiteralPath $dstDir)) {
+                New-Item -ItemType Directory -Path $dstDir -Force | Out-Null
+            }
+            Copy-Item -LiteralPath $row.Source -Destination $row.Dest -Force
+            Write-Host ("Imported {0}" -f $row.Relative)
+        }
+
+        Write-Host ''
+        Write-Host 'Post-import checklist:' -ForegroundColor Yellow
+        Write-Host '  - Edit meta.config.json roots / workspace.alwaysInclude for this machine'
+        Write-Host '  - Edit .cursor/rules/metra-persona.local.mdc operator display name'
+        Write-Host '  - Personal-root registryFile is not in the pack; copy separately if needed'
+        Write-Host '  - Run .\meta.ps1 workspace and .\meta.ps1 audit'
+
+        return [PSCustomObject]@{
+            Preview = $false
+            Files   = @($plan | ForEach-Object { $_.Relative })
+            Source  = $resolved.Source
+            Dest    = $metaRoot
+        }
+    }
+    finally {
+        if ($resolved.TempDir -and (Test-Path -LiteralPath $resolved.TempDir)) {
+            Remove-Item -LiteralPath $resolved.TempDir -Recurse -Force -ErrorAction SilentlyContinue
+        }
+    }
+}
+
 Export-ModuleMember -Function @(
     'Get-MetaRoot',
     'Get-MetaConfig',
@@ -1768,5 +2056,8 @@ Export-ModuleMember -Function @(
     'Get-MetaProjectGitCounts',
     'Export-MetaCanvasSnapshot',
     'Get-MetaProjectChats',
-    'Get-MetaCursorTranscriptRoots'
+    'Get-MetaCursorTranscriptRoots',
+    'Get-MetaProfileFileMap',
+    'Export-MetaProfile',
+    'Import-MetaProfile'
 )

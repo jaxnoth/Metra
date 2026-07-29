@@ -4,9 +4,23 @@
 .DS_Store
 Thumbs.db
 
+# Machine config (keep example and sample pack tracked)
+meta.config.json
+!meta.config.example.json
+!profiles/sample/meta.config.json
+
 # Registry entries that must not reach coworkers
 projects.local.json
 !projects.local.example.json
+!profiles/sample/projects.local.json
+
+# Operator Metra overlay (keep example and sample pack tracked)
+.cursor/rules/metra-persona.local.mdc
+!.cursor/rules/metra-persona.local.example.mdc
+!profiles/sample/.cursor/rules/metra-persona.local.mdc
+
+# Generated canvas snapshot (machine paths)
+docs/canvas-snapshot.json
 
 # Editor
 .vs/

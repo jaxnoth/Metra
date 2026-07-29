@@ -1,0 +1,16 @@
+{
+  "version": 1,
+  "id": "sample",
+  "description": "Anonymized starter pack for newcomers. Import with: .\\meta.ps1 import-profile -Path .\\profiles\\sample -Force",
+  "exportedUtc": "2026-07-29T00:00:00Z",
+  "files": [
+    "meta.config.json",
+    "projects.local.json",
+    ".cursor/rules/metra-persona.local.mdc"
+  ],
+  "notes": [
+    "Replace operator display name in .cursor/rules/metra-persona.local.mdc after import.",
+    "Edit meta.config.json roots and workspace.alwaysInclude for your machine.",
+    "Personal-root registryFile (e.g. projects.personal.json beside personal projects) is not included in this pack; copy that file with the personal root separately if you use one."
+  ]
+}

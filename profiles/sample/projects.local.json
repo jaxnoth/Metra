@@ -1,0 +1,34 @@
+{
+  "version": 1,
+  "updated": "2026-07-28",
+  "note": "Copy to projects.local.json (gitignored) for routing entries you do not want to share. Entries here override same-named entries in projects.json. A project root can also carry its own registryFile so its entries travel with the folder.",
+  "projects": [
+    {
+      "name": "ExampleProject",
+      "purpose": "One line an agent can use to decide whether this folder is the right stop.",
+      "share": false,
+      "optional": true,
+      "root": "work",
+      "triggers": [
+        "example",
+        "sample term"
+      ],
+      "entry": "AGENTS.md",
+      "capabilities": [
+        "thing-this-project-can-do"
+      ],
+      "whenPresent": "Command or file to start with when the folder exists.",
+      "whenMissing": "What to tell the user instead when it does not exist here.",
+      "preferredPaths": [
+        "README.md",
+        "AGENTS.md"
+      ],
+      "excludePaths": [
+        "bin",
+        "obj",
+        "node_modules"
+      ],
+      "related": []
+    }
+  ]
+}
