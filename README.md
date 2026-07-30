@@ -135,7 +135,7 @@ Personal-root `registryFile` is **not** auto-included - copy it with that root. 
 | `ctx` | Bounded agent context pack (markdown/json; optional `-Query`) |
 | `status` | `git status -sb` in each git project |
 | `pull` / `fetch` | Fast-forward pull or fetch across git projects |
-| `run <cmd>` | Run any shell command in each matching project |
+| `run <cmd>` | Run operator-provided shell text in each matching project (trusted input only; see [SECURITY.md](SECURITY.md)) |
 | `new <Name>` | Create a new project under the primary root (or `-Root`) |
 | `apply <file>` | Copy a shared file into matching projects |
 | `workspace` | Rebuild multi-root workspace from recent activity (optional IDE helper) |

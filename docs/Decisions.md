@@ -18,6 +18,12 @@ Entry shape:
 
 ---
 
+## 2026-07-30 - Keep Meta.psm1 single-file for public v1
+
+- Decision: Keep `scripts/Meta.psm1` as one module for public v1. Split internally by operational concern (Core, Projects, Registry, then Context/Audit/Profile/Workspace) only when feature velocity or contributor readability requires it. Public function names stay stable; do not split by line count alone.
+- Why: The file is large but coherent as one CLI surface. Premature multi-file layout turns maintenance into a scavenger hunt - the problem Metra exists to avoid.
+- See: `scripts/Meta.psm1`, `Export-ModuleMember`, `SECURITY.md` (`run` trust boundary)
+
 ## 2026-07-30 - Public README: 90-second + Why Metra
 
 - Decision: Keep a short "90-second understanding" and a brief "Why Metra?" near the top of `README.md`. Full Origin stays in `docs/Customizing-Metra.md`. Do not grow Teaching Mode into prompt coaching, skill levels, quizzes, or reflection loops.
