@@ -26,6 +26,7 @@
     .\metra.ps1 export-profile -Path $env:TEMP\my-metra-profile.zip
     .\metra.ps1 ctx
     .\metra.ps1 ctx -Query "ticket disk"
+    .\metra.ps1 ctx -IncludeAgent
     .\metra.ps1 setup
     .\metra.ps1 setup -Profile .\profiles\sample -Force
     .\metra.ps1 verify
@@ -69,7 +70,8 @@ param(
     [switch]$IncludeMetra,
     [switch]$SharedOnly,
     [switch]$MissingOnly,
-    [switch]$Quick
+    [switch]$Quick,
+    [switch]$IncludeAgent
 )
 
 $ErrorActionPreference = 'Stop'
@@ -96,7 +98,7 @@ Usage:
   .\metra.ps1 routing [-Name ProjA] [-SharedOnly] [-MissingOnly]
   .\metra.ps1 export-profile -Path <dir-or-zip>
   .\metra.ps1 import-profile -Path <dir-or-zip> [-Preview] [-Force]
-  .\metra.ps1 ctx [-Query 'terms'] [-Path <file|->] [-Format markdown|json] [-Limit 25]
+  .\metra.ps1 ctx [-Query 'terms'] [-Path <file|->] [-Format markdown|json] [-Limit 25] [-IncludeAgent]
   .\metra.ps1 setup [-Profile <dir-or-zip>] [-Force] [-Preview] [-Months 6] [-ScanDepth 2]
       One-shot onboarding: seed config if missing, optional profile, roots, workspace, routing, ctx.
   .\metra.ps1 verify
@@ -137,6 +139,7 @@ Examples:
   .\metra.ps1 export-profile -Path `$env:TEMP\my-metra-profile.zip
   .\metra.ps1 ctx
   .\metra.ps1 ctx -Query 'ticket disk'
+  .\metra.ps1 ctx -IncludeAgent
   .\metra.ps1 ctx -Format json -Path `$env:TEMP\metra-ctx.json
   .\metra.ps1 setup
   .\metra.ps1 setup -Profile .\profiles\sample -Force
@@ -312,7 +315,8 @@ switch ($Command) {
             $queryText = ($Rest -join ' ').Trim()
         }
         $params = @{
-            Format = $Format
+            Format       = $Format
+            IncludeAgent = [bool]$IncludeAgent
         }
         if ($queryText) { $params.Query = $queryText }
         if ($Path) { $params.Path = $Path }

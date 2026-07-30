@@ -18,6 +18,12 @@ Entry shape:
 
 ---
 
+## 2026-07-30 - Portable communications agent for cross-device handoff
+
+- Decision: Ship `integrations/communications-agent/AGENT.md` as the portable Metra communications brief for Cursor Cloud / mobile, desktop continuity, and non-Cursor harnesses. Extend `Export-MetraContext` / `.\metra.ps1 ctx` with `-IncludeAgent` to embed that brief into context packs. Document the phone-to-desktop path in `docs/Cross-Device.md`. Do not add a new public module command and do not fork a second Metra personality.
+- Why: Operators start Cloud Agents from phones and continue on desktops; `.cursor/rules` auto-load is Cursor-shaped and not always present. A tracked brief plus an opt-in `ctx` flag keeps one product voice while making handoff explicit (PR/branch + pack + notes - not invented cross-session memory).
+- See: `integrations/communications-agent/`, `Export-MetraContext -IncludeAgent`, `docs/Cross-Device.md`, `docs/Integrations.md`
+
 ## 2026-07-30 - Ops and communications are peer product surfaces
 
 - Decision: Treat Metra as two peer product surfaces: **ops** (`metra.ps1`, module, registries, `ctx`) and **communications** (Metra chat persona, Teaching Mode, professional artifact sink). Do not describe the persona as optional garnish, "not the product," or merely riding on the CLI. Routing and root isolation still win over personality for folder choice. Cursor remains the nicest auto-load adapter; CLI-only operators still get full ops value without persona chrome.

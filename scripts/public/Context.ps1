@@ -7,7 +7,8 @@ function Export-MetraContext {
     .DESCRIPTION
         Builds a compact map from configured roots, present routing entries, and selected
         project guidance. Writes docs/context-pack.md by default; Path '-' returns content
-        without writing a file.
+        without writing a file. Use -IncludeAgent to embed the portable Metra
+        communications-agent brief for cross-device handoff.
     .PARAMETER Query
         Terms used to rank and limit relevant projects.
     .PARAMETER Format
@@ -16,10 +17,15 @@ function Export-MetraContext {
         Output file path. Use '-' for stdout-only content.
     .PARAMETER Limit
         Maximum number of project entries included.
+    .PARAMETER IncludeAgent
+        Embeds integrations/communications-agent/AGENT.md into the pack for
+        phone/desktop or non-Cursor harness continuity.
     .PARAMETER Quiet
         Suppresses host status messages.
     .EXAMPLE
         Export-MetraContext -Query 'ticket disk'
+    .EXAMPLE
+        Export-MetraContext -IncludeAgent -Path '-'
     .EXAMPLE
         Export-MetraContext -Format json -Path $env:TEMP\metra-context.json
     .EXAMPLE
@@ -34,6 +40,7 @@ function Export-MetraContext {
         [string]$Format = 'markdown',
         [string]$Path,
         [int]$Limit = 25,
+        [switch]$IncludeAgent,
         [switch]$Quiet
     )
 
