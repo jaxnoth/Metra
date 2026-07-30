@@ -50,11 +50,6 @@ Most portfolio mistakes happen before coding starts: the wrong repository, the w
 
 Operator-facing brand kit (palette, motif, professional sink): [docs/Brand.md](docs/Brand.md). Coworker walkthrough (concepts + live, including a non-AI-friendly path): [docs/Demo-5min.md](docs/Demo-5min.md).
 
-```powershell
-git clone https://github.com/jaxnoth/Metra.git _meta
-cd _meta
-```
-
 ## Quick start (CLI first)
 
 ```powershell
