@@ -18,11 +18,11 @@ Entry shape:
 
 ---
 
-## 2026-07-30 - Portable communications agent for cross-device handoff
+## 2026-07-30 - Operator-private cloud continuity
 
-- Decision: Ship `integrations/communications-agent/AGENT.md` as the portable Metra communications brief for Cursor Cloud / mobile, desktop continuity, and non-Cursor harnesses. Extend `Export-MetraContext` / `.\metra.ps1 ctx` with `-IncludeAgent` to embed that brief into context packs. Document the phone-to-desktop path in `docs/Cross-Device.md`. Do not add a new public module command and do not fork a second Metra personality.
-- Why: Operators start Cloud Agents from phones and continue on desktops; `.cursor/rules` auto-load is Cursor-shaped and not always present. A tracked brief plus an opt-in `ctx` flag keeps one product voice while making handoff explicit (PR/branch + pack + notes - not invented cross-session memory).
-- See: `integrations/communications-agent/`, `Export-MetraContext -IncludeAgent`, `docs/Cross-Device.md`, `docs/Integrations.md`
+- Decision: Cross-device Cursor Cloud Agent continuity is **operator-private**, not a shared Metra product surface. Do not teach it in README, Demo, or Integrations. Optional code may stay in-tree but must stay inert without a personal API key; how-to belongs in gitignored `docs/*.local.md`. Shared product still owns the brainstorm-vs-implement persona rule and local `chats`.
+- Why: Personal Cursor account wiring and API keys do not travel cleanly with coworker or public clones.
+- See: `.gitignore` (`docs/*.local.md`)
 
 ## 2026-07-30 - Ops and communications are peer product surfaces
 

@@ -166,11 +166,10 @@ Ops output that feeds communications everywhere - not Cursor-only:
 ```powershell
 .\metra.ps1 ctx
 .\metra.ps1 ctx -Query "ticket disk"
-.\metra.ps1 ctx -IncludeAgent
 .\metra.ps1 ctx -Format json -Path $env:TEMP\metra-ctx.json
 ```
 
-Writes a bounded map of roots and present projects - enough for an agent to pick a stop without dumping the whole portfolio. Pair it with Metra's persona / `AGENTS.md` so the chat stays route-first after the pack is loaded. `-IncludeAgent` embeds the portable communications brief (`integrations/communications-agent/AGENT.md`) for phone Cloud Agents, desktop handoff, or harnesses without `.cursor/rules` auto-load. See [docs/Integrations.md](docs/Integrations.md) and [docs/Cross-Device.md](docs/Cross-Device.md).
+Writes a bounded map of roots and present projects - enough for an agent to pick a stop without dumping the whole portfolio. Pair it with Metra's persona / `AGENTS.md` so the chat stays route-first after the pack is loaded. Use it from Cursor, Claude Code, Codex, or any chat that accepts a file or paste. See [docs/Integrations.md](docs/Integrations.md).
 
 ## What ships vs stays local
 
@@ -205,7 +204,7 @@ Personal-root `registryFile` is **not** auto-included - copy it with that root. 
 | CLI commands (`setup`, `list`, `routing`, `ctx`, profile import/export, ...) | Intended stable (ops) |
 | Public PowerShell commands (the 17 above) | Intended stable; prefer extending an existing command over adding exports |
 | Compatibility functions and former `*-Meta*` aliases | One release; do not use in new scripts |
-| Persona / communications (`.cursor/rules/metra-persona.mdc`, `AGENTS.md`, `integrations/communications-agent/`) | Product surface; expected to evolve carefully |
+| Persona / communications (`.cursor/rules/metra-persona.mdc`, `AGENTS.md` voice) | Product surface; expected to evolve carefully |
 | Sample overlays / `profiles/sample/` / `profiles/addons/` | Examples / tone dials, not routing contracts |
 
 ## Commands
@@ -263,7 +262,6 @@ _metra/
   scripts/private/            Domain implementation helpers
   docs/                      Brand, Decisions, routing, Integrations, Demo, ...
   integrations/cursor/       Metra Ops canvas template
-  integrations/communications-agent/  portable Metra voice for cross-device handoff
   templates/basic/           default new-project template
   shared/                    files to push into other projects via apply
   .cursor/rules/             communications adapter: routing + Metra base (+ local overlay / add-ons gitignored)

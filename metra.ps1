@@ -26,7 +26,6 @@
     .\metra.ps1 export-profile -Path $env:TEMP\my-metra-profile.zip
     .\metra.ps1 ctx
     .\metra.ps1 ctx -Query "ticket disk"
-    .\metra.ps1 ctx -IncludeAgent
     .\metra.ps1 setup
     .\metra.ps1 setup -Profile .\profiles\sample -Force
     .\metra.ps1 verify
@@ -68,10 +67,10 @@ param(
     [switch]$DriftOnly,
     [Alias('IncludeMeta')]
     [switch]$IncludeMetra,
+    [switch]$Cloud,
     [switch]$SharedOnly,
     [switch]$MissingOnly,
-    [switch]$Quick,
-    [switch]$IncludeAgent
+    [switch]$Quick
 )
 
 $ErrorActionPreference = 'Stop'
@@ -98,7 +97,7 @@ Usage:
   .\metra.ps1 routing [-Name ProjA] [-SharedOnly] [-MissingOnly]
   .\metra.ps1 export-profile -Path <dir-or-zip>
   .\metra.ps1 import-profile -Path <dir-or-zip> [-Preview] [-Force]
-  .\metra.ps1 ctx [-Query 'terms'] [-Path <file|->] [-Format markdown|json] [-Limit 25] [-IncludeAgent]
+  .\metra.ps1 ctx [-Query 'terms'] [-Path <file|->] [-Format markdown|json] [-Limit 25]
   .\metra.ps1 setup [-Profile <dir-or-zip>] [-Force] [-Preview] [-Months 6] [-ScanDepth 2]
       One-shot onboarding: seed config if missing, optional profile, roots, workspace, routing, ctx.
   .\metra.ps1 verify
@@ -139,7 +138,6 @@ Examples:
   .\metra.ps1 export-profile -Path `$env:TEMP\my-metra-profile.zip
   .\metra.ps1 ctx
   .\metra.ps1 ctx -Query 'ticket disk'
-  .\metra.ps1 ctx -IncludeAgent
   .\metra.ps1 ctx -Format json -Path `$env:TEMP\metra-ctx.json
   .\metra.ps1 setup
   .\metra.ps1 setup -Profile .\profiles\sample -Force
@@ -272,9 +270,10 @@ switch ($Command) {
             $queryText = ($Rest -join ' ').Trim()
         }
         $params = @{
-            Days        = $Days
-            Limit       = $Limit
+            Days         = $Days
+            Limit        = $Limit
             IncludeMetra = [bool]$IncludeMetra
+            Cloud        = [bool]$Cloud
         }
         if ($Name) { $params.Name = $Name }
         if ($queryText) { $params.Query = $queryText }
@@ -285,9 +284,9 @@ switch ($Command) {
         }
         else {
             $rows |
-                Select-Object Project, ChatId, Modified, MatchedTerms, Title, Snippet1, Cite |
+                Select-Object Project, Source, ChatId, Modified, MatchedTerms, Title, Snippet1, Cite |
                 Format-List
-            Write-Host ("{0} chat(s). Cite with [title](ChatId); promote useful findings via TicketTracker note -Tags chat." -f $rows.Count)
+            Write-Host ("{0} chat(s). Cite with [title](ChatId or URL); promote useful findings via TicketTracker note -Tags chat." -f $rows.Count)
         }
     }
 
@@ -315,8 +314,7 @@ switch ($Command) {
             $queryText = ($Rest -join ' ').Trim()
         }
         $params = @{
-            Format       = $Format
-            IncludeAgent = [bool]$IncludeAgent
+            Format = $Format
         }
         if ($queryText) { $params.Query = $queryText }
         if ($Path) { $params.Path = $Path }
