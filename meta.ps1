@@ -106,7 +106,7 @@ Registries:
 
 Operator profile:
   profiles/sample/           anonymized pack to import on a new machine
-  export-profile             pack local meta.config / projects.local / Metra overlay
+  export-profile             pack local meta.config / projects.local / Metra overlay (+ humor add-on if present)
   import-profile             restore a pack (refuse overwrite unless -Force)
 
 Examples:

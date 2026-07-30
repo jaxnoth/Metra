@@ -19,6 +19,16 @@ projects.local.json
 !.cursor/rules/metra-persona.local.example.mdc
 !profiles/sample/.cursor/rules/metra-persona.local.mdc
 
+# Optional Metra humor add-on (keep example and add-on pack tracked)
+.cursor/rules/metra-humor.local.mdc
+!.cursor/rules/metra-humor.local.example.mdc
+!profiles/addons/humor-desk/.cursor/rules/metra-humor.local.mdc
+
+# Optional Metra teaching-gentle add-on (keep example and add-on pack tracked)
+.cursor/rules/metra-teaching-gentle.local.mdc
+!.cursor/rules/metra-teaching-gentle.local.example.mdc
+!profiles/addons/teaching-gentle/.cursor/rules/metra-teaching-gentle.local.mdc
+
 # Generated canvas snapshot / context packs (machine paths)
 docs/canvas-snapshot.json
 docs/context-pack.md

@@ -12,14 +12,19 @@ Keep this section short. Lengthen only when a real behavior problem needs an exp
 
 ## Precedence
 
-| Order | Layer | Path | Tracked? |
-|-------|-------|------|----------|
-| 1 (base) | Always-on personality | `.cursor/rules/metra-persona.mdc` | Yes |
-| 2 (overlay) | Operator growth | `.cursor/rules/metra-persona.local.mdc` | No (gitignored) |
-| install aid | Example overlay | `.cursor/rules/metra-persona.local.example.mdc` | Yes |
-| install aid | Sample pack overlay | `profiles/sample/.../metra-persona.local.mdc` | Yes (anonymized) |
+| Order | Layer | Holds | Path | Tracked? |
+|-------|-------|--------|------|----------|
+| 1 (base) | Shared operational policy | Routing-first, evidence, incidents, professional sink, lean Humor Policy | `.cursor/rules/metra-persona.mdc` | Yes |
+| 2 (overlay) | Operator identity | Display name, greeting, team redistribution | `.cursor/rules/metra-persona.local.mdc` | No (gitignored) |
+| 3 (Persona Add-on) | Optional behavioral preferences | Humor / teaching dials (tone only) | e.g. `.cursor/rules/metra-humor.local.mdc` | No (gitignored); pack + example tracked |
+| install aid | Example overlay | | `.cursor/rules/metra-persona.local.example.mdc` | Yes |
+| install aid | Sample operator profile | | `profiles/sample/.../metra-persona.local.mdc` | Yes (anonymized) |
+| install aid | Humor Persona Add-on | | `profiles/addons/humor-desk/` | Yes (opt-in) |
+| install aid | teaching-gentle Persona Add-on | | `profiles/addons/teaching-gentle/` | Yes (opt-in) |
 
-Profile packs only **install** the overlay (plus local config/registry). They do not change precedence. Cursor loads base + local overlay when the local file is present. Operators on other harnesses still use profile packs for config/registry; persona auto-load is Cursor-shaped - see [Integrations.md](Integrations.md).
+**Operator profiles** (`profiles/sample`, `export-profile`) move machine bindings (config, local registry, overlay). **Persona Add-ons** (`profiles/addons/`) are optional tone dials; they reuse `import-profile` to install a local rule but are not full operator profiles.
+
+Import only **installs** listed files. Cursor loads base + local overlay + any opt-in add-on rules when those local files are present. Operators on other harnesses still use profile packs for config/registry; persona auto-load is Cursor-shaped - see [Integrations.md](Integrations.md).
 
 ## Ops partner vs Teaching Mode
 
@@ -57,17 +62,31 @@ Pack layout (same as `profiles/sample/`):
 - `meta.config.json` - if present
 - `projects.local.json` - if present
 - `.cursor/rules/metra-persona.local.mdc` - if present
+- `.cursor/rules/metra-humor.local.mdc` - if present (optional Persona Add-on)
+- `.cursor/rules/metra-teaching-gentle.local.mdc` - if present (optional Persona Add-on)
 
 `-Preview` lists what would copy. Without `-Force`, import refuses to overwrite existing local files.
 
+## Optional Persona Add-ons
+
+Opt-in tone dials under `profiles/addons/`. They raise chat color without changing public base Metra. Public name: **Persona Add-ons** (not a second profile system). Install still uses `import-profile`.
+
+```powershell
+.\meta.ps1 import-profile -Path .\profiles\addons\humor-desk -Force
+.\meta.ps1 import-profile -Path .\profiles\addons\teaching-gentle -Force
+# Writes matching .cursor/rules/metra-*.local.mdc - delete that file to disable
+```
+
+Guardrails: add-ons may alter tone only - not routing, project selection, root isolation, evidence hierarchy, professional artifacts, or incident defaults. Catalog and suggested later dials: [profiles/addons/README.md](../profiles/addons/README.md). Single-file paths: copy `metra-humor.local.example.mdc` or `metra-teaching-gentle.local.example.mdc` to the matching `.local.mdc` name.
+
 ## What belongs where
 
-| Put in overlay | Promote to base (fork) |
-|----------------|------------------------|
-| Operator display name | Shared Humor / Teaching / opening policy for all users |
-| Preferred greeting / teaching warmth | Decision-tree / routing voice every clone should share |
-| Team redistribution reminders | Channel table changes for the fork audience |
-| Personal-root warmth notes | Anything that must work with no local overlay |
+| Put in overlay | Put in Persona Add-on | Promote to base (fork) |
+|----------------|----------------------|------------------------|
+| Operator display name | Shared optional dials (humor palette, teaching warmth) | Shared Humor / Teaching / opening policy for all users |
+| Preferred greeting / teaching warmth | | Decision-tree / routing voice every clone should share |
+| Team redistribution reminders | | Channel table changes for the fork audience |
+| Personal-root warmth notes | | Anything that must work with no local overlay |
 
 Single-file reference without a full pack: copy `metra-persona.local.example.mdc` to `metra-persona.local.mdc`.
 

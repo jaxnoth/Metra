@@ -1,0 +1,16 @@
+{
+  "version": 1,
+  "id": "humor-desk",
+  "description": "Optional Metra humor-desk Persona Add-on. Import with: .\\meta.ps1 import-profile -Path .\\profiles\\addons\\humor-desk -Force",
+  "exportedUtc": "2026-07-30T00:00:00Z",
+  "files": [
+    ".cursor/rules/metra-humor.local.mdc"
+  ],
+  "notes": [
+    "Persona Add-on (tone only). Does not change meta.config.json or metra-persona.local.mdc.",
+    "May not alter routing, root isolation, evidence hierarchy, professional artifacts, or incident defaults.",
+    "Base Humor Policy still wins on incidents and redistribution.",
+    "Remove .cursor/rules/metra-humor.local.mdc to disable.",
+    "See profiles/addons/README.md for other suggested Persona Add-ons."
+  ]
+}

@@ -1977,7 +1977,9 @@ function Get-MetaProfileFileMap {
     return @(
         'meta.config.json',
         'projects.local.json',
-        '.cursor/rules/metra-persona.local.mdc'
+        '.cursor/rules/metra-persona.local.mdc',
+        '.cursor/rules/metra-humor.local.mdc',
+        '.cursor/rules/metra-teaching-gentle.local.mdc'
     )
 }
 
@@ -2065,7 +2067,7 @@ function Export-MetaProfile {
         }
     }
     if ($present.Count -eq 0) {
-        throw 'Nothing to export: no meta.config.json, projects.local.json, or metra-persona.local.mdc found.'
+        throw 'Nothing to export: no meta.config.json, projects.local.json, metra-persona.local.mdc, metra-humor.local.mdc, or metra-teaching-gentle.local.mdc found.'
     }
 
     $expanded = [System.Environment]::ExpandEnvironmentVariables($Path)
@@ -2101,6 +2103,7 @@ function Export-MetaProfile {
         files       = @($present.ToArray())
         notes       = @(
             'Personal-root registryFile (e.g. projects.personal.json beside personal projects) is not included; copy it with that root separately.',
+            'Optional metra-humor.local.mdc / metra-teaching-gentle.local.mdc are included when present (Persona Add-ons).',
             'Do not pack secrets, ticket caches, or canvas snapshots.'
         )
     }
@@ -2118,6 +2121,7 @@ Import into another `_meta` clone:
 ``````powershell
 .\meta.ps1 import-profile -Path <this-folder-or-zip> -Force
 # Then edit meta.config.json roots / operator name in metra-persona.local.mdc
+# Optional: metra-humor.local.mdc comes from profiles/addons/humor-desk when you opted in
 ``````
 
 Personal-root ``registryFile`` is not included in this pack.
@@ -2555,7 +2559,9 @@ function Invoke-MetaVerify {
     # Required files
     $requiredPaths = @(
         @{ Name = 'projects.json'; Path = (Join-Path $metaRoot 'projects.json') },
-        @{ Name = 'profiles/sample/meta-profile.json'; Path = (Join-Path $metaRoot 'profiles\sample\meta-profile.json') }
+        @{ Name = 'profiles/sample/meta-profile.json'; Path = (Join-Path $metaRoot 'profiles\sample\meta-profile.json') },
+        @{ Name = 'profiles/addons/humor-desk/meta-profile.json'; Path = (Join-Path $metaRoot 'profiles\addons\humor-desk\meta-profile.json') },
+        @{ Name = 'profiles/addons/teaching-gentle/meta-profile.json'; Path = (Join-Path $metaRoot 'profiles\addons\teaching-gentle\meta-profile.json') }
     )
     foreach ($item in $requiredPaths) {
         if (Test-Path -LiteralPath $item.Path) {
