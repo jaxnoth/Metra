@@ -139,6 +139,12 @@ Personal-root `registryFile` is **not** auto-included - copy it with that root. 
 | `import-profile` | Restore a pack (`-Preview` or `-Force`) |
 | `verify` | Routing-Scenarios fixture smoke (`PASS`/`WARN`/`FAIL`; exit 1 on FAIL) |
 
+Focused Pester (optional; Pester 5+, PowerShell 7):
+
+```powershell
+pwsh -NoProfile -File .\tests\Invoke-MetaTests.ps1
+```
+
 ### Filters
 
 - `-Filter 'Acme*'` - wildcard on folder name

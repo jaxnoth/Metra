@@ -61,7 +61,7 @@ Prefer the automated runner:
 
 Exit code `0` when there are no FAIL rows (WARN alone is OK); `1` if any FAIL.
 
-Notes on the human list below: `projects.local.json` is machine-local (often present, not required). Soft sibling paths WARN when absent. Required files and live CLI exceptions FAIL.
+Notes on the human list below: `projects.local.json` is machine-local (often present, not required). Soft sibling paths WARN when absent. Required files and live CLI exceptions FAIL. The automated runner uses quiet `ctx` (`-Path -`) and quiet `import-profile -Preview` so smoke does not rewrite `docs/context-pack.*` or spam host output.
 
 Human-readable source of truth for what verify covers:
 

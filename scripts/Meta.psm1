@@ -2154,12 +2154,15 @@ function Import-MetaProfile {
         List what would copy; do not write.
     .PARAMETER Force
         Overwrite existing local files. Without -Force, refuse if any target already exists.
+    .PARAMETER Quiet
+        Suppress host messages (useful for verify / automated callers).
     #>
     [CmdletBinding()]
     param(
         [Parameter(Mandatory)][string]$Path,
         [switch]$Preview,
-        [switch]$Force
+        [switch]$Force,
+        [switch]$Quiet
     )
 
     $metaRoot = Get-MetaRoot
@@ -2203,17 +2206,19 @@ function Import-MetaProfile {
         }
 
         if ($Preview) {
-            Write-Host 'Preview import (no writes):' -ForegroundColor Cyan
-            foreach ($row in $plan) {
-                $flag = if ($row.Exists) { 'OVERWRITE' } else { 'NEW' }
-                Write-Host ("  [{0}] {1}" -f $flag, $row.Relative)
+            if (-not $Quiet) {
+                Write-Host 'Preview import (no writes):' -ForegroundColor Cyan
+                foreach ($row in $plan) {
+                    $flag = if ($row.Exists) { 'OVERWRITE' } else { 'NEW' }
+                    Write-Host ("  [{0}] {1}" -f $flag, $row.Relative)
+                }
+                Write-Host ''
+                Write-Host 'Post-import checklist (after a real import):'
+                Write-Host '  - Edit meta.config.json roots / workspace.alwaysInclude for this machine'
+                Write-Host '  - Edit .cursor/rules/metra-persona.local.mdc operator display name'
+                Write-Host '  - Personal-root registryFile is not in the pack; copy separately if needed'
+                Write-Host '  - Run .\meta.ps1 workspace and .\meta.ps1 audit'
             }
-            Write-Host ''
-            Write-Host 'Post-import checklist (after a real import):'
-            Write-Host '  - Edit meta.config.json roots / workspace.alwaysInclude for this machine'
-            Write-Host '  - Edit .cursor/rules/metra-persona.local.mdc operator display name'
-            Write-Host '  - Personal-root registryFile is not in the pack; copy separately if needed'
-            Write-Host '  - Run .\meta.ps1 workspace and .\meta.ps1 audit'
             return [PSCustomObject]@{
                 Preview = $true
                 Files   = @($plan | ForEach-Object { $_.Relative })
@@ -2233,15 +2238,19 @@ function Import-MetaProfile {
                 New-Item -ItemType Directory -Path $dstDir -Force | Out-Null
             }
             Copy-Item -LiteralPath $row.Source -Destination $row.Dest -Force
-            Write-Host ("Imported {0}" -f $row.Relative)
+            if (-not $Quiet) {
+                Write-Host ("Imported {0}" -f $row.Relative)
+            }
         }
 
-        Write-Host ''
-        Write-Host 'Post-import checklist:' -ForegroundColor Yellow
-        Write-Host '  - Edit meta.config.json roots / workspace.alwaysInclude for this machine'
-        Write-Host '  - Edit .cursor/rules/metra-persona.local.mdc operator display name'
-        Write-Host '  - Personal-root registryFile is not in the pack; copy separately if needed'
-        Write-Host '  - Run .\meta.ps1 workspace and .\meta.ps1 audit'
+        if (-not $Quiet) {
+            Write-Host ''
+            Write-Host 'Post-import checklist:' -ForegroundColor Yellow
+            Write-Host '  - Edit meta.config.json roots / workspace.alwaysInclude for this machine'
+            Write-Host '  - Edit .cursor/rules/metra-persona.local.mdc operator display name'
+            Write-Host '  - Personal-root registryFile is not in the pack; copy separately if needed'
+            Write-Host '  - Run .\meta.ps1 workspace and .\meta.ps1 audit'
+        }
 
         return [PSCustomObject]@{
             Preview = $false
@@ -2271,7 +2280,8 @@ function Export-MetaContextPack {
         [string]$Path,
         [ValidateSet('markdown', 'json')]
         [string]$Format = 'markdown',
-        [int]$Limit = 25
+        [int]$Limit = 25,
+        [switch]$Quiet
     )
 
     $metaRoot = Get-MetaRoot
@@ -2464,7 +2474,9 @@ function Export-MetaContextPack {
     $body = if ($Format -eq 'json') { $jsonText } else { $mdText }
 
     if ($stdoutOnly) {
-        Write-Output $body
+        if (-not $Quiet) {
+            Write-Output $body
+        }
     }
     else {
         $expanded = [System.Environment]::ExpandEnvironmentVariables($outPath)
@@ -2477,7 +2489,9 @@ function Export-MetaContextPack {
             New-Item -ItemType Directory -Path $destDir -Force | Out-Null
         }
         Set-Content -Path $destFull -Value $body -Encoding utf8
-        Write-Host ("Context pack written: {0} ({1} project(s))" -f $destFull, $projects.Count) -ForegroundColor Cyan
+        if (-not $Quiet) {
+            Write-Host ("Context pack written: {0} ({1} project(s))" -f $destFull, $projects.Count) -ForegroundColor Cyan
+        }
     }
 
     # Always refresh default companion formats under docs/ when writing the default path
@@ -2612,26 +2626,31 @@ function Invoke-MetaVerify {
         Add-VerifyResult -Name 'routing TicketTracker,Solarwinds,Trivia' -Status 'FAIL' -Detail $_.Exception.Message
     }
 
-    # Live CLI: ctx
+    # Live CLI: ctx (no docs write during smoke)
     try {
-        $ctx = Export-MetaContextPack -Query 'ticket' -Format markdown
-        $ctxPath = if ($ctx.Path) { [string]$ctx.Path } else { (Join-Path $metaRoot 'docs\context-pack.md') }
-        if (Test-Path -LiteralPath $ctxPath) {
-            Add-VerifyResult -Name 'ctx -Query ticket' -Status 'PASS' -Detail $ctxPath
+        $ctx = Export-MetaContextPack -Query 'ticket' -Format markdown -Path '-' -Quiet |
+            Select-Object -Last 1
+        if ($ctx -and [string]$ctx.Path -eq '-') {
+            Add-VerifyResult -Name 'ctx -Query ticket' -Status 'PASS' -Detail 'stdout-only (no file write)'
         }
         else {
-            Add-VerifyResult -Name 'ctx -Query ticket' -Status 'FAIL' -Detail "pack missing: $ctxPath"
+            Add-VerifyResult -Name 'ctx -Query ticket' -Status 'FAIL' -Detail 'expected Path=- for quiet ctx'
         }
     }
     catch {
         Add-VerifyResult -Name 'ctx -Query ticket' -Status 'FAIL' -Detail $_.Exception.Message
     }
 
-    # Live CLI: import-profile Preview
+    # Live CLI: import-profile Preview (quiet)
     try {
         $sample = Join-Path $metaRoot 'profiles\sample'
-        $null = Import-MetaProfile -Path $sample -Preview
-        Add-VerifyResult -Name 'import-profile sample -Preview' -Status 'PASS' -Detail $sample
+        $preview = Import-MetaProfile -Path $sample -Preview -Quiet
+        if ($preview.Preview -and @($preview.Files).Count -gt 0) {
+            Add-VerifyResult -Name 'import-profile sample -Preview' -Status 'PASS' -Detail $sample
+        }
+        else {
+            Add-VerifyResult -Name 'import-profile sample -Preview' -Status 'FAIL' -Detail 'preview returned no files'
+        }
     }
     catch {
         Add-VerifyResult -Name 'import-profile sample -Preview' -Status 'FAIL' -Detail $_.Exception.Message

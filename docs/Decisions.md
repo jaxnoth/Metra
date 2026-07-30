@@ -18,6 +18,12 @@ Entry shape:
 
 ---
 
+## 2026-07-30 - Quiet verify smoke
+
+- Decision: `.\meta.ps1 verify` uses quiet `ctx` (`-Path -`) and quiet `import-profile -Preview` so fixture smoke does not rewrite `docs/context-pack.*` or spam host output. Focused Pester under `tests/` covers routing rows, import refuse/Preview, quiet ctx, and verify Ok.
+- Why: Smoke should be pass/fail without mutating generated packs or drowning the result table.
+- See: `Invoke-MetaVerify`, `tests/Invoke-MetaTests.ps1`, `docs/Routing-Scenarios.md`
+
 ## 2026-07-30 - Routing fixture smoke via verify
 
 - Decision: Prefer `.\meta.ps1 verify` for Routing-Scenarios fixture checks. Keep the raw PowerShell list in that doc as the human-readable source of truth for what verify covers. Exit `0` with WARN-only; exit `1` on any FAIL.
