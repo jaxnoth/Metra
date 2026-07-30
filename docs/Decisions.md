@@ -18,9 +18,15 @@ Entry shape:
 
 ---
 
+## 2026-07-30 - Ops and communications are peer product surfaces
+
+- Decision: Treat Metra as two peer product surfaces: **ops** (`metra.ps1`, module, registries, `ctx`) and **communications** (Metra chat persona, Teaching Mode, professional artifact sink). Do not describe the persona as optional garnish, "not the product," or merely riding on the CLI. Routing and root isolation still win over personality for folder choice. Cursor remains the nicest auto-load adapter; CLI-only operators still get full ops value without persona chrome.
+- Why: The persona is how Metra communicates during agent sessions - route-first voice, Teaching Mode delivery, and a clear split between chat tone and durable professional writes. Demoting it undercuts that half of the product while over-correcting against "AI project with scripts bolted on."
+- See: `README.md`, `.cursor/rules/metra-persona.mdc`, `docs/Customizing-Metra.md`
+
 ## 2026-07-30 - Product framing: PowerShell first
 
-- Decision: Position Metra as a PowerShell product with an AI integration layer, not an AI project with PowerShell tooling. Primary surfaces are `metra.ps1`, the importable module (`scripts/Metra.psd1`), registries, and `ctx` packs. Cursor persona auto-load, Teaching Mode, and transcript search are first-class adapters - not the product hero.
+- Decision: Position Metra as a PowerShell product with an AI integration layer, not an AI project with PowerShell tooling. Primary ops surfaces are `metra.ps1`, the importable module (`scripts/Metra.psd1`), registries, and `ctx` packs. Cursor persona auto-load, Teaching Mode, and transcript search are first-class product surfaces for communications (refined in "Ops and communications are peer product surfaces") - not Cursor-only theater.
 - Why: A curated CLI and module surface serves CLI operators, PowerShell users, portfolio operators, and AI users. Framing Metra as Cursor-only shrinks the audience and undercuts the module / setup / help work.
 - See: `README.md`, `scripts/Metra.psd1`, `docs/Integrations.md`
 
