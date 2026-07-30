@@ -1,0 +1,34 @@
+{
+  "folders": [
+    {
+      "name": "Metra",
+      "path": "."
+    }
+  ],
+  "settings": {
+    "git.autoRepositoryDetection": true,
+    "git.repositoryScanMaxDepth": 1,
+    "files.exclude": {
+      "**/.git": true
+    },
+    "search.exclude": {
+      "**/bin": true,
+      "**/obj": true,
+      "**/node_modules": true,
+      "**/browser/node_modules": true,
+      "**/inventory/20*/**": true,
+      "**/catalog/index.json": true,
+      "**/catalog/index.yaml": true,
+      "**/artifacts/**/*.apm-template": true,
+      "**/TicketTracker/data/**": true,
+      "**/tests/results/**": true
+    },
+    "terminal.integrated.cwd": "${workspaceFolder:Metra}"
+  },
+  "extensions": {
+    "recommendations": [
+      "ms-vscode.powershell"
+    ]
+  }
+}
+
