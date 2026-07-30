@@ -1,0 +1,517 @@
+# Generated from the original Metra.psm1 domain split. Edit this file directly.
+
+function Get-MetraProjectGitCounts {
+    <#
+    .SYNOPSIS
+        Returns dirty/ahead/behind counts for a project folder (best-effort, no network).
+    #>
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory)][string]$Path
+    )
+
+    $result = [PSCustomObject]@{
+        isGit   = $false
+        dirty   = 0
+        ahead   = 0
+        behind  = 0
+        branch  = ''
+        summary = 'n/a'
+    }
+
+    if (-not (Test-Path -LiteralPath (Join-Path $Path '.git'))) {
+        return $result
+    }
+
+    $result.isGit = $true
+    Push-Location $Path
+    try {
+        $branch = (git rev-parse --abbrev-ref HEAD 2>$null)
+        if ($branch) { $result.branch = [string]$branch.Trim() }
+
+        $porcelain = @(git status --porcelain 2>$null)
+        $result.dirty = @($porcelain | Where-Object { $_ -and $_.Trim().Length -gt 0 }).Count
+
+        $ab = (git rev-list --left-right --count '@{u}...HEAD' 2>$null)
+        if ($ab -match '^\s*(\d+)\s+(\d+)\s*$') {
+            $result.behind = [int]$Matches[1]
+            $result.ahead = [int]$Matches[2]
+        }
+
+        $parts = @()
+        if ($result.dirty -gt 0) { $parts += ("dirty {0}" -f $result.dirty) }
+        if ($result.ahead -gt 0) { $parts += ("ahead {0}" -f $result.ahead) }
+        if ($result.behind -gt 0) { $parts += ("behind {0}" -f $result.behind) }
+        if ($parts.Count -eq 0) {
+            $result.summary = 'clean'
+        }
+        else {
+            $result.summary = ($parts -join ', ')
+        }
+    }
+    catch {
+        $result.summary = 'error'
+    }
+    finally {
+        Pop-Location
+    }
+
+    return $result
+}
+
+function Get-MetraOpsCanvasPath {
+    <#
+    .SYNOPSIS
+        Resolves the live Metra Ops canvas path for this checkout's Cursor project slug.
+    #>
+    [CmdletBinding()]
+    param()
+
+    $metraRoot = Get-MetraRoot
+    $slug = ConvertTo-MetraCursorProjectSlug -Path $metraRoot
+    if ([string]::IsNullOrWhiteSpace($slug)) {
+        $slug = 'c-Projects-meta'
+    }
+    return Join-Path $env:USERPROFILE (Join-Path '.cursor\projects' (Join-Path $slug 'canvases\metra-ops-board.canvas.tsx'))
+}
+
+function Install-MetraOpsCanvas {
+    <#
+    .SYNOPSIS
+        Ensures the live Metra Ops canvas exists, installing from the tracked template when needed.
+    #>
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory)][string]$CanvasPath
+    )
+
+    $metraRoot = Get-MetraRoot
+    $templatePath = Join-Path $metraRoot 'integrations\cursor\metra-ops-board.canvas.tsx.template'
+    $canvasDir = Split-Path -Parent $CanvasPath
+    $legacyPath = Join-Path $canvasDir 'meta-ops-board.canvas.tsx'
+
+    if (-not (Test-Path -LiteralPath $CanvasPath)) {
+        if (-not (Test-Path -LiteralPath $templatePath)) {
+            Write-Warning "Metra Ops canvas template missing: $templatePath"
+            return $false
+        }
+        if ($canvasDir -and -not (Test-Path -LiteralPath $canvasDir)) {
+            New-Item -ItemType Directory -Path $canvasDir -Force | Out-Null
+        }
+        Copy-Item -LiteralPath $templatePath -Destination $CanvasPath -Force
+        Write-Host ("Installed Metra Ops canvas from template: {0}" -f $CanvasPath) -ForegroundColor Green
+    }
+
+    if ((Test-Path -LiteralPath $legacyPath) -and ($legacyPath -ne $CanvasPath)) {
+        Remove-Item -LiteralPath $legacyPath -Force -ErrorAction SilentlyContinue
+        Write-Host ("Removed legacy canvas: {0}" -f $legacyPath) -ForegroundColor Yellow
+    }
+
+    return (Test-Path -LiteralPath $CanvasPath)
+}
+
+function Get-MetraQuickProjectHealthReports {
+    <#
+    .SYNOPSIS
+        Light registry/disk health for snapshot -Quick (no recursive scan, no git).
+    #>
+    [CmdletBinding()]
+    param()
+
+    $registry = Get-MetraProjectRegistry
+    $disk = @(Get-MetraProjects)
+    $byDisk = @{}
+    foreach ($d in $disk) {
+        $byDisk[$d.Name.ToLowerInvariant()] = $d
+    }
+
+    $driftCount = 0
+    $reports = @()
+
+    foreach ($d in $disk) {
+        $reg = Get-MetraRegistryProject -Registry $registry -Name $d.Name
+        $inRegistry = $null -ne $reg
+        $findings = @()
+        $hasAgents = Test-Path -LiteralPath (Join-Path $d.Path 'AGENTS.md')
+        $hasIgnore = Test-Path -LiteralPath (Join-Path $d.Path '.cursorignore')
+        $hasReadme = Test-Path -LiteralPath (Join-Path $d.Path 'README.md')
+
+        if (-not $inRegistry) {
+            $findings += 'Missing from registry (projects.json or projects.local.json)'
+            $driftCount++
+        }
+        elseif (-not $hasAgents -and [string]$reg.entry -eq 'AGENTS.md') {
+            $findings += 'Registry entry expects AGENTS.md but file is missing'
+            $driftCount++
+        }
+
+        $reports += [PSCustomObject]@{
+            Name            = $d.Name
+            Path            = $d.Path
+            Root            = $d.Root
+            HasAgentsMd     = $hasAgents
+            HasCursorIgnore = $hasIgnore
+            HasReadme       = $hasReadme
+            Findings        = $findings
+            LargeFiles      = @()
+            Drift           = ($findings.Count -gt 0)
+            InRegistry      = $inRegistry
+        }
+    }
+
+    return [PSCustomObject]@{
+        Reports    = $reports
+        DriftCount = $driftCount
+        DiskByName = $byDisk
+        Registry   = $registry
+    }
+}
+
+function Test-MetraCanvasSnapshotStale {
+    <#
+    .SYNOPSIS
+        True when the Ops board snapshot is older than MaxAgeHours or newer than registry/config inputs.
+    #>
+    [CmdletBinding()]
+    param(
+        [string]$SnapshotPath,
+        [double]$MaxAgeHours = 4
+    )
+
+    $metraRoot = Get-MetraRoot
+    if (-not $SnapshotPath) {
+        $SnapshotPath = Join-Path $metraRoot 'docs\canvas-snapshot.json'
+    }
+    if (-not (Test-Path -LiteralPath $SnapshotPath)) {
+        return $true
+    }
+
+    $snapTime = (Get-Item -LiteralPath $SnapshotPath).LastWriteTimeUtc
+    if (((Get-Date).ToUniversalTime() - $snapTime).TotalHours -gt $MaxAgeHours) {
+        return $true
+    }
+
+    $watch = @(
+        (Join-Path $metraRoot 'projects.json'),
+        (Join-Path $metraRoot 'projects.local.json'),
+        (Join-Path $metraRoot 'metra.config.json'),
+        (Join-Path $metraRoot 'meta.config.json')
+    )
+    foreach ($root in @(Get-MetraRoots -IncludeMissing)) {
+        if (-not $root.RegistryFile) { continue }
+        $rootRegistryPath = [System.Environment]::ExpandEnvironmentVariables([string]$root.RegistryFile)
+        if (-not [System.IO.Path]::IsPathRooted($rootRegistryPath)) {
+            $rootRegistryPath = Join-Path $root.Path $rootRegistryPath
+        }
+        $watch += $rootRegistryPath
+    }
+    foreach ($path in $watch) {
+        if (-not (Test-Path -LiteralPath $path)) { continue }
+        if ((Get-Item -LiteralPath $path).LastWriteTimeUtc -gt $snapTime) {
+            return $true
+        }
+    }
+    return $false
+}
+
+function Export-MetraCanvasSnapshot {
+    <#
+    .SYNOPSIS
+        Writes docs/canvas-snapshot.json from registry + quiet audit for the Metra Ops canvas embed.
+    .PARAMETER Quick
+        Hook-friendly refresh: registry + present/missing + AGENTS/.cursorignore/README only.
+        Skips recursive large-file scan and per-project git counts.
+    #>
+    [CmdletBinding()]
+    param(
+        [string]$OutPath,
+        [string]$CanvasPath,
+        [int]$ScanDepth = 2,
+        [switch]$Quick
+    )
+
+    $metraRoot = Get-MetraRoot
+    if (-not $OutPath) {
+        $OutPath = Join-Path $metraRoot 'docs\canvas-snapshot.json'
+    }
+    if (-not $CanvasPath) {
+        $CanvasPath = Get-MetraOpsCanvasPath
+    }
+
+    $registry = Get-MetraProjectRegistry
+    $cfg = Get-MetraConfig
+    $pinned = @()
+    if ($cfg.workspace -and $cfg.workspace.alwaysInclude) {
+        $pinned = @($cfg.workspace.alwaysInclude)
+    }
+
+    $auditDriftCount = 0
+    $byName = @{}
+    if ($Quick) {
+        Write-Host 'Running quick portfolio health for snapshot...' -ForegroundColor Cyan
+        $lightHealth = Get-MetraQuickProjectHealthReports
+        $auditDriftCount = [int]$lightHealth.DriftCount
+        foreach ($r in @($lightHealth.Reports)) {
+            $byName[[string]$r.Name.ToLowerInvariant()] = $r
+        }
+        $diskReports = @($lightHealth.Reports)
+    }
+    else {
+        Write-Host 'Running quiet portfolio audit for snapshot...' -ForegroundColor Cyan
+        $audit = Invoke-MetraProjectContextAudit -ScanDepth $ScanDepth -Quiet | Select-Object -Last 1
+        $auditDriftCount = [int]$audit.DriftCount
+        foreach ($r in @($audit.Reports)) {
+            $byName[[string]$r.Name.ToLowerInvariant()] = $r
+        }
+        $diskReports = @($audit.Reports)
+    }
+
+    $todos = @()
+    $projects = foreach ($reg in @($registry.projects)) {
+        $name = [string]$reg.name
+        $report = $byName[$name.ToLowerInvariant()]
+        $findings = @()
+        if ($report -and $report.Findings) { $findings = @($report.Findings) }
+
+        $large = @()
+        if (-not $Quick -and $report -and $report.LargeFiles) {
+            $large = @(
+                $report.LargeFiles | Select-Object -First 3 | ForEach-Object {
+                    [PSCustomObject]@{ path = [string]$_.Path; kb = [double]$_.KB }
+                }
+            )
+        }
+
+        $projectPath = if ($report) { [string]$report.Path } else { Join-Path (Get-ProjectsRoot) $name }
+        if ($Quick) {
+            $git = [PSCustomObject]@{
+                isGit   = $false
+                dirty   = 0
+                ahead   = 0
+                behind  = 0
+                branch  = ''
+                summary = 'skipped'
+            }
+        }
+        else {
+            $git = Get-MetraProjectGitCounts -Path $projectPath
+        }
+        $optional = [bool](Get-MetraProp -Object $reg -Name 'optional' -Default $false)
+
+        $status = 'healthy'
+        if (-not $report -and $optional) { $status = 'not-installed' }
+        elseif (-not $report) { $status = 'missing-audit' }
+        elseif ($report.Drift -or $findings.Count -gt 0) { $status = 'drift' }
+
+        if ($findings.Count -gt 0) {
+            foreach ($f in $findings) {
+                $todos += [PSCustomObject]@{
+                    id      = ($name + ':' + ($f.GetHashCode()))
+                    project = $name
+                    content = "$name - $f"
+                    status  = 'pending'
+                }
+            }
+        }
+        if ($git.isGit -and ($git.dirty -gt 0 -or $git.ahead -gt 0 -or $git.behind -gt 0)) {
+            $todos += [PSCustomObject]@{
+                id      = ($name + ':git')
+                project = $name
+                content = "$name - git $($git.summary)"
+                status  = 'pending'
+            }
+        }
+
+        [PSCustomObject]@{
+            name            = $name
+            purpose         = [string](Get-MetraProp -Object $reg -Name 'purpose' -Default '')
+            triggers        = @(Get-MetraProp -Object $reg -Name 'triggers' -Default @())
+            entry           = [string](Get-MetraProp -Object $reg -Name 'entry' -Default 'AGENTS.md')
+            preferredPaths  = @(Get-MetraProp -Object $reg -Name 'preferredPaths' -Default @())
+            excludePaths    = @(Get-MetraProp -Object $reg -Name 'excludePaths' -Default @())
+            related         = @(Get-MetraProp -Object $reg -Name 'related' -Default @())
+            inRegistry      = $true
+            registrySource  = [string](Get-MetraProp -Object $reg -Name 'source' -Default 'shared')
+            root            = if ($report) { [string]$report.Root } else { '' }
+            present         = [bool]$report
+            optional        = $optional
+            capabilities    = @(Get-MetraProp -Object $reg -Name 'capabilities' -Default @())
+            hasAgentsMd     = if ($report) { [bool]$report.HasAgentsMd } else { $false }
+            hasCursorIgnore = if ($report) { [bool]$report.HasCursorIgnore } else { $false }
+            hasReadme       = if ($report) { [bool]$report.HasReadme } else { $false }
+            drift           = if ($report) { [bool]$report.Drift } else { -not $optional }
+            findings        = $findings
+            largeFiles      = $large
+            status          = $status
+            pinned          = ($pinned -contains $name)
+            gitIsRepo       = [bool]$git.isGit
+            gitDirty        = [int]$git.dirty
+            gitAhead        = [int]$git.ahead
+            gitBehind       = [int]$git.behind
+            gitBranch       = [string]$git.branch
+            gitSummary      = [string]$git.summary
+        }
+    }
+
+    # Disk projects present but not in registry
+    foreach ($r in @($diskReports)) {
+        $exists = $false
+        foreach ($p in @($projects)) {
+            if ($p.name -eq $r.Name) { $exists = $true; break }
+        }
+        if (-not $exists) {
+            $findings = @($r.Findings)
+            if ($findings.Count -eq 0) {
+                $findings = @('Missing from registry (projects.json or projects.local.json)')
+            }
+            foreach ($f in $findings) {
+                $todos += [PSCustomObject]@{
+                    id      = ($r.Name + ':' + ($f.GetHashCode()))
+                    project = [string]$r.Name
+                    content = "$($r.Name) - $f"
+                    status  = 'pending'
+                }
+            }
+            if ($Quick) {
+                $git = [PSCustomObject]@{
+                    isGit   = $false
+                    dirty   = 0
+                    ahead   = 0
+                    behind  = 0
+                    branch  = ''
+                    summary = 'skipped'
+                }
+            }
+            else {
+                $git = Get-MetraProjectGitCounts -Path ([string]$r.Path)
+            }
+            if ($git.isGit -and ($git.dirty -gt 0 -or $git.ahead -gt 0 -or $git.behind -gt 0)) {
+                $todos += [PSCustomObject]@{
+                    id      = ($r.Name + ':git')
+                    project = [string]$r.Name
+                    content = "$($r.Name) - git $($git.summary)"
+                    status  = 'pending'
+                }
+            }
+            $projects = @($projects) + @(
+                [PSCustomObject]@{
+                    name            = [string]$r.Name
+                    purpose         = ''
+                    triggers        = @()
+                    entry           = 'AGENTS.md'
+                    preferredPaths  = @('README.md', 'AGENTS.md')
+                    excludePaths    = @()
+                    related         = @()
+                    inRegistry      = $false
+                    registrySource  = ''
+                    root            = [string]$r.Root
+                    present         = $true
+                    optional        = $false
+                    capabilities    = @()
+                    hasAgentsMd     = [bool]$r.HasAgentsMd
+                    hasCursorIgnore = [bool]$r.HasCursorIgnore
+                    hasReadme       = [bool]$r.HasReadme
+                    drift           = $true
+                    findings        = $findings
+                    largeFiles      = @()
+                    status          = 'drift'
+                    pinned          = $false
+                    gitIsRepo       = [bool]$git.isGit
+                    gitDirty        = [int]$git.dirty
+                    gitAhead        = [int]$git.ahead
+                    gitBehind       = [int]$git.behind
+                    gitBranch       = [string]$git.branch
+                    gitSummary      = [string]$git.summary
+                }
+            )
+        }
+    }
+
+    $missingAgents = @($projects | Where-Object { $_.present -and -not $_.hasAgentsMd }).Count
+    $missingIgnore = @($projects | Where-Object { $_.present -and -not $_.hasCursorIgnore }).Count
+    $driftProjects = @($projects | Where-Object { $_.drift }).Count
+    $notInstalled = @($projects | Where-Object { -not $_.present }).Count
+    $gitDirtyProjects = @($projects | Where-Object { $_.gitIsRepo -and $_.gitDirty -gt 0 }).Count
+    $gitDirtySum = @($projects | Where-Object { $_.gitIsRepo } | Measure-Object -Property gitDirty -Sum)
+    $gitDirtyFiles = if ($gitDirtySum -and $null -ne $gitDirtySum.Sum) { [int]$gitDirtySum.Sum } else { 0 }
+    $gitAheadProjects = @($projects | Where-Object { $_.gitIsRepo -and $_.gitAhead -gt 0 }).Count
+    $gitBehindProjects = @($projects | Where-Object { $_.gitIsRepo -and $_.gitBehind -gt 0 }).Count
+
+    $snapshot = [ordered]@{
+        generatedAt       = (Get-Date).ToString('o')
+        mode              = $(if ($Quick) { 'quick' } else { 'full' })
+        projectCount      = @($projects).Count
+        driftCount        = [int]$auditDriftCount
+        driftProjects     = $driftProjects
+        notInstalled      = $notInstalled
+        missingAgents     = $missingAgents
+        missingIgnore     = $missingIgnore
+        roots             = @(Get-MetraRoots -IncludeMissing | ForEach-Object {
+                [PSCustomObject]@{
+                    name    = $_.Name
+                    path    = $_.Path
+                    primary = $_.Primary
+                    exists  = $_.Exists
+                }
+            })
+        gitDirtyProjects  = [int]$gitDirtyProjects
+        gitDirtyFiles     = [int]$gitDirtyFiles
+        gitAheadProjects  = [int]$gitAheadProjects
+        gitBehindProjects = [int]$gitBehindProjects
+        pinned            = $pinned
+        defaultEntry      = [string]$registry.routing.defaultEntry
+        ticketFirst       = [bool]$registry.routing.ticketFirst
+        todos             = @($todos | Select-Object -First 40)
+        projects          = @($projects | Sort-Object name)
+    }
+
+    $dir = Split-Path -Parent $OutPath
+    if ($dir -and -not (Test-Path $dir)) {
+        New-Item -ItemType Directory -Path $dir -Force | Out-Null
+    }
+    $json = ($snapshot | ConvertTo-Json -Depth 8)
+    [System.IO.File]::WriteAllText($OutPath, $json + "`r`n")
+    Write-Host ("Wrote snapshot: {0}" -f $OutPath) -ForegroundColor Green
+
+    $canvasReady = Install-MetraOpsCanvas -CanvasPath $CanvasPath
+    if ($canvasReady) {
+        $canvas = [System.IO.File]::ReadAllText($CanvasPath)
+        $markerPairs = @(
+            @{ Begin = '// <metra-ops-snapshot>'; End = '// </metra-ops-snapshot>' },
+            @{ Begin = '// <meta-ops-snapshot>'; End = '// </meta-ops-snapshot>' }
+        )
+        $updatedEmbed = $false
+        foreach ($pair in $markerPairs) {
+            $begin = [string]$pair.Begin
+            $end = [string]$pair.End
+            $bi = $canvas.IndexOf($begin)
+            $ei = $canvas.IndexOf($end)
+            if ($bi -ge 0 -and $ei -gt $bi) {
+                $embedBegin = '// <metra-ops-snapshot>'
+                $embedEnd = '// </metra-ops-snapshot>'
+                $embed = @"
+$embedBegin
+const SNAPSHOT: MetaSnapshot = $json;
+$embedEnd
+"@
+                $updated = $canvas.Substring(0, $bi) + $embed + $canvas.Substring($ei + $end.Length)
+                [System.IO.File]::WriteAllText($CanvasPath, $updated)
+                Write-Host ("Updated canvas embed: {0}" -f $CanvasPath) -ForegroundColor Green
+                $updatedEmbed = $true
+                break
+            }
+        }
+        if (-not $updatedEmbed) {
+            Write-Warning "Canvas found but missing <metra-ops-snapshot> markers: $CanvasPath"
+        }
+    }
+
+    return [PSCustomObject]@{
+        OutPath      = $OutPath
+        CanvasPath   = $CanvasPath
+        ProjectCount = $snapshot.projectCount
+        DriftCount   = $snapshot.driftCount
+        TodoCount    = @($snapshot.todos).Count
+    }
+}
+

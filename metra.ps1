@@ -73,7 +73,7 @@ param(
 )
 
 $ErrorActionPreference = 'Stop'
-Import-Module (Join-Path $PSScriptRoot 'scripts\Metra.psm1') -Force
+Import-Module (Join-Path $PSScriptRoot 'scripts\Metra.psd1') -Force
 
 function Show-Help {
     @"
@@ -149,7 +149,7 @@ switch ($Command) {
     'help' { Show-Help }
 
     'list' {
-        $projects = Get-MetraProjects -Filter $Filter -Root $Root -GitOnly:$GitOnly
+        $projects = Get-MetraProject -Filter $Filter -Root $Root -GitOnly:$GitOnly
         $projects |
             Select-Object Name, Root, IsGit, Path |
             Format-Table -AutoSize
@@ -157,7 +157,7 @@ switch ($Command) {
     }
 
     'roots' {
-        $roots = @(Get-MetraRoots -IncludeMissing)
+        $roots = @(Get-MetraProjectRoot -IncludeMissing)
         $roots |
             Select-Object Name, Primary, Exists, Optional, Audit, ScanDepth, RegistryFile, Path |
             Format-Table -AutoSize
@@ -168,7 +168,7 @@ switch ($Command) {
     }
 
     'routing' {
-        $rows = @(Get-MetraRoutingTable -Name $Name -SharedOnly:$SharedOnly -MissingOnly:$MissingOnly)
+        $rows = @(Get-MetraRouting -Name $Name -SharedOnly:$SharedOnly -MissingOnly:$MissingOnly)
         if ($rows.Count -eq 0) {
             Write-Host 'No registry entries matched.' -ForegroundColor Yellow
         }
@@ -185,15 +185,15 @@ switch ($Command) {
     }
 
     'status' {
-        Get-MetraStatus -Filter $Filter -Name $Name -Root $Root | Out-Null
+        Get-MetraProjectStatus -Filter $Filter -Name $Name -Root $Root | Out-Null
     }
 
     'pull' {
-        Update-MetraProjects -Filter $Filter -Name $Name -Root $Root | Out-Null
+        Update-MetraProject -Filter $Filter -Name $Name -Root $Root | Out-Null
     }
 
     'fetch' {
-        Update-MetraProjects -Filter $Filter -Name $Name -Root $Root -FetchOnly | Out-Null
+        Update-MetraProject -Filter $Filter -Name $Name -Root $Root -FetchOnly | Out-Null
     }
 
     'run' {
@@ -203,7 +203,7 @@ switch ($Command) {
         $cmdText = ($Rest -join ' ').Trim()
         # Allow callers to pass -- then the command
         if ($cmdText.StartsWith('-- ')) { $cmdText = $cmdText.Substring(3) }
-        Invoke-AcrossProjects -Command $cmdText -Filter $Filter -Name $Name -Root $Root -GitOnly:$GitOnly -ContinueOnError:$ContinueOnError |
+        Invoke-MetraProjectCommand -Command $cmdText -Filter $Filter -Name $Name -Root $Root -GitOnly:$GitOnly -ContinueOnError:$ContinueOnError |
             Out-Null
     }
 
@@ -229,7 +229,7 @@ switch ($Command) {
             throw "apply requires a source file. Example: .\metra.ps1 apply .\shared\.editorconfig"
         }
         $source = $Rest[0]
-        Copy-AcrossProjects -Source $source -RelativePath $RelativePath -Filter $Filter -Name $Name -Root $Root -Force:$Force
+        Copy-MetraProjectFile -Source $source -RelativePath $RelativePath -Filter $Filter -Name $Name -Root $Root -Force:$Force
     }
 
     'workspace' {
@@ -249,7 +249,7 @@ switch ($Command) {
         if ($Name) { $params.Name = $Name }
         if ($Root) { $params.Root = $Root }
         if ($ScanDepth -ge 0) { $params.ScanDepth = $ScanDepth }
-        $result = Invoke-MetraProjectContextAudit @params | Select-Object -Last 1
+        $result = Test-MetraProjectContext @params | Select-Object -Last 1
         Write-Host ""
         Write-Host ("Audited {0} project(s); drift signals: {1}" -f $result.ProjectCount, $result.DriftCount)
     }
@@ -259,7 +259,7 @@ switch ($Command) {
             Quick = [bool]$Quick
         }
         if ($ScanDepth -ge 0) { $params.ScanDepth = $ScanDepth }
-        Export-MetraCanvasSnapshot @params | Format-List
+        Export-MetraSnapshot @params | Format-List
     }
 
     'chats' {
@@ -276,7 +276,7 @@ switch ($Command) {
         if ($Name) { $params.Name = $Name }
         if ($queryText) { $params.Query = $queryText }
         if ($Ticket) { $params.Ticket = $Ticket }
-        $rows = @(Get-MetraProjectChats @params)
+        $rows = @(Get-MetraChat @params)
         if ($rows.Count -eq 0) {
             Write-Host 'No matching chats (try broader -Query, more -Days, or other -Name projects).' -ForegroundColor Yellow
         }
@@ -324,7 +324,7 @@ switch ($Command) {
         else {
             $params.Limit = $Limit
         }
-        Export-MetraContextPack @params | Format-List
+        Export-MetraContext @params | Format-List
     }
 
     'setup' {
@@ -338,11 +338,11 @@ switch ($Command) {
         if ($profilePath) { $params.Profile = $profilePath }
         if ($Months -ge 0) { $params.Months = $Months }
         if ($ScanDepth -ge 0) { $params.ScanDepth = $ScanDepth }
-        Invoke-MetraSetup @params | Format-List Preview, WouldSeedConfig, SeededConfig, Profile
+        Initialize-Metra @params | Format-List Preview, WouldSeedConfig, SeededConfig, Profile
     }
 
     'verify' {
-        $report = Invoke-MetraVerify
+        $report = Test-MetraInstallation -Detailed
         $report.Results |
             Select-Object Status, Name, Detail |
             Format-Table -AutoSize
