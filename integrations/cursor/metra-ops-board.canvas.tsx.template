@@ -1,0 +1,466 @@
+import {
+  Button,
+  Callout,
+  Card,
+  CardBody,
+  CardHeader,
+  Checkbox,
+  Divider,
+  Grid,
+  H1,
+  H2,
+  H3,
+  Pill,
+  Row,
+  Spacer,
+  Stack,
+  Stat,
+  Table,
+  Text,
+  TextInput,
+  TodoListCard,
+  useCanvasState,
+  useHostTheme,
+} from "cursor/canvas";
+import type { ReactNode } from "react";
+
+type LargeFile = { path: string; kb: number };
+type ProjectRow = {
+  name: string;
+  purpose: string;
+  triggers: string[];
+  entry: string;
+  preferredPaths: string[];
+  excludePaths: string[];
+  related: string[];
+  inRegistry: boolean;
+  hasAgentsMd: boolean;
+  hasCursorIgnore: boolean;
+  hasReadme: boolean;
+  drift: boolean;
+  findings: string[];
+  largeFiles: LargeFile[];
+  status: string;
+  pinned: boolean;
+  gitIsRepo: boolean;
+  gitDirty: number;
+  gitAhead: number;
+  gitBehind: number;
+  gitBranch: string;
+  gitSummary: string;
+};
+type MetaTodo = { id: string; project: string; content: string; status: "pending" | "in_progress" | "completed" | "cancelled" };
+type MetaSnapshot = {
+  generatedAt: string;
+  projectCount: number;
+  driftCount: number;
+  driftProjects: number;
+  missingAgents: number;
+  missingIgnore: number;
+  gitDirtyProjects: number;
+  gitDirtyFiles: number;
+  gitAheadProjects: number;
+  gitBehindProjects: number;
+  pinned: string[];
+  defaultEntry: string;
+  ticketFirst: boolean;
+  todos: MetaTodo[];
+  projects: ProjectRow[];
+};
+
+// <metra-ops-snapshot>
+const SNAPSHOT: MetaSnapshot = {
+  generatedAt: "pending",
+  projectCount: 0,
+  driftCount: 0,
+  driftProjects: 0,
+  missingAgents: 0,
+  missingIgnore: 0,
+  gitDirtyProjects: 0,
+  gitDirtyFiles: 0,
+  gitAheadProjects: 0,
+  gitBehindProjects: 0,
+  pinned: [],
+  defaultEntry: "TicketTracker",
+  ticketFirst: true,
+  todos: [],
+  projects: [],
+};
+// </metra-ops-snapshot>
+
+type TabId = "ops" | "triage";
+
+type Ranked = {
+  project: ProjectRow;
+  score: number;
+  matched: string[];
+};
+
+function tokenize(text: string): string[] {
+  return text
+    .toLowerCase()
+    .split(/[^a-z0-9_+.-]+/)
+    .map((t) => t.trim())
+    .filter((t) => t.length >= 2);
+}
+
+function rankProjects(query: string): Ranked[] {
+  const tokens = tokenize(query);
+  if (tokens.length === 0) return [];
+  const ranked: Ranked[] = [];
+  for (const project of SNAPSHOT.projects) {
+    const matched: string[] = [];
+    let score = 0;
+    const hay = [
+      project.name.toLowerCase(),
+      project.purpose.toLowerCase(),
+      ...project.triggers.map((t) => t.toLowerCase()),
+    ].join(" | ");
+    for (const token of tokens) {
+      for (const trigger of project.triggers) {
+        const t = trigger.toLowerCase();
+        if (t === token || t.includes(token) || token.includes(t)) {
+          score += t === token ? 5 : 3;
+          if (!matched.includes(trigger)) matched.push(trigger);
+        }
+      }
+      if (project.name.toLowerCase().includes(token)) score += 2;
+      if (hay.includes(token) && matched.length === 0) score += 1;
+    }
+    if (project.pinned) score += 0.5;
+    if (score > 0) ranked.push({ project, score, matched });
+  }
+  return ranked.sort((a, b) => b.score - a.score).slice(0, 8);
+}
+
+function generatedLabel(iso: string): string {
+  if (!iso || iso === "pending") return "snapshot pending - run meta.ps1 snapshot";
+  try {
+    return new Date(iso).toLocaleString();
+  } catch {
+    return iso;
+  }
+}
+
+function MetraRouteMark() {
+  const theme = useHostTheme();
+  // Brand intent: Signal Teal wayfinding via host accent (see docs/Brand.md dual-mode map).
+  return (
+    <svg width="72" height="16" viewBox="0 0 72 16" aria-hidden="true">
+      <line
+        x1="4"
+        y1="8"
+        x2="68"
+        y2="8"
+        stroke={theme.accent.primary}
+        strokeWidth="2"
+      />
+      <circle cx="6" cy="8" r="4" fill={theme.accent.primary} />
+      <circle
+        cx="36"
+        cy="8"
+        r="4"
+        fill={theme.fill.tertiary}
+        stroke={theme.accent.primary}
+        strokeWidth="1.5"
+      />
+      <circle cx="66" cy="8" r="4" fill={theme.accent.primary} />
+    </svg>
+  );
+}
+
+const TRIAGE_STEPS = [
+  { id: "brief", label: "Identify ticket with TicketTracker brief (not raw data/tickets.json)" },
+  { id: "similar", label: "Check similar tickets and local notes" },
+  { id: "chats", label: "Search related Cursor chats (TicketTracker chats / meta.ps1 chats) for primary project clues" },
+  { id: "match", label: "Match RoutingTerms to one primary project" },
+  { id: "agents", label: "Open that project's AGENTS.md / preferred paths" },
+  { id: "investigate", label: "Investigate only in the primary project first" },
+  { id: "note", label: "Record note (cite chat uuid if used); add AI Recommendation only when supported" },
+] as const;
+
+export default function MetraOpsBoard() {
+  const theme = useHostTheme();
+  const [tab, setTab] = useCanvasState<TabId>("tab", "ops");
+  const [query, setQuery] = useCanvasState("recommendQuery", "");
+  const [primary, setPrimary] = useCanvasState<string>("primaryProject", "");
+  const [checks, setChecks] = useCanvasState<Record<string, boolean>>("triageChecks", {});
+
+  const ranked = rankProjects(query);
+  const top = ranked[0]?.project;
+  const activePrimary =
+    SNAPSHOT.projects.find((p) => p.name === primary) ||
+    top ||
+    SNAPSHOT.projects.find((p) => p.name === SNAPSHOT.defaultEntry);
+
+  const todos = SNAPSHOT.todos.map((t) => ({
+    id: t.id,
+    content: t.content,
+    status: t.status,
+  }));
+
+  const tableRows = SNAPSHOT.projects.map((p) => [
+    p.name,
+    p.pinned ? "pinned" : "",
+    p.hasAgentsMd ? "yes" : "no",
+    p.hasCursorIgnore ? "yes" : "no",
+    p.status,
+    p.gitIsRepo ? p.gitSummary : "n/a",
+    p.findings.slice(0, 2).join("; ") || "",
+  ]);
+  const rowTone = SNAPSHOT.projects.map((p) => {
+    if (p.drift) return "warning" as const;
+    if (p.gitIsRepo && (p.gitDirty > 0 || p.gitBehind > 0)) return "info" as const;
+    return "success" as const;
+  });
+
+  const pinnedPills: ReactNode[] = [];
+  for (const name of SNAPSHOT.pinned) {
+    pinnedPills.push(
+      <Pill active={primary === name} onClick={() => setPrimary(name)}>
+        {name}
+      </Pill>,
+    );
+  }
+
+  const rankedCards: ReactNode[] = [];
+  for (const r of ranked) {
+    rankedCards.push(
+      <Card>
+        <CardHeader
+          trailing={
+            <Button
+              variant={primary === r.project.name ? "primary" : "secondary"}
+              onClick={() => setPrimary(r.project.name)}
+            >
+              Use primary
+            </Button>
+          }
+        >
+          {r.project.name}
+        </CardHeader>
+        <CardBody>
+          <Stack gap={6}>
+            <Row gap={8} wrap>
+              <Pill size="sm">score {r.score.toFixed(1)}</Pill>
+              {r.project.pinned ? <Pill size="sm" active>pinned</Pill> : null}
+              <Pill size="sm" active={r.project.status === "healthy"}>
+                {r.project.status}
+              </Pill>
+            </Row>
+            <Text size="small">{r.project.purpose}</Text>
+            <Text size="small" tone="secondary">
+              Entry: {r.project.entry}
+              {r.matched.length > 0 ? ` | matched: ${r.matched.join(", ")}` : ""}
+            </Text>
+            {r.project.related.length > 0 ? (
+              <Text size="small" tone="tertiary">
+                Related: {r.project.related.join(", ")}
+              </Text>
+            ) : null}
+          </Stack>
+        </CardBody>
+      </Card>,
+    );
+  }
+
+  const triageChecks: ReactNode[] = [];
+  for (const step of TRIAGE_STEPS) {
+    triageChecks.push(
+      <Checkbox
+        checked={Boolean(checks[step.id])}
+        label={step.label}
+        onChange={(checked) =>
+          setChecks((prev) => ({
+            ...prev,
+            [step.id]: checked,
+          }))
+        }
+      />,
+    );
+  }
+
+  return (
+    <Stack gap={16} style={{ padding: 16 }}>
+      <div
+        style={{
+          background: theme.fill.tertiary,
+          borderLeft: `3px solid ${theme.accent.primary}`,
+          borderBottom: `1px solid ${theme.stroke.tertiary}`,
+          padding: "14px 16px",
+        }}
+      >
+        <Stack gap={6}>
+          <Row gap={10} align="center">
+            <MetraRouteMark />
+            <H1>Metra Ops</H1>
+            <Pill active size="sm">
+              Metra
+            </Pill>
+          </Row>
+          <Text tone="secondary" size="small">
+            Portfolio health, project routing, and ticket triage. Snapshot:{" "}
+            {generatedLabel(SNAPSHOT.generatedAt)}
+          </Text>
+        </Stack>
+      </div>
+
+      <Row gap={8}>
+        <Pill active={tab === "ops"} onClick={() => setTab("ops")}>
+          Ops
+        </Pill>
+        <Pill active={tab === "triage"} onClick={() => setTab("triage")}>
+          Triage
+        </Pill>
+      </Row>
+
+      {tab === "ops" ? (
+        <Stack gap={16}>
+          <Grid columns={4} gap={12}>
+            <Stat value={String(SNAPSHOT.projectCount)} label="Projects" />
+            <Stat
+              value={String(SNAPSHOT.driftCount)}
+              label="Drift signals"
+              tone={SNAPSHOT.driftCount > 0 ? "warning" : "success"}
+            />
+            <Stat
+              value={String(SNAPSHOT.gitDirtyProjects ?? 0)}
+              label="Git dirty projects"
+              tone={(SNAPSHOT.gitDirtyProjects ?? 0) > 0 ? "warning" : "success"}
+            />
+            <Stat
+              value={String(SNAPSHOT.gitDirtyFiles ?? 0)}
+              label="Dirty files"
+              tone={(SNAPSHOT.gitDirtyFiles ?? 0) > 0 ? "info" : "success"}
+            />
+          </Grid>
+
+          <Row gap={8} wrap>
+            <Stat
+              value={String(SNAPSHOT.gitAheadProjects ?? 0)}
+              label="Ahead of remote"
+              tone={(SNAPSHOT.gitAheadProjects ?? 0) > 0 ? "info" : undefined}
+            />
+            <Stat
+              value={String(SNAPSHOT.gitBehindProjects ?? 0)}
+              label="Behind remote"
+              tone={(SNAPSHOT.gitBehindProjects ?? 0) > 0 ? "warning" : undefined}
+            />
+            <Stat
+              value={String(SNAPSHOT.missingAgents)}
+              label="Missing AGENTS.md"
+              tone={SNAPSHOT.missingAgents > 0 ? "warning" : "success"}
+            />
+            <Stat
+              value={String(SNAPSHOT.missingIgnore)}
+              label="Missing .cursorignore"
+              tone={SNAPSHOT.missingIgnore > 0 ? "warning" : "success"}
+            />
+          </Row>
+
+          <Row gap={8} wrap>
+            <Text weight="semibold">Pinned hubs</Text>
+            {pinnedPills}
+            {SNAPSHOT.ticketFirst ? <Pill active>ticket-first</Pill> : null}
+          </Row>
+
+          {todos.length > 0 ? (
+            <TodoListCard todos={todos} defaultExpanded />
+          ) : (
+            <Callout tone="success" title="Portfolio healthy">
+              No drift todos in the current snapshot. Re-run meta.ps1 snapshot after layout changes.
+            </Callout>
+          )}
+
+          <Card>
+            <CardHeader>Project recommender</CardHeader>
+            <CardBody>
+              <Stack gap={12}>
+                <Text tone="secondary" size="small">
+                  Paste ticket keywords or TicketTracker brief RoutingTerms.
+                </Text>
+                <TextInput
+                  value={query}
+                  onChange={setQuery}
+                  placeholder="e.g. orion disk alert DataOps / pharos colleague slate"
+                />
+                {rankedCards.length > 0 ? (
+                  <Stack gap={8}>{rankedCards}</Stack>
+                ) : (
+                  <Text tone="tertiary" size="small">
+                    Type terms to rank projects from projects.json triggers.
+                  </Text>
+                )}
+              </Stack>
+            </CardBody>
+          </Card>
+
+          <Divider />
+          <H2>Project health</H2>
+          <Table
+            headers={["Project", "Pinned", "AGENTS", "Ignore", "Status", "Git", "Findings"]}
+            rows={tableRows}
+            rowTone={rowTone}
+            striped
+            stickyHeader
+          />
+        </Stack>
+      ) : (
+        <Stack gap={16}>
+          <Callout tone="info" title="Ticket-first session">
+            Start in TicketTracker, route to one technical project, broaden only when evidence requires it.
+          </Callout>
+
+          <Card>
+            <CardHeader>Primary project</CardHeader>
+            <CardBody>
+              {activePrimary ? (
+                <Stack gap={8}>
+                  <Row gap={8} align="center">
+                    <H3>{activePrimary.name}</H3>
+                    <Pill active={activePrimary.status === "healthy"}>{activePrimary.status}</Pill>
+                  </Row>
+                  <Text size="small">{activePrimary.purpose}</Text>
+                  <Text size="small" tone="secondary">
+                    Open: {activePrimary.entry} then {activePrimary.preferredPaths.slice(0, 3).join(", ")}
+                  </Text>
+                  {activePrimary.related.length > 0 ? (
+                    <Text size="small" tone="tertiary">
+                      Related only if needed: {activePrimary.related.join(", ")}
+                    </Text>
+                  ) : null}
+                  {!primary && top ? (
+                    <Text size="small" tone="secondary">
+                      Using recommender top match. Set primary on the Ops tab to lock it.
+                    </Text>
+                  ) : null}
+                </Stack>
+              ) : (
+                <Text tone="secondary">
+                  Rank a project on the Ops tab, or rely on default entry {SNAPSHOT.defaultEntry}.
+                </Text>
+              )}
+            </CardBody>
+          </Card>
+
+          <Card>
+            <CardHeader>Session checklist</CardHeader>
+            <CardBody>
+              <Stack gap={10}>
+                {triageChecks}
+                <Spacer />
+                <Button variant="secondary" onClick={() => setChecks({})}>
+                  Reset checklist
+                </Button>
+              </Stack>
+            </CardBody>
+          </Card>
+
+          <Callout tone="warning" title="Do not">
+            Do not open full catalog/index.json, inventory dumps, or TicketTracker data/tickets.json. Do not scan all sibling repos before routing.
+          </Callout>
+        </Stack>
+      )}
+    </Stack>
+  );
+}

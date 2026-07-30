@@ -34,6 +34,9 @@ MIT licensed. Host on public GitHub (repo name **Metra**) or a private org fork.
 | Product / GitHub repo | **Metra** |
 | Recommended local folder | **`_meta`** (also accepted: `Metra`, `metra`) |
 | CLI | `meta.ps1` |
+| Workspace file | `Metra.code-workspace` (legacy `Meta.code-workspace` still honored if configured) |
+
+Operator-facing brand kit (palette, motif, professional sink): [docs/Brand.md](docs/Brand.md). Coworker walkthrough (concepts + live, including a non-AI-friendly path): [docs/Demo-5min.md](docs/Demo-5min.md).
 
 ```powershell
 git clone https://github.com/<you>/Metra.git _meta
@@ -129,10 +132,11 @@ Personal-root `registryFile` is **not** auto-included - copy it with that root. 
 | `apply <file>` | Copy a shared file into matching projects |
 | `workspace` | Rebuild multi-root workspace from recent activity (optional IDE helper) |
 | `audit` | Context/token audit + optional `-DriftOnly` vs registries |
-| `snapshot` | Write `docs/canvas-snapshot.json` and refresh Ops canvas embed |
+| `snapshot` | Write `docs/canvas-snapshot.json` and refresh / install Metra Ops canvas embed |
 | `chats` | Search local Cursor agent transcripts (bounded; Cursor-specific) |
 | `export-profile` | Pack local config / local registry / Metra overlay |
 | `import-profile` | Restore a pack (`-Preview` or `-Force`) |
+| `verify` | Routing-Scenarios fixture smoke (`PASS`/`WARN`/`FAIL`; exit 1 on FAIL) |
 
 ### Filters
 
@@ -155,7 +159,8 @@ _meta/
   LICENSE                    MIT
   SECURITY.md
   scripts/Meta.psm1          PowerShell helpers
-  docs/                      routing + Metra customization + Integrations
+  docs/                      routing + Brand + Metra customization + Integrations
+  integrations/cursor/       Metra Ops canvas template
   templates/basic/           default new-project template
   shared/                    files to push into other projects via apply
   .cursor/rules/             Cursor adapter: routing + Metra base (+ local overlay gitignored)

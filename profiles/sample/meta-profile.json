@@ -11,6 +11,7 @@
   "notes": [
     "Replace operator display name in .cursor/rules/metra-persona.local.mdc after import.",
     "Edit meta.config.json roots and workspace.alwaysInclude for your machine.",
+    "Workspace outputs default to Metra.code-workspace with orchestration folder label Metra.",
     "Personal-root registryFile (e.g. projects.personal.json beside personal projects) is not included in this pack; copy that file with the personal root separately if you use one."
   ]
 }

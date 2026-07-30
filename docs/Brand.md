@@ -1,0 +1,139 @@
+# Metra brand kit
+
+Compact identity for **operator-facing** Metra surfaces. Durable artifacts (tickets, commits, coworker redistribution, professional docs meant for iSupport) stay unbranded.
+
+## Customization boundary
+
+How far Metra goes into Cursor:
+
+| Layer | Stance |
+|-------|--------|
+| Metra Ops canvas | Customize deeply (layout, motif, dual-mode intent) |
+| CLI help colors | Light touch (Cyan / Yellow / Red) |
+| Naming (`Metra`, workspace label) | Yes |
+| Optional local accent override | Allowed - Signal Teal into host accent only |
+| Full Cursor color theme extension | Out of scope (optional personal experiment only) |
+| Activity bar / title bar takeover | No |
+
+Host-following stays the rule for canvases: map brand **intent** through `useHostTheme()` - no hardcoded hex in `.canvas.tsx`. Reference hex below is for docs, approval screenshots, and optional local Cursor accent overrides.
+
+## Palette (reference)
+
+| Token | Hex | Use |
+|-------|-----|-----|
+| Signal Teal | `#0F766E` | Primary brand / action accent |
+| Graphite | `#1F2937` | Structure and strong text (light themes) |
+| Mist | `#E6F4F1` | Restrained tint / soft fill (light) |
+| Amber | `#D97706` | Attention only - never general decoration |
+
+Host success/error greens and reds stay operational. Do not invent a rainbow of brand colors.
+
+## Dual-mode intent map
+
+Same jobs in **Cursor Light** and **Cursor Dark**. Host tokens vary; the mapping should feel like one product.
+
+| Brand job | Light feel | Dark feel | Canvas mapping |
+|-----------|------------|-----------|----------------|
+| Signal Teal (brand) | Clear teal/blue accent on route mark, faceplate bar, primary buttons | Same accent, slightly brighter on charcoal | `theme.accent.primary` |
+| Mist (soft brand fill) | Soft cool gray/teal-tinted strip behind title | Soft elevated fill, not flat black slab | `theme.fill.tertiary` (faceplate) |
+| Graphite (structure) | Strong title / body | Strong title / body | `theme.text.primary` / host typography |
+| Amber (attention) | Dirty, missing, drift > 0, behind remote | Same | Stat / row `tone="warning"` |
+| Healthy / zero issues | Calm success (often teal-green) | Same | Stat `tone="success"` |
+| Informational git counts | Quiet blue/info | Same | Stat `tone="info"` |
+| Route motif | 3 nodes + line in accent | Same, readable on charcoal | `MetraRouteMark` SVG |
+
+**Daily default:** Cursor Dark is fine for long sessions.  
+**Demo / approval faceplate:** Cursor Light shows Mist + Signal Teal intent more clearly. Both must pass the checklist below.
+
+### Optional local accent (not a full skin)
+
+To push Signal Teal into host accent (and thus the Ops board route mark) without a Metra theme pack, a **local** `settings.json` accent override is enough. Example only - do not commit machine-specific settings into `_meta`:
+
+```json
+"workbench.colorCustomizations": {
+  "[Cursor Light]": {
+    "focusBorder": "#0F766E",
+    "button.background": "#0F766E",
+    "button.hoverBackground": "#0D9488",
+    "textLink.foreground": "#0F766E"
+  },
+  "[Cursor Dark]": {
+    "focusBorder": "#14B8A6",
+    "button.background": "#0F766E",
+    "button.hoverBackground": "#14B8A6",
+    "textLink.foreground": "#2DD4BF"
+  }
+}
+```
+
+Dark uses a slightly brighter teal for focus/links so the motif stays visible on charcoal. If host accent stays Cursor blue, the board is still valid - brand intent is "accent = primary wayfinding," not "must be exactly #0F766E."
+
+## Motif
+
+A short **route line with nodes** - wayfinding, not a train logo and not Chicago transit Metra blue/orange. No mascot, no emoji chrome, no gradients, no box shadows.
+
+## Typography
+
+Use the host font. Monospace only for commands and paths (`.\meta.ps1`, folder names).
+
+## Ops board layout target
+
+Faceplate (top strip):
+
+1. Left accent bar (`accent.primary`, ~3px)
+2. Route mark (accent)
+3. **Metra Ops** title + small **Metra** pill
+4. One-line subtitle + snapshot timestamp
+5. Soft fill behind the strip (`fill.tertiary`) - Mist intent on light, elevated soft fill on dark
+
+Below that (unchanged jobs):
+
+- Ops / Triage pills
+- Health stats (success / warning / info tones as above)
+- Pinned hubs
+- To-dos / recommender / health table
+
+## Surface adapters
+
+| Surface | Rule |
+|---------|------|
+| Cursor Canvas | Map brand intent to `useHostTheme()` tokens (`accent`, `fill`, `text`, `stroke`). No hardcoded hex in `.canvas.tsx`. |
+| PowerShell CLI | Restrained Cyan headings; Yellow/Red for warning/error. Product name **Metra** in help text. |
+| Markdown docs / `ctx` packs | Neutral prose; product name **Metra** in titles. No teal wallpaper. |
+
+## Naming boundary
+
+| Operator-facing | Technical (keep) |
+|-----------------|------------------|
+| Product **Metra** | Checkout folder `_meta` (also accepted: `Metra`, `metra`) |
+| Workspace file `Metra.code-workspace` | CLI `meta.ps1` |
+| Orchestration folder label **Metra** | Internal PowerShell `Meta-*` function names |
+| Canvas **Metra Ops** / `metra-ops-board` | Cursor path-derived state slug (e.g. `c-Projects-meta`) |
+
+## Professional sink
+
+Chat and operator UIs may show Metra branding. Tickets, commits, ADRs, and redistribution drafts do **not** get Metra voice, catchphrases, or decorative brand chrome.
+
+## Screenshot approval checklist
+
+Capture **Metra Ops** (Ops tab) under **Cursor Light** and **Cursor Dark**. Re-run `.\meta.ps1 snapshot` if the board looks stale. Submit both shots for approval against this list:
+
+| Check | Light | Dark |
+|-------|-------|------|
+| Reads as Metra Ops, not a generic status widget | | |
+| Route mark visible; nodes + line use accent | | |
+| Faceplate soft fill distinct from page background | | |
+| Zero-drift / healthy stats calm (success), not loud | | |
+| Dirty / missing / drift use amber-like attention (warning) | | |
+| No gradients, glow, emoji, or heavy shadows | | |
+| Amber not used as general decoration | | |
+| Same information hierarchy in both modes | | |
+
+Pass = both columns feel like one product at different times of day. Fail = dark looks like a different app, or light loses the wayfinding accent.
+
+## Related
+
+- [Demo-5min.md](Demo-5min.md) - coworker walkthrough (concepts for low AI experience + live demo)
+- [Customizing-Metra.md](Customizing-Metra.md) - persona and overlays
+- [Integrations.md](Integrations.md) - core vs Cursor
+- [Context-Routing.md](Context-Routing.md) - Ops board refresh

@@ -567,7 +567,7 @@ function Get-RecentMetaProjects {
 function Update-MetaWorkspace {
     <#
     .SYNOPSIS
-        Rebuilds Meta.code-workspace file(s) with meta plus projects active in the lookback window.
+        Rebuilds Metra.code-workspace file(s) with Metra plus projects active in the lookback window.
     #>
     [CmdletBinding(SupportsShouldProcess)]
     param(
@@ -598,7 +598,7 @@ function Update-MetaWorkspace {
 
     $primaryRootName = (@(Get-MetaRoots -IncludeMissing) | Where-Object { $_.Primary } | Select-Object -First 1).Name
 
-    Write-Host ("Lookback: {0} month(s) | {1} project(s) (+ meta)" -f $Months, $recent.Count) -ForegroundColor Cyan
+    Write-Host ("Lookback: {0} month(s) | {1} project(s) (+ Metra)" -f $Months, $recent.Count) -ForegroundColor Cyan
     $recent | ForEach-Object {
         Write-Host ("  {0,-24} {1,-10} {2:yyyy-MM-dd}" -f $_.Name, $_.Root, $_.LastActivity)
     }
@@ -607,9 +607,11 @@ function Update-MetaWorkspace {
     foreach ($out in $outputs) {
         $outPath = Join-Path $metaRoot $out.path
         $prefix = [string]$out.projectPathPrefix
+        $folderLabel = [string](Get-MetaProp -Object $out -Name 'metaFolderName' -Default 'Metra')
+        if ([string]::IsNullOrWhiteSpace($folderLabel)) { $folderLabel = 'Metra' }
         $folders = @(
             [ordered]@{
-                name = 'meta'
+                name = $folderLabel
                 path = [string]$out.metaFolderPath
             }
         )
@@ -1236,16 +1238,174 @@ function Get-MetaProjectGitCounts {
     return $result
 }
 
+function Get-MetaOpsCanvasPath {
+    <#
+    .SYNOPSIS
+        Resolves the live Metra Ops canvas path for this checkout's Cursor project slug.
+    #>
+    [CmdletBinding()]
+    param()
+
+    $metaRoot = Get-MetaRoot
+    $slug = ConvertTo-MetaCursorProjectSlug -Path $metaRoot
+    if ([string]::IsNullOrWhiteSpace($slug)) {
+        $slug = 'c-Projects-meta'
+    }
+    return Join-Path $env:USERPROFILE (Join-Path '.cursor\projects' (Join-Path $slug 'canvases\metra-ops-board.canvas.tsx'))
+}
+
+function Install-MetaOpsCanvas {
+    <#
+    .SYNOPSIS
+        Ensures the live Metra Ops canvas exists, installing from the tracked template when needed.
+    #>
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory)][string]$CanvasPath
+    )
+
+    $metaRoot = Get-MetaRoot
+    $templatePath = Join-Path $metaRoot 'integrations\cursor\metra-ops-board.canvas.tsx.template'
+    $canvasDir = Split-Path -Parent $CanvasPath
+    $legacyPath = Join-Path $canvasDir 'meta-ops-board.canvas.tsx'
+
+    if (-not (Test-Path -LiteralPath $CanvasPath)) {
+        if (-not (Test-Path -LiteralPath $templatePath)) {
+            Write-Warning "Metra Ops canvas template missing: $templatePath"
+            return $false
+        }
+        if ($canvasDir -and -not (Test-Path -LiteralPath $canvasDir)) {
+            New-Item -ItemType Directory -Path $canvasDir -Force | Out-Null
+        }
+        Copy-Item -LiteralPath $templatePath -Destination $CanvasPath -Force
+        Write-Host ("Installed Metra Ops canvas from template: {0}" -f $CanvasPath) -ForegroundColor Green
+    }
+
+    if ((Test-Path -LiteralPath $legacyPath) -and ($legacyPath -ne $CanvasPath)) {
+        Remove-Item -LiteralPath $legacyPath -Force -ErrorAction SilentlyContinue
+        Write-Host ("Removed legacy canvas: {0}" -f $legacyPath) -ForegroundColor Yellow
+    }
+
+    return (Test-Path -LiteralPath $CanvasPath)
+}
+
+function Get-MetaQuickProjectHealthReports {
+    <#
+    .SYNOPSIS
+        Light registry/disk health for snapshot -Quick (no recursive scan, no git).
+    #>
+    [CmdletBinding()]
+    param()
+
+    $registry = Get-MetaProjectRegistry
+    $disk = @(Get-MetaProjects)
+    $byDisk = @{}
+    foreach ($d in $disk) {
+        $byDisk[$d.Name.ToLowerInvariant()] = $d
+    }
+
+    $driftCount = 0
+    $reports = @()
+
+    foreach ($d in $disk) {
+        $reg = Get-MetaRegistryProject -Registry $registry -Name $d.Name
+        $inRegistry = $null -ne $reg
+        $findings = @()
+        $hasAgents = Test-Path -LiteralPath (Join-Path $d.Path 'AGENTS.md')
+        $hasIgnore = Test-Path -LiteralPath (Join-Path $d.Path '.cursorignore')
+        $hasReadme = Test-Path -LiteralPath (Join-Path $d.Path 'README.md')
+
+        if (-not $inRegistry) {
+            $findings += 'Missing from registry (projects.json or projects.local.json)'
+            $driftCount++
+        }
+        elseif (-not $hasAgents -and [string]$reg.entry -eq 'AGENTS.md') {
+            $findings += 'Registry entry expects AGENTS.md but file is missing'
+            $driftCount++
+        }
+
+        $reports += [PSCustomObject]@{
+            Name            = $d.Name
+            Path            = $d.Path
+            Root            = $d.Root
+            HasAgentsMd     = $hasAgents
+            HasCursorIgnore = $hasIgnore
+            HasReadme       = $hasReadme
+            Findings        = $findings
+            LargeFiles      = @()
+            Drift           = ($findings.Count -gt 0)
+            InRegistry      = $inRegistry
+        }
+    }
+
+    return [PSCustomObject]@{
+        Reports    = $reports
+        DriftCount = $driftCount
+        DiskByName = $byDisk
+        Registry   = $registry
+    }
+}
+
+function Test-MetaCanvasSnapshotStale {
+    <#
+    .SYNOPSIS
+        True when the Ops board snapshot is older than MaxAgeHours or newer than registry/config inputs.
+    #>
+    [CmdletBinding()]
+    param(
+        [string]$SnapshotPath,
+        [double]$MaxAgeHours = 4
+    )
+
+    $metaRoot = Get-MetaRoot
+    if (-not $SnapshotPath) {
+        $SnapshotPath = Join-Path $metaRoot 'docs\canvas-snapshot.json'
+    }
+    if (-not (Test-Path -LiteralPath $SnapshotPath)) {
+        return $true
+    }
+
+    $snapTime = (Get-Item -LiteralPath $SnapshotPath).LastWriteTimeUtc
+    if (((Get-Date).ToUniversalTime() - $snapTime).TotalHours -gt $MaxAgeHours) {
+        return $true
+    }
+
+    $watch = @(
+        (Join-Path $metaRoot 'projects.json'),
+        (Join-Path $metaRoot 'projects.local.json'),
+        (Join-Path $metaRoot 'meta.config.json')
+    )
+    foreach ($root in @(Get-MetaRoots -IncludeMissing)) {
+        if (-not $root.RegistryFile) { continue }
+        $rootRegistryPath = [System.Environment]::ExpandEnvironmentVariables([string]$root.RegistryFile)
+        if (-not [System.IO.Path]::IsPathRooted($rootRegistryPath)) {
+            $rootRegistryPath = Join-Path $root.Path $rootRegistryPath
+        }
+        $watch += $rootRegistryPath
+    }
+    foreach ($path in $watch) {
+        if (-not (Test-Path -LiteralPath $path)) { continue }
+        if ((Get-Item -LiteralPath $path).LastWriteTimeUtc -gt $snapTime) {
+            return $true
+        }
+    }
+    return $false
+}
+
 function Export-MetaCanvasSnapshot {
     <#
     .SYNOPSIS
-        Writes docs/canvas-snapshot.json from registry + quiet audit for the Ops canvas embed.
+        Writes docs/canvas-snapshot.json from registry + quiet audit for the Metra Ops canvas embed.
+    .PARAMETER Quick
+        Hook-friendly refresh: registry + present/missing + AGENTS/.cursorignore/README only.
+        Skips recursive large-file scan and per-project git counts.
     #>
     [CmdletBinding()]
     param(
         [string]$OutPath,
         [string]$CanvasPath,
-        [int]$ScanDepth = 2
+        [int]$ScanDepth = 2,
+        [switch]$Quick
     )
 
     $metaRoot = Get-MetaRoot
@@ -1253,7 +1413,7 @@ function Export-MetaCanvasSnapshot {
         $OutPath = Join-Path $metaRoot 'docs\canvas-snapshot.json'
     }
     if (-not $CanvasPath) {
-        $CanvasPath = Join-Path $env:USERPROFILE '.cursor\projects\c-Projects-meta\canvases\meta-ops-board.canvas.tsx'
+        $CanvasPath = Get-MetaOpsCanvasPath
     }
 
     $registry = Get-MetaProjectRegistry
@@ -1263,22 +1423,36 @@ function Export-MetaCanvasSnapshot {
         $pinned = @($cfg.workspace.alwaysInclude)
     }
 
-    Write-Host 'Running quiet portfolio audit for snapshot...' -ForegroundColor Cyan
-    $audit = Invoke-MetaProjectContextAudit -ScanDepth $ScanDepth -Quiet | Select-Object -Last 1
+    $auditDriftCount = 0
     $byName = @{}
-    foreach ($r in @($audit.Reports)) {
-        $byName[[string]$r.Name] = $r
+    if ($Quick) {
+        Write-Host 'Running quick portfolio health for snapshot...' -ForegroundColor Cyan
+        $lightHealth = Get-MetaQuickProjectHealthReports
+        $auditDriftCount = [int]$lightHealth.DriftCount
+        foreach ($r in @($lightHealth.Reports)) {
+            $byName[[string]$r.Name.ToLowerInvariant()] = $r
+        }
+        $diskReports = @($lightHealth.Reports)
+    }
+    else {
+        Write-Host 'Running quiet portfolio audit for snapshot...' -ForegroundColor Cyan
+        $audit = Invoke-MetaProjectContextAudit -ScanDepth $ScanDepth -Quiet | Select-Object -Last 1
+        $auditDriftCount = [int]$audit.DriftCount
+        foreach ($r in @($audit.Reports)) {
+            $byName[[string]$r.Name.ToLowerInvariant()] = $r
+        }
+        $diskReports = @($audit.Reports)
     }
 
     $todos = @()
     $projects = foreach ($reg in @($registry.projects)) {
         $name = [string]$reg.name
-        $report = $byName[$name]
+        $report = $byName[$name.ToLowerInvariant()]
         $findings = @()
         if ($report -and $report.Findings) { $findings = @($report.Findings) }
 
         $large = @()
-        if ($report -and $report.LargeFiles) {
+        if (-not $Quick -and $report -and $report.LargeFiles) {
             $large = @(
                 $report.LargeFiles | Select-Object -First 3 | ForEach-Object {
                     [PSCustomObject]@{ path = [string]$_.Path; kb = [double]$_.KB }
@@ -1287,7 +1461,19 @@ function Export-MetaCanvasSnapshot {
         }
 
         $projectPath = if ($report) { [string]$report.Path } else { Join-Path (Get-ProjectsRoot) $name }
-        $git = Get-MetaProjectGitCounts -Path $projectPath
+        if ($Quick) {
+            $git = [PSCustomObject]@{
+                isGit   = $false
+                dirty   = 0
+                ahead   = 0
+                behind  = 0
+                branch  = ''
+                summary = 'skipped'
+            }
+        }
+        else {
+            $git = Get-MetaProjectGitCounts -Path $projectPath
+        }
         $optional = [bool](Get-MetaProp -Object $reg -Name 'optional' -Default $false)
 
         $status = 'healthy'
@@ -1345,19 +1531,17 @@ function Export-MetaCanvasSnapshot {
         }
     }
 
-    # Disk projects present in audit but not registry
-    foreach ($r in @($audit.Reports)) {
-        if ($byName.ContainsKey([string]$r.Name) -and -not (@($registry.projects.name) -contains $r.Name)) {
-            # already handled via registry loop only; add orphans
-        }
-    }
-    foreach ($r in @($audit.Reports)) {
+    # Disk projects present but not in registry
+    foreach ($r in @($diskReports)) {
         $exists = $false
         foreach ($p in @($projects)) {
             if ($p.name -eq $r.Name) { $exists = $true; break }
         }
         if (-not $exists) {
             $findings = @($r.Findings)
+            if ($findings.Count -eq 0) {
+                $findings = @('Missing from registry (projects.json or projects.local.json)')
+            }
             foreach ($f in $findings) {
                 $todos += [PSCustomObject]@{
                     id      = ($r.Name + ':' + ($f.GetHashCode()))
@@ -1366,7 +1550,19 @@ function Export-MetaCanvasSnapshot {
                     status  = 'pending'
                 }
             }
-            $git = Get-MetaProjectGitCounts -Path ([string]$r.Path)
+            if ($Quick) {
+                $git = [PSCustomObject]@{
+                    isGit   = $false
+                    dirty   = 0
+                    ahead   = 0
+                    behind  = 0
+                    branch  = ''
+                    summary = 'skipped'
+                }
+            }
+            else {
+                $git = Get-MetaProjectGitCounts -Path ([string]$r.Path)
+            }
             if ($git.isGit -and ($git.dirty -gt 0 -or $git.ahead -gt 0 -or $git.behind -gt 0)) {
                 $todos += [PSCustomObject]@{
                     id      = ($r.Name + ':git')
@@ -1414,15 +1610,16 @@ function Export-MetaCanvasSnapshot {
     $driftProjects = @($projects | Where-Object { $_.drift }).Count
     $notInstalled = @($projects | Where-Object { -not $_.present }).Count
     $gitDirtyProjects = @($projects | Where-Object { $_.gitIsRepo -and $_.gitDirty -gt 0 }).Count
-    $gitDirtyFiles = (@($projects | Where-Object { $_.gitIsRepo } | Measure-Object -Property gitDirty -Sum).Sum)
-    if ($null -eq $gitDirtyFiles) { $gitDirtyFiles = 0 }
+    $gitDirtySum = @($projects | Where-Object { $_.gitIsRepo } | Measure-Object -Property gitDirty -Sum)
+    $gitDirtyFiles = if ($gitDirtySum -and $null -ne $gitDirtySum.Sum) { [int]$gitDirtySum.Sum } else { 0 }
     $gitAheadProjects = @($projects | Where-Object { $_.gitIsRepo -and $_.gitAhead -gt 0 }).Count
     $gitBehindProjects = @($projects | Where-Object { $_.gitIsRepo -and $_.gitBehind -gt 0 }).Count
 
     $snapshot = [ordered]@{
         generatedAt       = (Get-Date).ToString('o')
+        mode              = $(if ($Quick) { 'quick' } else { 'full' })
         projectCount      = @($projects).Count
-        driftCount        = [int]$audit.DriftCount
+        driftCount        = [int]$auditDriftCount
         driftProjects     = $driftProjects
         notInstalled      = $notInstalled
         missingAgents     = $missingAgents
@@ -1454,24 +1651,36 @@ function Export-MetaCanvasSnapshot {
     [System.IO.File]::WriteAllText($OutPath, $json + "`r`n")
     Write-Host ("Wrote snapshot: {0}" -f $OutPath) -ForegroundColor Green
 
-    if (Test-Path -LiteralPath $CanvasPath) {
+    $canvasReady = Install-MetaOpsCanvas -CanvasPath $CanvasPath
+    if ($canvasReady) {
         $canvas = [System.IO.File]::ReadAllText($CanvasPath)
-        $begin = '// <meta-ops-snapshot>'
-        $end = '// </meta-ops-snapshot>'
-        $bi = $canvas.IndexOf($begin)
-        $ei = $canvas.IndexOf($end)
-        if ($bi -ge 0 -and $ei -gt $bi) {
-            $embed = @"
-$begin
+        $markerPairs = @(
+            @{ Begin = '// <metra-ops-snapshot>'; End = '// </metra-ops-snapshot>' },
+            @{ Begin = '// <meta-ops-snapshot>'; End = '// </meta-ops-snapshot>' }
+        )
+        $updatedEmbed = $false
+        foreach ($pair in $markerPairs) {
+            $begin = [string]$pair.Begin
+            $end = [string]$pair.End
+            $bi = $canvas.IndexOf($begin)
+            $ei = $canvas.IndexOf($end)
+            if ($bi -ge 0 -and $ei -gt $bi) {
+                $embedBegin = '// <metra-ops-snapshot>'
+                $embedEnd = '// </metra-ops-snapshot>'
+                $embed = @"
+$embedBegin
 const SNAPSHOT: MetaSnapshot = $json;
-$end
+$embedEnd
 "@
-            $updated = $canvas.Substring(0, $bi) + $embed + $canvas.Substring($ei + $end.Length)
-            [System.IO.File]::WriteAllText($CanvasPath, $updated)
-            Write-Host ("Updated canvas embed: {0}" -f $CanvasPath) -ForegroundColor Green
+                $updated = $canvas.Substring(0, $bi) + $embed + $canvas.Substring($ei + $end.Length)
+                [System.IO.File]::WriteAllText($CanvasPath, $updated)
+                Write-Host ("Updated canvas embed: {0}" -f $CanvasPath) -ForegroundColor Green
+                $updatedEmbed = $true
+                break
+            }
         }
-        else {
-            Write-Warning "Canvas found but missing <meta-ops-snapshot> markers: $CanvasPath"
+        if (-not $updatedEmbed) {
+            Write-Warning "Canvas found but missing <metra-ops-snapshot> markers: $CanvasPath"
         }
     }
 
@@ -2285,6 +2494,190 @@ function Export-MetaContextPack {
     }
 }
 
+function Invoke-MetaVerify {
+    <#
+    .SYNOPSIS
+        Runs Routing-Scenarios fixture smoke checks; returns PASS/WARN/FAIL rows.
+    .DESCRIPTION
+        Required checks FAIL when missing. Soft sibling paths WARN when absent (optional stubs)
+        and FAIL when present but expected patterns are missing. Live CLI checks FAIL on
+        exception; WARN when a named project is not Present on disk.
+        Exit code semantics for callers: 0 when FailCount is 0; otherwise 1.
+    #>
+    [CmdletBinding()]
+    param()
+
+    $metaRoot = Get-MetaRoot
+    $projectsRoot = Get-ProjectsRoot
+    $results = New-Object System.Collections.ArrayList
+
+    function Add-VerifyResult {
+        param(
+            [string]$Name,
+            [ValidateSet('PASS', 'WARN', 'FAIL')][string]$Status,
+            [string]$Detail = ''
+        )
+        [void]$results.Add([PSCustomObject]@{
+            Name   = $Name
+            Status = $Status
+            Detail = $Detail
+        })
+    }
+
+    function Test-SoftSiblingPath {
+        param(
+            [string]$Name,
+            [string]$RelativeUnderProjectsRoot
+        )
+        $full = Join-Path $projectsRoot $RelativeUnderProjectsRoot
+        if (Test-Path -LiteralPath $full) {
+            Add-VerifyResult -Name $Name -Status 'PASS' -Detail $full
+            return $full
+        }
+        Add-VerifyResult -Name $Name -Status 'WARN' -Detail "absent (optional stub): $full"
+        return $null
+    }
+
+    # Required files
+    $requiredPaths = @(
+        @{ Name = 'projects.json'; Path = (Join-Path $metaRoot 'projects.json') },
+        @{ Name = 'profiles/sample/meta-profile.json'; Path = (Join-Path $metaRoot 'profiles\sample\meta-profile.json') }
+    )
+    foreach ($item in $requiredPaths) {
+        if (Test-Path -LiteralPath $item.Path) {
+            Add-VerifyResult -Name $item.Name -Status 'PASS' -Detail $item.Path
+        }
+        else {
+            Add-VerifyResult -Name $item.Name -Status 'FAIL' -Detail "missing: $($item.Path)"
+        }
+    }
+
+    # Soft sibling paths from Routing-Scenarios fixtures
+    $null = Test-SoftSiblingPath -Name 'TicketTracker/AGENTS.md' -RelativeUnderProjectsRoot 'TicketTracker\AGENTS.md'
+    $null = Test-SoftSiblingPath -Name 'Trivia/AGENTS.md' -RelativeUnderProjectsRoot 'Trivia\AGENTS.md'
+    $null = Test-SoftSiblingPath -Name 'Solarwinds/docs/Ticket-Triage.md' -RelativeUnderProjectsRoot 'Solarwinds\docs\Ticket-Triage.md'
+
+    $ttPs1 = Join-Path $projectsRoot 'TicketTracker\TicketTracker.ps1'
+    if (Test-Path -LiteralPath $ttPs1) {
+        foreach ($pat in @("'brief'", "'chats'")) {
+            $hit = Select-String -Path $ttPs1 -Pattern $pat -SimpleMatch -ErrorAction SilentlyContinue
+            if ($hit) {
+                Add-VerifyResult -Name ("TicketTracker.ps1 $pat") -Status 'PASS' -Detail $ttPs1
+            }
+            else {
+                Add-VerifyResult -Name ("TicketTracker.ps1 $pat") -Status 'FAIL' -Detail "pattern not found: $pat"
+            }
+        }
+    }
+    else {
+        Add-VerifyResult -Name 'TicketTracker.ps1 patterns' -Status 'WARN' -Detail 'TicketTracker.ps1 absent (optional stub)'
+    }
+
+    # Live CLI: roots
+    try {
+        $roots = @(Get-MetaRoots -IncludeMissing)
+        if ($roots.Count -gt 0) {
+            Add-VerifyResult -Name 'meta.ps1 roots' -Status 'PASS' -Detail ("{0} root(s)" -f $roots.Count)
+        }
+        else {
+            Add-VerifyResult -Name 'meta.ps1 roots' -Status 'FAIL' -Detail 'no roots returned'
+        }
+    }
+    catch {
+        Add-VerifyResult -Name 'meta.ps1 roots' -Status 'FAIL' -Detail $_.Exception.Message
+    }
+
+    # Live CLI: routing for fixture names
+    try {
+        $routing = @(Get-MetaRoutingTable -Name @('TicketTracker', 'Solarwinds', 'Trivia'))
+        if ($routing.Count -eq 0) {
+            Add-VerifyResult -Name 'routing TicketTracker,Solarwinds,Trivia' -Status 'FAIL' -Detail 'no routing rows'
+        }
+        else {
+            foreach ($row in $routing) {
+                $label = "routing $($row.Name)"
+                if ($row.Present) {
+                    Add-VerifyResult -Name $label -Status 'PASS' -Detail $row.Path
+                }
+                elseif ($row.Optional) {
+                    Add-VerifyResult -Name $label -Status 'WARN' -Detail 'not Present (optional)'
+                }
+                else {
+                    Add-VerifyResult -Name $label -Status 'WARN' -Detail 'not Present on disk'
+                }
+            }
+        }
+    }
+    catch {
+        Add-VerifyResult -Name 'routing TicketTracker,Solarwinds,Trivia' -Status 'FAIL' -Detail $_.Exception.Message
+    }
+
+    # Live CLI: ctx
+    try {
+        $ctx = Export-MetaContextPack -Query 'ticket' -Format markdown
+        $ctxPath = if ($ctx.Path) { [string]$ctx.Path } else { (Join-Path $metaRoot 'docs\context-pack.md') }
+        if (Test-Path -LiteralPath $ctxPath) {
+            Add-VerifyResult -Name 'ctx -Query ticket' -Status 'PASS' -Detail $ctxPath
+        }
+        else {
+            Add-VerifyResult -Name 'ctx -Query ticket' -Status 'FAIL' -Detail "pack missing: $ctxPath"
+        }
+    }
+    catch {
+        Add-VerifyResult -Name 'ctx -Query ticket' -Status 'FAIL' -Detail $_.Exception.Message
+    }
+
+    # Live CLI: import-profile Preview
+    try {
+        $sample = Join-Path $metaRoot 'profiles\sample'
+        $null = Import-MetaProfile -Path $sample -Preview
+        Add-VerifyResult -Name 'import-profile sample -Preview' -Status 'PASS' -Detail $sample
+    }
+    catch {
+        Add-VerifyResult -Name 'import-profile sample -Preview' -Status 'FAIL' -Detail $_.Exception.Message
+    }
+
+    # Soft: chats (Cursor-specific; may be empty)
+    try {
+        $chats = @(Get-MetaProjectChats -Name 'Solarwinds' -Query 'alert' -Limit 3 -ErrorAction Stop)
+        Add-VerifyResult -Name 'chats Solarwinds alert' -Status 'PASS' -Detail ("{0} row(s)" -f $chats.Count)
+    }
+    catch {
+        Add-VerifyResult -Name 'chats Solarwinds alert' -Status 'WARN' -Detail $_.Exception.Message
+    }
+
+    # Soft: audit DriftOnly on fixture trio when present
+    try {
+        $presentNames = @(
+            Get-MetaRoutingTable -Name @('Solarwinds', 'TicketTracker', 'Trivia') |
+                Where-Object { $_.Present } |
+                ForEach-Object { $_.Name }
+        )
+        if ($presentNames.Count -eq 0) {
+            Add-VerifyResult -Name 'audit -DriftOnly fixtures' -Status 'WARN' -Detail 'no fixture projects Present'
+        }
+        else {
+            $audit = Invoke-MetaProjectContextAudit -Name $presentNames -DriftOnly -Quiet | Select-Object -Last 1
+            Add-VerifyResult -Name 'audit -DriftOnly fixtures' -Status 'PASS' -Detail ("driftSignals={0}" -f $audit.DriftCount)
+        }
+    }
+    catch {
+        Add-VerifyResult -Name 'audit -DriftOnly fixtures' -Status 'FAIL' -Detail $_.Exception.Message
+    }
+
+    $pass = @($results | Where-Object Status -eq 'PASS').Count
+    $warn = @($results | Where-Object Status -eq 'WARN').Count
+    $fail = @($results | Where-Object Status -eq 'FAIL').Count
+
+    return [PSCustomObject]@{
+        Results   = @($results)
+        PassCount = $pass
+        WarnCount = $warn
+        FailCount = $fail
+        Ok        = ($fail -eq 0)
+    }
+}
+
 Export-ModuleMember -Function @(
     'Get-MetaRoot',
     'Get-MetaConfig',
@@ -2305,6 +2698,9 @@ Export-ModuleMember -Function @(
     'Invoke-MetaProjectContextAudit',
     'Get-MetaProjectGitCounts',
     'Export-MetaCanvasSnapshot',
+    'Test-MetaCanvasSnapshotStale',
+    'Get-MetaQuickProjectHealthReports',
+    'Invoke-MetaVerify',
     'Export-MetaContextPack',
     'Get-MetaProjectChats',
     'Get-MetaCursorTranscriptRoots',
@@ -2312,3 +2708,4 @@ Export-ModuleMember -Function @(
     'Export-MetaProfile',
     'Import-MetaProfile'
 )
+
