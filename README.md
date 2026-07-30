@@ -4,9 +4,21 @@ Portfolio ops for multi-root project folders. Discover siblings, run commands ac
 
 Not a monorepo build system. Not another "meta" multi-repo clone framework.
 
-MIT licensed. Host on public GitHub (repo name **Metra**) or a private org fork.
+MIT licensed. Public repo: [jaxnoth/Metra](https://github.com/jaxnoth/Metra).
 
 **Requirements:** PowerShell. Cursor is optional for full persona auto-load - see [docs/Integrations.md](docs/Integrations.md).
+
+## 90-second understanding
+
+If you only read three things:
+
+1. **Metra manages multi-project workspaces** - siblings under one or more roots, operated with `meta.ps1`.
+2. **Routing picks one project before work starts** - personality never chooses the folder.
+3. **`ctx` creates agent handoff packs** - bounded maps you can open, paste, or `@` in any coding agent.
+
+## Why Metra?
+
+Most portfolio mistakes happen before coding starts: the wrong repository, the wrong root, the wrong ticket, the wrong assumptions. Metra routes first, gathers just enough context, then works. The chat persona is a constrained ops partner for that workflow - not the product itself. Longer operating philosophy: [docs/Customizing-Metra.md](docs/Customizing-Metra.md) (Origin).
 
 ## What Metra is / is not
 
@@ -39,7 +51,7 @@ MIT licensed. Host on public GitHub (repo name **Metra**) or a private org fork.
 Operator-facing brand kit (palette, motif, professional sink): [docs/Brand.md](docs/Brand.md). Coworker walkthrough (concepts + live, including a non-AI-friendly path): [docs/Demo-5min.md](docs/Demo-5min.md).
 
 ```powershell
-git clone https://github.com/<you>/Metra.git _meta
+git clone https://github.com/jaxnoth/Metra.git _meta
 cd _meta
 ```
 
@@ -47,7 +59,7 @@ cd _meta
 
 ```powershell
 cd C:\Projects   # or your work root
-git clone <this-repo-url> _meta
+git clone https://github.com/jaxnoth/Metra.git _meta
 cd _meta
 .\meta.ps1 import-profile -Path .\profiles\sample -Force
 # Edit meta.config.json roots / workspace.alwaysInclude
