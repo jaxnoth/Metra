@@ -6,8 +6,10 @@ Metra's **brain** is portable. **Cursor** is the first harness adapter.
 flowchart LR
   core[CLI registries ctx AGENTS]
   cursor[Cursor adapter mdc workspace chats]
+  comms[Communications agent portable brief]
   other[Future adapters deferred]
   core --> cursor
+  core --> comms
   core --> other
 ```
 
@@ -75,6 +77,18 @@ Default outputs (gitignored): `docs/context-pack.md` and `docs/context-pack.json
 
 Use the pack with **any** coding agent: `@` in Cursor, attach/paste in Claude Code / Codex / other chats. Prefer `ctx` over dumping `canvas-snapshot.json` or full registries.
 
+## Communications agent (cross-device)
+
+Portable Metra voice for phone Cloud Agents, desktop handoff, and harnesses that do not auto-load `.cursor/rules`:
+
+| Piece | Path / command |
+|-------|----------------|
+| Agent brief | `integrations/communications-agent/AGENT.md` |
+| Operator guide | [Cross-Device.md](Cross-Device.md) |
+| Pack with voice embedded | `.\metra.ps1 ctx -IncludeAgent` |
+
+Same product voice as the Cursor persona rule - adapter load path only. Do not invent a second Metra.
+
 ## Future adapters (deferred)
 
 Claude Code, Codex, Copilot, and similar tools are **not** generated in this pass. Pattern when adding one:
@@ -88,9 +102,11 @@ Claude Code, Codex, Copilot, and similar tools are **not** generated in this pas
 - [README.md](../README.md) - quick start and core vs Cursor
 - [Brand.md](Brand.md) - operator-facing palette and professional sink
 - [Customizing-Metra.md](Customizing-Metra.md) - persona, Origin, and overlays
+- [Cross-Device.md](Cross-Device.md) - phone / desktop / harness handoff
 - [Context-Routing.md](Context-Routing.md) - registries, audit, Metra Ops board
 - [Search-Echo.md](Search-Echo.md) - multi-root Grep echo and path scoping
 - [Decisions.md](Decisions.md) - append-only portfolio decisions
 - [Routing-Scenarios.md](Routing-Scenarios.md) - routing / persona smoke + `verify` fixtures
 - [Demo-5min.md](Demo-5min.md) - coworker walkthrough
 - [AGENTS.md](../AGENTS.md) - short agent entry
+- [integrations/communications-agent/](../integrations/communications-agent/) - portable communications agent

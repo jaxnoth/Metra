@@ -1,5 +1,39 @@
 # Generated from the original Metra.psm1 domain split. Edit this file directly.
 
+function Get-MetraCommunicationsAgentBrief {
+    <#
+    .SYNOPSIS
+        Load the portable Metra communications-agent brief when present.
+    #>
+    [CmdletBinding()]
+    param()
+
+    $agentPath = Join-Path (Get-MetraRoot) 'integrations\communications-agent\AGENT.md'
+    if (-not (Test-Path -LiteralPath $agentPath)) {
+        return $null
+    }
+
+    $raw = Get-Content -LiteralPath $agentPath -Raw -ErrorAction Stop
+    $lines = @(
+        ($raw -split "`r?`n") |
+            ForEach-Object { $_.TrimEnd() } |
+            Where-Object { $_ -and $_ -notmatch '^\s*#' -and $_ -notmatch '^\s*\|' }
+    )
+
+    $summary = @(
+        $lines |
+            Where-Object { $_ -match '^\*\*' -or $_ -match '^- ' -or $_ -match '^\d+\.' } |
+            Select-Object -First 8
+    )
+
+    return [PSCustomObject]@{
+        Path    = 'integrations/communications-agent/AGENT.md'
+        Exists  = $true
+        Summary = @($summary)
+        Body    = $raw.TrimEnd() + "`n"
+    }
+}
+
 function Export-MetraContextPack {
     <#
     .SYNOPSIS
@@ -7,6 +41,8 @@ function Export-MetraContextPack {
     .DESCRIPTION
         Token-safe map for humans and agents. Does not dump canvas-snapshot inventory.
         Prefer relative or env-style personal roots when echoing paths.
+        -IncludeAgent embeds the portable Metra communications-agent brief for
+        cross-device / non-Cursor harness handoff.
     #>
     [CmdletBinding()]
     param(
@@ -15,6 +51,7 @@ function Export-MetraContextPack {
         [ValidateSet('markdown', 'json')]
         [string]$Format = 'markdown',
         [int]$Limit = 25,
+        [switch]$IncludeAgent,
         [switch]$Quiet
     )
 
@@ -125,17 +162,26 @@ function Export-MetraContextPack {
             }
     )
 
+    $reminders = [System.Collections.Generic.List[string]]::new()
+    [void]$reminders.Add('Route to one primary project; load that project AGENTS.md before broad search.')
+    [void]$reminders.Add('Ticket/helpdesk: TicketTracker first when present, then one technical project.')
+    [void]$reminders.Add('Keep work and personal roots isolated unless the user names a cross-root handoff.')
+    [void]$reminders.Add('CLI: .\metra.ps1 routing | audit | chats | ctx')
+    if ($IncludeAgent) {
+        [void]$reminders.Add('Communications: use integrations/communications-agent/AGENT.md for Metra voice across devices; do not invent chat memory across sessions.')
+    }
+
+    $agentBrief = $null
+    if ($IncludeAgent) {
+        $agentBrief = Get-MetraCommunicationsAgentBrief
+    }
+
     $pack = [ordered]@{
         version     = 1
         product     = 'Metra'
         generatedUtc = [DateTime]::UtcNow.ToString('o')
         query       = if ($Query) { $Query } else { $null }
-        reminders   = @(
-            'Route to one primary project; load that project AGENTS.md before broad search.',
-            'Ticket/helpdesk: TicketTracker first when present, then one technical project.',
-            'Keep work and personal roots isolated unless the user names a cross-root handoff.',
-            'CLI: .\metra.ps1 routing | audit | chats | ctx'
-        )
+        reminders   = @($reminders)
         roots       = @($roots)
         projects    = @($projects | ForEach-Object {
             [ordered]@{
@@ -148,6 +194,21 @@ function Export-MetraContextPack {
             }
         })
         missingOptional = @($missingOptional)
+    }
+
+    if ($IncludeAgent) {
+        $pack['communicationsAgent'] = if ($agentBrief) {
+            [ordered]@{
+                path    = $agentBrief.Path
+                summary = @($agentBrief.Summary)
+            }
+        }
+        else {
+            [ordered]@{
+                path    = 'integrations/communications-agent/AGENT.md'
+                summary = @('Communications agent brief missing from checkout.')
+            }
+        }
     }
 
     $defaultMd = Join-Path $metraRoot 'docs\context-pack.md'
@@ -174,6 +235,26 @@ function Export-MetraContextPack {
     [void]$md.AppendLine('')
     foreach ($r in $pack.reminders) {
         [void]$md.AppendLine(("- {0}" -f $r))
+    }
+    if ($IncludeAgent) {
+        [void]$md.AppendLine('')
+        [void]$md.AppendLine('## Communications agent')
+        [void]$md.AppendLine('')
+        if ($agentBrief) {
+            [void]$md.AppendLine(('Portable Metra voice: `{0}`' -f $agentBrief.Path))
+            [void]$md.AppendLine('')
+            [void]$md.AppendLine('Cross-device continuity: prefer the open PR/branch, this pack, and ticket notes - do not invent prior chat memory.')
+            [void]$md.AppendLine('')
+            [void]$md.AppendLine('<details>')
+            [void]$md.AppendLine('<summary>Metra communications agent brief</summary>')
+            [void]$md.AppendLine('')
+            [void]$md.AppendLine($agentBrief.Body.TrimEnd())
+            [void]$md.AppendLine('')
+            [void]$md.AppendLine('</details>')
+        }
+        else {
+            [void]$md.AppendLine('Communications agent brief missing. Expected `integrations/communications-agent/AGENT.md`.')
+        }
     }
     [void]$md.AppendLine('')
     [void]$md.AppendLine('## Roots')
@@ -235,10 +316,12 @@ function Export-MetraContextPack {
     }
 
     return [PSCustomObject]@{
-        Path         = if ($stdoutOnly) { '-' } else { $outPath }
-        Format       = $Format
-        ProjectCount = $projects.Count
-        Query        = $Query
+        Path           = if ($stdoutOnly) { '-' } else { $outPath }
+        Format         = $Format
+        ProjectCount   = $projects.Count
+        Query          = $Query
+        IncludeAgent   = [bool]$IncludeAgent
+        AgentPath      = if ($agentBrief) { $agentBrief.Path } else { $null }
     }
 }
 

@@ -92,6 +92,7 @@ Optional entries may be absent: follow `whenMissing` advice instead of inventing
 .\metra.ps1 routing -MissingOnly
 .\metra.ps1 ctx
 .\metra.ps1 ctx -Query "ticket disk"
+.\metra.ps1 ctx -IncludeAgent
 .\metra.ps1 audit
 .\metra.ps1 audit -Name Solarwinds,TicketTracker,Trivia
 .\metra.ps1 audit -DriftOnly

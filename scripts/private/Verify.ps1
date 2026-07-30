@@ -49,7 +49,8 @@ function Invoke-MetraVerify {
         @{ Name = 'projects.json'; Path = (Join-Path $metraRoot 'projects.json') },
         @{ Name = 'profiles/sample/metra-profile.json'; Path = (Join-Path $metraRoot 'profiles\sample\metra-profile.json') },
         @{ Name = 'profiles/addons/humor-desk/metra-profile.json'; Path = (Join-Path $metraRoot 'profiles\addons\humor-desk\metra-profile.json') },
-        @{ Name = 'profiles/addons/teaching-gentle/metra-profile.json'; Path = (Join-Path $metraRoot 'profiles\addons\teaching-gentle\metra-profile.json') }
+        @{ Name = 'profiles/addons/teaching-gentle/metra-profile.json'; Path = (Join-Path $metraRoot 'profiles\addons\teaching-gentle\metra-profile.json') },
+        @{ Name = 'integrations/communications-agent/AGENT.md'; Path = (Join-Path $metraRoot 'integrations\communications-agent\AGENT.md') }
     )
     foreach ($item in $requiredPaths) {
         if (Test-Path -LiteralPath $item.Path) {
