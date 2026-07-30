@@ -41,6 +41,7 @@ docs/context-pack.json
 !.vscode/extensions.json
 !.vscode/settings.json
 *.code-workspace
+!Metra.code-workspace
 
 # PowerShell
 *.ps1xml.bak

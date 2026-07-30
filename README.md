@@ -56,6 +56,8 @@ Operator-facing brand kit (palette, motif, professional sink): [docs/Brand.md](d
 cd C:\Projects   # or your work root
 git clone https://github.com/jaxnoth/Metra.git _metra
 cd _metra
+# Once per machine (Windows): allow local scripts for your user
+Set-ExecutionPolicy -Scope CurrentUser -ExecutionPolicy RemoteSigned
 .\metra.ps1 import-profile -Path .\profiles\sample -Force
 # Edit metra.config.json roots / workspace.alwaysInclude
 # Edit .cursor\rules\metra-persona.local.mdc operator display name (replace Alex) if using Cursor
@@ -73,11 +75,13 @@ Preview a pack without writing:
 
 ### Optional: open in Cursor
 
+The repo ships a starter `Metra.code-workspace` (Metra folder only). Open that after clone. To pull in sibling projects under your roots (after `import-profile` / config edits):
+
 ```powershell
 .\metra.ps1 workspace
 ```
 
-Open `Metra.code-workspace` (or `Meta.code-workspace` if your live config still uses that name). Workspace generation helps VS Code/Cursor multi-root; it is **not** required for CLI, routing, or `ctx`.
+That regenerates `Metra.code-workspace` locally (multi-root). Generation helps VS Code/Cursor multi-root; it is **not** required for CLI, routing, or `ctx`.
 
 ## Teaching Mode
 
@@ -102,7 +106,8 @@ Writes a bounded map of roots and present projects. Use it from Cursor, Claude C
 | `metra-persona.mdc` (full base) | `.cursor/rules/metra-persona.local.mdc` |
 | `profiles/addons/` (opt-in Persona Add-ons) | `.cursor/rules/metra-humor.local.mdc`, `metra-teaching-gentle.local.mdc` (after import) |
 | `*.example.json` / `*.local.example.mdc` | `docs/canvas-snapshot.json`, `docs/context-pack.*` |
-| `profiles/sample/` (ready-to-import pack) | regenerated workspaces |
+| `profiles/sample/` (ready-to-import pack) | regenerated multi-root workspace (after `.\metra.ps1 workspace`) |
+| `Metra.code-workspace` (Metra-only starter) | |
 | `.cursor/hooks/` (sessionStart Ops refresh) | |
 | MIT LICENSE, public docs (Brand, Decisions, Integrations, ...) | |
 
