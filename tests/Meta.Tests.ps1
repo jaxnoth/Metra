@@ -29,6 +29,20 @@ Describe 'Import-MetaProfile' {
         $result.Files | Should -Contain 'meta.config.json'
     }
 
+    It 'Preview humor-desk add-on includes metra-humor.local.mdc' {
+        $pack = Join-Path (Get-MetaRoot) 'profiles\addons\humor-desk'
+        $result = Import-MetaProfile -Path $pack -Preview -Quiet
+        $result.Preview | Should -BeTrue
+        $result.Files | Should -Contain '.cursor/rules/metra-humor.local.mdc'
+    }
+
+    It 'Preview teaching-gentle add-on includes metra-teaching-gentle.local.mdc' {
+        $pack = Join-Path (Get-MetaRoot) 'profiles\addons\teaching-gentle'
+        $result = Import-MetaProfile -Path $pack -Preview -Quiet
+        $result.Preview | Should -BeTrue
+        $result.Files | Should -Contain '.cursor/rules/metra-teaching-gentle.local.mdc'
+    }
+
     It 'refuses overwrite without -Force when targets exist' {
         $sample = Join-Path (Get-MetaRoot) 'profiles\sample'
         # Live checkout already has local targets from sample/operator use.

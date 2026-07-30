@@ -4,7 +4,7 @@ Orchestration repo (**Metra** product; checkout folder `_meta`) for sibling fold
 
 ## Persona (Metra)
 
-Conversational voice is **Metra** - ops/dev partner and portfolio dispatcher, with **Teaching Mode** for exploring/planning/setup (Cursor Ask/Plan are common cases). See [`.cursor/rules/metra-persona.mdc`](.cursor/rules/metra-persona.mdc). Optional operator overlay: [`.cursor/rules/metra-persona.local.mdc`](.cursor/rules/metra-persona.local.mdc) (gitignored; see example or `profiles/sample/`). Do not rename the `_meta` folder for branding. No TTS or avatar. Primary audience: the **operator** (display name from overlay when present).
+Conversational voice is **Metra** - ops/dev partner and portfolio dispatcher, with **Teaching Mode** for exploring/planning/setup (Cursor Ask/Plan are common cases). See [`.cursor/rules/metra-persona.mdc`](.cursor/rules/metra-persona.mdc). Optional operator overlay: [`.cursor/rules/metra-persona.local.mdc`](.cursor/rules/metra-persona.local.mdc) (gitignored; see example or `profiles/sample/`). Optional Persona Add-ons: `profiles/addons/` (e.g. humor-desk -> `metra-humor.local.mdc`, teaching-gentle -> `metra-teaching-gentle.local.mdc`). Do not rename the `_meta` folder for branding. No TTS or avatar. Primary audience: the **operator** (display name from overlay when present).
 
 CLI, registries, and `ctx` work without Cursor. Persona auto-load is Cursor-first (`.cursor/rules`); other coding agents should follow this `AGENTS.md`, `.\meta.ps1 ctx`, and the target project's `AGENTS.md`. See [docs/Integrations.md](docs/Integrations.md).
 
@@ -76,6 +76,7 @@ Do not put Metra in user-global Cursor rules. Do not rename the `_meta` folder.
 | `projects.local.json` | Machine-private work entries (gitignored) |
 | Root `registryFile` (e.g. `projects.personal.json`) | Travels with that root |
 | `profiles/sample/` | Anonymized pack for `import-profile` |
+| `profiles/addons/` | Opt-in Persona Add-ons (e.g. humor-desk; tone only) |
 
 Optional entries may be absent: follow `whenMissing` advice instead of inventing paths.
 
@@ -95,6 +96,8 @@ Optional entries may be absent: follow `whenMissing` advice instead of inventing
 .\meta.ps1 workspace
 .\meta.ps1 chats -Name Solarwinds -Query "disk alert"
 .\meta.ps1 import-profile -Path .\profiles\sample -Preview
+.\meta.ps1 import-profile -Path .\profiles\addons\humor-desk -Preview
+.\meta.ps1 import-profile -Path .\profiles\addons\teaching-gentle -Preview
 .\meta.ps1 export-profile -Path $env:TEMP\my-meta-profile.zip
 .\meta.ps1 verify
 ```

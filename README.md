@@ -100,6 +100,7 @@ Writes a bounded map of roots and present projects. Use it from Cursor, Claude C
 | CLI, module, templates, shared/ | `meta.config.json` |
 | `projects.json` (example stubs) | `projects.local.json` |
 | `metra-persona.mdc` (full base) | `.cursor/rules/metra-persona.local.mdc` |
+| `profiles/addons/` (opt-in Persona Add-ons) | `.cursor/rules/metra-humor.local.mdc`, `metra-teaching-gentle.local.mdc` (after import) |
 | `*.example.json` / `*.local.example.mdc` | `docs/canvas-snapshot.json`, `docs/context-pack.*` |
 | `profiles/sample/` (ready-to-import pack) | regenerated workspaces |
 | `.cursor/hooks/` (sessionStart Ops refresh) | |
@@ -123,7 +124,7 @@ Personal-root `registryFile` is **not** auto-included - copy it with that root. 
 |---------|-----------|
 | CLI commands (`list`, `routing`, `ctx`, profile import/export, ...) | Intended stable |
 | Persona rules (`.cursor/rules/metra-persona.mdc`) | Expected to evolve |
-| Sample overlays / `profiles/sample/` | Examples, not contracts |
+| Sample overlays / `profiles/sample/` / `profiles/addons/` | Examples, not contracts |
 
 ## Commands
 
@@ -142,7 +143,7 @@ Personal-root `registryFile` is **not** auto-included - copy it with that root. 
 | `audit` | Context/token audit + optional `-DriftOnly` vs registries |
 | `snapshot` | Write `docs/canvas-snapshot.json` and refresh / install Metra Ops canvas embed (`-Quick` skips deep audit/git) |
 | `chats` | Search local Cursor agent transcripts (bounded; Cursor-specific) |
-| `export-profile` | Pack local config / local registry / Metra overlay |
+| `export-profile` | Pack local config / local registry / Metra overlay (+ humor add-on if present) |
 | `import-profile` | Restore a pack (`-Preview` or `-Force`) |
 | `verify` | Routing-Scenarios fixture smoke (`PASS`/`WARN`/`FAIL`; exit 1 on FAIL) |
 
@@ -169,6 +170,7 @@ _meta/
   projects.json              shared agent routing registry (example stubs OK)
   projects.local.example.json
   profiles/sample/           anonymized operator pack
+  profiles/addons/           optional Persona Add-ons (e.g. humor-desk)
   AGENTS.md                  agent entry + Metra examples
   LICENSE                    MIT
   SECURITY.md
@@ -177,7 +179,7 @@ _meta/
   integrations/cursor/       Metra Ops canvas template
   templates/basic/           default new-project template
   shared/                    files to push into other projects via apply
-  .cursor/rules/             Cursor adapter: routing + Metra base (+ local overlay gitignored)
+  .cursor/rules/             Cursor adapter: routing + Metra base (+ local overlay / add-ons gitignored)
   .cursor/hooks/             sessionStart stale-gated snapshot -Quick (no workspace rewrite)
 ```
 

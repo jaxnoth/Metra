@@ -7,6 +7,8 @@ Keep these local (gitignored). They often contain machine paths, private routing
 - `meta.config.json` (use `meta.config.example.json` or `profiles/sample/`)
 - `projects.local.json` (use `projects.local.example.json`)
 - `.cursor/rules/metra-persona.local.mdc` (use the example or sample pack)
+- `.cursor/rules/metra-humor.local.mdc` (optional; use the example or `profiles/addons/humor-desk`)
+- `.cursor/rules/metra-teaching-gentle.local.mdc` (optional; use the example or `profiles/addons/teaching-gentle`)
 - `docs/canvas-snapshot.json` (regenerate with `.\meta.ps1 snapshot`)
 - `docs/context-pack.md` / `docs/context-pack.json` (regenerate with `.\meta.ps1 ctx`)
 
