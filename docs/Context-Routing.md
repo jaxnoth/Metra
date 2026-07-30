@@ -18,12 +18,13 @@ Keep agent response time and token use low by routing to one project, then loadi
 | `.cursor/rules/metra-persona.local.mdc` | Operator overlay (gitignored) |
 | Project `AGENTS.md` | Local entry playbook |
 | Project `.cursorignore` | Hide generated/cache/binary noise |
+| `docs/Decisions.md` | Append-only portfolio-wide Metra policy (prefer before transcript dig) |
 
 ## Multi-root isolation
 
 Configured roots (see `meta.config.json` `roots`) stay separate:
 
-- Work asks stay under the work root (`C:\Projects`).
+- Work asks stay under the primary work root (example: `C:\Projects`).
 - Personal asks stay under the personal root when present.
 - Do not open another root unless the user names that project or asks to move material between them.
 - `related` lists must stay same-root. Cross-root ideas (for example Misc scratch sheets into Trivia, or a personal bible game borrowing a work printable) are chat opt-in only.
@@ -41,8 +42,9 @@ Configured roots (see `meta.config.json` `roots`) stay separate:
 .\meta.ps1 routing -MissingOnly
 .\meta.ps1 ctx
 .\meta.ps1 ctx -Query "ticket disk"
+.\meta.ps1 verify
 ```
-The audit is a **re-runnable probe**. Do not rewrite it for routine project changes. Re-run it; update curated files when it reports drift. Cloud/personal roots use light audit (no deep recursive scan).
+The audit is a **re-runnable probe**. Do not rewrite it for routine project changes. Re-run it; update curated files when it reports drift. Cloud/personal roots use light audit (no deep recursive scan). Use `verify` for Routing-Scenarios fixture smoke (PASS/WARN/FAIL).
 
 ## When to re-audit
 
@@ -114,5 +116,14 @@ Canonical durable memory remains:
 - TicketTracker `note` (prefer `-Tags chat` and cite `[short title](chat-uuid)`)
 - `solutions/` write-ups for recurring patterns
 - `AI Recommendation:` on the ticket description when analysis supports it
+- For Metra portfolio policy (persona, brand, hooks): [Decisions.md](Decisions.md)
 
 Do not dump full JSONL transcripts into agent context unless the user opens a specific chat.
+
+## Related
+
+- [Routing-Scenarios.md](Routing-Scenarios.md) - routing / persona smoke + `verify`
+- [Integrations.md](Integrations.md) - Cursor adapter, sessionStart, ctx handoff
+- [Search-Echo.md](Search-Echo.md) - multi-root Grep echo
+- [Decisions.md](Decisions.md) - append-only Metra policy
+- [Brand.md](Brand.md) - Ops board brand kit

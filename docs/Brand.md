@@ -134,6 +134,7 @@ Pass = both columns feel like one product at different times of day. Fail = dark
 ## Related
 
 - [Demo-5min.md](Demo-5min.md) - coworker walkthrough (concepts for low AI experience + live demo)
-- [Customizing-Metra.md](Customizing-Metra.md) - persona and overlays
+- [Customizing-Metra.md](Customizing-Metra.md) - persona, Origin, and overlays
+- [Decisions.md](Decisions.md) - append-only portfolio decisions (incl. brand bounds)
 - [Integrations.md](Integrations.md) - core vs Cursor
 - [Context-Routing.md](Context-Routing.md) - Ops board refresh

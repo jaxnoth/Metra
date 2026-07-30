@@ -44,7 +44,7 @@ Base also ships Humor Policy, time-aware openings, decision tree, channels, and 
 .\meta.ps1 ctx
 ```
 
-**Moving yourself between machines (e.g. laptop verify):**
+**Moving yourself between machines:**
 
 ```powershell
 .\meta.ps1 export-profile -Path $env:TEMP\my-meta-profile.zip
@@ -94,7 +94,9 @@ Profile packs do **not** include a personal root's `registryFile` (for example `
 - [Brand.md](Brand.md) - operator-facing palette, motif, professional sink
 - [Decisions.md](Decisions.md) - append-only portfolio decisions
 - [Integrations.md](Integrations.md) - core vs Cursor; ctx handoff
-- [Routing-Scenarios.md](Routing-Scenarios.md) - persona smoke table
+- [Routing-Scenarios.md](Routing-Scenarios.md) - persona smoke + `.\meta.ps1 verify`
+- [Demo-5min.md](Demo-5min.md) - coworker walkthrough
+- [Search-Echo.md](Search-Echo.md) - multi-root Grep echo
 - [SECURITY.md](../SECURITY.md) - what not to commit
 - [Context-Routing.md](Context-Routing.md) - registry and audit cadence
 - [README.md](../README.md) - public quick start, naming, versioning

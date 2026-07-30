@@ -14,7 +14,7 @@ flowchart LR
 ## Runtime requirement
 
 - **PowerShell** - required for `meta.ps1` / `Meta.psm1` today.
-- **Cursor** - optional. Needed for automatic persona load (`.cursor/rules`), Ask/Plan Teaching Mode hooks, and `chats` transcript search.
+- **Cursor** - optional. Needed for automatic persona load (`.cursor/rules`), Ask/Plan Teaching Mode, `chats` transcript search, and `sessionStart` Ops refresh (`.cursor/hooks`).
 
 ## What works without Cursor
 
@@ -87,9 +87,10 @@ Claude Code, Codex, Copilot, and similar tools are **not** generated in this pas
 
 - [README.md](../README.md) - quick start and core vs Cursor
 - [Brand.md](Brand.md) - operator-facing palette and professional sink
-- [Customizing-Metra.md](Customizing-Metra.md) - persona and overlays
+- [Customizing-Metra.md](Customizing-Metra.md) - persona, Origin, and overlays
 - [Context-Routing.md](Context-Routing.md) - registries, audit, Metra Ops board
 - [Search-Echo.md](Search-Echo.md) - multi-root Grep echo and path scoping
 - [Decisions.md](Decisions.md) - append-only portfolio decisions
 - [Routing-Scenarios.md](Routing-Scenarios.md) - routing / persona smoke + `verify` fixtures
+- [Demo-5min.md](Demo-5min.md) - coworker walkthrough
 - [AGENTS.md](../AGENTS.md) - short agent entry
