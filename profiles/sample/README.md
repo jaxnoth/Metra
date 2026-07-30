@@ -1,4 +1,4 @@
-# Sample operator profile pack
+# Sample Metra operator profile pack
 
 Anonymized starter pack for newcomers. Same layout as `export-profile` / `import-profile`.
 
@@ -7,7 +7,7 @@ Anonymized starter pack for newcomers. Same layout as `export-profile` / `import
 | File | Role |
 |------|------|
 | `meta-profile.json` | Manifest (id, file list, notes) |
-| `meta.config.json` | Starter roots config (relative work root, optional personal root) |
+| `meta.config.json` | Starter roots config (relative work root, optional personal root); workspace outputs `Metra.code-workspace` |
 | `projects.local.json` | Example private registry entry (`ExampleProject`) |
 | `.cursor/rules/metra-persona.local.mdc` | Operator overlay (display name placeholder: Alex) |
 
@@ -25,12 +25,13 @@ From the `_meta` repo root:
 # Edit .cursor\rules\metra-persona.local.mdc operator display name
 .\meta.ps1 workspace
 .\meta.ps1 audit
+.\meta.ps1 snapshot
 ```
 
-Preview only (no writes):
+Open `Metra.code-workspace` (orchestration folder labeled **Metra**). Preview only (no writes):
 
 ```powershell
 .\meta.ps1 import-profile -Path .\profiles\sample -Preview
 ```
 
-See [docs/Customizing-Metra.md](../../docs/Customizing-Metra.md) and [SECURITY.md](../../SECURITY.md).
+See [docs/Customizing-Metra.md](../../docs/Customizing-Metra.md), [docs/Brand.md](../../docs/Brand.md), and [SECURITY.md](../../SECURITY.md).

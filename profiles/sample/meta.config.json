@@ -38,12 +38,12 @@
     "scanDepth": 2,
     "outputs": [
       {
-        "path": "Meta.code-workspace",
+        "path": "Metra.code-workspace",
         "metaFolderPath": ".",
         "projectPathPrefix": "../"
       },
       {
-        "path": "../Meta.code-workspace",
+        "path": "../Metra.code-workspace",
         "metaFolderPath": "_meta",
         "projectPathPrefix": ""
       }
@@ -66,7 +66,7 @@
         "**/TicketTracker/data/**": true,
         "**/tests/results/**": true
       },
-      "terminal.integrated.cwd": "${workspaceFolder:meta}"
+      "terminal.integrated.cwd": "${workspaceFolder:Metra}"
     },
     "extensions": {
       "recommendations": [

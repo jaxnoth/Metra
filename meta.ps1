@@ -1,6 +1,6 @@
 <#
 .SYNOPSIS
-    Meta CLI for managing sibling projects under configured roots.
+    Metra CLI for managing sibling projects under configured roots.
 
 .EXAMPLE
     .\meta.ps1 list
@@ -16,6 +16,7 @@
     .\meta.ps1 audit -Name Solarwinds,TicketTracker
     .\meta.ps1 audit -DriftOnly
     .\meta.ps1 snapshot
+    .\meta.ps1 snapshot -Quick
     .\meta.ps1 chats -Name Solarwinds -Query "disk alert"
     .\meta.ps1 chats -Name TicketTracker,Solarwinds -Ticket 12345
     .\meta.ps1 roots
@@ -25,6 +26,7 @@
     .\meta.ps1 export-profile -Path $env:TEMP\my-meta-profile.zip
     .\meta.ps1 ctx
     .\meta.ps1 ctx -Query "ticket disk"
+    .\meta.ps1 verify
 #>
 [CmdletBinding()]
 param(
@@ -32,7 +34,7 @@ param(
     [ValidateSet(
         'list', 'status', 'pull', 'fetch', 'run', 'new', 'apply', 'workspace',
         'audit', 'snapshot', 'chats', 'roots', 'routing',
-        'export-profile', 'import-profile', 'ctx', 'help'
+        'export-profile', 'import-profile', 'ctx', 'verify', 'help'
     )]
     [string]$Command = 'help',
 
@@ -62,7 +64,8 @@ param(
     [switch]$DriftOnly,
     [switch]$IncludeMeta,
     [switch]$SharedOnly,
-    [switch]$MissingOnly
+    [switch]$MissingOnly,
+    [switch]$Quick
 )
 
 $ErrorActionPreference = 'Stop'
@@ -82,13 +85,14 @@ Usage:
   .\meta.ps1 apply <SourceFile> [-RelativePath path\in\project] [-Filter '*'] [-Root ...] [-Force]
   .\meta.ps1 workspace [-Months 6] [-ScanDepth 2] [-Preview]
   .\meta.ps1 audit [-Filter '*'] [-Name ProjA,ProjB] [-Root ...] [-DriftOnly] [-ScanDepth 4]
-  .\meta.ps1 snapshot [-ScanDepth 2]
+  .\meta.ps1 snapshot [-ScanDepth 2] [-Quick]
   .\meta.ps1 chats [-Name ProjA,ProjB] [-Query 'terms'] [-Ticket 12345] [-Days 90] [-Limit 10] [-IncludeMeta]
   .\meta.ps1 roots
   .\meta.ps1 routing [-Name ProjA] [-SharedOnly] [-MissingOnly]
   .\meta.ps1 export-profile -Path <dir-or-zip>
   .\meta.ps1 import-profile -Path <dir-or-zip> [-Preview] [-Force]
   .\meta.ps1 ctx [-Query 'terms'] [-Path <file|->] [-Format markdown|json] [-Limit 25]
+  .\meta.ps1 verify
 
 Roots:
   Projects can live in more than one folder (see roots in meta.config.json).
@@ -127,6 +131,7 @@ Examples:
   .\meta.ps1 ctx
   .\meta.ps1 ctx -Query 'ticket disk'
   .\meta.ps1 ctx -Format json -Path `$env:TEMP\metra-ctx.json
+  .\meta.ps1 verify
 "@ | Write-Host
 }
 
@@ -240,7 +245,9 @@ switch ($Command) {
     }
 
     'snapshot' {
-        $params = @{}
+        $params = @{
+            Quick = [bool]$Quick
+        }
         if ($ScanDepth -ge 0) { $params.ScanDepth = $ScanDepth }
         Export-MetaCanvasSnapshot @params | Format-List
     }
@@ -308,5 +315,16 @@ switch ($Command) {
             $params.Limit = $Limit
         }
         Export-MetaContextPack @params | Format-List
+    }
+
+    'verify' {
+        $report = Invoke-MetaVerify
+        $report.Results |
+            Select-Object Status, Name, Detail |
+            Format-Table -AutoSize
+        Write-Host ("PASS={0} WARN={1} FAIL={2}" -f $report.PassCount, $report.WarnCount, $report.FailCount)
+        if (-not $report.Ok) {
+            exit 1
+        }
     }
 }

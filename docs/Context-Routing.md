@@ -67,17 +67,26 @@ The audit is a **re-runnable probe**. Do not rewrite it for routine project chan
 
 Usually re-run; rarely rewrite. Treat drift as a manual review signal rather than auto-regenerating guidance.
 
-## Canvas Ops board
+## Canvas Ops board (Metra Ops)
 
-Open the Cursor Canvas `meta-ops-board` beside chat for visual health + routing (Ops tab = health + recommender; Triage tab = session checklist). Typical local path: `%USERPROFILE%\.cursor\projects\c-Projects-meta\canvases\meta-ops-board.canvas.tsx` (folder name may vary by machine).
+Open the Cursor Canvas **Metra Ops** (`metra-ops-board`) beside chat for visual health + routing (Ops tab = health + recommender; Triage tab = session checklist).
+
+Typical local path (slug is path-derived from the checkout folder):
+
+`%USERPROFILE%\.cursor\projects\<cursor-slug>\canvases\metra-ops-board.canvas.tsx`
+
+For a `_meta` checkout under `C:\Projects`, the slug is usually `c-Projects-meta`.
 
 Refresh data after audits or layout changes:
 
 ```powershell
-.\meta.ps1 snapshot
+.\meta.ps1 snapshot          # full audit + git
+.\meta.ps1 snapshot -Quick   # hook-friendly; registry + light health only
 ```
 
-This writes [`canvas-snapshot.json`](canvas-snapshot.json) and updates the embedded `SNAPSHOT` block between `// <meta-ops-snapshot>` markers in the canvas. The canvas cannot read disk at runtime - always re-run `snapshot` (or ask the agent to) when the board looks stale.
+Agent chat `sessionStart` can run `-Quick` when the snapshot is stale - see [Integrations.md](Integrations.md). Do not auto-run `workspace` from that hook.
+
+Brand kit for the faceplate: [Brand.md](Brand.md).
 
 Snapshot health includes:
 - Agent routing coverage (`AGENTS.md`, `.cursorignore`, drift findings)

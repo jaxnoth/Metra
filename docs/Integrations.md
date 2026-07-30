@@ -26,6 +26,8 @@ flowchart LR
 | Profile move between machines | `export-profile` / `import-profile` |
 | Shared + local registries | `projects.json`, `projects.local.json`, root `registryFile` |
 | Agent entry docs | this repo's `AGENTS.md` + each project's `AGENTS.md` |
+| Durable Metra decisions | [Decisions.md](Decisions.md) (append-only; prefer before transcript dig) |
+| Routing smoke | `.\meta.ps1 verify` |
 
 ## What Cursor adds
 
@@ -33,8 +35,34 @@ flowchart LR
 |------------|--------|
 | Always-on Metra persona + overlay | `.cursor/rules/metra-persona.mdc` (+ local overlay) |
 | Teaching Mode in Ask/Plan | Same rule; intent-based triggers also apply elsewhere |
-| Multi-root workspace file | `.\meta.ps1 workspace` (optional) |
+| Multi-root workspace file | `.\meta.ps1 workspace` -> `Metra.code-workspace` (optional; orchestration folder labeled **Metra**) |
+| Metra Ops board | `.\meta.ps1 snapshot` installs/refreshes `metra-ops-board.canvas.tsx` from `integrations/cursor/` |
 | Prior chat search | `.\meta.ps1 chats` (reads Cursor agent transcripts) |
+| Stale Ops refresh on chat start | `.cursor/hooks.json` `sessionStart` -> `.cursor/hooks/session-snapshot.ps1` |
+
+## sessionStart vs IDE load
+
+Cursor **project hooks** run on **agent chat session start**, not when you open the IDE window or reload the workspace.
+
+| Action | Auto? |
+|--------|-------|
+| Refresh Ops board when snapshot is stale (`snapshot -Quick`) | Yes - `sessionStart` hook (fail-open; never blocks chat) |
+| Rebuild `Metra.code-workspace` | **No** - run `.\meta.ps1 workspace` manually when folders change (auto-rewrite can reload Cursor mid-session) |
+
+Stale means: snapshot older than 4 hours, **or** `projects.json` / `projects.local.json` / `meta.config.json` / root `registryFile` newer than `docs/canvas-snapshot.json`.
+
+### Quick vs full snapshot
+
+```powershell
+.\meta.ps1 snapshot -Quick   # registry + present/missing + AGENTS/.cursorignore/README; no deep scan, no git counts
+.\meta.ps1 snapshot          # full quiet audit + git counts (deliberate refresh)
+```
+
+Plain English is preferred over slash commands for this operator. Ask to refresh the Ops board when needed; the sessionStart hook covers the common stale case.
+
+### Multi-root search echo
+
+After routing, scope Grep/Glob to one absolute project path. See [Search-Echo.md](Search-Echo.md).
 
 ## Universal handoff with `ctx`
 
@@ -43,7 +71,7 @@ flowchart LR
 .\meta.ps1 ctx -Query "your topic"
 ```
 
-Default outputs (gitignored): `docs/context-pack.md` and `docs/context-pack.json`.
+Default outputs (gitignored): `docs/context-pack.md` and `docs/context-pack.json` (title: **Metra context pack**).
 
 Use the pack with **any** coding agent: `@` in Cursor, attach/paste in Claude Code / Codex / other chats. Prefer `ctx` over dumping `canvas-snapshot.json` or full registries.
 
@@ -58,6 +86,10 @@ Claude Code, Codex, Copilot, and similar tools are **not** generated in this pas
 ## Related docs
 
 - [README.md](../README.md) - quick start and core vs Cursor
+- [Brand.md](Brand.md) - operator-facing palette and professional sink
 - [Customizing-Metra.md](Customizing-Metra.md) - persona and overlays
-- [Context-Routing.md](Context-Routing.md) - registries and audit
+- [Context-Routing.md](Context-Routing.md) - registries, audit, Metra Ops board
+- [Search-Echo.md](Search-Echo.md) - multi-root Grep echo and path scoping
+- [Decisions.md](Decisions.md) - append-only portfolio decisions
+- [Routing-Scenarios.md](Routing-Scenarios.md) - routing / persona smoke + `verify` fixtures
 - [AGENTS.md](../AGENTS.md) - short agent entry
