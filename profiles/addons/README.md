@@ -29,15 +29,15 @@ If a dial needs to change those behaviors, discuss it as a **base** rule change 
 Also:
 
 - Opt-in only. A clone without the local rule keeps quiet public Metra.
-- Import does not rewrite `meta.config.json` or the operator overlay unless the pack intentionally lists those files.
+- Import does not rewrite `metra.config.json` or the operator overlay unless the pack intentionally lists those files.
 - Personality never chooses the project.
 
 ## Install
 
 ```powershell
-.\meta.ps1 import-profile -Path .\profiles\addons\humor-desk -Preview
-.\meta.ps1 import-profile -Path .\profiles\addons\humor-desk -Force
-.\meta.ps1 import-profile -Path .\profiles\addons\teaching-gentle -Force
+.\metra.ps1 import-profile -Path .\profiles\addons\humor-desk -Preview
+.\metra.ps1 import-profile -Path .\profiles\addons\humor-desk -Force
+.\metra.ps1 import-profile -Path .\profiles\addons\teaching-gentle -Force
 ```
 
 That writes the matching `.cursor/rules/metra-*.local.mdc` (gitignored). Delete the file to disable. (`list-addons` / `disable-addon` are deferred - not v1.)

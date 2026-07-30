@@ -13,21 +13,21 @@ flowchart LR
 
 ## Runtime requirement
 
-- **PowerShell** - required for `meta.ps1` / `Meta.psm1` today.
+- **PowerShell** - required for `metra.ps1` / `Metra.psm1` today.
 - **Cursor** - optional. Needed for automatic persona load (`.cursor/rules`), Ask/Plan Teaching Mode, `chats` transcript search, and `sessionStart` Ops refresh (`.cursor/hooks`).
 
 ## What works without Cursor
 
 | Capability | How |
 |------------|-----|
-| Discover / list / status / pull / run | `.\meta.ps1 ...` |
-| Routing table | `.\meta.ps1 routing` |
-| Context pack | `.\meta.ps1 ctx` then open, paste, or attach the file |
+| Discover / list / status / pull / run | `.\metra.ps1 ...` |
+| Routing table | `.\metra.ps1 routing` |
+| Context pack | `.\metra.ps1 ctx` then open, paste, or attach the file |
 | Profile move between machines | `export-profile` / `import-profile` |
 | Shared + local registries | `projects.json`, `projects.local.json`, root `registryFile` |
 | Agent entry docs | this repo's `AGENTS.md` + each project's `AGENTS.md` |
 | Durable Metra decisions | [Decisions.md](Decisions.md) (append-only; prefer before transcript dig) |
-| Routing smoke | `.\meta.ps1 verify` |
+| Routing smoke | `.\metra.ps1 verify` |
 
 ## What Cursor adds
 
@@ -35,9 +35,9 @@ flowchart LR
 |------------|--------|
 | Always-on Metra persona + overlay | `.cursor/rules/metra-persona.mdc` (+ local overlay) |
 | Teaching Mode in Ask/Plan | Same rule; intent-based triggers also apply elsewhere |
-| Multi-root workspace file | `.\meta.ps1 workspace` -> `Metra.code-workspace` (optional; orchestration folder labeled **Metra**) |
-| Metra Ops board | `.\meta.ps1 snapshot` installs/refreshes `metra-ops-board.canvas.tsx` from `integrations/cursor/` |
-| Prior chat search | `.\meta.ps1 chats` (reads Cursor agent transcripts) |
+| Multi-root workspace file | `.\metra.ps1 workspace` -> `Metra.code-workspace` (optional; orchestration folder labeled **Metra**) |
+| Metra Ops board | `.\metra.ps1 snapshot` installs/refreshes `metra-ops-board.canvas.tsx` from `integrations/cursor/` |
+| Prior chat search | `.\metra.ps1 chats` (reads Cursor agent transcripts) |
 | Stale Ops refresh on chat start | `.cursor/hooks.json` `sessionStart` -> `.cursor/hooks/session-snapshot.ps1` |
 
 ## sessionStart vs IDE load
@@ -47,15 +47,15 @@ Cursor **project hooks** run on **agent chat session start**, not when you open 
 | Action | Auto? |
 |--------|-------|
 | Refresh Ops board when snapshot is stale (`snapshot -Quick`) | Yes - `sessionStart` hook (fail-open; never blocks chat) |
-| Rebuild `Metra.code-workspace` | **No** - run `.\meta.ps1 workspace` manually when folders change (auto-rewrite can reload Cursor mid-session) |
+| Rebuild `Metra.code-workspace` | **No** - run `.\metra.ps1 workspace` manually when folders change (auto-rewrite can reload Cursor mid-session) |
 
-Stale means: snapshot older than 4 hours, **or** `projects.json` / `projects.local.json` / `meta.config.json` / root `registryFile` newer than `docs/canvas-snapshot.json`.
+Stale means: snapshot older than 4 hours, **or** `projects.json` / `projects.local.json` / `metra.config.json` / root `registryFile` newer than `docs/canvas-snapshot.json`.
 
 ### Quick vs full snapshot
 
 ```powershell
-.\meta.ps1 snapshot -Quick   # registry + present/missing + AGENTS/.cursorignore/README; no deep scan, no git counts
-.\meta.ps1 snapshot          # full quiet audit + git counts (deliberate refresh)
+.\metra.ps1 snapshot -Quick   # registry + present/missing + AGENTS/.cursorignore/README; no deep scan, no git counts
+.\metra.ps1 snapshot          # full quiet audit + git counts (deliberate refresh)
 ```
 
 Plain English is preferred over slash commands for this operator. Ask to refresh the Ops board when needed; the sessionStart hook covers the common stale case.
@@ -67,8 +67,8 @@ After routing, scope Grep/Glob to one absolute project path. See [Search-Echo.md
 ## Universal handoff with `ctx`
 
 ```powershell
-.\meta.ps1 ctx
-.\meta.ps1 ctx -Query "your topic"
+.\metra.ps1 ctx
+.\metra.ps1 ctx -Query "your topic"
 ```
 
 Default outputs (gitignored): `docs/context-pack.md` and `docs/context-pack.json` (title: **Metra context pack**).

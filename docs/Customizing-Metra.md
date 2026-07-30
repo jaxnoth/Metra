@@ -1,6 +1,6 @@
 # Customizing Metra
 
-Metra is the chat persona for portfolio ops in the Metra checkout (product name **Metra**; recommended folder `_metra`; CLI `meta.ps1`). Routing and root isolation always win; durable artifacts (code, tickets, commits) stay professional.
+Metra is the chat persona for portfolio ops in the Metra checkout (product name **Metra**; recommended folder `_metra`; CLI `metra.ps1`). Routing and root isolation always win; durable artifacts (code, tickets, commits) stay professional.
 
 ## Origin
 
@@ -43,23 +43,23 @@ Base also ships Humor Policy, time-aware openings, decision tree, channels, and 
 **Newcomers:**
 
 ```powershell
-.\meta.ps1 import-profile -Path .\profiles\sample -Force
+.\metra.ps1 import-profile -Path .\profiles\sample -Force
 # Replace Alex in .cursor\rules\metra-persona.local.mdc
-# Fix roots in meta.config.json
-.\meta.ps1 ctx
+# Fix roots in metra.config.json
+.\metra.ps1 ctx
 ```
 
 **Moving yourself between machines:**
 
 ```powershell
-.\meta.ps1 export-profile -Path $env:TEMP\my-meta-profile.zip
-.\meta.ps1 import-profile -Path $env:TEMP\my-meta-profile.zip -Force
+.\metra.ps1 export-profile -Path $env:TEMP\my-metra-profile.zip
+.\metra.ps1 import-profile -Path $env:TEMP\my-metra-profile.zip -Force
 ```
 
 Pack layout (same as `profiles/sample/`):
 
-- `meta-profile.json` - manifest
-- `meta.config.json` - if present
+- `metra-profile.json` - manifest
+- `metra.config.json` - if present
 - `projects.local.json` - if present
 - `.cursor/rules/metra-persona.local.mdc` - if present
 - `.cursor/rules/metra-humor.local.mdc` - if present (optional Persona Add-on)
@@ -72,8 +72,8 @@ Pack layout (same as `profiles/sample/`):
 Opt-in tone dials under `profiles/addons/`. They raise chat color without changing public base Metra. Public name: **Persona Add-ons** (not a second profile system). Install still uses `import-profile`.
 
 ```powershell
-.\meta.ps1 import-profile -Path .\profiles\addons\humor-desk -Force
-.\meta.ps1 import-profile -Path .\profiles\addons\teaching-gentle -Force
+.\metra.ps1 import-profile -Path .\profiles\addons\humor-desk -Force
+.\metra.ps1 import-profile -Path .\profiles\addons\teaching-gentle -Force
 # Writes matching .cursor/rules/metra-*.local.mdc - delete that file to disable
 ```
 
@@ -93,9 +93,9 @@ Single-file reference without a full pack: copy `metra-persona.local.example.mdc
 ## Context pack
 
 ```powershell
-.\meta.ps1 ctx
-.\meta.ps1 ctx -Query "ticket disk"
-.\meta.ps1 ctx -Format json -Path $env:TEMP\metra-ctx.json
+.\metra.ps1 ctx
+.\metra.ps1 ctx -Query "ticket disk"
+.\metra.ps1 ctx -Format json -Path $env:TEMP\metra-ctx.json
 ```
 
 Writes bounded `docs/context-pack.md` / `.json` by default (gitignored). Useful for agent handoff and Teaching Mode onboarding.
@@ -104,7 +104,7 @@ Writes bounded `docs/context-pack.md` / `.json` by default (gitignored). Useful 
 
 Profile packs do **not** include a personal root's `registryFile` (for example `projects.personal.json` beside cloud-synced projects). After import:
 
-1. Point the personal root in `meta.config.json` at the synced folder.
+1. Point the personal root in `metra.config.json` at the synced folder.
 2. Ensure `registryFile` exists beside those projects (or copy it from the other machine with that folder).
 
 ## Related docs
@@ -113,7 +113,7 @@ Profile packs do **not** include a personal root's `registryFile` (for example `
 - [Brand.md](Brand.md) - operator-facing palette, motif, professional sink
 - [Decisions.md](Decisions.md) - append-only portfolio decisions
 - [Integrations.md](Integrations.md) - core vs Cursor; ctx handoff
-- [Routing-Scenarios.md](Routing-Scenarios.md) - persona smoke + `.\meta.ps1 verify`
+- [Routing-Scenarios.md](Routing-Scenarios.md) - persona smoke + `.\metra.ps1 verify`
 - [Demo-5min.md](Demo-5min.md) - coworker walkthrough
 - [Search-Echo.md](Search-Echo.md) - multi-root Grep echo
 - [SECURITY.md](../SECURITY.md) - what not to commit

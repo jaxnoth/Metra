@@ -1,22 +1,30 @@
-# Meta.psm1 - helpers for the C:\Projects meta repo
+# Metra.psm1 - helpers for the Metra orchestration repo
 
 Set-StrictMode -Version Latest
 
-function Get-MetaRoot {
-    # Module lives in <meta>/scripts
+function Get-MetraRoot {
+    # Module lives in <metra>/scripts
     return (Resolve-Path (Join-Path $PSScriptRoot '..')).Path
 }
 
-function Get-MetaConfig {
-    $root = Get-MetaRoot
-    $configPath = Join-Path $root 'meta.config.json'
-    if (-not (Test-Path $configPath)) {
-        throw "Missing config: $configPath"
+function Get-MetraConfig {
+    $root = Get-MetraRoot
+    $preferred = Join-Path $root 'metra.config.json'
+    $legacy = Join-Path $root 'meta.config.json'
+    if (Test-Path -LiteralPath $preferred) {
+        $configPath = $preferred
+    }
+    elseif (Test-Path -LiteralPath $legacy) {
+        Write-Warning 'Using legacy meta.config.json; rename to metra.config.json when convenient.'
+        $configPath = $legacy
+    }
+    else {
+        throw "Missing config: $preferred (also checked meta.config.json)"
     }
     return Get-Content -Raw -Path $configPath | ConvertFrom-Json
 }
 
-function Get-MetaProp {
+function Get-MetraProp {
     <#
     .SYNOPSIS
         Reads an optional property from a JSON-derived object without tripping StrictMode.
@@ -34,7 +42,7 @@ function Get-MetaProp {
     return $prop.Value
 }
 
-function Get-MetaRoots {
+function Get-MetraRoots {
     <#
     .SYNOPSIS
         Resolves the configured project roots (multi-root aware, env vars expanded).
@@ -49,27 +57,27 @@ function Get-MetaRoots {
         [switch]$IncludeMissing
     )
 
-    $cfg = Get-MetaConfig
-    $metaRoot = Get-MetaRoot
+    $cfg = Get-MetraConfig
+    $metraRoot = Get-MetraRoot
 
-    $defs = @(Get-MetaProp -Object $cfg -Name 'roots' -Default @())
+    $defs = @(Get-MetraProp -Object $cfg -Name 'roots' -Default @())
     if ($defs.Count -eq 0) {
-        $legacy = Get-MetaProp -Object $cfg -Name 'projectsRoot'
+        $legacy = Get-MetraProp -Object $cfg -Name 'projectsRoot'
         if ($legacy) {
             $defs = @([PSCustomObject]@{ name = 'projects'; path = $legacy; primary = $true })
         }
     }
     if ($defs.Count -eq 0) {
-        throw 'meta.config.json defines no project roots (expected a roots array or projectsRoot).'
+        throw 'metra.config.json defines no project roots (expected a roots array or projectsRoot).'
     }
 
     $primarySeen = $false
     $results = foreach ($def in $defs) {
-        $rootName = [string](Get-MetaProp -Object $def -Name 'name' -Default 'projects')
-        $rawPath = [string](Get-MetaProp -Object $def -Name 'path' -Default '..')
+        $rootName = [string](Get-MetraProp -Object $def -Name 'name' -Default 'projects')
+        $rawPath = [string](Get-MetraProp -Object $def -Name 'path' -Default '..')
         $expanded = [System.Environment]::ExpandEnvironmentVariables($rawPath)
         if (-not [System.IO.Path]::IsPathRooted($expanded)) {
-            $expanded = Join-Path $metaRoot $expanded
+            $expanded = Join-Path $metraRoot $expanded
         }
 
         $exists = Test-Path -LiteralPath $expanded
@@ -80,7 +88,7 @@ function Get-MetaRoots {
             [System.IO.Path]::GetFullPath($expanded)
         }
 
-        $isPrimary = [bool](Get-MetaProp -Object $def -Name 'primary' -Default $false)
+        $isPrimary = [bool](Get-MetraProp -Object $def -Name 'primary' -Default $false)
         if ($isPrimary) { $primarySeen = $true }
 
         [PSCustomObject]@{
@@ -88,13 +96,13 @@ function Get-MetaRoots {
             Path      = $fullPath
             RawPath   = $rawPath
             Primary   = $isPrimary
-            Optional  = [bool](Get-MetaProp -Object $def -Name 'optional' -Default $false)
-            Cloud     = [bool](Get-MetaProp -Object $def -Name 'cloud' -Default $false)
-            ScanDepth = Get-MetaProp -Object $def -Name 'scanDepth'
-            Audit     = [string](Get-MetaProp -Object $def -Name 'audit' -Default 'full')
-            Registry  = [string](Get-MetaProp -Object $def -Name 'registry' -Default 'shared')
-            RegistryFile = [string](Get-MetaProp -Object $def -Name 'registryFile' -Default '')
-            Exclude   = @(Get-MetaProp -Object $def -Name 'exclude' -Default @())
+            Optional  = [bool](Get-MetraProp -Object $def -Name 'optional' -Default $false)
+            Cloud     = [bool](Get-MetraProp -Object $def -Name 'cloud' -Default $false)
+            ScanDepth = Get-MetraProp -Object $def -Name 'scanDepth'
+            Audit     = [string](Get-MetraProp -Object $def -Name 'audit' -Default 'full')
+            Registry  = [string](Get-MetraProp -Object $def -Name 'registry' -Default 'shared')
+            RegistryFile = [string](Get-MetraProp -Object $def -Name 'registryFile' -Default '')
+            Exclude   = @(Get-MetraProp -Object $def -Name 'exclude' -Default @())
             Exists    = $exists
         }
     }
@@ -127,13 +135,13 @@ function Get-ProjectsRoot {
     .SYNOPSIS
         Returns the primary project root (creation target and legacy single-root callers).
     #>
-    $roots = @(Get-MetaRoots -IncludeMissing)
+    $roots = @(Get-MetraRoots -IncludeMissing)
     $primary = @($roots | Where-Object { $_.Primary }) | Select-Object -First 1
     if (-not $primary) { $primary = $roots[0] }
     return $primary.Path
 }
 
-function Test-MetaSelfFolderName {
+function Test-MetraSelfFolderName {
     <#
     .SYNOPSIS
         True when the folder is this orchestration checkout (Metra product, _metra convention).
@@ -151,9 +159,9 @@ function Test-ExcludedProjectName {
     )
 
     # Always skip the Metra orchestration folder under any accepted name.
-    if (Test-MetaSelfFolderName -Name $Name) { return $true }
+    if (Test-MetraSelfFolderName -Name $Name) { return $true }
 
-    $exclude = @(Get-MetaProp -Object $Config -Name 'exclude' -Default @())
+    $exclude = @(Get-MetraProp -Object $Config -Name 'exclude' -Default @())
     if ($exclude -contains $Name) { return $true }
 
     if ($Root) {
@@ -162,13 +170,13 @@ function Test-ExcludedProjectName {
         }
     }
 
-    foreach ($pattern in @(Get-MetaProp -Object $Config -Name 'excludeNamePatterns' -Default @())) {
+    foreach ($pattern in @(Get-MetraProp -Object $Config -Name 'excludeNamePatterns' -Default @())) {
         if ($Name -like $pattern) { return $true }
     }
     return $false
 }
 
-function Get-MetaProjects {
+function Get-MetraProjects {
     <#
     .SYNOPSIS
         Lists project directories across every configured root.
@@ -186,8 +194,8 @@ function Get-MetaProjects {
         [switch]$IncludeShadowed
     )
 
-    $cfg = Get-MetaConfig
-    $roots = @(Get-MetaRoots -Name $Root)
+    $cfg = Get-MetraConfig
+    $roots = @(Get-MetraRoots -Name $Root)
     $seen = @{}
 
     $items = foreach ($projectRoot in $roots) {
@@ -222,7 +230,7 @@ function Get-MetaProjects {
     return @($items | Sort-Object Name, Root)
 }
 
-function Resolve-MetaProjectSet {
+function Resolve-MetraProjectSet {
     param(
         [string]$Filter = '*',
         [string[]]$Name,
@@ -230,7 +238,7 @@ function Resolve-MetaProjectSet {
         [switch]$GitOnly
     )
 
-    $projects = Get-MetaProjects -Filter $Filter -Root $Root -GitOnly:$GitOnly
+    $projects = Get-MetraProjects -Filter $Filter -Root $Root -GitOnly:$GitOnly
     if ($Name -and $Name.Count -gt 0) {
         $wanted = $Name | ForEach-Object { $_.ToLowerInvariant() }
         $projects = $projects | Where-Object { $wanted -contains $_.Name.ToLowerInvariant() }
@@ -259,7 +267,7 @@ function Invoke-AcrossProjects {
         [switch]$Quiet
     )
 
-    $projects = Resolve-MetaProjectSet -Filter $Filter -Name $Name -Root $Root -GitOnly:$GitOnly
+    $projects = Resolve-MetraProjectSet -Filter $Filter -Name $Name -Root $Root -GitOnly:$GitOnly
     if ($projects.Count -eq 0) {
         Write-Warning 'No matching projects.'
         return @()
@@ -319,7 +327,7 @@ function Invoke-AcrossProjects {
     return $results
 }
 
-function Get-MetaStatus {
+function Get-MetraStatus {
     <#
     .SYNOPSIS
         Shows git status --short for each git project.
@@ -334,7 +342,7 @@ function Get-MetaStatus {
     Invoke-AcrossProjects -Command 'git status -sb' -Filter $Filter -Name $Name -Root $Root -GitOnly -ContinueOnError
 }
 
-function Update-MetaProjects {
+function Update-MetraProjects {
     <#
     .SYNOPSIS
         Runs git pull --ff-only (or fetch) across git projects.
@@ -371,7 +379,7 @@ function Copy-AcrossProjects {
         $RelativePath = Split-Path -Leaf $sourcePath
     }
 
-    $projects = Resolve-MetaProjectSet -Filter $Filter -Name $Name -Root $Root
+    $projects = Resolve-MetraProjectSet -Filter $Filter -Name $Name -Root $Root
     foreach ($project in $projects) {
         $dest = Join-Path $project.Path $RelativePath
         $destDir = Split-Path -Parent $dest
@@ -385,7 +393,7 @@ function Copy-AcrossProjects {
     }
 }
 
-function New-MetaProject {
+function New-MetraProject {
     <#
     .SYNOPSIS
         Creates a new project folder under the projects root, optionally from a template, and inits git.
@@ -400,11 +408,11 @@ function New-MetaProject {
         [switch]$Force
     )
 
-    $cfg = Get-MetaConfig
-    $metaRoot = Get-MetaRoot
+    $cfg = Get-MetraConfig
+    $metraRoot = Get-MetraRoot
 
     if ($Root) {
-        $targetRoot = @(Get-MetaRoots -Name $Root -IncludeMissing) | Select-Object -First 1
+        $targetRoot = @(Get-MetraRoots -Name $Root -IncludeMissing) | Select-Object -First 1
         if (-not $targetRoot.Exists) {
             throw ("Root '{0}' is not available on this machine: {1}" -f $targetRoot.Name, $targetRoot.Path)
         }
@@ -428,7 +436,7 @@ function New-MetaProject {
     }
 
     $templateName = if ($Template) { $Template } else { $cfg.defaultTemplate }
-    $templateDir = Join-Path $metaRoot (Join-Path $cfg.templatesDir $templateName)
+    $templateDir = Join-Path $metraRoot (Join-Path $cfg.templatesDir $templateName)
 
     $descLine = if ($Description) { $Description } else { "Project $Name" }
 
@@ -513,7 +521,7 @@ function Get-ProjectLastActivity {
     return ($timestamps | Measure-Object -Maximum).Maximum
 }
 
-function Get-RecentMetaProjects {
+function Get-RecentMetraProjects {
     <#
     .SYNOPSIS
         Returns sibling projects with activity within the lookback window (default from config: 6 months).
@@ -525,24 +533,24 @@ function Get-RecentMetaProjects {
         [switch]$IncludeAlways
     )
 
-    $cfg = Get-MetaConfig
-    $ws = Get-MetaProp -Object $cfg -Name 'workspace'
+    $cfg = Get-MetraConfig
+    $ws = Get-MetraProp -Object $cfg -Name 'workspace'
     if (-not $PSBoundParameters.ContainsKey('Months')) {
-        $Months = [int](Get-MetaProp -Object $ws -Name 'months' -Default 6)
+        $Months = [int](Get-MetraProp -Object $ws -Name 'months' -Default 6)
     }
     if (-not $PSBoundParameters.ContainsKey('ScanDepth')) {
-        $ScanDepth = [int](Get-MetaProp -Object $ws -Name 'scanDepth' -Default 2)
+        $ScanDepth = [int](Get-MetraProp -Object $ws -Name 'scanDepth' -Default 2)
     }
 
     $cutoff = (Get-Date).AddMonths(-1 * $Months)
-    $always = @(Get-MetaProp -Object $ws -Name 'alwaysInclude' -Default @())
+    $always = @(Get-MetraProp -Object $ws -Name 'alwaysInclude' -Default @())
 
     $rootDepths = @{}
-    foreach ($r in @(Get-MetaRoots)) {
+    foreach ($r in @(Get-MetraRoots)) {
         $rootDepths[$r.Name] = if ($null -ne $r.ScanDepth) { [int]$r.ScanDepth } else { $ScanDepth }
     }
 
-    $projects = Get-MetaProjects | ForEach-Object {
+    $projects = Get-MetraProjects | ForEach-Object {
         $depth = if ($rootDepths.ContainsKey($_.Root)) { $rootDepths[$_.Root] } else { $ScanDepth }
         $last = Get-ProjectLastActivity -Path $_.Path -ScanDepth $depth
         $forced = $always -contains $_.Name
@@ -564,7 +572,7 @@ function Get-RecentMetaProjects {
     return @($projects | Where-Object Recent | Sort-Object Name)
 }
 
-function Update-MetaWorkspace {
+function Update-MetraWorkspace {
     <#
     .SYNOPSIS
         Rebuilds Metra.code-workspace file(s) with Metra plus projects active in the lookback window.
@@ -576,11 +584,11 @@ function Update-MetaWorkspace {
         [switch]$WhatIfPreview
     )
 
-    $cfg = Get-MetaConfig
-    $metaRoot = Get-MetaRoot
+    $cfg = Get-MetraConfig
+    $metraRoot = Get-MetraRoot
     $ws = $cfg.workspace
     if (-not $ws) {
-        throw 'meta.config.json is missing a workspace section.'
+        throw 'metra.config.json is missing a workspace section.'
     }
 
     if (-not $PSBoundParameters.ContainsKey('Months')) {
@@ -590,13 +598,13 @@ function Update-MetaWorkspace {
         $ScanDepth = [int]$ws.scanDepth
     }
 
-    $recent = Get-RecentMetaProjects -Months $Months -ScanDepth $ScanDepth
-    $outputs = @(Get-MetaProp -Object $ws -Name 'outputs' -Default @())
+    $recent = Get-RecentMetraProjects -Months $Months -ScanDepth $ScanDepth
+    $outputs = @(Get-MetraProp -Object $ws -Name 'outputs' -Default @())
     if ($outputs.Count -eq 0) {
-        throw 'workspace.outputs is empty in meta.config.json.'
+        throw 'workspace.outputs is empty in metra.config.json.'
     }
 
-    $primaryRootName = (@(Get-MetaRoots -IncludeMissing) | Where-Object { $_.Primary } | Select-Object -First 1).Name
+    $primaryRootName = (@(Get-MetraRoots -IncludeMissing) | Where-Object { $_.Primary } | Select-Object -First 1).Name
 
     Write-Host ("Lookback: {0} month(s) | {1} project(s) (+ Metra)" -f $Months, $recent.Count) -ForegroundColor Cyan
     $recent | ForEach-Object {
@@ -605,14 +613,21 @@ function Update-MetaWorkspace {
 
     $written = @()
     foreach ($out in $outputs) {
-        $outPath = Join-Path $metaRoot $out.path
+        $outPath = Join-Path $metraRoot $out.path
         $prefix = [string]$out.projectPathPrefix
-        $folderLabel = [string](Get-MetaProp -Object $out -Name 'metaFolderName' -Default 'Metra')
+        $folderLabel = [string](Get-MetraProp -Object $out -Name 'metraFolderName' -Default $null)
+        if ([string]::IsNullOrWhiteSpace($folderLabel)) {
+            $folderLabel = [string](Get-MetraProp -Object $out -Name 'metaFolderName' -Default 'Metra')
+        }
         if ([string]::IsNullOrWhiteSpace($folderLabel)) { $folderLabel = 'Metra' }
+        $folderPathValue = Get-MetraProp -Object $out -Name 'metraFolderPath' -Default $null
+        if ($null -eq $folderPathValue -or [string]::IsNullOrWhiteSpace([string]$folderPathValue)) {
+            $folderPathValue = Get-MetraProp -Object $out -Name 'metaFolderPath' -Default '.'
+        }
         $folders = @(
             [ordered]@{
                 name = $folderLabel
-                path = [string]$out.metaFolderPath
+                path = [string]$folderPathValue
             }
         )
         foreach ($project in $recent) {
@@ -661,7 +676,7 @@ function Update-MetaWorkspace {
     }
 }
 
-function Read-MetaRegistryFile {
+function Read-MetraRegistryFile {
     param(
         [Parameter(Mandatory)][string]$Path,
         [Parameter(Mandatory)][string]$Source
@@ -669,13 +684,13 @@ function Read-MetaRegistryFile {
 
     if (-not (Test-Path -LiteralPath $Path)) { return $null }
     $doc = Get-Content -Raw -Path $Path | ConvertFrom-Json
-    foreach ($p in @(Get-MetaProp -Object $doc -Name 'projects' -Default @())) {
+    foreach ($p in @(Get-MetraProp -Object $doc -Name 'projects' -Default @())) {
         $p | Add-Member -NotePropertyName 'source' -NotePropertyValue $Source -Force
     }
     return $doc
 }
 
-function Get-MetaProjectRegistry {
+function Get-MetraProjectRegistry {
     <#
     .SYNOPSIS
         Loads the agent routing registry: shared projects.json plus optional projects.local.json.
@@ -690,42 +705,42 @@ function Get-MetaProjectRegistry {
         [switch]$SharedOnly
     )
 
-    $metaRoot = Get-MetaRoot
-    $sharedPath = Join-Path $metaRoot 'projects.json'
-    $localPath = Join-Path $metaRoot 'projects.local.json'
+    $metraRoot = Get-MetraRoot
+    $sharedPath = Join-Path $metraRoot 'projects.json'
+    $localPath = Join-Path $metraRoot 'projects.local.json'
 
-    $shared = Read-MetaRegistryFile -Path $sharedPath -Source 'shared'
+    $shared = Read-MetraRegistryFile -Path $sharedPath -Source 'shared'
     if (-not $shared) {
         throw "Missing project registry: $sharedPath"
     }
 
     $projects = [System.Collections.Generic.List[object]]::new()
     $index = @{}
-    foreach ($p in @(Get-MetaProp -Object $shared -Name 'projects' -Default @())) {
+    foreach ($p in @(Get-MetraProp -Object $shared -Name 'projects' -Default @())) {
         $key = ([string]$p.name).ToLowerInvariant()
         $index[$key] = $projects.Count
         [void]$projects.Add($p)
     }
 
-    $routing = Get-MetaProp -Object $shared -Name 'routing'
+    $routing = Get-MetraProp -Object $shared -Name 'routing'
     $localLoaded = $false
     $extraSources = @()
 
     if (-not $SharedOnly) {
         # A root may carry its own registry file so entries travel with the folder itself
         # (for example a cloud-synced personal root that reaches a second machine).
-        foreach ($projectRoot in @(Get-MetaRoots)) {
+        foreach ($projectRoot in @(Get-MetraRoots)) {
             if (-not $projectRoot.RegistryFile) { continue }
             $rootRegistryPath = [System.Environment]::ExpandEnvironmentVariables($projectRoot.RegistryFile)
             if (-not [System.IO.Path]::IsPathRooted($rootRegistryPath)) {
                 $rootRegistryPath = Join-Path $projectRoot.Path $rootRegistryPath
             }
-            $rootRegistry = Read-MetaRegistryFile -Path $rootRegistryPath -Source $projectRoot.Name
+            $rootRegistry = Read-MetraRegistryFile -Path $rootRegistryPath -Source $projectRoot.Name
             if (-not $rootRegistry) { continue }
             $extraSources += $rootRegistryPath
-            foreach ($p in @(Get-MetaProp -Object $rootRegistry -Name 'projects' -Default @())) {
+            foreach ($p in @(Get-MetraProp -Object $rootRegistry -Name 'projects' -Default @())) {
                 $key = ([string]$p.name).ToLowerInvariant()
-                if (-not (Get-MetaProp -Object $p -Name 'root')) {
+                if (-not (Get-MetraProp -Object $p -Name 'root')) {
                     $p | Add-Member -NotePropertyName 'root' -NotePropertyValue $projectRoot.Name -Force
                 }
                 if ($index.ContainsKey($key)) {
@@ -738,10 +753,10 @@ function Get-MetaProjectRegistry {
             }
         }
 
-        $local = Read-MetaRegistryFile -Path $localPath -Source 'local'
+        $local = Read-MetraRegistryFile -Path $localPath -Source 'local'
         if ($local) {
             $localLoaded = $true
-            foreach ($p in @(Get-MetaProp -Object $local -Name 'projects' -Default @())) {
+            foreach ($p in @(Get-MetraProp -Object $local -Name 'projects' -Default @())) {
                 $key = ([string]$p.name).ToLowerInvariant()
                 if ($index.ContainsKey($key)) {
                     $projects[$index[$key]] = $p
@@ -751,7 +766,7 @@ function Get-MetaProjectRegistry {
                     [void]$projects.Add($p)
                 }
             }
-            $localRouting = Get-MetaProp -Object $local -Name 'routing'
+            $localRouting = Get-MetraProp -Object $local -Name 'routing'
             if ($localRouting -and $routing) {
                 foreach ($prop in $localRouting.PSObject.Properties) {
                     $routing | Add-Member -NotePropertyName $prop.Name -NotePropertyValue $prop.Value -Force
@@ -764,8 +779,8 @@ function Get-MetaProjectRegistry {
     }
 
     return [PSCustomObject]@{
-        version      = Get-MetaProp -Object $shared -Name 'version' -Default 1
-        updated      = Get-MetaProp -Object $shared -Name 'updated' -Default ''
+        version      = Get-MetraProp -Object $shared -Name 'version' -Default 1
+        updated      = Get-MetraProp -Object $shared -Name 'updated' -Default ''
         routing      = $routing
         projects     = @($projects.ToArray())
         sharedPath   = $sharedPath
@@ -775,7 +790,7 @@ function Get-MetaProjectRegistry {
     }
 }
 
-function Get-MetaRoutingTable {
+function Get-MetraRoutingTable {
     <#
     .SYNOPSIS
         Resolves registry entries against what is actually on disk, with stub advice.
@@ -792,9 +807,9 @@ function Get-MetaRoutingTable {
         [switch]$MissingOnly
     )
 
-    $registry = Get-MetaProjectRegistry -SharedOnly:$SharedOnly
+    $registry = Get-MetraProjectRegistry -SharedOnly:$SharedOnly
     $disk = @{}
-    foreach ($p in @(Get-MetaProjects)) {
+    foreach ($p in @(Get-MetraProjects)) {
         $disk[$p.Name.ToLowerInvariant()] = $p
     }
 
@@ -809,12 +824,12 @@ function Get-MetaRoutingTable {
         $present = $null -ne $onDisk
         if ($MissingOnly -and $present) { continue }
 
-        $optional = [bool](Get-MetaProp -Object $reg -Name 'optional' -Default $false)
+        $optional = [bool](Get-MetraProp -Object $reg -Name 'optional' -Default $false)
         $advice = if ($present) {
-            [string](Get-MetaProp -Object $reg -Name 'whenPresent' -Default '')
+            [string](Get-MetraProp -Object $reg -Name 'whenPresent' -Default '')
         }
         else {
-            [string](Get-MetaProp -Object $reg -Name 'whenMissing' -Default '')
+            [string](Get-MetraProp -Object $reg -Name 'whenMissing' -Default '')
         }
         if (-not $advice -and -not $present) {
             $advice = "Not on this machine. Ask the user for the details this project would have provided; do not invent them."
@@ -822,13 +837,13 @@ function Get-MetaRoutingTable {
 
         [PSCustomObject]@{
             Name         = $regName
-            Source       = [string](Get-MetaProp -Object $reg -Name 'source' -Default 'shared')
+            Source       = [string](Get-MetraProp -Object $reg -Name 'source' -Default 'shared')
             Root         = if ($present) { [string]$onDisk.Root } else { '' }
             Present      = $present
             Optional     = $optional
-            Entry        = [string](Get-MetaProp -Object $reg -Name 'entry' -Default 'AGENTS.md')
-            Capabilities = @(Get-MetaProp -Object $reg -Name 'capabilities' -Default @())
-            Triggers     = @(Get-MetaProp -Object $reg -Name 'triggers' -Default @())
+            Entry        = [string](Get-MetraProp -Object $reg -Name 'entry' -Default 'AGENTS.md')
+            Capabilities = @(Get-MetraProp -Object $reg -Name 'capabilities' -Default @())
+            Triggers     = @(Get-MetraProp -Object $reg -Name 'triggers' -Default @())
             Advice       = $advice
             Path         = if ($present) { [string]$onDisk.Path } else { '' }
         }
@@ -837,7 +852,7 @@ function Get-MetaRoutingTable {
     return @($rows | Sort-Object @{ Expression = 'Present'; Descending = $true }, Name)
 }
 
-function Get-MetaRegistryProject {
+function Get-MetraRegistryProject {
     param(
         [Parameter(Mandatory)]$Registry,
         [Parameter(Mandatory)][string]$Name
@@ -846,7 +861,7 @@ function Get-MetaRegistryProject {
     @($Registry.projects) | Where-Object { $_.name -eq $Name } | Select-Object -First 1
 }
 
-function Test-MetaPathExists {
+function Test-MetraPathExists {
     param(
         [Parameter(Mandatory)][string]$Root,
         [Parameter(Mandatory)][string]$Relative
@@ -856,7 +871,7 @@ function Test-MetaPathExists {
     return (Test-Path -LiteralPath $full)
 }
 
-function Get-MetaGeneratedPathHints {
+function Get-MetraGeneratedPathHints {
     return @(
         'node_modules',
         'browser\node_modules',
@@ -874,7 +889,7 @@ function Get-MetaGeneratedPathHints {
     )
 }
 
-function Invoke-MetaProjectContextAudit {
+function Invoke-MetraProjectContextAudit {
     <#
     .SYNOPSIS
         Read-only context audit for one or more projects; optional drift check against projects.json.
@@ -891,14 +906,14 @@ function Invoke-MetaProjectContextAudit {
         [int]$ScanDepth = 4
     )
 
-    $registry = Get-MetaProjectRegistry
-    $projects = @(Resolve-MetaProjectSet -Filter $Filter -Name $Name -Root $Root)
-    $generatedHints = Get-MetaGeneratedPathHints
+    $registry = Get-MetraProjectRegistry
+    $projects = @(Resolve-MetraProjectSet -Filter $Filter -Name $Name -Root $Root)
+    $generatedHints = Get-MetraGeneratedPathHints
     $driftCount = 0
     $reports = @()
 
     $rootInfo = @{}
-    foreach ($r in @(Get-MetaRoots -IncludeMissing)) {
+    foreach ($r in @(Get-MetraRoots -IncludeMissing)) {
         $rootInfo[$r.Name] = $r
     }
 
@@ -925,7 +940,7 @@ function Invoke-MetaProjectContextAudit {
         $key = [string]$reg.name
         if (-not $diskNameSet.ContainsKey($key.ToLowerInvariant())) {
             if (-not $Name -or (@($Name) -contains $reg.name)) {
-                if ([bool](Get-MetaProp -Object $reg -Name 'optional' -Default $false)) {
+                if ([bool](Get-MetraProp -Object $reg -Name 'optional' -Default $false)) {
                     Write-AuditHost ("optional: {0} not installed here (advice-only routing)" -f $reg.name)
                 }
                 else {
@@ -937,7 +952,7 @@ function Invoke-MetaProjectContextAudit {
     }
 
     foreach ($project in $projects) {
-        $reg = Get-MetaRegistryProject -Registry $registry -Name $project.Name
+        $reg = Get-MetraRegistryProject -Registry $registry -Name $project.Name
         $inRegistry = $null -ne $reg
         $findings = @()
         $advisories = @()
@@ -965,7 +980,7 @@ function Invoke-MetaProjectContextAudit {
             }
             foreach ($ex in @($reg.excludePaths)) {
                 if ([string]::IsNullOrWhiteSpace([string]$ex)) { continue }
-                if ((Test-MetaPathExists -Root $project.Path -Relative ([string]$ex)) -and -not $hasIgnore) {
+                if ((Test-MetraPathExists -Root $project.Path -Relative ([string]$ex)) -and -not $hasIgnore) {
                     if ($lightAudit) {
                         $advisories += "excludePath '$ex' exists but .cursorignore is missing"
                     }
@@ -979,7 +994,7 @@ function Invoke-MetaProjectContextAudit {
             foreach ($pref in @($reg.preferredPaths)) {
                 if ([string]::IsNullOrWhiteSpace([string]$pref)) { continue }
                 if ($pref -eq 'AGENTS.md' -or $pref -eq 'README.md') { continue }
-                if (-not (Test-MetaPathExists -Root $project.Path -Relative ([string]$pref))) {
+                if (-not (Test-MetraPathExists -Root $project.Path -Relative ([string]$pref))) {
                     $findings += "preferredPath missing: $pref"
                 }
             }
@@ -1101,7 +1116,7 @@ function Invoke-MetaProjectContextAudit {
             Path              = $project.Path
             Root              = $project.Root
             LightAudit        = $lightAudit
-            RegistrySource    = if ($inRegistry) { [string](Get-MetaProp -Object $reg -Name 'source' -Default 'shared') } else { '' }
+            RegistrySource    = if ($inRegistry) { [string](Get-MetraProp -Object $reg -Name 'source' -Default 'shared') } else { '' }
             InRegistry        = $inRegistry
             HasAgentsMd       = $hasAgents
             HasCursorIgnore   = $hasIgnore
@@ -1179,7 +1194,7 @@ function Invoke-MetaProjectContextAudit {
     Write-Output $summary
 }
 
-function Get-MetaProjectGitCounts {
+function Get-MetraProjectGitCounts {
     <#
     .SYNOPSIS
         Returns dirty/ahead/behind counts for a project folder (best-effort, no network).
@@ -1238,7 +1253,7 @@ function Get-MetaProjectGitCounts {
     return $result
 }
 
-function Get-MetaOpsCanvasPath {
+function Get-MetraOpsCanvasPath {
     <#
     .SYNOPSIS
         Resolves the live Metra Ops canvas path for this checkout's Cursor project slug.
@@ -1246,15 +1261,15 @@ function Get-MetaOpsCanvasPath {
     [CmdletBinding()]
     param()
 
-    $metaRoot = Get-MetaRoot
-    $slug = ConvertTo-MetaCursorProjectSlug -Path $metaRoot
+    $metraRoot = Get-MetraRoot
+    $slug = ConvertTo-MetraCursorProjectSlug -Path $metraRoot
     if ([string]::IsNullOrWhiteSpace($slug)) {
         $slug = 'c-Projects-meta'
     }
     return Join-Path $env:USERPROFILE (Join-Path '.cursor\projects' (Join-Path $slug 'canvases\metra-ops-board.canvas.tsx'))
 }
 
-function Install-MetaOpsCanvas {
+function Install-MetraOpsCanvas {
     <#
     .SYNOPSIS
         Ensures the live Metra Ops canvas exists, installing from the tracked template when needed.
@@ -1264,8 +1279,8 @@ function Install-MetaOpsCanvas {
         [Parameter(Mandatory)][string]$CanvasPath
     )
 
-    $metaRoot = Get-MetaRoot
-    $templatePath = Join-Path $metaRoot 'integrations\cursor\metra-ops-board.canvas.tsx.template'
+    $metraRoot = Get-MetraRoot
+    $templatePath = Join-Path $metraRoot 'integrations\cursor\metra-ops-board.canvas.tsx.template'
     $canvasDir = Split-Path -Parent $CanvasPath
     $legacyPath = Join-Path $canvasDir 'meta-ops-board.canvas.tsx'
 
@@ -1289,7 +1304,7 @@ function Install-MetaOpsCanvas {
     return (Test-Path -LiteralPath $CanvasPath)
 }
 
-function Get-MetaQuickProjectHealthReports {
+function Get-MetraQuickProjectHealthReports {
     <#
     .SYNOPSIS
         Light registry/disk health for snapshot -Quick (no recursive scan, no git).
@@ -1297,8 +1312,8 @@ function Get-MetaQuickProjectHealthReports {
     [CmdletBinding()]
     param()
 
-    $registry = Get-MetaProjectRegistry
-    $disk = @(Get-MetaProjects)
+    $registry = Get-MetraProjectRegistry
+    $disk = @(Get-MetraProjects)
     $byDisk = @{}
     foreach ($d in $disk) {
         $byDisk[$d.Name.ToLowerInvariant()] = $d
@@ -1308,7 +1323,7 @@ function Get-MetaQuickProjectHealthReports {
     $reports = @()
 
     foreach ($d in $disk) {
-        $reg = Get-MetaRegistryProject -Registry $registry -Name $d.Name
+        $reg = Get-MetraRegistryProject -Registry $registry -Name $d.Name
         $inRegistry = $null -ne $reg
         $findings = @()
         $hasAgents = Test-Path -LiteralPath (Join-Path $d.Path 'AGENTS.md')
@@ -1346,7 +1361,7 @@ function Get-MetaQuickProjectHealthReports {
     }
 }
 
-function Test-MetaCanvasSnapshotStale {
+function Test-MetraCanvasSnapshotStale {
     <#
     .SYNOPSIS
         True when the Ops board snapshot is older than MaxAgeHours or newer than registry/config inputs.
@@ -1357,9 +1372,9 @@ function Test-MetaCanvasSnapshotStale {
         [double]$MaxAgeHours = 4
     )
 
-    $metaRoot = Get-MetaRoot
+    $metraRoot = Get-MetraRoot
     if (-not $SnapshotPath) {
-        $SnapshotPath = Join-Path $metaRoot 'docs\canvas-snapshot.json'
+        $SnapshotPath = Join-Path $metraRoot 'docs\canvas-snapshot.json'
     }
     if (-not (Test-Path -LiteralPath $SnapshotPath)) {
         return $true
@@ -1371,11 +1386,12 @@ function Test-MetaCanvasSnapshotStale {
     }
 
     $watch = @(
-        (Join-Path $metaRoot 'projects.json'),
-        (Join-Path $metaRoot 'projects.local.json'),
-        (Join-Path $metaRoot 'meta.config.json')
+        (Join-Path $metraRoot 'projects.json'),
+        (Join-Path $metraRoot 'projects.local.json'),
+        (Join-Path $metraRoot 'metra.config.json'),
+        (Join-Path $metraRoot 'meta.config.json')
     )
-    foreach ($root in @(Get-MetaRoots -IncludeMissing)) {
+    foreach ($root in @(Get-MetraRoots -IncludeMissing)) {
         if (-not $root.RegistryFile) { continue }
         $rootRegistryPath = [System.Environment]::ExpandEnvironmentVariables([string]$root.RegistryFile)
         if (-not [System.IO.Path]::IsPathRooted($rootRegistryPath)) {
@@ -1392,7 +1408,7 @@ function Test-MetaCanvasSnapshotStale {
     return $false
 }
 
-function Export-MetaCanvasSnapshot {
+function Export-MetraCanvasSnapshot {
     <#
     .SYNOPSIS
         Writes docs/canvas-snapshot.json from registry + quiet audit for the Metra Ops canvas embed.
@@ -1408,16 +1424,16 @@ function Export-MetaCanvasSnapshot {
         [switch]$Quick
     )
 
-    $metaRoot = Get-MetaRoot
+    $metraRoot = Get-MetraRoot
     if (-not $OutPath) {
-        $OutPath = Join-Path $metaRoot 'docs\canvas-snapshot.json'
+        $OutPath = Join-Path $metraRoot 'docs\canvas-snapshot.json'
     }
     if (-not $CanvasPath) {
-        $CanvasPath = Get-MetaOpsCanvasPath
+        $CanvasPath = Get-MetraOpsCanvasPath
     }
 
-    $registry = Get-MetaProjectRegistry
-    $cfg = Get-MetaConfig
+    $registry = Get-MetraProjectRegistry
+    $cfg = Get-MetraConfig
     $pinned = @()
     if ($cfg.workspace -and $cfg.workspace.alwaysInclude) {
         $pinned = @($cfg.workspace.alwaysInclude)
@@ -1427,7 +1443,7 @@ function Export-MetaCanvasSnapshot {
     $byName = @{}
     if ($Quick) {
         Write-Host 'Running quick portfolio health for snapshot...' -ForegroundColor Cyan
-        $lightHealth = Get-MetaQuickProjectHealthReports
+        $lightHealth = Get-MetraQuickProjectHealthReports
         $auditDriftCount = [int]$lightHealth.DriftCount
         foreach ($r in @($lightHealth.Reports)) {
             $byName[[string]$r.Name.ToLowerInvariant()] = $r
@@ -1436,7 +1452,7 @@ function Export-MetaCanvasSnapshot {
     }
     else {
         Write-Host 'Running quiet portfolio audit for snapshot...' -ForegroundColor Cyan
-        $audit = Invoke-MetaProjectContextAudit -ScanDepth $ScanDepth -Quiet | Select-Object -Last 1
+        $audit = Invoke-MetraProjectContextAudit -ScanDepth $ScanDepth -Quiet | Select-Object -Last 1
         $auditDriftCount = [int]$audit.DriftCount
         foreach ($r in @($audit.Reports)) {
             $byName[[string]$r.Name.ToLowerInvariant()] = $r
@@ -1472,9 +1488,9 @@ function Export-MetaCanvasSnapshot {
             }
         }
         else {
-            $git = Get-MetaProjectGitCounts -Path $projectPath
+            $git = Get-MetraProjectGitCounts -Path $projectPath
         }
-        $optional = [bool](Get-MetaProp -Object $reg -Name 'optional' -Default $false)
+        $optional = [bool](Get-MetraProp -Object $reg -Name 'optional' -Default $false)
 
         $status = 'healthy'
         if (-not $report -and $optional) { $status = 'not-installed' }
@@ -1502,18 +1518,18 @@ function Export-MetaCanvasSnapshot {
 
         [PSCustomObject]@{
             name            = $name
-            purpose         = [string](Get-MetaProp -Object $reg -Name 'purpose' -Default '')
-            triggers        = @(Get-MetaProp -Object $reg -Name 'triggers' -Default @())
-            entry           = [string](Get-MetaProp -Object $reg -Name 'entry' -Default 'AGENTS.md')
-            preferredPaths  = @(Get-MetaProp -Object $reg -Name 'preferredPaths' -Default @())
-            excludePaths    = @(Get-MetaProp -Object $reg -Name 'excludePaths' -Default @())
-            related         = @(Get-MetaProp -Object $reg -Name 'related' -Default @())
+            purpose         = [string](Get-MetraProp -Object $reg -Name 'purpose' -Default '')
+            triggers        = @(Get-MetraProp -Object $reg -Name 'triggers' -Default @())
+            entry           = [string](Get-MetraProp -Object $reg -Name 'entry' -Default 'AGENTS.md')
+            preferredPaths  = @(Get-MetraProp -Object $reg -Name 'preferredPaths' -Default @())
+            excludePaths    = @(Get-MetraProp -Object $reg -Name 'excludePaths' -Default @())
+            related         = @(Get-MetraProp -Object $reg -Name 'related' -Default @())
             inRegistry      = $true
-            registrySource  = [string](Get-MetaProp -Object $reg -Name 'source' -Default 'shared')
+            registrySource  = [string](Get-MetraProp -Object $reg -Name 'source' -Default 'shared')
             root            = if ($report) { [string]$report.Root } else { '' }
             present         = [bool]$report
             optional        = $optional
-            capabilities    = @(Get-MetaProp -Object $reg -Name 'capabilities' -Default @())
+            capabilities    = @(Get-MetraProp -Object $reg -Name 'capabilities' -Default @())
             hasAgentsMd     = if ($report) { [bool]$report.HasAgentsMd } else { $false }
             hasCursorIgnore = if ($report) { [bool]$report.HasCursorIgnore } else { $false }
             hasReadme       = if ($report) { [bool]$report.HasReadme } else { $false }
@@ -1561,7 +1577,7 @@ function Export-MetaCanvasSnapshot {
                 }
             }
             else {
-                $git = Get-MetaProjectGitCounts -Path ([string]$r.Path)
+                $git = Get-MetraProjectGitCounts -Path ([string]$r.Path)
             }
             if ($git.isGit -and ($git.dirty -gt 0 -or $git.ahead -gt 0 -or $git.behind -gt 0)) {
                 $todos += [PSCustomObject]@{
@@ -1624,7 +1640,7 @@ function Export-MetaCanvasSnapshot {
         notInstalled      = $notInstalled
         missingAgents     = $missingAgents
         missingIgnore     = $missingIgnore
-        roots             = @(Get-MetaRoots -IncludeMissing | ForEach-Object {
+        roots             = @(Get-MetraRoots -IncludeMissing | ForEach-Object {
                 [PSCustomObject]@{
                     name    = $_.Name
                     path    = $_.Path
@@ -1651,7 +1667,7 @@ function Export-MetaCanvasSnapshot {
     [System.IO.File]::WriteAllText($OutPath, $json + "`r`n")
     Write-Host ("Wrote snapshot: {0}" -f $OutPath) -ForegroundColor Green
 
-    $canvasReady = Install-MetaOpsCanvas -CanvasPath $CanvasPath
+    $canvasReady = Install-MetraOpsCanvas -CanvasPath $CanvasPath
     if ($canvasReady) {
         $canvas = [System.IO.File]::ReadAllText($CanvasPath)
         $markerPairs = @(
@@ -1693,7 +1709,7 @@ $embedEnd
     }
 }
 
-function ConvertTo-MetaCursorProjectSlug {
+function ConvertTo-MetraCursorProjectSlug {
     <#
     .SYNOPSIS
         Builds the Cursor per-project folder slug for a project name or full path.
@@ -1721,7 +1737,7 @@ function ConvertTo-MetaCursorProjectSlug {
     }
 
     $trimmed = $Name.Trim()
-    if (Test-MetaSelfFolderName -Name $trimmed) {
+    if (Test-MetraSelfFolderName -Name $trimmed) {
         $leaf = ($trimmed.TrimStart('_')).ToLowerInvariant()
         return "c-Projects-$leaf"
     }
@@ -1729,7 +1745,7 @@ function ConvertTo-MetaCursorProjectSlug {
     return "c-Projects-$slug"
 }
 
-function Get-MetaCursorTranscriptRoots {
+function Get-MetraCursorTranscriptRoots {
     <#
     .SYNOPSIS
         Maps project names to local Cursor agent-transcript folders.
@@ -1737,7 +1753,8 @@ function Get-MetaCursorTranscriptRoots {
     [CmdletBinding()]
     param(
         [string[]]$Name,
-        [switch]$IncludeMeta
+        [Alias('IncludeMeta')]
+        [switch]$IncludeMetra
     )
 
     $cursorProjects = Join-Path $env:USERPROFILE '.cursor\projects'
@@ -1754,17 +1771,17 @@ function Get-MetaCursorTranscriptRoots {
         }
     }
     else {
-        $projects = Get-MetaProjects
+        $projects = Get-MetraProjects
         foreach ($p in $projects) { $wanted.Add([string]$p.Name) }
     }
-    if ($IncludeMeta -or -not $Name -or $Name.Count -eq 0) {
-        if (-not ($wanted | Where-Object { Test-MetaSelfFolderName -Name $_ })) {
+    if ($IncludeMetra -or -not $Name -or $Name.Count -eq 0) {
+        if (-not ($wanted | Where-Object { Test-MetraSelfFolderName -Name $_ })) {
             $wanted.Add('_metra')
         }
     }
 
     $pathByName = @{}
-    foreach ($p in @(Get-MetaProjects)) {
+    foreach ($p in @(Get-MetraProjects)) {
         $pathByName[$p.Name.ToLowerInvariant()] = $p.Path
     }
 
@@ -1773,9 +1790,9 @@ function Get-MetaCursorTranscriptRoots {
         $candidates = [System.Collections.Generic.List[string]]::new()
         $known = $pathByName[$projectName.ToLowerInvariant()]
         if ($known) {
-            [void]$candidates.Add((ConvertTo-MetaCursorProjectSlug -Path $known))
+            [void]$candidates.Add((ConvertTo-MetraCursorProjectSlug -Path $known))
         }
-        [void]$candidates.Add((ConvertTo-MetaCursorProjectSlug -Name $projectName))
+        [void]$candidates.Add((ConvertTo-MetraCursorProjectSlug -Name $projectName))
 
         foreach ($slug in $candidates) {
             if (-not $slug -or $seen.ContainsKey($slug)) { continue }
@@ -1791,7 +1808,7 @@ function Get-MetaCursorTranscriptRoots {
     }
 }
 
-function Get-MetaChatSearchTerms {
+function Get-MetraChatSearchTerms {
     param(
         [string]$Query,
         [string]$Ticket
@@ -1826,7 +1843,7 @@ function Get-MetaChatSearchTerms {
     return $bag.ToArray()
 }
 
-function Get-MetaChatSnippet {
+function Get-MetraChatSnippet {
     param(
         [Parameter(Mandatory)][string]$Text,
         [Parameter(Mandatory)][string]$Term,
@@ -1844,7 +1861,7 @@ function Get-MetaChatSnippet {
     return $snip.Trim()
 }
 
-function Get-MetaChatTitle {
+function Get-MetraChatTitle {
     param([Parameter(Mandatory)][string]$Raw)
 
     $text = $Raw
@@ -1861,7 +1878,7 @@ function Get-MetaChatTitle {
     return '(no title)'
 }
 
-function Get-MetaProjectChats {
+function Get-MetraProjectChats {
     <#
     .SYNOPSIS
         Search local Cursor agent transcripts for ticket / keyword clues (bounded summaries).
@@ -1870,9 +1887,9 @@ function Get-MetaProjectChats {
         (skips subagents/). Returns chat uuid, title, matched terms, and short snippets -
         not full transcripts. Canonical ticket memory remains TicketTracker notes/solutions.
     .EXAMPLE
-        Get-MetaProjectChats -Name Solarwinds -Query 'disk alert' -Limit 10
+        Get-MetraProjectChats -Name Solarwinds -Query 'disk alert' -Limit 10
     .EXAMPLE
-        Get-MetaProjectChats -Name TicketTracker,Solarwinds -Ticket 12345 -Days 90
+        Get-MetraProjectChats -Name TicketTracker,Solarwinds -Ticket 12345 -Days 90
     #>
     [CmdletBinding()]
     param(
@@ -1882,15 +1899,16 @@ function Get-MetaProjectChats {
         [int]$Days = 90,
         [int]$Limit = 10,
         [int]$SnippetChars = 160,
-        [switch]$IncludeMeta
+        [Alias('IncludeMeta')]
+        [switch]$IncludeMetra
     )
 
     if ($Limit -lt 1) { $Limit = 10 }
     if ($Days -lt 1) { $Days = 90 }
 
-    $terms = @(Get-MetaChatSearchTerms -Query $Query -Ticket $Ticket | ForEach-Object { [string]$_ })
+    $terms = @(Get-MetraChatSearchTerms -Query $Query -Ticket $Ticket | ForEach-Object { [string]$_ })
     Write-Verbose ("Chat search terms ({0}): {1}" -f $terms.Count, ($terms -join ' | '))
-    $roots = @(Get-MetaCursorTranscriptRoots -Name $Name -IncludeMeta:$IncludeMeta)
+    $roots = @(Get-MetraCursorTranscriptRoots -Name $Name -IncludeMetra:$IncludeMetra)
     if ($roots.Count -eq 0) {
         Write-Warning 'No Cursor transcript folders found for the selected projects.'
         return @()
@@ -1948,7 +1966,7 @@ function Get-MetaProjectChats {
                 if ($raw.IndexOf($term, [System.StringComparison]::OrdinalIgnoreCase) -ge 0) {
                     [void]$matched.Add($term)
                     if ($snippets.Count -lt 2) {
-                        $snip = Get-MetaChatSnippet -Text $raw -Term $term -MaxChars $SnippetChars
+                        $snip = Get-MetraChatSnippet -Text $raw -Term $term -MaxChars $SnippetChars
                         if ($snip) { [void]$snippets.Add([string]$snip) }
                     }
                 }
@@ -1956,7 +1974,7 @@ function Get-MetaProjectChats {
             if ($matched.Count -eq 0) { continue }
         }
 
-        $title = Get-MetaChatTitle -Raw $raw
+        $title = Get-MetraChatTitle -Raw $raw
         $results.Add([PSCustomObject]@{
             Project      = [string]$c.Project
             ChatId       = [string]$c.ChatId
@@ -1973,13 +1991,13 @@ function Get-MetaProjectChats {
     return [object[]]$results.ToArray()
 }
 
-function Get-MetaProfileFileMap {
+function Get-MetraProfileFileMap {
     <#
     .SYNOPSIS
         Relative paths that make up an operator profile pack (same layout as profiles/sample).
     #>
     return @(
-        'meta.config.json',
+        'metra.config.json',
         'projects.local.json',
         '.cursor/rules/metra-persona.local.mdc',
         '.cursor/rules/metra-humor.local.mdc',
@@ -1987,7 +2005,7 @@ function Get-MetaProfileFileMap {
     )
 }
 
-function Resolve-MetaProfileSourceDir {
+function Resolve-MetraProfileSourceDir {
     <#
     .SYNOPSIS
         Resolves a profile pack path to an unpacked directory (extracts zip to temp when needed).
@@ -2021,19 +2039,27 @@ function Resolve-MetaProfileSourceDir {
         throw "Profile path must be a directory or .zip file: $full"
     }
 
-    $tempRoot = Join-Path ([System.IO.Path]::GetTempPath()) ('meta-profile-' + [guid]::NewGuid().ToString('N'))
+    $tempRoot = Join-Path ([System.IO.Path]::GetTempPath()) ('metra-profile-' + [guid]::NewGuid().ToString('N'))
     New-Item -ItemType Directory -Path $tempRoot -Force | Out-Null
     Expand-Archive -LiteralPath $item.FullName -DestinationPath $tempRoot -Force
 
-    $manifest = Get-ChildItem -LiteralPath $tempRoot -Filter 'meta-profile.json' -Recurse -File -ErrorAction SilentlyContinue |
+    $manifest = Get-ChildItem -LiteralPath $tempRoot -Filter 'metra-profile.json' -Recurse -File -ErrorAction SilentlyContinue |
         Select-Object -First 1
+    if (-not $manifest) {
+        $manifest = Get-ChildItem -LiteralPath $tempRoot -Filter 'meta-profile.json' -Recurse -File -ErrorAction SilentlyContinue |
+            Select-Object -First 1
+    }
     $dir = if ($manifest) {
         $manifest.Directory.FullName
     }
     else {
         $children = @(Get-ChildItem -LiteralPath $tempRoot -Directory)
-        if ($children.Count -eq 1 -and (Test-Path (Join-Path $children[0].FullName 'meta-profile.json'))) {
-            $children[0].FullName
+        $childDir = if ($children.Count -eq 1) { $children[0].FullName } else { $null }
+        if ($childDir -and (
+                (Test-Path (Join-Path $childDir 'metra-profile.json')) -or
+                (Test-Path (Join-Path $childDir 'meta-profile.json'))
+            )) {
+            $childDir
         }
         else {
             $tempRoot
@@ -2048,7 +2074,7 @@ function Resolve-MetaProfileSourceDir {
     }
 }
 
-function Export-MetaProfile {
+function Export-MetraProfile {
     <#
     .SYNOPSIS
         Pack local operator customizations into a portable folder (or zip if path ends in .zip).
@@ -2061,17 +2087,17 @@ function Export-MetaProfile {
         [Parameter(Mandatory)][string]$Path
     )
 
-    $metaRoot = Get-MetaRoot
-    $fileMap = @(Get-MetaProfileFileMap)
+    $metraRoot = Get-MetraRoot
+    $fileMap = @(Get-MetraProfileFileMap)
     $present = New-Object System.Collections.Generic.List[string]
     foreach ($rel in $fileMap) {
-        $src = Join-Path $metaRoot ($rel -replace '/', [IO.Path]::DirectorySeparatorChar)
+        $src = Join-Path $metraRoot ($rel -replace '/', [IO.Path]::DirectorySeparatorChar)
         if (Test-Path -LiteralPath $src) {
             [void]$present.Add($rel)
         }
     }
     if ($present.Count -eq 0) {
-        throw 'Nothing to export: no meta.config.json, projects.local.json, metra-persona.local.mdc, metra-humor.local.mdc, or metra-teaching-gentle.local.mdc found.'
+        throw 'Nothing to export: no metra.config.json, projects.local.json, metra-persona.local.mdc, metra-humor.local.mdc, or metra-teaching-gentle.local.mdc found.'
     }
 
     $expanded = [System.Environment]::ExpandEnvironmentVariables($Path)
@@ -2082,7 +2108,7 @@ function Export-MetaProfile {
     $asZip = $destFull.EndsWith('.zip', [StringComparison]::OrdinalIgnoreCase)
 
     $staging = if ($asZip) {
-        Join-Path ([System.IO.Path]::GetTempPath()) ('meta-profile-export-' + [guid]::NewGuid().ToString('N'))
+        Join-Path ([System.IO.Path]::GetTempPath()) ('metra-profile-export-' + [guid]::NewGuid().ToString('N'))
     }
     else {
         $destFull
@@ -2090,7 +2116,7 @@ function Export-MetaProfile {
     New-Item -ItemType Directory -Path $staging -Force | Out-Null
 
     foreach ($rel in $present) {
-        $src = Join-Path $metaRoot ($rel -replace '/', [IO.Path]::DirectorySeparatorChar)
+        $src = Join-Path $metraRoot ($rel -replace '/', [IO.Path]::DirectorySeparatorChar)
         $dst = Join-Path $staging ($rel -replace '/', [IO.Path]::DirectorySeparatorChar)
         $dstDir = Split-Path -Parent $dst
         if (-not (Test-Path -LiteralPath $dstDir)) {
@@ -2111,20 +2137,20 @@ function Export-MetaProfile {
             'Do not pack secrets, ticket caches, or canvas snapshots.'
         )
     }
-    $manifestPath = Join-Path $staging 'meta-profile.json'
+    $manifestPath = Join-Path $staging 'metra-profile.json'
     ($manifest | ConvertTo-Json -Depth 6) | Set-Content -Path $manifestPath -Encoding utf8
 
     $readmePath = Join-Path $staging 'README.md'
     @"
-# Exported Meta operator profile
+# Exported Metra operator profile
 
 Created: $($manifest.exportedUtc)
 
 Import into another Metra checkout:
 
 ``````powershell
-.\meta.ps1 import-profile -Path <this-folder-or-zip> -Force
-# Then edit meta.config.json roots / operator name in metra-persona.local.mdc
+.\metra.ps1 import-profile -Path <this-folder-or-zip> -Force
+# Then edit metra.config.json roots / operator name in metra-persona.local.mdc
 # Optional: metra-humor.local.mdc / metra-teaching-gentle.local.mdc come from profiles/addons when you opted in
 ``````
 
@@ -2143,7 +2169,7 @@ Personal-root ``registryFile`` is not included in this pack.
         }
         Compress-Archive -Path (Join-Path $staging '*') -DestinationPath $destFull -Force
         Remove-Item -LiteralPath $staging -Recurse -Force
-        $manifestOut = 'meta-profile.json (inside zip)'
+        $manifestOut = 'metra-profile.json (inside zip)'
     }
 
     return [PSCustomObject]@{
@@ -2154,7 +2180,7 @@ Personal-root ``registryFile`` is not included in this pack.
     }
 }
 
-function Import-MetaProfile {
+function Import-MetraProfile {
     <#
     .SYNOPSIS
         Restore an operator profile pack into the Metra checkout (same layout as profiles/sample).
@@ -2173,36 +2199,45 @@ function Import-MetaProfile {
         [switch]$Quiet
     )
 
-    $metaRoot = Get-MetaRoot
-    $resolved = Resolve-MetaProfileSourceDir -Path $Path
+    $metraRoot = Get-MetraRoot
+    $resolved = Resolve-MetraProfileSourceDir -Path $Path
     try {
         $srcDir = $resolved.Directory
-        $manifestPath = Join-Path $srcDir 'meta-profile.json'
-        $fileMap = @(Get-MetaProfileFileMap)
+        $manifestPath = Join-Path $srcDir 'metra-profile.json'
+        if (-not (Test-Path -LiteralPath $manifestPath)) {
+            $manifestPath = Join-Path $srcDir 'meta-profile.json'
+        }
+        $fileMap = @(Get-MetraProfileFileMap)
         $fromManifest = @()
         if (Test-Path -LiteralPath $manifestPath) {
             $manifest = Get-Content -Raw -Path $manifestPath | ConvertFrom-Json
-            $fromManifest = @(Get-MetaProp -Object $manifest -Name 'files' -Default @())
+            $fromManifest = @(Get-MetraProp -Object $manifest -Name 'files' -Default @())
         }
         $candidates = if ($fromManifest.Count -gt 0) { $fromManifest } else { $fileMap }
 
         $plan = New-Object System.Collections.Generic.List[object]
         foreach ($rel in $candidates) {
             $relNorm = [string]$rel -replace '\\', '/'
-            if ($fileMap -notcontains $relNorm -and $fileMap -notcontains ($relNorm -replace '/', '\')) {
-                # Still allow known map paths only
-                $allowed = $false
-                foreach ($known in $fileMap) {
-                    if ($known -eq $relNorm) { $allowed = $true; break }
-                }
-                if (-not $allowed) { continue }
+            # Legacy pack filenames map onto current destinations.
+            $destRel = switch ($relNorm) {
+                'meta.config.json' { 'metra.config.json' }
+                default { $relNorm }
             }
+            $allowed = $false
+            foreach ($known in $fileMap) {
+                if ($known -eq $destRel) { $allowed = $true; break }
+            }
+            if (-not $allowed) { continue }
+
             $src = Join-Path $srcDir ($relNorm -replace '/', [IO.Path]::DirectorySeparatorChar)
+            if (-not (Test-Path -LiteralPath $src) -and $relNorm -eq 'metra.config.json') {
+                $src = Join-Path $srcDir 'meta.config.json'
+            }
             if (-not (Test-Path -LiteralPath $src)) { continue }
-            $dst = Join-Path $metaRoot ($relNorm -replace '/', [IO.Path]::DirectorySeparatorChar)
+            $dst = Join-Path $metraRoot ($destRel -replace '/', [IO.Path]::DirectorySeparatorChar)
             $exists = Test-Path -LiteralPath $dst
             [void]$plan.Add([PSCustomObject]@{
-                Relative = $relNorm
+                Relative = $destRel
                 Source   = $src
                 Dest     = $dst
                 Exists   = $exists
@@ -2222,10 +2257,10 @@ function Import-MetaProfile {
                 }
                 Write-Host ''
                 Write-Host 'Post-import checklist (after a real import):'
-                Write-Host '  - Edit meta.config.json roots / workspace.alwaysInclude for this machine'
+                Write-Host '  - Edit metra.config.json roots / workspace.alwaysInclude for this machine'
                 Write-Host '  - Edit .cursor/rules/metra-persona.local.mdc operator display name'
                 Write-Host '  - Personal-root registryFile is not in the pack; copy separately if needed'
-                Write-Host '  - Run .\meta.ps1 workspace and .\meta.ps1 audit'
+                Write-Host '  - Run .\metra.ps1 workspace and .\metra.ps1 audit'
             }
             return [PSCustomObject]@{
                 Preview = $true
@@ -2254,17 +2289,17 @@ function Import-MetaProfile {
         if (-not $Quiet) {
             Write-Host ''
             Write-Host 'Post-import checklist:' -ForegroundColor Yellow
-            Write-Host '  - Edit meta.config.json roots / workspace.alwaysInclude for this machine'
+            Write-Host '  - Edit metra.config.json roots / workspace.alwaysInclude for this machine'
             Write-Host '  - Edit .cursor/rules/metra-persona.local.mdc operator display name'
             Write-Host '  - Personal-root registryFile is not in the pack; copy separately if needed'
-            Write-Host '  - Run .\meta.ps1 workspace and .\meta.ps1 audit'
+            Write-Host '  - Run .\metra.ps1 workspace and .\metra.ps1 audit'
         }
 
         return [PSCustomObject]@{
             Preview = $false
             Files   = @($plan | ForEach-Object { $_.Relative })
             Source  = $resolved.Source
-            Dest    = $metaRoot
+            Dest    = $metraRoot
         }
     }
     finally {
@@ -2274,7 +2309,7 @@ function Import-MetaProfile {
     }
 }
 
-function Export-MetaContextPack {
+function Export-MetraContextPack {
     <#
     .SYNOPSIS
         Build a bounded agent-facing context pack (roots + present routing).
@@ -2292,10 +2327,10 @@ function Export-MetaContextPack {
         [switch]$Quiet
     )
 
-    $metaRoot = Get-MetaRoot
+    $metraRoot = Get-MetraRoot
     if ($Limit -lt 1) { $Limit = 25 }
 
-    $roots = @(Get-MetaRoots -IncludeMissing | ForEach-Object {
+    $roots = @(Get-MetraRoots -IncludeMissing | ForEach-Object {
         $displayPath = [string]$_.RawPath
         if ([string]::IsNullOrWhiteSpace($displayPath)) { $displayPath = $_.Path }
         # Avoid leaking expanded username paths into packs when RawPath used env vars.
@@ -2314,9 +2349,9 @@ function Export-MetaContextPack {
         }
     })
 
-    $registry = Get-MetaProjectRegistry
+    $registry = Get-MetraProjectRegistry
     $disk = @{}
-    foreach ($p in @(Get-MetaProjects)) {
+    foreach ($p in @(Get-MetraProjects)) {
         $disk[$p.Name.ToLowerInvariant()] = $p
     }
 
@@ -2334,8 +2369,8 @@ function Export-MetaContextPack {
         $onDisk = $disk[$regName.ToLowerInvariant()]
         if (-not $onDisk) { continue }
 
-        $purpose = [string](Get-MetaProp -Object $reg -Name 'purpose' -Default '')
-        $triggers = @(Get-MetaProp -Object $reg -Name 'triggers' -Default @())
+        $purpose = [string](Get-MetraProp -Object $reg -Name 'purpose' -Default '')
+        $triggers = @(Get-MetraProp -Object $reg -Name 'triggers' -Default @())
         $score = 0
         if ($tokens.Count -gt 0) {
             $hay = (@($regName) + $triggers + @($purpose) | ForEach-Object { [string]$_ }) -join ' '
@@ -2355,15 +2390,15 @@ function Export-MetaContextPack {
             root         = [string]$onDisk.Root
             purpose      = $purpose
             triggers     = @($triggers)
-            capabilities = @(Get-MetaProp -Object $reg -Name 'capabilities' -Default @())
-            entry        = [string](Get-MetaProp -Object $reg -Name 'entry' -Default 'AGENTS.md')
+            capabilities = @(Get-MetraProp -Object $reg -Name 'capabilities' -Default @())
+            entry        = [string](Get-MetraProp -Object $reg -Name 'entry' -Default 'AGENTS.md')
             score        = $score
         })
     }
 
     # Also include present disk projects with no registry row (bounded).
     if ($tokens.Count -eq 0) {
-        foreach ($p in @(Get-MetaProjects)) {
+        foreach ($p in @(Get-MetraProjects)) {
             $exists = $false
             foreach ($s in $scored) {
                 if ($s.name -eq $p.Name) { $exists = $true; break }
@@ -2388,7 +2423,7 @@ function Export-MetaContextPack {
     )
 
     $missingOptional = @(
-        Get-MetaRoutingTable |
+        Get-MetraRoutingTable |
             Where-Object { -not $_.Present -and $_.Optional } |
             Select-Object -First 10 |
             ForEach-Object {
@@ -2408,7 +2443,7 @@ function Export-MetaContextPack {
             'Route to one primary project; load that project AGENTS.md before broad search.',
             'Ticket/helpdesk: TicketTracker first when present, then one technical project.',
             'Keep work and personal roots isolated unless the user names a cross-root handoff.',
-            'CLI: .\meta.ps1 routing | audit | chats | ctx'
+            'CLI: .\metra.ps1 routing | audit | chats | ctx'
         )
         roots       = @($roots)
         projects    = @($projects | ForEach-Object {
@@ -2424,8 +2459,8 @@ function Export-MetaContextPack {
         missingOptional = @($missingOptional)
     }
 
-    $defaultMd = Join-Path $metaRoot 'docs\context-pack.md'
-    $defaultJson = Join-Path $metaRoot 'docs\context-pack.json'
+    $defaultMd = Join-Path $metraRoot 'docs\context-pack.md'
+    $defaultJson = Join-Path $metraRoot 'docs\context-pack.json'
     $outPath = $Path
     $stdoutOnly = $false
     if ([string]::IsNullOrWhiteSpace($outPath)) {
@@ -2516,7 +2551,7 @@ function Export-MetaContextPack {
     }
 }
 
-function Invoke-MetaVerify {
+function Invoke-MetraVerify {
     <#
     .SYNOPSIS
         Runs Routing-Scenarios fixture smoke checks; returns PASS/WARN/FAIL rows.
@@ -2529,7 +2564,7 @@ function Invoke-MetaVerify {
     [CmdletBinding()]
     param()
 
-    $metaRoot = Get-MetaRoot
+    $metraRoot = Get-MetraRoot
     $projectsRoot = Get-ProjectsRoot
     $results = New-Object System.Collections.ArrayList
 
@@ -2562,10 +2597,10 @@ function Invoke-MetaVerify {
 
     # Required files
     $requiredPaths = @(
-        @{ Name = 'projects.json'; Path = (Join-Path $metaRoot 'projects.json') },
-        @{ Name = 'profiles/sample/meta-profile.json'; Path = (Join-Path $metaRoot 'profiles\sample\meta-profile.json') },
-        @{ Name = 'profiles/addons/humor-desk/meta-profile.json'; Path = (Join-Path $metaRoot 'profiles\addons\humor-desk\meta-profile.json') },
-        @{ Name = 'profiles/addons/teaching-gentle/meta-profile.json'; Path = (Join-Path $metaRoot 'profiles\addons\teaching-gentle\meta-profile.json') }
+        @{ Name = 'projects.json'; Path = (Join-Path $metraRoot 'projects.json') },
+        @{ Name = 'profiles/sample/metra-profile.json'; Path = (Join-Path $metraRoot 'profiles\sample\metra-profile.json') },
+        @{ Name = 'profiles/addons/humor-desk/metra-profile.json'; Path = (Join-Path $metraRoot 'profiles\addons\humor-desk\metra-profile.json') },
+        @{ Name = 'profiles/addons/teaching-gentle/metra-profile.json'; Path = (Join-Path $metraRoot 'profiles\addons\teaching-gentle\metra-profile.json') }
     )
     foreach ($item in $requiredPaths) {
         if (Test-Path -LiteralPath $item.Path) {
@@ -2599,21 +2634,21 @@ function Invoke-MetaVerify {
 
     # Live CLI: roots
     try {
-        $roots = @(Get-MetaRoots -IncludeMissing)
+        $roots = @(Get-MetraRoots -IncludeMissing)
         if ($roots.Count -gt 0) {
-            Add-VerifyResult -Name 'meta.ps1 roots' -Status 'PASS' -Detail ("{0} root(s)" -f $roots.Count)
+            Add-VerifyResult -Name 'metra.ps1 roots' -Status 'PASS' -Detail ("{0} root(s)" -f $roots.Count)
         }
         else {
-            Add-VerifyResult -Name 'meta.ps1 roots' -Status 'FAIL' -Detail 'no roots returned'
+            Add-VerifyResult -Name 'metra.ps1 roots' -Status 'FAIL' -Detail 'no roots returned'
         }
     }
     catch {
-        Add-VerifyResult -Name 'meta.ps1 roots' -Status 'FAIL' -Detail $_.Exception.Message
+        Add-VerifyResult -Name 'metra.ps1 roots' -Status 'FAIL' -Detail $_.Exception.Message
     }
 
     # Live CLI: routing for fixture names
     try {
-        $routing = @(Get-MetaRoutingTable -Name @('TicketTracker', 'Solarwinds', 'Trivia'))
+        $routing = @(Get-MetraRoutingTable -Name @('TicketTracker', 'Solarwinds', 'Trivia'))
         if ($routing.Count -eq 0) {
             Add-VerifyResult -Name 'routing TicketTracker,Solarwinds,Trivia' -Status 'FAIL' -Detail 'no routing rows'
         }
@@ -2638,7 +2673,7 @@ function Invoke-MetaVerify {
 
     # Live CLI: ctx (no docs write during smoke)
     try {
-        $ctx = Export-MetaContextPack -Query 'ticket' -Format markdown -Path '-' -Quiet |
+        $ctx = Export-MetraContextPack -Query 'ticket' -Format markdown -Path '-' -Quiet |
             Select-Object -Last 1
         if ($ctx -and [string]$ctx.Path -eq '-') {
             Add-VerifyResult -Name 'ctx -Query ticket' -Status 'PASS' -Detail 'stdout-only (no file write)'
@@ -2653,8 +2688,8 @@ function Invoke-MetaVerify {
 
     # Live CLI: import-profile Preview (quiet)
     try {
-        $sample = Join-Path $metaRoot 'profiles\sample'
-        $preview = Import-MetaProfile -Path $sample -Preview -Quiet
+        $sample = Join-Path $metraRoot 'profiles\sample'
+        $preview = Import-MetraProfile -Path $sample -Preview -Quiet
         if ($preview.Preview -and @($preview.Files).Count -gt 0) {
             Add-VerifyResult -Name 'import-profile sample -Preview' -Status 'PASS' -Detail $sample
         }
@@ -2668,7 +2703,7 @@ function Invoke-MetaVerify {
 
     # Soft: chats (Cursor-specific; may be empty)
     try {
-        $chats = @(Get-MetaProjectChats -Name 'Solarwinds' -Query 'alert' -Limit 3 -ErrorAction Stop)
+        $chats = @(Get-MetraProjectChats -Name 'Solarwinds' -Query 'alert' -Limit 3 -ErrorAction Stop)
         Add-VerifyResult -Name 'chats Solarwinds alert' -Status 'PASS' -Detail ("{0} row(s)" -f $chats.Count)
     }
     catch {
@@ -2678,7 +2713,7 @@ function Invoke-MetaVerify {
     # Soft: audit DriftOnly on fixture trio when present
     try {
         $presentNames = @(
-            Get-MetaRoutingTable -Name @('Solarwinds', 'TicketTracker', 'Trivia') |
+            Get-MetraRoutingTable -Name @('Solarwinds', 'TicketTracker', 'Trivia') |
                 Where-Object { $_.Present } |
                 ForEach-Object { $_.Name }
         )
@@ -2686,7 +2721,7 @@ function Invoke-MetaVerify {
             Add-VerifyResult -Name 'audit -DriftOnly fixtures' -Status 'WARN' -Detail 'no fixture projects Present'
         }
         else {
-            $audit = Invoke-MetaProjectContextAudit -Name $presentNames -DriftOnly -Quiet | Select-Object -Last 1
+            $audit = Invoke-MetraProjectContextAudit -Name $presentNames -DriftOnly -Quiet | Select-Object -Last 1
             Add-VerifyResult -Name 'audit -DriftOnly fixtures' -Status 'PASS' -Detail ("driftSignals={0}" -f $audit.DriftCount)
         }
     }
@@ -2707,34 +2742,65 @@ function Invoke-MetaVerify {
     }
 }
 
+# Silent one-release compatibility aliases (old Meta-* names).
+$script:MetraCompatAliasMap = [ordered]@{
+    'Get-MetaRoot'                   = 'Get-MetraRoot'
+    'Get-MetaConfig'                 = 'Get-MetraConfig'
+    'Get-MetaProp'                   = 'Get-MetraProp'
+    'Get-MetaRoots'                  = 'Get-MetraRoots'
+    'Get-MetaProjects'               = 'Get-MetraProjects'
+    'Get-MetaStatus'                 = 'Get-MetraStatus'
+    'Update-MetaProjects'            = 'Update-MetraProjects'
+    'New-MetaProject'                = 'New-MetraProject'
+    'Get-RecentMetaProjects'         = 'Get-RecentMetraProjects'
+    'Update-MetaWorkspace'           = 'Update-MetraWorkspace'
+    'Get-MetaProjectRegistry'        = 'Get-MetraProjectRegistry'
+    'Get-MetaRoutingTable'           = 'Get-MetraRoutingTable'
+    'Invoke-MetaProjectContextAudit' = 'Invoke-MetraProjectContextAudit'
+    'Get-MetaProjectGitCounts'       = 'Get-MetraProjectGitCounts'
+    'Export-MetaCanvasSnapshot'      = 'Export-MetraCanvasSnapshot'
+    'Test-MetaCanvasSnapshotStale'   = 'Test-MetraCanvasSnapshotStale'
+    'Get-MetaQuickProjectHealthReports' = 'Get-MetraQuickProjectHealthReports'
+    'Invoke-MetaVerify'              = 'Invoke-MetraVerify'
+    'Export-MetaContextPack'         = 'Export-MetraContextPack'
+    'Get-MetaProjectChats'           = 'Get-MetraProjectChats'
+    'Get-MetaCursorTranscriptRoots'  = 'Get-MetraCursorTranscriptRoots'
+    'Get-MetaProfileFileMap'         = 'Get-MetraProfileFileMap'
+    'Export-MetaProfile'             = 'Export-MetraProfile'
+    'Import-MetaProfile'             = 'Import-MetraProfile'
+}
+foreach ($pair in $script:MetraCompatAliasMap.GetEnumerator()) {
+    Set-Alias -Name $pair.Key -Value $pair.Value -Scope Script -Force
+}
+
 Export-ModuleMember -Function @(
-    'Get-MetaRoot',
-    'Get-MetaConfig',
-    'Get-MetaProp',
-    'Get-MetaRoots',
+    'Get-MetraRoot',
+    'Get-MetraConfig',
+    'Get-MetraProp',
+    'Get-MetraRoots',
     'Get-ProjectsRoot',
-    'Get-MetaProjects',
+    'Get-MetraProjects',
     'Invoke-AcrossProjects',
-    'Get-MetaStatus',
-    'Update-MetaProjects',
+    'Get-MetraStatus',
+    'Update-MetraProjects',
     'Copy-AcrossProjects',
-    'New-MetaProject',
+    'New-MetraProject',
     'Get-ProjectLastActivity',
-    'Get-RecentMetaProjects',
-    'Update-MetaWorkspace',
-    'Get-MetaProjectRegistry',
-    'Get-MetaRoutingTable',
-    'Invoke-MetaProjectContextAudit',
-    'Get-MetaProjectGitCounts',
-    'Export-MetaCanvasSnapshot',
-    'Test-MetaCanvasSnapshotStale',
-    'Get-MetaQuickProjectHealthReports',
-    'Invoke-MetaVerify',
-    'Export-MetaContextPack',
-    'Get-MetaProjectChats',
-    'Get-MetaCursorTranscriptRoots',
-    'Get-MetaProfileFileMap',
-    'Export-MetaProfile',
-    'Import-MetaProfile'
-)
+    'Get-RecentMetraProjects',
+    'Update-MetraWorkspace',
+    'Get-MetraProjectRegistry',
+    'Get-MetraRoutingTable',
+    'Invoke-MetraProjectContextAudit',
+    'Get-MetraProjectGitCounts',
+    'Export-MetraCanvasSnapshot',
+    'Test-MetraCanvasSnapshotStale',
+    'Get-MetraQuickProjectHealthReports',
+    'Invoke-MetraVerify',
+    'Export-MetraContextPack',
+    'Get-MetraProjectChats',
+    'Get-MetraCursorTranscriptRoots',
+    'Get-MetraProfileFileMap',
+    'Export-MetraProfile',
+    'Import-MetraProfile'
+) -Alias @($script:MetraCompatAliasMap.Keys)
 

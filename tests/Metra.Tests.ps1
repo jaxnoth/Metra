@@ -1,14 +1,14 @@
 # Requires Pester 5+ (pwsh recommended).
-# Run: pwsh -NoProfile -File .\tests\Invoke-MetaTests.ps1
+# Run: pwsh -NoProfile -File .\tests\Invoke-MetraTests.ps1
 
 BeforeAll {
-    $metaRoot = (Resolve-Path (Join-Path $PSScriptRoot '..')).Path
-    Import-Module (Join-Path $metaRoot 'scripts\Meta.psm1') -Force
+    $metraRoot = (Resolve-Path (Join-Path $PSScriptRoot '..')).Path
+    Import-Module (Join-Path $metraRoot 'scripts\Metra.psm1') -Force
 }
 
-Describe 'Get-MetaRoutingTable' {
+Describe 'Get-MetraRoutingTable' {
     It 'returns TicketTracker, Solarwinds, and Trivia rows from shared/local registry' {
-        $rows = @(Get-MetaRoutingTable -Name @('TicketTracker', 'Solarwinds', 'Trivia'))
+        $rows = @(Get-MetraRoutingTable -Name @('TicketTracker', 'Solarwinds', 'Trivia'))
         $rows.Count | Should -BeGreaterOrEqual 3
         ($rows.Name | Sort-Object -Unique) | Should -Contain 'TicketTracker'
         ($rows.Name | Sort-Object -Unique) | Should -Contain 'Solarwinds'
@@ -20,39 +20,39 @@ Describe 'Get-MetaRoutingTable' {
     }
 }
 
-Describe 'Import-MetaProfile' {
+Describe 'Import-MetraProfile' {
     It 'Preview -Quiet returns files and writes nothing' {
-        $sample = Join-Path (Get-MetaRoot) 'profiles\sample'
-        $result = Import-MetaProfile -Path $sample -Preview -Quiet
+        $sample = Join-Path (Get-MetraRoot) 'profiles\sample'
+        $result = Import-MetraProfile -Path $sample -Preview -Quiet
         $result.Preview | Should -BeTrue
         @($result.Files).Count | Should -BeGreaterThan 0
-        $result.Files | Should -Contain 'meta.config.json'
+        $result.Files | Should -Contain 'metra.config.json'
     }
 
     It 'Preview humor-desk add-on includes metra-humor.local.mdc' {
-        $pack = Join-Path (Get-MetaRoot) 'profiles\addons\humor-desk'
-        $result = Import-MetaProfile -Path $pack -Preview -Quiet
+        $pack = Join-Path (Get-MetraRoot) 'profiles\addons\humor-desk'
+        $result = Import-MetraProfile -Path $pack -Preview -Quiet
         $result.Preview | Should -BeTrue
         $result.Files | Should -Contain '.cursor/rules/metra-humor.local.mdc'
     }
 
     It 'Preview teaching-gentle add-on includes metra-teaching-gentle.local.mdc' {
-        $pack = Join-Path (Get-MetaRoot) 'profiles\addons\teaching-gentle'
-        $result = Import-MetaProfile -Path $pack -Preview -Quiet
+        $pack = Join-Path (Get-MetraRoot) 'profiles\addons\teaching-gentle'
+        $result = Import-MetraProfile -Path $pack -Preview -Quiet
         $result.Preview | Should -BeTrue
         $result.Files | Should -Contain '.cursor/rules/metra-teaching-gentle.local.mdc'
     }
 
     It 'refuses overwrite without -Force when targets exist' {
-        $sample = Join-Path (Get-MetaRoot) 'profiles\sample'
+        $sample = Join-Path (Get-MetraRoot) 'profiles\sample'
         # Live checkout already has local targets from sample/operator use.
-        { Import-MetaProfile -Path $sample -Quiet } | Should -Throw '*Refusing to overwrite*'
+        { Import-MetraProfile -Path $sample -Quiet } | Should -Throw '*Refusing to overwrite*'
     }
 }
 
-Describe 'Export-MetaContextPack' {
+Describe 'Export-MetraContextPack' {
     It 'Path - with Quiet does not rewrite docs/context-pack.md' {
-        $packPath = Join-Path (Get-MetaRoot) 'docs\context-pack.md'
+        $packPath = Join-Path (Get-MetraRoot) 'docs\context-pack.md'
         $before = if (Test-Path -LiteralPath $packPath) {
             (Get-Item -LiteralPath $packPath).LastWriteTimeUtc
         }
@@ -61,7 +61,7 @@ Describe 'Export-MetaContextPack' {
         }
 
         Start-Sleep -Milliseconds 50
-        $result = Export-MetaContextPack -Query 'ticket' -Format markdown -Path '-' -Quiet |
+        $result = Export-MetraContextPack -Query 'ticket' -Format markdown -Path '-' -Quiet |
             Select-Object -Last 1
 
         $result.Path | Should -Be '-'
@@ -73,9 +73,9 @@ Describe 'Export-MetaContextPack' {
     }
 }
 
-Describe 'Invoke-MetaVerify' {
+Describe 'Invoke-MetraVerify' {
     It 'returns structured PASS/WARN/FAIL with Ok when FailCount is 0' {
-        $report = Invoke-MetaVerify
+        $report = Invoke-MetraVerify
         $report.PassCount | Should -BeGreaterThan 0
         $report.FailCount | Should -BeGreaterOrEqual 0
         $report.Ok | Should -Be ($report.FailCount -eq 0)
@@ -84,8 +84,9 @@ Describe 'Invoke-MetaVerify' {
     }
 
     It 'passes on this machine (no FAIL rows)' {
-        $report = Invoke-MetaVerify
+        $report = Invoke-MetraVerify
         $report.FailCount | Should -Be 0
         $report.Ok | Should -BeTrue
     }
 }
+

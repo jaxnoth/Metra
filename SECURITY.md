@@ -4,13 +4,13 @@
 
 Keep these local (gitignored). They often contain machine paths, private routing, or operator identity:
 
-- `meta.config.json` (use `meta.config.example.json` or `profiles/sample/`)
+- `metra.config.json` (use `metra.config.example.json` or `profiles/sample/`)
 - `projects.local.json` (use `projects.local.example.json`)
 - `.cursor/rules/metra-persona.local.mdc` (use the example or sample pack)
 - `.cursor/rules/metra-humor.local.mdc` (optional; use the example or `profiles/addons/humor-desk`)
 - `.cursor/rules/metra-teaching-gentle.local.mdc` (optional; use the example or `profiles/addons/teaching-gentle`)
-- `docs/canvas-snapshot.json` (regenerate with `.\meta.ps1 snapshot`)
-- `docs/context-pack.md` / `docs/context-pack.json` (regenerate with `.\meta.ps1 ctx`)
+- `docs/canvas-snapshot.json` (regenerate with `.\metra.ps1 snapshot`)
+- `docs/context-pack.md` / `docs/context-pack.json` (regenerate with `.\metra.ps1 ctx`)
 
 The tracked pack under `profiles/sample/` is intentional and anonymized. Do not replace it with a live export that contains real usernames, hostnames, or org-private paths.
 
@@ -18,7 +18,7 @@ Tracked Cursor hooks under `.cursor/hooks/` are safe to commit (no secrets). Do 
 
 ## Operator commands
 
-`.\meta.ps1 run <command>` executes operator-provided shell text inside selected project folders (via `Invoke-Expression`). That is intentional portfolio tooling - not a sandbox.
+`.\metra.ps1 run <command>` executes operator-provided shell text inside selected project folders (via `Invoke-Expression`). That is intentional portfolio tooling - not a sandbox.
 
 - Only pass commands you trust.
 - Do not feed untrusted or remote-controlled input into `run`.

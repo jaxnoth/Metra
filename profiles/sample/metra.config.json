@@ -40,12 +40,12 @@
     "outputs": [
       {
         "path": "Metra.code-workspace",
-        "metaFolderPath": ".",
+        "metraFolderPath": ".",
         "projectPathPrefix": "../"
       },
       {
         "path": "../Metra.code-workspace",
-        "metaFolderPath": "_metra",
+        "metraFolderPath": "_metra",
         "projectPathPrefix": ""
       }
     ],
@@ -76,3 +76,4 @@
     }
   }
 }
+

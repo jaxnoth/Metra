@@ -16,8 +16,8 @@ Installs `.cursor/rules/metra-teaching-gentle.local.mdc` with:
 From the Metra checkout root (recommended `_metra`; older clones may use `_meta`):
 
 ```powershell
-.\meta.ps1 import-profile -Path .\profiles\addons\teaching-gentle -Preview
-.\meta.ps1 import-profile -Path .\profiles\addons\teaching-gentle -Force
+.\metra.ps1 import-profile -Path .\profiles\addons\teaching-gentle -Preview
+.\metra.ps1 import-profile -Path .\profiles\addons\teaching-gentle -Force
 ```
 
 Disable: delete `.cursor/rules/metra-teaching-gentle.local.mdc`.
@@ -28,7 +28,7 @@ For a shared Cursor session helping with school or family work, import this add-
 
 | File | Role |
 |------|------|
-| `meta-profile.json` | Manifest (install via `import-profile`) |
+| `metra-profile.json` | Manifest (install via `import-profile`) |
 | `.cursor/rules/metra-teaching-gentle.local.mdc` | Always-on Cursor rule after import |
 
 See [profiles/addons/README.md](../README.md) and [docs/Customizing-Metra.md](../../../docs/Customizing-Metra.md).

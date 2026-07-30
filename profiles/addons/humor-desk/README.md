@@ -17,8 +17,8 @@ Installs `.cursor/rules/metra-humor.local.mdc` with:
 From the Metra checkout root (recommended `_metra`; older clones may use `_meta`):
 
 ```powershell
-.\meta.ps1 import-profile -Path .\profiles\addons\humor-desk -Preview
-.\meta.ps1 import-profile -Path .\profiles\addons\humor-desk -Force
+.\metra.ps1 import-profile -Path .\profiles\addons\humor-desk -Preview
+.\metra.ps1 import-profile -Path .\profiles\addons\humor-desk -Force
 ```
 
 Disable: delete `.cursor/rules/metra-humor.local.mdc`.
@@ -27,7 +27,7 @@ Disable: delete `.cursor/rules/metra-humor.local.mdc`.
 
 | File | Role |
 |------|------|
-| `meta-profile.json` | Manifest (install via `import-profile`) |
+| `metra-profile.json` | Manifest (install via `import-profile`) |
 | `.cursor/rules/metra-humor.local.mdc` | Always-on Cursor rule after import |
 
 See [profiles/addons/README.md](../README.md) and [docs/Customizing-Metra.md](../../../docs/Customizing-Metra.md).

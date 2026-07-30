@@ -1,7 +1,7 @@
 {
   "version": 2,
   "updated": "2026-07-28",
-  "note": "Shared routing registry. Only entries meant for coworkers live here. Machine-private entries belong in projects.local.json; entries that travel with a project root belong in that root's registryFile (see meta.config.json).",
+  "note": "Shared routing registry. Only entries meant for coworkers live here. Machine-private entries belong in projects.local.json; entries that travel with a project root belong in that root's registryFile (see metra.config.json).",
   "routing": {
     "ticketFirst": true,
     "defaultEntry": "TicketTracker",
@@ -13,7 +13,7 @@
       "An entry marked optional may be absent on this machine: follow its whenMissing advice instead of guessing at paths or commands.",
       "Keep work and personal roots isolated: do not open a project in another root unless the user names that project or explicitly asks to move material between them.",
       "related lists stay same-root only; cross-root handoffs are chat opt-in, not automatic routing.",
-      "Run .\\meta.ps1 routing to see which entries resolved to a real folder."
+      "Run .\\metra.ps1 routing to see which entries resolved to a real folder."
     ]
   },
   "projects": [

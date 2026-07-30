@@ -18,15 +18,21 @@ Entry shape:
 
 ---
 
+## 2026-07-30 - CLI / module / config rename to Metra
+
+- Decision: Canonical names are `metra.ps1`, `scripts/Metra.psm1`, `*-Metra*` functions, `metra.config.json`, `metra-profile.json`, and workspace keys `metraFolderName` / `metraFolderPath`. Docs and rules teach only those names. Silent one-release compatibility: `meta.ps1` shim, config/profile filename fallbacks, `metaFolder*` dual-read, and exported `*-Meta*` aliases. Live checkout folder may stay `_meta` (Cursor state). Remove shims in a later pass after muscle memory settles.
+- Why: Product, persona, canvas, and recommended folder already said Metra; keeping `meta.*` trained two brands.
+- See: `metra.ps1`, `meta.ps1`, `scripts/Metra.psm1`, `docs/Brand.md`
+
 ## 2026-07-30 - Recommended checkout folder `_metra`
 
-- Decision: Recommended local checkout name is **`_metra`**. Still accepted: `_meta`, `Metra`, `metra` (and legacy `meta`). `Test-MetaSelfFolderName` recognizes all of them. Do not require renaming an existing `_meta` live checkout.
+- Decision: Recommended local checkout name is **`_metra`**. Still accepted: `_meta`, `Metra`, `metra` (and legacy `meta`). `Test-MetraSelfFolderName` recognizes all of them. Do not require renaming an existing `_meta` live checkout.
 - Why: Leading underscore keeps orchestration at the top of the sibling list; `_metra` matches the product name better than `_meta` without losing that sort behavior.
-- See: `README.md` (Naming), `Test-MetaSelfFolderName`, `docs/Brand.md`
+- See: `README.md` (Naming), `Test-MetraSelfFolderName`, `docs/Brand.md`
 
 ## 2026-07-30 - Ship teaching-gentle Persona Add-on
 
-- Decision: Ship `profiles/addons/teaching-gentle/` as the second Persona Add-on. Installs `metra-teaching-gentle.local.mdc`. Activates gentler pacing only when the operator explicitly requests kid/family/beginner/educational or teaching-gentle mode - never infer audience. While active, suppress humor-desk sarcasm. `Get-MetaProfileFileMap` includes the new local rule path.
+- Decision: Ship `profiles/addons/teaching-gentle/` as the second Persona Add-on. Installs `metra-teaching-gentle.local.mdc`. Activates gentler pacing only when the operator explicitly requests kid/family/beginner/educational or teaching-gentle mode - never infer audience. While active, suppress humor-desk sarcasm. `Get-MetraProfileFileMap` includes the new local rule path.
 - Why: Family / educational Cursor sessions need a shareable tone dial without baking audience assumptions into base Metra.
 - See: `profiles/addons/teaching-gentle/`, `profiles/addons/README.md`
 
@@ -38,15 +44,15 @@ Entry shape:
 
 ## 2026-07-30 - Optional persona add-on packs (humor-desk first)
 
-- Decision: Ship optional persona dials as `profiles/addons/<id>/` packs that import into gitignored `.cursor/rules/*.local.mdc` files. Public base `metra-persona.mdc` stays lean. First pack: `humor-desk` (desk-partner humor palette). `Get-MetaProfileFileMap` includes `.cursor/rules/metra-humor.local.mdc` so import/export can carry it. Further packs only when someone would actually import them.
+- Decision: Ship optional persona dials as `profiles/addons/<id>/` packs that import into gitignored `.cursor/rules/*.local.mdc` files. Public base `metra-persona.mdc` stays lean. First pack: `humor-desk` (desk-partner humor palette). `Get-MetraProfileFileMap` includes `.cursor/rules/metra-humor.local.mdc` so import/export can carry it. Further packs only when someone would actually import them.
 - Why: Operators want louder chat tone without forcing it on every clone or bloating always-on base. Same install path as sample profile; easy to remove by deleting the local rule.
 - See: `profiles/addons/README.md`, `profiles/addons/humor-desk/`, `docs/Customizing-Metra.md`
 
-## 2026-07-30 - Keep Meta.psm1 single-file for public v1
+## 2026-07-30 - Keep Metra.psm1 single-file for public v1
 
-- Decision: Keep `scripts/Meta.psm1` as one module for public v1. Split internally by operational concern (Core, Projects, Registry, then Context/Audit/Profile/Workspace) only when feature velocity or contributor readability requires it. Public function names stay stable; do not split by line count alone.
+- Decision: Keep `scripts/Metra.psm1` as one module for public v1. Split internally by operational concern (Core, Projects, Registry, then Context/Audit/Profile/Workspace) only when feature velocity or contributor readability requires it. Public function names stay stable; do not split by line count alone.
 - Why: The file is large but coherent as one CLI surface. Premature multi-file layout turns maintenance into a scavenger hunt - the problem Metra exists to avoid.
-- See: `scripts/Meta.psm1`, `Export-ModuleMember`, `SECURITY.md` (`run` trust boundary)
+- See: `scripts/Metra.psm1`, `Export-ModuleMember`, `SECURITY.md` (`run` trust boundary)
 
 ## 2026-07-30 - Public README: 90-second + Why Metra
 
@@ -56,15 +62,15 @@ Entry shape:
 
 ## 2026-07-30 - Quiet verify smoke
 
-- Decision: `.\meta.ps1 verify` uses quiet `ctx` (`-Path -`) and quiet `import-profile -Preview` so fixture smoke does not rewrite `docs/context-pack.*` or spam host output. Focused Pester under `tests/` covers routing rows, import refuse/Preview, quiet ctx, and verify Ok.
+- Decision: `.\metra.ps1 verify` uses quiet `ctx` (`-Path -`) and quiet `import-profile -Preview` so fixture smoke does not rewrite `docs/context-pack.*` or spam host output. Focused Pester under `tests/` covers routing rows, import refuse/Preview, quiet ctx, and verify Ok.
 - Why: Smoke should be pass/fail without mutating generated packs or drowning the result table.
-- See: `Invoke-MetaVerify`, `tests/Invoke-MetaTests.ps1`, `docs/Routing-Scenarios.md`
+- See: `Invoke-MetraVerify`, `tests/Invoke-MetraTests.ps1`, `docs/Routing-Scenarios.md`
 
 ## 2026-07-30 - Routing fixture smoke via verify
 
-- Decision: Prefer `.\meta.ps1 verify` for Routing-Scenarios fixture checks. Keep the raw PowerShell list in that doc as the human-readable source of truth for what verify covers. Exit `0` with WARN-only; exit `1` on any FAIL.
+- Decision: Prefer `.\metra.ps1 verify` for Routing-Scenarios fixture checks. Keep the raw PowerShell list in that doc as the human-readable source of truth for what verify covers. Exit `0` with WARN-only; exit `1` on any FAIL.
 - Why: Agents need structured PASS/WARN/FAIL instead of eyeball-only smoke.
-- See: `docs/Routing-Scenarios.md`, `Invoke-MetaVerify`, `.\meta.ps1 verify`
+- See: `docs/Routing-Scenarios.md`, `Invoke-MetraVerify`, `.\metra.ps1 verify`
 
 ## 2026-07-30 - Origin note off the always-on hot path
 
@@ -76,7 +82,7 @@ Entry shape:
 
 - Decision: On agent chat `sessionStart`, refresh the Ops board with `snapshot -Quick` only when the snapshot is stale (age > 4h or registry/config newer). Never auto-run `workspace` from that hook.
 - Why: Full snapshot is slow; rewriting `Metra.code-workspace` can reload Cursor mid-session. Stale-gated Quick keeps board truth without desk churn.
-- See: `.cursor/hooks/session-snapshot.ps1`, `docs/Integrations.md`, `.\meta.ps1 snapshot -Quick`
+- See: `.cursor/hooks/session-snapshot.ps1`, `docs/Integrations.md`, `.\metra.ps1 snapshot -Quick`
 
 ## 2026-07-29 - Dual-mode brand without a Cursor skin
 
@@ -98,6 +104,6 @@ Entry shape:
 
 ## 2026-07-29 - Product naming
 
-- Decision: Product name is **Metra**. Recommended checkout folder was `_meta` at the time (later updated to `_metra`; see 2026-07-30 Decision). Also accepted: `Metra`, `metra`. CLI stays `meta.ps1`. Do not rename the live folder for branding.
+- Decision: Product name is **Metra**. Recommended checkout folder was `_meta` at the time (later updated to `_metra`; see 2026-07-30 Decision). Also accepted: `Metra`, `metra`. CLI was still `meta.ps1` at the time (renamed later; see 2026-07-30 CLI rename Decision). Do not rename the live folder for branding.
 - Why: Branding without breaking paths, remotes, or Cursor state slugs.
 - See: `docs/Brand.md`, `README.md`
