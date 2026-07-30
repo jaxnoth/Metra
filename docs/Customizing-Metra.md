@@ -38,22 +38,55 @@ Anti-lecture summary, Request Shaping, and curriculum order live in the base rul
 
 Base also ships Humor Policy, time-aware openings, decision tree, channels, and edges. Primary audience language is **the operator**; the overlay sets the display name.
 
+## Roots and workspace
+
+`metra.config.json` **`roots`** are folders Metra scans for sibling projects. They are not Cursor workspace folders by themselves. After you change `roots` or `workspace.alwaysInclude`, run `.\metra.ps1 setup` (or `.\metra.ps1 workspace`) so `Metra.code-workspace` picks up siblings.
+
+The committed example and sample pack use a **work root only** (`path: ".."`). Add a personal or cloud root when you need one - JSON cannot comment entries out.
+
+### Optional personal / cloud root
+
+Append another object under `roots` (keep `work` primary). Same shape for any cloud vendor - Metra only needs a path:
+
+```json
+{
+  "name": "personal",
+  "path": "%USERPROFILE%\\iCloudDrive\\Projects",
+  "optional": true,
+  "cloud": true,
+  "scanDepth": 0,
+  "audit": "light",
+  "registry": "local",
+  "registryFile": "projects.personal.json"
+}
+```
+
+Path examples:
+
+| Provider | Typical `path` |
+|----------|----------------|
+| iCloud | `%USERPROFILE%\iCloudDrive\Projects` |
+| OneDrive | `%USERPROFILE%\OneDrive\Projects` or `%USERPROFILE%\OneDrive - Org\Projects` |
+| Other | Any folder you keep projects in |
+
+Then `.\metra.ps1 setup` again. Missing optional roots show as yellow in `roots` / `setup` without failing.
+
 ## Sample pack vs your own export
 
 **Newcomers:**
 
 ```powershell
-.\metra.ps1 import-profile -Path .\profiles\sample -Force
+.\metra.ps1 setup -Profile .\profiles\sample -Force
 # Replace Alex in .cursor\rules\metra-persona.local.mdc
-# Fix roots in metra.config.json
-.\metra.ps1 ctx
+# Fix roots in metra.config.json if needed, then:
+.\metra.ps1 setup
 ```
 
 **Moving yourself between machines:**
 
 ```powershell
 .\metra.ps1 export-profile -Path $env:TEMP\my-metra-profile.zip
-.\metra.ps1 import-profile -Path $env:TEMP\my-metra-profile.zip -Force
+.\metra.ps1 setup -Profile $env:TEMP\my-metra-profile.zip -Force
 ```
 
 Pack layout (same as `profiles/sample/`):
@@ -102,10 +135,11 @@ Writes bounded `docs/context-pack.md` / `.json` by default (gitignored). Useful 
 
 ## Personal-root registryFile
 
-Profile packs do **not** include a personal root's `registryFile` (for example `projects.personal.json` beside cloud-synced projects). After import:
+Profile packs do **not** include a personal root's `registryFile` (for example `projects.personal.json` beside cloud-synced projects). After you add a personal root and import:
 
-1. Point the personal root in `metra.config.json` at the synced folder.
+1. Point the personal root in `metra.config.json` at the synced folder (see path table above).
 2. Ensure `registryFile` exists beside those projects (or copy it from the other machine with that folder).
+3. Re-run `.\metra.ps1 setup` so workspace / routing see that root.
 
 ## Related docs
 

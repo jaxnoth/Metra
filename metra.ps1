@@ -26,6 +26,8 @@
     .\metra.ps1 export-profile -Path $env:TEMP\my-metra-profile.zip
     .\metra.ps1 ctx
     .\metra.ps1 ctx -Query "ticket disk"
+    .\metra.ps1 setup
+    .\metra.ps1 setup -Profile .\profiles\sample -Force
     .\metra.ps1 verify
 #>
 [CmdletBinding()]
@@ -34,7 +36,7 @@ param(
     [ValidateSet(
         'list', 'status', 'pull', 'fetch', 'run', 'new', 'apply', 'workspace',
         'audit', 'snapshot', 'chats', 'roots', 'routing',
-        'export-profile', 'import-profile', 'ctx', 'verify', 'help'
+        'export-profile', 'import-profile', 'ctx', 'setup', 'verify', 'help'
     )]
     [string]$Command = 'help',
 
@@ -48,6 +50,7 @@ param(
     [string]$Template,
     [string]$RelativePath,
     [string]$Path,
+    [string]$Profile,
     [int]$Months = -1,
     [int]$ScanDepth = -1,
     [string]$Query,
@@ -94,6 +97,8 @@ Usage:
   .\metra.ps1 export-profile -Path <dir-or-zip>
   .\metra.ps1 import-profile -Path <dir-or-zip> [-Preview] [-Force]
   .\metra.ps1 ctx [-Query 'terms'] [-Path <file|->] [-Format markdown|json] [-Limit 25]
+  .\metra.ps1 setup [-Profile <dir-or-zip>] [-Force] [-Preview] [-Months 6] [-ScanDepth 2]
+      One-shot onboarding: seed config if missing, optional profile, roots, workspace, routing, ctx.
   .\metra.ps1 verify
 
 Roots:
@@ -133,6 +138,9 @@ Examples:
   .\metra.ps1 ctx
   .\metra.ps1 ctx -Query 'ticket disk'
   .\metra.ps1 ctx -Format json -Path `$env:TEMP\metra-ctx.json
+  .\metra.ps1 setup
+  .\metra.ps1 setup -Profile .\profiles\sample -Force
+  .\metra.ps1 setup -Preview
   .\metra.ps1 verify
 "@ | Write-Host
 }
@@ -317,6 +325,20 @@ switch ($Command) {
             $params.Limit = $Limit
         }
         Export-MetraContextPack @params | Format-List
+    }
+
+    'setup' {
+        $profilePath = $Profile
+        if (-not $profilePath -and $Path) { $profilePath = $Path }
+        if (-not $profilePath -and $Rest -and $Rest.Count -gt 0) { $profilePath = $Rest[0] }
+        $params = @{
+            Preview = [bool]$Preview
+            Force   = [bool]$Force
+        }
+        if ($profilePath) { $params.Profile = $profilePath }
+        if ($Months -ge 0) { $params.Months = $Months }
+        if ($ScanDepth -ge 0) { $params.ScanDepth = $ScanDepth }
+        Invoke-MetraSetup @params | Format-List Preview, WouldSeedConfig, SeededConfig, Profile
     }
 
     'verify' {

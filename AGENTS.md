@@ -83,6 +83,8 @@ Optional entries may be absent: follow `whenMissing` advice instead of inventing
 ## Commands
 
 ```powershell
+.\metra.ps1 setup
+.\metra.ps1 setup -Profile .\profiles\sample -Force
 .\metra.ps1 list
 .\metra.ps1 list -Root personal
 .\metra.ps1 roots

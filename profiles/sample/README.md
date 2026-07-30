@@ -7,7 +7,7 @@ Anonymized starter pack for newcomers. Same layout as `export-profile` / `import
 | File | Role |
 |------|------|
 | `metra-profile.json` | Manifest (id, file list, notes) |
-| `metra.config.json` | Starter roots config (relative work root, optional personal root); workspace outputs `Metra.code-workspace` |
+| `metra.config.json` | Starter roots config (work root `..` only); workspace outputs `Metra.code-workspace` |
 | `projects.local.json` | Example private registry entry (`ExampleProject`) |
 | `.cursor/rules/metra-persona.local.mdc` | Operator overlay (display name placeholder: Alex) |
 
@@ -20,18 +20,15 @@ Personal-root `registryFile` (e.g. `projects.personal.json` beside personal proj
 From the Metra checkout root (recommended `_metra`; older clones may use `_meta`):
 
 ```powershell
-.\metra.ps1 import-profile -Path .\profiles\sample -Force
-# Edit metra.config.json roots / alwaysInclude
+.\metra.ps1 setup -Profile .\profiles\sample -Force
+# Edit metra.config.json roots / alwaysInclude if needed, then: .\metra.ps1 setup
 # Edit .cursor\rules\metra-persona.local.mdc operator display name
-.\metra.ps1 workspace
-.\metra.ps1 audit
-.\metra.ps1 snapshot
 ```
 
-Open `Metra.code-workspace` (orchestration folder labeled **Metra**). Preview only (no writes):
+Open or reload `Metra.code-workspace` (orchestration folder labeled **Metra**). Preview only (no writes):
 
 ```powershell
-.\metra.ps1 import-profile -Path .\profiles\sample -Preview
+.\metra.ps1 setup -Profile .\profiles\sample -Preview
 ```
 
 See [docs/Customizing-Metra.md](../../docs/Customizing-Metra.md), [docs/Brand.md](../../docs/Brand.md), and [SECURITY.md](../../SECURITY.md).

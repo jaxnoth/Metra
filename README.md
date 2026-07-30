@@ -58,31 +58,37 @@ git clone https://github.com/jaxnoth/Metra.git _metra
 cd _metra
 # Once per machine (Windows): allow local scripts for your user
 Set-ExecutionPolicy -Scope CurrentUser -ExecutionPolicy RemoteSigned
-.\metra.ps1 import-profile -Path .\profiles\sample -Force
-# Edit metra.config.json roots / workspace.alwaysInclude
-# Edit .cursor\rules\metra-persona.local.mdc operator display name (replace Alex) if using Cursor
-.\metra.ps1 routing
-.\metra.ps1 ctx
+# Bare clone: seeds metra.config.json from the example, builds workspace, routing, ctx
+.\metra.ps1 setup
+# Or with a pack (sample or your export zip):
+# .\metra.ps1 setup -Profile .\profiles\sample -Force
+# Edit metra.config.json roots / alwaysInclude if paths differ, then re-run:
+# .\metra.ps1 setup
 ```
 
-Hand the context pack to any agent: open/attach/paste/`@` `docs/context-pack.md` (or JSON). Optional stubs in `projects.json` (TicketTracker, Solarwinds) teach routing; they are **not** required installs - `whenMissing` advice appears if those folders are absent.
+### What setup did
 
-Preview a pack without writing:
+| Piece | Meaning |
+|-------|---------|
+| `roots` | Disk locations Metra scans for sibling project folders |
+| `workspace` | Rebuilds `Metra.code-workspace` folder list from those roots (recent activity + `alwaysInclude`) |
+| `routing` | Named registry projects + triggers vs `Present` on disk (`whenMissing` advice if absent) |
+| `ctx` | Writes `docs/context-pack.md` - hand to any agent |
+
+Editing `roots` alone does **not** change Cursor folders until `setup` (or `.\metra.ps1 workspace`) runs again. Optional personal/cloud root snippets (iCloud, OneDrive, ...): [docs/Customizing-Metra.md](docs/Customizing-Metra.md).
+
+Shared stubs in `projects.json` (TicketTracker, Solarwinds) teach routing; they are **not** required installs.
+
+Preview without writing:
 
 ```powershell
-.\metra.ps1 import-profile -Path .\profiles\sample -Preview
+.\metra.ps1 setup -Preview
+.\metra.ps1 setup -Profile .\profiles\sample -Preview
 ```
 
 ### Optional: open in Cursor
 
-The repo ships a starter `Metra.code-workspace` (Metra folder only). Open that after clone. To pull in sibling projects under your roots (after `import-profile` / config edits):
-
-```powershell
-.\metra.ps1 workspace
-```
-
-That regenerates `Metra.code-workspace` locally (multi-root). Generation helps VS Code/Cursor multi-root; it is **not** required for CLI, routing, or `ctx`.
-
+The repo ships a starter `Metra.code-workspace` (Metra folder only). After `setup`, reopen or reload that file so sibling projects appear. Workspace multi-root helps VS Code/Cursor; it is **not** required for CLI, routing, or `ctx`. If using Cursor, set the operator display name in `.cursor\rules\metra-persona.local.mdc` after importing a profile.
 ## Teaching Mode
 
 When exploring, planning, or onboarding (Cursor Ask/Plan are common cases), Metra leans into a slightly humorous professional college-professor delivery: answer first, one next step, link docs instead of pasting them, stop when you can execute. Guide the work, teach Metra vocabulary when needed, and recommend concrete options when you are stuck. After an ambiguous ask, Metra may offer one **Request Shaping** example of a more routeable future request - not prompt grades or unsolicited critique. Same persona as ops Metra - not a second character. Depth and pacing adapt to the conversation; Metra does not infer demographics or personal traits. Details: [docs/Customizing-Metra.md](docs/Customizing-Metra.md).
@@ -127,7 +133,7 @@ Personal-root `registryFile` is **not** auto-included - copy it with that root. 
 
 | Surface | Stability |
 |---------|-----------|
-| CLI commands (`list`, `routing`, `ctx`, profile import/export, ...) | Intended stable |
+| CLI commands (`setup`, `list`, `routing`, `ctx`, profile import/export, ...) | Intended stable |
 | Persona rules (`.cursor/rules/metra-persona.mdc`) | Expected to evolve |
 | Sample overlays / `profiles/sample/` / `profiles/addons/` | Examples, not contracts |
 
@@ -135,6 +141,7 @@ Personal-root `registryFile` is **not** auto-included - copy it with that root. 
 
 | Command | Purpose |
 |---------|---------|
+| `setup` | One-shot onboarding: seed config if missing, optional `-Profile`, roots, workspace, routing, ctx |
 | `list` | Show project folders (optional `-GitOnly`, `-Filter`, `-Root`) |
 | `roots` | Show configured project roots and whether each exists |
 | `routing` | Show merged registry entries vs disk (`-SharedOnly`, `-MissingOnly`) |

@@ -6,16 +6,6 @@
       "path": "..",
       "primary": true,
       "registry": "shared"
-    },
-    {
-      "name": "personal",
-      "path": "%USERPROFILE%\\iCloudDrive\\Projects",
-      "optional": true,
-      "cloud": true,
-      "scanDepth": 0,
-      "audit": "light",
-      "registry": "local",
-      "registryFile": "projects.personal.json"
     }
   ],
   "exclude": [
