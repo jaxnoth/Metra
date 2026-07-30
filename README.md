@@ -25,7 +25,7 @@ MIT licensed. Host on public GitHub (repo name **Metra**) or a private org fork.
 | Layer | What you get |
 |-------|----------------|
 | **Core** (any shell; any agent that can read files) | `meta.ps1`, `projects.json` / local registries, `ctx` packs, profile import/export, this `AGENTS.md`, per-project `AGENTS.md` |
-| **Cursor integration** (first-class adapter) | `.cursor/rules` persona auto-load, Ask/Plan Teaching Mode hooks, `chats` transcript search, optional multi-root `.code-workspace` |
+| **Cursor integration** (first-class adapter) | `.cursor/rules` persona auto-load, Ask/Plan Teaching Mode, `chats` transcript search, optional multi-root `.code-workspace`, `sessionStart` Ops refresh (`.cursor/hooks`) |
 
 ## Naming
 
@@ -95,7 +95,8 @@ Writes a bounded map of roots and present projects. Use it from Cursor, Claude C
 | `metra-persona.mdc` (full base) | `.cursor/rules/metra-persona.local.mdc` |
 | `*.example.json` / `*.local.example.mdc` | `docs/canvas-snapshot.json`, `docs/context-pack.*` |
 | `profiles/sample/` (ready-to-import pack) | regenerated workspaces |
-| MIT LICENSE, public docs | |
+| `.cursor/hooks/` (sessionStart Ops refresh) | |
+| MIT LICENSE, public docs (Brand, Decisions, Integrations, ...) | |
 
 Bindings (paths, alwaysInclude, operator name) are local facts. Canonical routing stubs and the Metra base rule are shared.
 
@@ -132,7 +133,7 @@ Personal-root `registryFile` is **not** auto-included - copy it with that root. 
 | `apply <file>` | Copy a shared file into matching projects |
 | `workspace` | Rebuild multi-root workspace from recent activity (optional IDE helper) |
 | `audit` | Context/token audit + optional `-DriftOnly` vs registries |
-| `snapshot` | Write `docs/canvas-snapshot.json` and refresh / install Metra Ops canvas embed |
+| `snapshot` | Write `docs/canvas-snapshot.json` and refresh / install Metra Ops canvas embed (`-Quick` skips deep audit/git) |
 | `chats` | Search local Cursor agent transcripts (bounded; Cursor-specific) |
 | `export-profile` | Pack local config / local registry / Metra overlay |
 | `import-profile` | Restore a pack (`-Preview` or `-Force`) |
@@ -159,11 +160,12 @@ _meta/
   LICENSE                    MIT
   SECURITY.md
   scripts/Meta.psm1          PowerShell helpers
-  docs/                      routing + Brand + Metra customization + Integrations
+  docs/                      Brand, Decisions, routing, Integrations, Demo, ...
   integrations/cursor/       Metra Ops canvas template
   templates/basic/           default new-project template
   shared/                    files to push into other projects via apply
   .cursor/rules/             Cursor adapter: routing + Metra base (+ local overlay gitignored)
+  .cursor/hooks/             sessionStart stale-gated snapshot -Quick (no workspace rewrite)
 ```
 
 ## First-time layout
@@ -207,11 +209,12 @@ C:\Projects\                 (work root)
 
 ## Agent routing
 
-Classify work, consult `.\meta.ps1 routing` or `.\meta.ps1 ctx`, load one project `AGENTS.md` before scanning siblings. Ticket work starts in TicketTracker when present. Keep work and personal roots isolated unless the user names a cross-root project. Details: [docs/Context-Routing.md](docs/Context-Routing.md), [docs/Integrations.md](docs/Integrations.md).
+Classify work, consult `.\meta.ps1 routing` or `.\meta.ps1 ctx`, load one project `AGENTS.md` before scanning siblings. Ticket work starts in TicketTracker when present. Keep work and personal roots isolated unless the user names a cross-root project. Prefer [docs/Decisions.md](docs/Decisions.md) for durable Metra policy before digging chats. Smoke fixtures: `.\meta.ps1 verify`. Details: [docs/Context-Routing.md](docs/Context-Routing.md), [docs/Integrations.md](docs/Integrations.md).
 
 ```powershell
 .\meta.ps1 audit
 .\meta.ps1 audit -DriftOnly
+.\meta.ps1 verify
 .\meta.ps1 ctx -Query "disk alert"
 .\meta.ps1 chats -Name Solarwinds -Query "disk alert"
 ```

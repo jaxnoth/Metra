@@ -15,7 +15,7 @@ Use after changing registries, project `AGENTS.md`, or `.cursorignore`.
 
 ## Persona smoke (Metra)
 
-Use after changing `.cursor/rules/metra-persona.mdc`, the local overlay, or the Persona section in `AGENTS.md`. See also [Customizing-Metra.md](Customizing-Metra.md).
+Use after changing `.cursor/rules/metra-persona.mdc`, the local overlay, or the Persona section in `AGENTS.md`. See also [Customizing-Metra.md](Customizing-Metra.md) (including Origin) and [Decisions.md](Decisions.md).
 
 | Scenario | Pass criteria |
 |----------|---------------|
@@ -60,6 +60,8 @@ Prefer the automated runner:
 ```
 
 Exit code `0` when there are no FAIL rows (WARN alone is OK); `1` if any FAIL.
+
+Notes on the human list below: `projects.local.json` is machine-local (often present, not required). Soft sibling paths WARN when absent. Required files and live CLI exceptions FAIL.
 
 Human-readable source of truth for what verify covers:
 

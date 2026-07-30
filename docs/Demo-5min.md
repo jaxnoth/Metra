@@ -207,8 +207,10 @@ cd _meta
 Docs for people who want to read later:
 
 - [Context-Routing.md](Context-Routing.md) - how routing works
-- [Customizing-Metra.md](Customizing-Metra.md) - persona (optional depth)
+- [Customizing-Metra.md](Customizing-Metra.md) - persona and Origin (optional depth)
 - [Integrations.md](Integrations.md) - what works without Cursor
+- [Brand.md](Brand.md) - Ops board look (optional)
+- [Decisions.md](Decisions.md) - short record of portfolio-wide Metra choices
 
 ---
 

@@ -12,7 +12,7 @@ Keep these local (gitignored). They often contain machine paths, private routing
 
 The tracked pack under `profiles/sample/` is intentional and anonymized. Do not replace it with a live export that contains real usernames, hostnames, or org-private paths.
 
-Do not put secrets in `shared/` and then `apply` them across projects. Do not commit TicketTracker caches, Orion inventory dumps, or credential stores into this repo.
+Tracked Cursor hooks under `.cursor/hooks/` are safe to commit (no secrets). Do not put secrets in `shared/` and then `apply` them across projects. Do not commit TicketTracker caches, Orion inventory dumps, or credential stores into this repo.
 
 ## Reporting issues
 

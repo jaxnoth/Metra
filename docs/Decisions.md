@@ -18,6 +18,12 @@ Entry shape:
 
 ---
 
+## 2026-07-30 - Routing fixture smoke via verify
+
+- Decision: Prefer `.\meta.ps1 verify` for Routing-Scenarios fixture checks. Keep the raw PowerShell list in that doc as the human-readable source of truth for what verify covers. Exit `0` with WARN-only; exit `1` on any FAIL.
+- Why: Agents need structured PASS/WARN/FAIL instead of eyeball-only smoke.
+- See: `docs/Routing-Scenarios.md`, `Invoke-MetaVerify`, `.\meta.ps1 verify`
+
 ## 2026-07-30 - Origin note off the always-on hot path
 
 - Decision: Keep a short Metra origin / operating-philosophy note in `docs/Customizing-Metra.md` (Origin). Do not paste the full essay into `.cursor/rules/metra-persona.mdc`.
