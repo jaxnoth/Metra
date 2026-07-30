@@ -11,10 +11,11 @@ Keep these local (gitignored). They often contain machine paths, private routing
 - `.cursor/rules/metra-teaching-gentle.local.mdc` (optional; use the example or `profiles/addons/teaching-gentle`)
 - `docs/canvas-snapshot.json` (regenerate with `.\metra.ps1 snapshot`)
 - `docs/context-pack.md` / `docs/context-pack.json` (regenerate with `.\metra.ps1 ctx`)
+- `docs/*.local.md` (operator-private notes)
 
 The tracked pack under `profiles/sample/` is intentional and anonymized. Do not replace it with a live export that contains real usernames, hostnames, or org-private paths.
 
-Tracked Cursor hooks under `.cursor/hooks/` are safe to commit (no secrets). Do not put secrets in `shared/` and then `apply` them across projects. Do not commit TicketTracker caches, Orion inventory dumps, or credential stores into this repo.
+Tracked Cursor hooks under `.cursor/hooks/` are safe to commit (no secrets). Do not put secrets in `shared/` and then `apply` them across projects. Do not commit TicketTracker caches, Orion inventory dumps, or credential stores into this repo. Never commit API keys or tokens from environment variables.
 
 ## Operator commands
 

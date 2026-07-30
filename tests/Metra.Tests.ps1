@@ -146,39 +146,33 @@ Describe 'Export-MetraContext' {
             (Get-Item -LiteralPath $packPath).LastWriteTimeUtc | Should -Be $before
         }
     }
+}
 
-    It 'IncludeAgent embeds the portable communications brief' {
-        $agentPath = Join-Path (Get-MetraRoot) 'integrations\communications-agent\AGENT.md'
-        Test-Path -LiteralPath $agentPath | Should -BeTrue
-
-        $tempMd = Join-Path ([System.IO.Path]::GetTempPath()) ("metra-ctx-agent-{0}.md" -f [guid]::NewGuid())
+Describe 'Get-MetraChat cloud option' {
+    It 'accepts -Cloud and warns when CURSOR_API_KEY is unset' {
+        $prev = $env:CURSOR_API_KEY
         try {
-            $result = Export-MetraContext -IncludeAgent -Format markdown -Path $tempMd -Quiet |
-                Select-Object -Last 1
-            $body = Get-Content -LiteralPath $tempMd -Raw
-
-            $result.IncludeAgent | Should -BeTrue
-            $result.AgentPath | Should -Be 'integrations/communications-agent/AGENT.md'
-            $body | Should -Match 'Communications agent'
-            $body | Should -Match 'Metra communications agent'
+            if (Test-Path Env:CURSOR_API_KEY) {
+                Remove-Item Env:CURSOR_API_KEY
+            }
+            $warns = $null
+            $rows = @(Get-MetraChat -IncludeMetra -Cloud -Limit 3 -WarningVariable warns -WarningAction SilentlyContinue)
+            @($warns | Where-Object { $_ -match 'CURSOR_API_KEY' }).Count | Should -BeGreaterThan 0
+            $rows | Should -Not -BeNullOrEmpty
+            $rows[0].PSObject.Properties.Name | Should -Contain 'Source'
         }
         finally {
-            Remove-Item -LiteralPath $tempMd -Force -ErrorAction SilentlyContinue
+            if ($null -ne $prev -and $prev -ne '') {
+                $env:CURSOR_API_KEY = $prev
+            }
         }
     }
 
-    It 'IncludeAgent json includes communicationsAgent path' {
-        $tempJson = Join-Path ([System.IO.Path]::GetTempPath()) ("metra-ctx-agent-{0}.json" -f [guid]::NewGuid())
-        try {
-            $null = Export-MetraContext -IncludeAgent -Format json -Path $tempJson -Quiet
-            $pack = Get-Content -LiteralPath $tempJson -Raw | ConvertFrom-Json
-            $pack.communicationsAgent.path | Should -Be 'integrations/communications-agent/AGENT.md'
-            @($pack.reminders | Where-Object { $_ -match 'Communications' }).Count |
-                Should -BeGreaterThan 0
+    It 'maps Metra GitHub URLs to the Metra project' {
+        $mapped = & (Get-Module Metra) {
+            Resolve-MetraChatProjectFromRepo -RepoUrl 'https://github.com/jaxnoth/Metra.git' -WantedNames @('Metra')
         }
-        finally {
-            Remove-Item -LiteralPath $tempJson -Force -ErrorAction SilentlyContinue
-        }
+        $mapped | Should -Be 'Metra'
     }
 }
 

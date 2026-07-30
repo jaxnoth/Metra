@@ -128,11 +128,10 @@ Single-file reference without a full pack: copy `metra-persona.local.example.mdc
 ```powershell
 .\metra.ps1 ctx
 .\metra.ps1 ctx -Query "ticket disk"
-.\metra.ps1 ctx -IncludeAgent
 .\metra.ps1 ctx -Format json -Path $env:TEMP\metra-ctx.json
 ```
 
-Writes bounded `docs/context-pack.md` / `.json` by default (gitignored). Useful for agent handoff and Teaching Mode onboarding. `-IncludeAgent` embeds the portable Metra communications brief for phone/desktop continuity - see [Cross-Device.md](Cross-Device.md).
+Writes bounded `docs/context-pack.md` / `.json` by default (gitignored). Useful for agent handoff and Teaching Mode onboarding.
 
 ## Personal-root registryFile
 
@@ -148,7 +147,6 @@ Profile packs do **not** include a personal root's `registryFile` (for example `
 - [Brand.md](Brand.md) - operator-facing palette, motif, professional sink
 - [Decisions.md](Decisions.md) - append-only portfolio decisions
 - [Integrations.md](Integrations.md) - core vs Cursor; ctx handoff
-- [Cross-Device.md](Cross-Device.md) - portable communications agent across devices
 - [Routing-Scenarios.md](Routing-Scenarios.md) - persona smoke + `.\metra.ps1 verify`
 - [Demo-5min.md](Demo-5min.md) - coworker walkthrough
 - [Search-Echo.md](Search-Echo.md) - multi-root Grep echo

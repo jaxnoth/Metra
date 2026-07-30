@@ -24,7 +24,7 @@ function Get-MetraChat {
     .EXAMPLE
         Get-MetraChat -Name TicketTracker,Solarwinds -Ticket 1035020 -IncludeMetra
     .OUTPUTS
-        PSCustomObject containing project, chat ID, title, snippets, matched terms, and citation.
+        PSCustomObject containing project, source, chat ID, title, snippets, matched terms, and citation.
     #>
     [CmdletBinding()]
     param(
@@ -34,9 +34,9 @@ function Get-MetraChat {
         [int]$Days = 90,
         [int]$Limit = 10,
         [Alias('IncludeMeta')]
-        [switch]$IncludeMetra
+        [switch]$IncludeMetra,
+        [switch]$Cloud
     )
 
     Get-MetraProjectChats @PSBoundParameters
 }
-

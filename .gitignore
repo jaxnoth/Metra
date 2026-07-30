@@ -35,6 +35,9 @@ docs/canvas-snapshot.json
 docs/context-pack.md
 docs/context-pack.json
 
+# Operator-private notes (not for public/team clones)
+docs/*.local.md
+
 # Editor
 .vs/
 .vscode/*
