@@ -73,6 +73,31 @@ Describe 'Export-MetraContextPack' {
     }
 }
 
+Describe 'Invoke-MetraSetup' {
+    It 'Preview -Quiet returns structured result without seeding when config exists' {
+        $preferred = Join-Path (Get-MetraRoot) 'metra.config.json'
+        $legacy = Join-Path (Get-MetraRoot) 'meta.config.json'
+        $hasConfig = (Test-Path -LiteralPath $preferred) -or (Test-Path -LiteralPath $legacy)
+        $hasConfig | Should -BeTrue
+
+        $result = Invoke-MetraSetup -Preview -Quiet
+        $result.Preview | Should -BeTrue
+        $result.WouldSeedConfig | Should -BeFalse
+        $result.SeededConfig | Should -BeFalse
+        $result.Workspace | Should -BeNullOrEmpty
+        @($result.Roots).Count | Should -BeGreaterThan 0
+    }
+
+    It 'Preview with sample Profile does not throw and keeps WouldSeedConfig false when config exists' {
+        $sample = Join-Path (Get-MetraRoot) 'profiles\sample'
+        $result = Invoke-MetraSetup -Profile $sample -Preview -Quiet
+        $result.Preview | Should -BeTrue
+        $result.WouldSeedConfig | Should -BeFalse
+        $result.Import | Should -Not -BeNullOrEmpty
+        $result.Import.Preview | Should -BeTrue
+    }
+}
+
 Describe 'Invoke-MetraVerify' {
     It 'returns structured PASS/WARN/FAIL with Ok when FailCount is 0' {
         $report = Invoke-MetraVerify
