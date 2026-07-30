@@ -12,7 +12,7 @@ Before searching sibling repositories:
 3. Ticket / iSupport / helpdesk work starts in **TicketTracker**, then routes to one technical project.
 4. Load that project's `AGENTS.md` (fallback: README). Prefer its `preferredPaths`; avoid its `excludePaths`.
 5. Do not glob or grep across all workspace folders first.
-6. After routing, scope file search to an **absolute `path`** under that one project (or `_meta` only for Metra/orchestration work). Multi-root workspaces echo the same hit once per mounted folder - workspace-wide Grep burns tokens.
+6. After routing, scope file search to an **absolute `path`** under that one project (or the Metra checkout for orchestration work - recommended `C:\Projects\_metra`; older clones may use `_meta`). Multi-root workspaces echo the same hit once per mounted folder - workspace-wide Grep burns tokens.
 7. Prefer `.\meta.ps1 routing` / `.\meta.ps1 ctx` over portfolio-wide file search for "which project?" questions.
 8. Stay inside the chosen project's **root** (work vs personal). Do not open folders from another root unless the user names that project or explicitly asks to move material between roots.
 9. Open same-root `related` projects only when the primary project evidence requires it. Cross-root handoffs are opt-in in chat, never automatic.

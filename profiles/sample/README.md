@@ -17,7 +17,7 @@ Personal-root `registryFile` (e.g. `projects.personal.json` beside personal proj
 
 ## Import
 
-From the `_meta` repo root:
+From the Metra checkout root (recommended `_metra`; older clones may use `_meta`):
 
 ```powershell
 .\meta.ps1 import-profile -Path .\profiles\sample -Force

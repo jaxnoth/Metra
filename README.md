@@ -44,7 +44,7 @@ Most portfolio mistakes happen before coding starts: the wrong repository, the w
 | Layer | Name |
 |-------|------|
 | Product / GitHub repo | **Metra** |
-| Recommended local folder | **`_meta`** (also accepted: `Metra`, `metra`) |
+| Recommended local folder | **`_metra`** (also accepted: `_meta`, `Metra`, `metra`) |
 | CLI | `meta.ps1` |
 | Workspace file | `Metra.code-workspace` (legacy `Meta.code-workspace` still honored if configured) |
 
@@ -54,8 +54,8 @@ Operator-facing brand kit (palette, motif, professional sink): [docs/Brand.md](d
 
 ```powershell
 cd C:\Projects   # or your work root
-git clone https://github.com/jaxnoth/Metra.git _meta
-cd _meta
+git clone https://github.com/jaxnoth/Metra.git _metra
+cd _metra
 .\meta.ps1 import-profile -Path .\profiles\sample -Force
 # Edit meta.config.json roots / workspace.alwaysInclude
 # Edit .cursor\rules\metra-persona.local.mdc operator display name (replace Alex) if using Cursor
@@ -164,7 +164,7 @@ pwsh -NoProfile -File .\tests\Invoke-MetaTests.ps1
 ## Layout
 
 ```
-_meta/
+_metra/
   meta.ps1                   Metra CLI entrypoint
   meta.config.example.json   starter config (live meta.config.json is gitignored)
   projects.json              shared agent routing registry (example stubs OK)
@@ -187,7 +187,7 @@ _meta/
 
 ```text
 C:\Projects\                 (work root)
-  _meta\                     <- clone of Metra
+  _metra\                    <- clone of Metra (also accepted: _meta, Metra, metra)
   Reporting\
   TicketTracker\             (optional; stub in projects.json)
   ...
@@ -241,5 +241,5 @@ Issues and PRs welcome. Keep machine-local files out of commits (see [SECURITY.m
 ## Notes
 
 - Nested git repos stay independent; this repo only tracks its own scripts/config.
-- The orchestration folder (`_meta` / `Metra` / `metra`) is excluded from project discovery.
+- The orchestration folder (`_metra` / `_meta` / `Metra` / `metra`) is excluded from project discovery.
 - Pin folders you always want in the workspace with `workspace.alwaysInclude` in your local config.

@@ -31,9 +31,9 @@ One sentence for the room:
 
 ## Prep (10 minutes before)
 
-1. Open `Metra.code-workspace` (or your workspace that includes `_meta`).
+1. Open `Metra.code-workspace` (or your workspace that includes the Metra checkout).
 2. Optional for the Ops board faceplate shot: **Cursor Light** (daily work can stay **Cursor Dark**). See [Brand.md](Brand.md) dual-mode checklist.
-3. Terminal cwd: `C:\Projects\_meta` (or your Metra checkout).
+3. Terminal cwd: `C:\Projects\_metra` (or `_meta` / your Metra checkout).
 4. Confirm shared stubs resolve:
 
 ```powershell
@@ -46,7 +46,7 @@ One sentence for the room:
 .\meta.ps1 ctx -Query "ticket disk"
 ```
 
-6. Open a **new** Cursor chat with `_meta` in scope. Prefer **Ask** mode (read-only) so nothing changes by accident.
+6. Open a **new** Cursor chat with the Metra checkout in scope. Prefer **Ask** mode (read-only) so nothing changes by accident.
 7. Have Prompts A and B on a second monitor or printed card.
 8. Optional: one whiteboard or slide with the flow line below.
 
@@ -107,7 +107,7 @@ Speak slowly. Define terms once. Do not quiz the room.
 > - **Routing** - a shared list of trigger words that say "this ask belongs in TicketTracker / Solarwinds / Trivia / ..."
 > - **Personality** - how the chat talks to **you** while you work
 >
-> The checkout folder is often named `_meta`. The product name is Metra. The command line tool is `meta.ps1`.
+> The checkout folder is often named `_metra` (older clones may still use `_meta`). The product name is Metra. The command line tool is `meta.ps1`.
 
 **3. Routing vs personality (~60s)**
 
@@ -197,8 +197,8 @@ How to try later (do not live-clone unless asked):
 
 ```powershell
 cd C:\Projects
-git clone <Metra-repo-url> _meta
-cd _meta
+git clone <Metra-repo-url> _metra
+cd _metra
 .\meta.ps1 import-profile -Path .\profiles\sample -Preview
 ```
 
