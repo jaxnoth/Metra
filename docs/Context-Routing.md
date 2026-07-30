@@ -22,27 +22,27 @@ Keep agent response time and token use low by routing to one project, then loadi
 
 ## Multi-root isolation
 
-Configured roots (see `meta.config.json` `roots`) stay separate:
+Configured roots (see `metra.config.json` `roots`) stay separate:
 
 - Work asks stay under the primary work root (example: `C:\Projects`).
 - Personal asks stay under the personal root when present.
 - Do not open another root unless the user names that project or asks to move material between them.
 - `related` lists must stay same-root. Cross-root ideas (for example Misc scratch sheets into Trivia, or a personal bible game borrowing a work printable) are chat opt-in only.
 
-`.\meta.ps1 routing` shows which registry entries resolved to a real folder. `.\meta.ps1 ctx` writes a bounded agent context pack (present projects + reminders). Optional shared stubs (TicketTracker, Solarwinds) return `whenMissing` advice when absent instead of counting as drift.
+`.\metra.ps1 routing` shows which registry entries resolved to a real folder. `.\metra.ps1 ctx` writes a bounded agent context pack (present projects + reminders). Optional shared stubs (TicketTracker, Solarwinds) return `whenMissing` advice when absent instead of counting as drift.
 
 ## Audit command
 
 ```powershell
-.\meta.ps1 audit
-.\meta.ps1 audit -Name Solarwinds,Trivia
-.\meta.ps1 audit -Root personal
-.\meta.ps1 audit -DriftOnly
-.\meta.ps1 routing
-.\meta.ps1 routing -MissingOnly
-.\meta.ps1 ctx
-.\meta.ps1 ctx -Query "ticket disk"
-.\meta.ps1 verify
+.\metra.ps1 audit
+.\metra.ps1 audit -Name Solarwinds,Trivia
+.\metra.ps1 audit -Root personal
+.\metra.ps1 audit -DriftOnly
+.\metra.ps1 routing
+.\metra.ps1 routing -MissingOnly
+.\metra.ps1 ctx
+.\metra.ps1 ctx -Query "ticket disk"
+.\metra.ps1 verify
 ```
 The audit is a **re-runnable probe**. Do not rewrite it for routine project changes. Re-run it; update curated files when it reports drift. Cloud/personal roots use light audit (no deep recursive scan). Use `verify` for Routing-Scenarios fixture smoke (PASS/WARN/FAIL).
 
@@ -82,8 +82,8 @@ For a `_metra` checkout under `C:\Projects`, the slug is usually `c-Projects-met
 Refresh data after audits or layout changes:
 
 ```powershell
-.\meta.ps1 snapshot          # full audit + git
-.\meta.ps1 snapshot -Quick   # hook-friendly; registry + light health only
+.\metra.ps1 snapshot          # full audit + git
+.\metra.ps1 snapshot -Quick   # hook-friendly; registry + light health only
 ```
 
 Agent chat `sessionStart` can run `-Quick` when the snapshot is stale - see [Integrations.md](Integrations.md). Do not auto-run `workspace` from that hook.
@@ -108,8 +108,8 @@ During ticket triage, search them for clues (bounded summaries only):
 .\TicketTracker.ps1 chats <id> -Name Solarwinds -IncludeMeta
 
 # From the Metra checkout
-.\meta.ps1 chats -Name Solarwinds -Query "disk alert"
-.\meta.ps1 chats -Name TicketTracker,Solarwinds -Ticket 12345 -IncludeMeta
+.\metra.ps1 chats -Name Solarwinds -Query "disk alert"
+.\metra.ps1 chats -Name TicketTracker,Solarwinds -Ticket 12345 -IncludeMeta
 ```
 
 Canonical durable memory remains:

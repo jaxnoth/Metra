@@ -5,9 +5,10 @@
 Thumbs.db
 
 # Machine config (keep example and sample pack tracked)
+metra.config.json
 meta.config.json
-!meta.config.example.json
-!profiles/sample/meta.config.json
+!metra.config.example.json
+!profiles/sample/metra.config.json
 
 # Registry entries that must not reach coworkers
 projects.local.json
@@ -43,3 +44,4 @@ docs/context-pack.json
 
 # PowerShell
 *.ps1xml.bak
+

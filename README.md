@@ -12,7 +12,7 @@ MIT licensed. Public repo: [jaxnoth/Metra](https://github.com/jaxnoth/Metra).
 
 If you only read three things:
 
-1. **Metra manages multi-project workspaces** - siblings under one or more roots, operated with `meta.ps1`.
+1. **Metra manages multi-project workspaces** - siblings under one or more roots, operated with `metra.ps1`.
 2. **Routing picks one project before work starts** - personality never chooses the folder.
 3. **`ctx` creates agent handoff packs** - bounded maps you can open, paste, or `@` in any coding agent.
 
@@ -36,7 +36,7 @@ Most portfolio mistakes happen before coding starts: the wrong repository, the w
 
 | Layer | What you get |
 |-------|----------------|
-| **Core** (any shell; any agent that can read files) | `meta.ps1`, `projects.json` / local registries, `ctx` packs, profile import/export, this `AGENTS.md`, per-project `AGENTS.md` |
+| **Core** (any shell; any agent that can read files) | `metra.ps1`, `projects.json` / local registries, `ctx` packs, profile import/export, this `AGENTS.md`, per-project `AGENTS.md` |
 | **Cursor integration** (first-class adapter) | `.cursor/rules` persona auto-load, Ask/Plan Teaching Mode, `chats` transcript search, optional multi-root `.code-workspace`, `sessionStart` Ops refresh (`.cursor/hooks`) |
 
 ## Naming
@@ -45,7 +45,7 @@ Most portfolio mistakes happen before coding starts: the wrong repository, the w
 |-------|------|
 | Product / GitHub repo | **Metra** |
 | Recommended local folder | **`_metra`** (also accepted: `_meta`, `Metra`, `metra`) |
-| CLI | `meta.ps1` |
+| CLI | `metra.ps1` |
 | Workspace file | `Metra.code-workspace` (legacy `Meta.code-workspace` still honored if configured) |
 
 Operator-facing brand kit (palette, motif, professional sink): [docs/Brand.md](docs/Brand.md). Coworker walkthrough (concepts + live, including a non-AI-friendly path): [docs/Demo-5min.md](docs/Demo-5min.md).
@@ -56,11 +56,11 @@ Operator-facing brand kit (palette, motif, professional sink): [docs/Brand.md](d
 cd C:\Projects   # or your work root
 git clone https://github.com/jaxnoth/Metra.git _metra
 cd _metra
-.\meta.ps1 import-profile -Path .\profiles\sample -Force
-# Edit meta.config.json roots / workspace.alwaysInclude
+.\metra.ps1 import-profile -Path .\profiles\sample -Force
+# Edit metra.config.json roots / workspace.alwaysInclude
 # Edit .cursor\rules\metra-persona.local.mdc operator display name (replace Alex) if using Cursor
-.\meta.ps1 routing
-.\meta.ps1 ctx
+.\metra.ps1 routing
+.\metra.ps1 ctx
 ```
 
 Hand the context pack to any agent: open/attach/paste/`@` `docs/context-pack.md` (or JSON). Optional stubs in `projects.json` (TicketTracker, Solarwinds) teach routing; they are **not** required installs - `whenMissing` advice appears if those folders are absent.
@@ -68,13 +68,13 @@ Hand the context pack to any agent: open/attach/paste/`@` `docs/context-pack.md`
 Preview a pack without writing:
 
 ```powershell
-.\meta.ps1 import-profile -Path .\profiles\sample -Preview
+.\metra.ps1 import-profile -Path .\profiles\sample -Preview
 ```
 
 ### Optional: open in Cursor
 
 ```powershell
-.\meta.ps1 workspace
+.\metra.ps1 workspace
 ```
 
 Open `Metra.code-workspace` (or `Meta.code-workspace` if your live config still uses that name). Workspace generation helps VS Code/Cursor multi-root; it is **not** required for CLI, routing, or `ctx`.
@@ -86,9 +86,9 @@ When exploring, planning, or onboarding (Cursor Ask/Plan are common cases), Metr
 ## Context pack (universal handoff)
 
 ```powershell
-.\meta.ps1 ctx
-.\meta.ps1 ctx -Query "ticket disk"
-.\meta.ps1 ctx -Format json -Path $env:TEMP\metra-ctx.json
+.\metra.ps1 ctx
+.\metra.ps1 ctx -Query "ticket disk"
+.\metra.ps1 ctx -Format json -Path $env:TEMP\metra-ctx.json
 ```
 
 Writes a bounded map of roots and present projects. Use it from Cursor, Claude Code, Codex, or any chat that accepts a file or paste. See [docs/Integrations.md](docs/Integrations.md).
@@ -97,7 +97,7 @@ Writes a bounded map of roots and present projects. Use it from Cursor, Claude C
 
 | Ship in git | Keep local / export via profile |
 |-------------|-------------------------------|
-| CLI, module, templates, shared/ | `meta.config.json` |
+| CLI, module, templates, shared/ | `metra.config.json` |
 | `projects.json` (example stubs) | `projects.local.json` |
 | `metra-persona.mdc` (full base) | `.cursor/rules/metra-persona.local.mdc` |
 | `profiles/addons/` (opt-in Persona Add-ons) | `.cursor/rules/metra-humor.local.mdc`, `metra-teaching-gentle.local.mdc` (after import) |
@@ -111,9 +111,9 @@ Bindings (paths, alwaysInclude, operator name) are local facts. Canonical routin
 Move yourself between machines:
 
 ```powershell
-.\meta.ps1 export-profile -Path $env:TEMP\my-meta-profile.zip
+.\metra.ps1 export-profile -Path $env:TEMP\my-metra-profile.zip
 # on the other machine, after clone:
-.\meta.ps1 import-profile -Path $env:TEMP\my-meta-profile.zip -Force
+.\metra.ps1 import-profile -Path $env:TEMP\my-metra-profile.zip -Force
 ```
 
 Personal-root `registryFile` is **not** auto-included - copy it with that root. See [docs/Customizing-Metra.md](docs/Customizing-Metra.md), [SECURITY.md](SECURITY.md).
@@ -150,7 +150,7 @@ Personal-root `registryFile` is **not** auto-included - copy it with that root. 
 Focused Pester (optional; Pester 5+, PowerShell 7):
 
 ```powershell
-pwsh -NoProfile -File .\tests\Invoke-MetaTests.ps1
+pwsh -NoProfile -File .\tests\Invoke-MetraTests.ps1
 ```
 
 ### Filters
@@ -165,8 +165,8 @@ pwsh -NoProfile -File .\tests\Invoke-MetaTests.ps1
 
 ```
 _metra/
-  meta.ps1                   Metra CLI entrypoint
-  meta.config.example.json   starter config (live meta.config.json is gitignored)
+  metra.ps1                   Metra CLI entrypoint
+  metra.config.example.json   starter config (live metra.config.json is gitignored)
   projects.json              shared agent routing registry (example stubs OK)
   projects.local.example.json
   profiles/sample/           anonymized operator pack
@@ -174,7 +174,7 @@ _metra/
   AGENTS.md                  agent entry + Metra examples
   LICENSE                    MIT
   SECURITY.md
-  scripts/Meta.psm1          PowerShell helpers
+  scripts/Metra.psm1          PowerShell helpers
   docs/                      Brand, Decisions, routing, Integrations, Demo, ...
   integrations/cursor/       Metra Ops canvas template
   templates/basic/           default new-project template
@@ -210,28 +210,28 @@ C:\Projects\                 (work root)
 ## Creating projects
 
 ```powershell
-.\meta.ps1 new ReportingOps -Description "Ops scripts for reporting"
-.\meta.ps1 new ScratchPad -Template basic -NoGit
-.\meta.ps1 new SermonNotes -Root personal
+.\metra.ps1 new ReportingOps -Description "Ops scripts for reporting"
+.\metra.ps1 new ScratchPad -Template basic -NoGit
+.\metra.ps1 new SermonNotes -Root personal
 ```
 
 ## Cross-project adjustments
 
 ```powershell
-.\meta.ps1 run "git status -sb" -Root work -GitOnly
-.\meta.ps1 apply .\shared\.editorconfig -RelativePath .editorconfig
+.\metra.ps1 run "git status -sb" -Root work -GitOnly
+.\metra.ps1 apply .\shared\.editorconfig -RelativePath .editorconfig
 ```
 
 ## Agent routing
 
-Classify work, consult `.\meta.ps1 routing` or `.\meta.ps1 ctx`, load one project `AGENTS.md` before scanning siblings. Ticket work starts in TicketTracker when present. Keep work and personal roots isolated unless the user names a cross-root project. Prefer [docs/Decisions.md](docs/Decisions.md) for durable Metra policy before digging chats. Smoke fixtures: `.\meta.ps1 verify`. Details: [docs/Context-Routing.md](docs/Context-Routing.md), [docs/Integrations.md](docs/Integrations.md).
+Classify work, consult `.\metra.ps1 routing` or `.\metra.ps1 ctx`, load one project `AGENTS.md` before scanning siblings. Ticket work starts in TicketTracker when present. Keep work and personal roots isolated unless the user names a cross-root project. Prefer [docs/Decisions.md](docs/Decisions.md) for durable Metra policy before digging chats. Smoke fixtures: `.\metra.ps1 verify`. Details: [docs/Context-Routing.md](docs/Context-Routing.md), [docs/Integrations.md](docs/Integrations.md).
 
 ```powershell
-.\meta.ps1 audit
-.\meta.ps1 audit -DriftOnly
-.\meta.ps1 verify
-.\meta.ps1 ctx -Query "disk alert"
-.\meta.ps1 chats -Name Solarwinds -Query "disk alert"
+.\metra.ps1 audit
+.\metra.ps1 audit -DriftOnly
+.\metra.ps1 verify
+.\metra.ps1 ctx -Query "disk alert"
+.\metra.ps1 chats -Name Solarwinds -Query "disk alert"
 ```
 
 ## Contributing

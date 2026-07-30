@@ -74,7 +74,7 @@ A short **route line with nodes** - wayfinding, not a train logo and not Chicago
 
 ## Typography
 
-Use the host font. Monospace only for commands and paths (`.\meta.ps1`, folder names).
+Use the host font. Monospace only for commands and paths (`.\metra.ps1`, folder names).
 
 ## Ops board layout target
 
@@ -103,12 +103,14 @@ Below that (unchanged jobs):
 
 ## Naming boundary
 
-| Operator-facing | Technical (keep) |
-|-----------------|------------------|
+| Operator-facing | Technical |
+|-----------------|-----------|
 | Product **Metra** | Checkout folder `_metra` (also accepted: `_meta`, `Metra`, `metra`) |
-| Workspace file `Metra.code-workspace` | CLI `meta.ps1` |
-| Orchestration folder label **Metra** | Internal PowerShell `Meta-*` function names |
-| Canvas **Metra Ops** / `metra-ops-board` | Cursor path-derived state slug (e.g. `c-Projects-meta`) |
+| Workspace file `Metra.code-workspace` | CLI `metra.ps1`, module `Metra.psm1`, config `metra.config.json` |
+| Orchestration folder label **Metra** | Internal PowerShell `*-Metra*` function names |
+| Canvas **Metra Ops** / `metra-ops-board` | Cursor path-derived state slug (e.g. `c-Projects-meta` for a `_meta` checkout) |
+
+Legacy silent shims (one release; not taught): `meta.ps1` forwards to `metra.ps1`; loaders accept `meta.config.json` / `meta-profile.json` / `metaFolder*` keys; old `*-Meta*` function aliases remain exported.
 
 ## Professional sink
 
@@ -116,7 +118,7 @@ Chat and operator UIs may show Metra branding. Tickets, commits, ADRs, and redis
 
 ## Screenshot approval checklist
 
-Capture **Metra Ops** (Ops tab) under **Cursor Light** and **Cursor Dark**. Re-run `.\meta.ps1 snapshot` if the board looks stale. Submit both shots for approval against this list:
+Capture **Metra Ops** (Ops tab) under **Cursor Light** and **Cursor Dark**. Re-run `.\metra.ps1 snapshot` if the board looks stale. Submit both shots for approval against this list:
 
 | Check | Light | Dark |
 |-------|-------|------|

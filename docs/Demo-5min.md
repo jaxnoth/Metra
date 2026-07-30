@@ -37,13 +37,13 @@ One sentence for the room:
 4. Confirm shared stubs resolve:
 
 ```powershell
-.\meta.ps1 routing -Name TicketTracker,Solarwinds,Trivia
+.\metra.ps1 routing -Name TicketTracker,Solarwinds,Trivia
 ```
 
 5. Pre-generate a context pack (so you do not wait live):
 
 ```powershell
-.\meta.ps1 ctx -Query "ticket disk"
+.\metra.ps1 ctx -Query "ticket disk"
 ```
 
 6. Open a **new** Cursor chat with the Metra checkout in scope. Prefer **Ask** mode (read-only) so nothing changes by accident.
@@ -107,7 +107,7 @@ Speak slowly. Define terms once. Do not quiz the room.
 > - **Routing** - a shared list of trigger words that say "this ask belongs in TicketTracker / Solarwinds / Trivia / ..."
 > - **Personality** - how the chat talks to **you** while you work
 >
-> The checkout folder is often named `_metra` (older clones may still use `_meta`). The product name is Metra. The command line tool is `meta.ps1`.
+> The checkout folder is often named `_metra` (older clones may still use `_meta`). The product name is Metra. The command line tool is `metra.ps1`.
 
 **3. Routing vs personality (~60s)**
 
@@ -136,7 +136,7 @@ Narrate what you are doing. Assume they have never seen this screen.
 > This is not magic. It is a table we maintain. Watch the Triggers column - everyday phrases mapped to a project.
 
 ```powershell
-.\meta.ps1 routing -Name TicketTracker,Solarwinds,Trivia
+.\metra.ps1 routing -Name TicketTracker,Solarwinds,Trivia
 ```
 
 Point at:
@@ -199,7 +199,7 @@ How to try later (do not live-clone unless asked):
 cd C:\Projects
 git clone <Metra-repo-url> _metra
 cd _metra
-.\meta.ps1 import-profile -Path .\profiles\sample -Preview
+.\metra.ps1 import-profile -Path .\profiles\sample -Preview
 ```
 
 > Preview first. No pressure to adopt Cursor this week. Questions are open.

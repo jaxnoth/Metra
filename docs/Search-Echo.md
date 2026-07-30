@@ -4,7 +4,7 @@ Metra often opens many sibling folders in one workspace. Content search tools th
 
 ## Agent mitigation (required)
 
-After routing to one project, always pass an absolute `path` to Grep/Glob (that project's folder, or `C:\Projects\_metra` for orchestration work - older clones may still use `_meta`). Prefer `.\meta.ps1 routing` / `ctx` for "which project?" asks.
+After routing to one project, always pass an absolute `path` to Grep/Glob (that project's folder, or `C:\Projects\_metra` for orchestration work - older clones may still use `_meta`). Prefer `.\metra.ps1 routing` / `ctx` for "which project?" asks.
 
 ## Operator / workspace options
 
@@ -12,9 +12,9 @@ After routing to one project, always pass an absolute `path` to Grep/Glob (that 
 |----------|--------|------|
 | Path-scoped agent search (above) | Stops most echo without changing the IDE | None |
 | Smaller Metra-only workspace session | Fewer mounts = less echo | Open fewer folders when doing Metra-checkout-only work |
-| Trim `workspace.alwaysInclude` in `meta.config.json` | Fewer always-mounted hubs | May need manual open for unpinned projects |
+| Trim `workspace.alwaysInclude` in `metra.config.json` | Fewer always-mounted hubs | May need manual open for unpinned projects |
 | `.cursorindexingignore` | Reduces index noise; may not stop Grep echo across roots | Experiment per machine |
 
-Do **not** auto-run `.\meta.ps1 workspace` on chat start - rewriting the workspace file can reload Cursor mid-session.
+Do **not** auto-run `.\metra.ps1 workspace` on chat start - rewriting the workspace file can reload Cursor mid-session.
 
 See [Integrations.md](Integrations.md) for sessionStart snapshot hooks. Broader routing cadence: [Context-Routing.md](Context-Routing.md).

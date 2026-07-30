@@ -10,7 +10,7 @@ Use after changing registries, project `AGENTS.md`, or `.cursorignore`.
 | Fun Committee / IT printable / word search | Trivia (work root) | Stay on work root; do not open personal bible games unless named |
 | Personal bible bingo / quiz / roku | Matching personal root project | Stay on personal root; do not open work Trivia or Misc unless asked |
 | Cross-root ask ("copy Misc sheets into Trivia") | Named destination first | Open the other root only for that handoff |
-| Coworker clone missing TicketTracker / Solarwinds | Advice-only stub | `.\meta.ps1 routing -MissingOnly` shows `whenMissing`; not drift |
+| Coworker clone missing TicketTracker / Solarwinds | Advice-only stub | `.\metra.ps1 routing -MissingOnly` shows `whenMissing`; not drift |
 | Cross-project (e.g. Pharos + Colleague) | TicketTracker -> primary technical repo | Open related project only after primary evidence; same root |
 
 ## Persona smoke (Metra)
@@ -40,7 +40,7 @@ Use after changing `.cursor/rules/metra-persona.mdc`, the local overlay, or the 
 | Urgent + banner | Model disclosure line still present every reply |
 | First reply in Ask or Plan mode | Reply opens with `**Metra** · Model: ...`; read-only mode does not drop the banner |
 | Mode switch mid-thread (Agent / Ask / Plan) | Banner survives the switch; next reply still leads with `**Metra** ·` |
-| Unknown / missing project | Say unknown; suggest `.\meta.ps1 routing`; do not invent folders |
+| Unknown / missing project | Say unknown; suggest `.\metra.ps1 routing`; do not invent folders |
 | Mixed-root / cross-root ask | Explicit approval before opening both scopes |
 | Paraphrase the same route ask twice | Recognizably Metra without a catchphrase |
 | Forced joke / catchphrase pressure | Humor stays opportunistic; never required; never delays work |
@@ -56,7 +56,7 @@ Before merging a persona edit: improves portfolio (routing/code/docs/tickets)? N
 Prefer the automated runner:
 
 ```powershell
-.\meta.ps1 verify
+.\metra.ps1 verify
 ```
 
 Exit code `0` when there are no FAIL rows (WARN alone is OK); `1` if any FAIL.
@@ -68,16 +68,16 @@ Human-readable source of truth for what verify covers:
 ```powershell
 Test-Path .\projects.json
 Test-Path .\projects.local.json
-Test-Path .\profiles\sample\meta-profile.json
+Test-Path .\profiles\sample\metra-profile.json
 Test-Path ..\TicketTracker\AGENTS.md
 Test-Path ..\Trivia\AGENTS.md
 Test-Path ..\Solarwinds\docs\Ticket-Triage.md
 Select-String -Path ..\TicketTracker\TicketTracker.ps1 -Pattern "'brief'"
 Select-String -Path ..\TicketTracker\TicketTracker.ps1 -Pattern "'chats'"
-.\meta.ps1 roots
-.\meta.ps1 routing -Name TicketTracker,Solarwinds,Trivia
-.\meta.ps1 ctx -Query "ticket"
-.\meta.ps1 import-profile -Path .\profiles\sample -Preview
-.\meta.ps1 audit -Name Solarwinds,TicketTracker,Trivia -DriftOnly
-.\meta.ps1 chats -Name Solarwinds -Query "alert" -Limit 3
+.\metra.ps1 roots
+.\metra.ps1 routing -Name TicketTracker,Solarwinds,Trivia
+.\metra.ps1 ctx -Query "ticket"
+.\metra.ps1 import-profile -Path .\profiles\sample -Preview
+.\metra.ps1 audit -Name Solarwinds,TicketTracker,Trivia -DriftOnly
+.\metra.ps1 chats -Name Solarwinds -Query "alert" -Limit 3
 ```

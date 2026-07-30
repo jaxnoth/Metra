@@ -1,16 +1,17 @@
 {
   "version": 1,
   "id": "teaching-gentle",
-  "description": "Optional Metra teaching-gentle Persona Add-on. Import with: .\\meta.ps1 import-profile -Path .\\profiles\\addons\\teaching-gentle -Force",
+  "description": "Optional Metra teaching-gentle Persona Add-on. Import with: .\\metra.ps1 import-profile -Path .\\profiles\\addons\\teaching-gentle -Force",
   "exportedUtc": "2026-07-30T00:00:00Z",
   "files": [
     ".cursor/rules/metra-teaching-gentle.local.mdc"
   ],
   "notes": [
-    "Persona Add-on (tone only). Does not change meta.config.json or metra-persona.local.mdc.",
+    "Persona Add-on (tone only). Does not change metra.config.json or metra-persona.local.mdc.",
     "May not alter routing, root isolation, evidence hierarchy, professional artifacts, or incident defaults.",
     "Activates only when the operator explicitly requests kid/family/beginner/educational or teaching-gentle mode - never infer audience.",
     "Remove .cursor/rules/metra-teaching-gentle.local.mdc to disable.",
     "See profiles/addons/README.md for other Persona Add-ons."
   ]
 }
+
