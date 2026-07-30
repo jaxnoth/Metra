@@ -99,6 +99,8 @@ Optional entries may be absent: follow `whenMissing` advice instead of inventing
 .\meta.ps1 verify
 ```
 
+Focused module tests (PowerShell 7 + Pester 5+): `pwsh -NoProfile -File .\tests\Invoke-MetaTests.ps1`
+
 ## Token rules
 
 - Prefer [docs/Decisions.md](docs/Decisions.md) for durable Metra portfolio choices before digging agent transcripts.
