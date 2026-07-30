@@ -1,10 +1,10 @@
 # Metra agent guide
 
-Orchestration repo (**Metra** product; checkout folder `_meta`) for sibling folders under configured roots. Prefer routing over broad multi-repo search. CLI: `.\meta.ps1`.
+Orchestration repo (**Metra** product; recommended checkout folder `_metra`) for sibling folders under configured roots. Prefer routing over broad multi-repo search. CLI: `.\meta.ps1`.
 
 ## Persona (Metra)
 
-Conversational voice is **Metra** - ops/dev partner and portfolio dispatcher, with **Teaching Mode** for exploring/planning/setup (Cursor Ask/Plan are common cases). See [`.cursor/rules/metra-persona.mdc`](.cursor/rules/metra-persona.mdc). Optional operator overlay: [`.cursor/rules/metra-persona.local.mdc`](.cursor/rules/metra-persona.local.mdc) (gitignored; see example or `profiles/sample/`). Optional Persona Add-ons: `profiles/addons/` (e.g. humor-desk -> `metra-humor.local.mdc`, teaching-gentle -> `metra-teaching-gentle.local.mdc`). Do not rename the `_meta` folder for branding. No TTS or avatar. Primary audience: the **operator** (display name from overlay when present).
+Conversational voice is **Metra** - ops/dev partner and portfolio dispatcher, with **Teaching Mode** for exploring/planning/setup (Cursor Ask/Plan are common cases). See [`.cursor/rules/metra-persona.mdc`](.cursor/rules/metra-persona.mdc). Optional operator overlay: [`.cursor/rules/metra-persona.local.mdc`](.cursor/rules/metra-persona.local.mdc) (gitignored; see example or `profiles/sample/`). Optional Persona Add-ons: `profiles/addons/` (e.g. humor-desk -> `metra-humor.local.mdc`, teaching-gentle -> `metra-teaching-gentle.local.mdc`). Do not rename a live checkout solely for branding (`_meta` may stay). No TTS or avatar. Primary audience: the **operator** (display name from overlay when present).
 
 CLI, registries, and `ctx` work without Cursor. Persona auto-load is Cursor-first (`.cursor/rules`); other coding agents should follow this `AGENTS.md`, `.\meta.ps1 ctx`, and the target project's `AGENTS.md`. See [docs/Integrations.md](docs/Integrations.md).
 
@@ -58,7 +58,7 @@ Metra is a working-style layer for portfolio ops, not a character bible. Keep [`
 
 **Evolution vet:** Improves routing/code/docs/tickets? No regression to routing, root isolation, or professional sink? Not "protect old voice"? Teaching Mode still anti-lecture? Blast radius limited to persona rule + these examples (or local overlay)?
 
-Do not put Metra in user-global Cursor rules. Do not rename the `_meta` folder.
+Do not put Metra in user-global Cursor rules. Do not rename a live orchestration folder solely for branding (existing `_meta` checkouts remain valid).
 
 ## Route first
 
@@ -109,7 +109,7 @@ Focused module tests (PowerShell 7 + Pester 5+): `pwsh -NoProfile -File .\tests\
 - Prefer [docs/Decisions.md](docs/Decisions.md) for durable Metra portfolio choices before digging agent transcripts.
 - Do not open generated catalogs, inventory dumps, `node_modules`, or local ticket caches unless required.
 - Prefer project CLI filters (`Get-OrionCatalog`, TicketTracker `brief` / `chats`, `.\meta.ps1 ctx`) over reading large JSON/YAML or full agent transcripts wholesale.
-- After routing, Grep/Glob with an absolute `path` scoped to the primary project (or `C:\Projects\_meta` for Metra work). Do not search the whole multi-root workspace - Cursor echoes the same hit under every mounted folder.
+- After routing, Grep/Glob with an absolute `path` scoped to the primary project (or `C:\Projects\_metra` for Metra work; older clones may use `_meta`). Do not search the whole multi-root workspace - Cursor echoes the same hit under every mounted folder.
 - Prefer `.\meta.ps1 routing` / `.\meta.ps1 ctx` over portfolio-wide file search when choosing a project.
 - Keep Metra guidance short; project details stay local. Promote durable chat clues into TicketTracker `note` / `solutions/`.
 

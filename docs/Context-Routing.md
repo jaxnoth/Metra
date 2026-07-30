@@ -12,7 +12,7 @@ Keep agent response time and token use low by routing to one project, then loadi
 | `projects.local.json` | Machine-private work entries (gitignored) |
 | Root `registryFile` | Optional per-root overlay (e.g. personal iCloud) |
 | `profiles/sample/` | Anonymized operator pack for `import-profile` |
-| `AGENTS.md` | Short human/agent fallback for `_meta` |
+| `AGENTS.md` | Short human/agent fallback for the Metra checkout |
 | `.cursor/rules/project-routing.mdc` | Always-on routing rule |
 | `.cursor/rules/metra-persona.mdc` | Base Metra personality (tracked) |
 | `.cursor/rules/metra-persona.local.mdc` | Operator overlay (gitignored) |
@@ -77,7 +77,7 @@ Typical local path (slug is path-derived from the checkout folder):
 
 `%USERPROFILE%\.cursor\projects\<cursor-slug>\canvases\metra-ops-board.canvas.tsx`
 
-For a `_meta` checkout under `C:\Projects`, the slug is usually `c-Projects-meta`.
+For a `_metra` checkout under `C:\Projects`, the slug is usually `c-Projects-metra`. An older `_meta` checkout is usually `c-Projects-meta`.
 
 Refresh data after audits or layout changes:
 
@@ -107,7 +107,7 @@ During ticket triage, search them for clues (bounded summaries only):
 .\TicketTracker.ps1 chats <id>
 .\TicketTracker.ps1 chats <id> -Name Solarwinds -IncludeMeta
 
-# From _meta
+# From the Metra checkout
 .\meta.ps1 chats -Name Solarwinds -Query "disk alert"
 .\meta.ps1 chats -Name TicketTracker,Solarwinds -Ticket 12345 -IncludeMeta
 ```

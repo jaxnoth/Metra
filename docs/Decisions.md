@@ -18,6 +18,12 @@ Entry shape:
 
 ---
 
+## 2026-07-30 - Recommended checkout folder `_metra`
+
+- Decision: Recommended local checkout name is **`_metra`**. Still accepted: `_meta`, `Metra`, `metra` (and legacy `meta`). `Test-MetaSelfFolderName` recognizes all of them. Do not require renaming an existing `_meta` live checkout.
+- Why: Leading underscore keeps orchestration at the top of the sibling list; `_metra` matches the product name better than `_meta` without losing that sort behavior.
+- See: `README.md` (Naming), `Test-MetaSelfFolderName`, `docs/Brand.md`
+
 ## 2026-07-30 - Ship teaching-gentle Persona Add-on
 
 - Decision: Ship `profiles/addons/teaching-gentle/` as the second Persona Add-on. Installs `metra-teaching-gentle.local.mdc`. Activates gentler pacing only when the operator explicitly requests kid/family/beginner/educational or teaching-gentle mode - never infer audience. While active, suppress humor-desk sarcasm. `Get-MetaProfileFileMap` includes the new local rule path.
@@ -92,6 +98,6 @@ Entry shape:
 
 ## 2026-07-29 - Product naming
 
-- Decision: Product name is **Metra**. Recommended checkout folder remains `_meta` (also accepted: `Metra`, `metra`). CLI stays `meta.ps1`. Do not rename the live folder for branding.
+- Decision: Product name is **Metra**. Recommended checkout folder was `_meta` at the time (later updated to `_metra`; see 2026-07-30 Decision). Also accepted: `Metra`, `metra`. CLI stays `meta.ps1`. Do not rename the live folder for branding.
 - Why: Branding without breaking paths, remotes, or Cursor state slugs.
 - See: `docs/Brand.md`, `README.md`

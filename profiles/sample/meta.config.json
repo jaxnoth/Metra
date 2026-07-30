@@ -19,6 +19,7 @@
     }
   ],
   "exclude": [
+    "_metra",
     "_meta",
     "Metra",
     "metra"
@@ -44,7 +45,7 @@
       },
       {
         "path": "../Metra.code-workspace",
-        "metaFolderPath": "_meta",
+        "metaFolderPath": "_metra",
         "projectPathPrefix": ""
       }
     ],

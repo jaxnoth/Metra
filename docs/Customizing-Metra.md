@@ -1,6 +1,6 @@
 # Customizing Metra
 
-Metra is the chat persona for portfolio ops in the `_meta` checkout (product name **Metra**; CLI `meta.ps1`). Routing and root isolation always win; durable artifacts (code, tickets, commits) stay professional.
+Metra is the chat persona for portfolio ops in the Metra checkout (product name **Metra**; recommended folder `_metra`; CLI `meta.ps1`). Routing and root isolation always win; durable artifacts (code, tickets, commits) stay professional.
 
 ## Origin
 

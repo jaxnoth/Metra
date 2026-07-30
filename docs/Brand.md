@@ -47,7 +47,7 @@ Same jobs in **Cursor Light** and **Cursor Dark**. Host tokens vary; the mapping
 
 ### Optional local accent (not a full skin)
 
-To push Signal Teal into host accent (and thus the Ops board route mark) without a Metra theme pack, a **local** `settings.json` accent override is enough. Example only - do not commit machine-specific settings into `_meta`:
+To push Signal Teal into host accent (and thus the Ops board route mark) without a Metra theme pack, a **local** `settings.json` accent override is enough. Example only - do not commit machine-specific settings into the Metra checkout:
 
 ```json
 "workbench.colorCustomizations": {
@@ -105,7 +105,7 @@ Below that (unchanged jobs):
 
 | Operator-facing | Technical (keep) |
 |-----------------|------------------|
-| Product **Metra** | Checkout folder `_meta` (also accepted: `Metra`, `metra`) |
+| Product **Metra** | Checkout folder `_metra` (also accepted: `_meta`, `Metra`, `metra`) |
 | Workspace file `Metra.code-workspace` | CLI `meta.ps1` |
 | Orchestration folder label **Metra** | Internal PowerShell `Meta-*` function names |
 | Canvas **Metra Ops** / `metra-ops-board` | Cursor path-derived state slug (e.g. `c-Projects-meta`) |

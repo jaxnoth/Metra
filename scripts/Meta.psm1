@@ -136,11 +136,11 @@ function Get-ProjectsRoot {
 function Test-MetaSelfFolderName {
     <#
     .SYNOPSIS
-        True when the folder is this orchestration checkout (Metra product, _meta convention).
+        True when the folder is this orchestration checkout (Metra product, _metra convention).
     #>
     param([Parameter(Mandatory)][string]$Name)
     $n = $Name.Trim()
-    return @('_meta', 'meta', 'Metra', 'metra') -contains $n
+    return @('_metra', '_meta', 'meta', 'Metra', 'metra') -contains $n
 }
 
 function Test-ExcludedProjectName {
@@ -1698,8 +1698,9 @@ function ConvertTo-MetaCursorProjectSlug {
     .SYNOPSIS
         Builds the Cursor per-project folder slug for a project name or full path.
     .DESCRIPTION
-        Cursor names its state folder after the workspace path: C:\Projects\_meta becomes
-        c-Projects-meta. Projects outside the primary root (for example a cloud-synced
+        Cursor names its state folder after the workspace path: C:\Projects\_metra becomes
+        c-Projects-metra (leading underscores stripped). C:\Projects\_meta becomes c-Projects-meta.
+        Projects outside the primary root (for example a cloud-synced
         personal folder) therefore need the path form, not the name form.
     #>
     [CmdletBinding(DefaultParameterSetName = 'Name')]
@@ -1720,7 +1721,10 @@ function ConvertTo-MetaCursorProjectSlug {
     }
 
     $trimmed = $Name.Trim()
-    if (Test-MetaSelfFolderName -Name $trimmed) { return 'c-Projects-meta' }
+    if (Test-MetaSelfFolderName -Name $trimmed) {
+        $leaf = ($trimmed.TrimStart('_')).ToLowerInvariant()
+        return "c-Projects-$leaf"
+    }
     $slug = ($trimmed -replace '[^\w]+', '-').Trim('-')
     return "c-Projects-$slug"
 }
@@ -1755,7 +1759,7 @@ function Get-MetaCursorTranscriptRoots {
     }
     if ($IncludeMeta -or -not $Name -or $Name.Count -eq 0) {
         if (-not ($wanted | Where-Object { Test-MetaSelfFolderName -Name $_ })) {
-            $wanted.Add('_meta')
+            $wanted.Add('_metra')
         }
     }
 
@@ -1779,7 +1783,7 @@ function Get-MetaCursorTranscriptRoots {
             $transcriptRoot = Join-Path $cursorProjects (Join-Path $slug 'agent-transcripts')
             if (-not (Test-Path -LiteralPath $transcriptRoot)) { continue }
             [PSCustomObject]@{
-                Name           = if (Test-MetaSelfFolderName -Name $projectName) { '_meta' } else { $projectName }
+                Name           = $projectName
                 CursorSlug     = $slug
                 TranscriptRoot = $transcriptRoot
             }
@@ -2098,7 +2102,7 @@ function Export-MetaProfile {
     $manifest = [ordered]@{
         version     = 1
         id          = 'export'
-        description = 'Operator profile exported from local _meta customizations.'
+        description = 'Operator profile exported from local Metra checkout customizations.'
         exportedUtc = [DateTime]::UtcNow.ToString('o')
         files       = @($present.ToArray())
         notes       = @(
@@ -2116,12 +2120,12 @@ function Export-MetaProfile {
 
 Created: $($manifest.exportedUtc)
 
-Import into another `_meta` clone:
+Import into another Metra checkout:
 
 ``````powershell
 .\meta.ps1 import-profile -Path <this-folder-or-zip> -Force
 # Then edit meta.config.json roots / operator name in metra-persona.local.mdc
-# Optional: metra-humor.local.mdc comes from profiles/addons/humor-desk when you opted in
+# Optional: metra-humor.local.mdc / metra-teaching-gentle.local.mdc come from profiles/addons when you opted in
 ``````
 
 Personal-root ``registryFile`` is not included in this pack.
@@ -2153,7 +2157,7 @@ Personal-root ``registryFile`` is not included in this pack.
 function Import-MetaProfile {
     <#
     .SYNOPSIS
-        Restore an operator profile pack into _meta (same layout as profiles/sample).
+        Restore an operator profile pack into the Metra checkout (same layout as profiles/sample).
     .PARAMETER Preview
         List what would copy; do not write.
     .PARAMETER Force
