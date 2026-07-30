@@ -1,6 +1,6 @@
 # Metra
 
-Portfolio ops for multi-root project folders. Discover siblings, run commands across them, route AI agents to **one project at a time**, and ship **Metra** - an ops-partner chat persona (Teaching Mode for exploring, planning, and setup).
+PowerShell portfolio ops for multi-root project folders. Discover siblings, run commands across them, route work to **one project at a time**, and hand bounded context to coding agents when you want it. Optional **Metra** chat persona (Teaching Mode for exploring, planning, and setup) rides on top - it is not the product.
 
 Not a monorepo build system. Not another "meta" multi-repo clone framework.
 
@@ -12,17 +12,17 @@ MIT licensed. Public repo: [jaxnoth/Metra](https://github.com/jaxnoth/Metra).
 
 If you only read three things:
 
-1. **Metra manages multi-project workspaces** - siblings under one or more roots, operated with `metra.ps1`.
+1. **Metra is a PowerShell product** - `metra.ps1` plus an importable module with a curated public command surface.
 2. **Routing picks one project before work starts** - personality never chooses the folder.
 3. **`ctx` creates agent handoff packs** - bounded maps you can open, paste, or `@` in any coding agent.
 
 ## Why Metra?
 
-Most portfolio mistakes happen before coding starts: the wrong repository, the wrong root, the wrong ticket, the wrong assumptions. Metra routes first, gathers just enough context, then works. The chat persona is a constrained ops partner for that workflow - not the product itself. Longer operating philosophy: [docs/Customizing-Metra.md](docs/Customizing-Metra.md) (Origin).
+Most portfolio mistakes happen before coding starts: the wrong repository, the wrong root, the wrong ticket, the wrong assumptions. Metra routes first, gathers just enough context, then works. The AI layer (persona, Teaching Mode, transcript search) is an integration on that CLI - not an AI project with PowerShell bolted on. Longer operating philosophy: [docs/Customizing-Metra.md](docs/Customizing-Metra.md) (Origin).
 
 ## What Metra is / is not
 
-**Is:** a portfolio orchestration layer (CLI + routing registry + agent guidance + optional persona overlay).
+**Is:** a PowerShell portfolio orchestration layer (CLI + module + routing registry + `ctx` packs), with optional agent guidance and persona overlay.
 
 **Not:**
 
@@ -36,7 +36,7 @@ Most portfolio mistakes happen before coding starts: the wrong repository, the w
 
 | Layer | What you get |
 |-------|----------------|
-| **Core** (any shell; any agent that can read files) | `metra.ps1`, `projects.json` / local registries, `ctx` packs, profile import/export, this `AGENTS.md`, per-project `AGENTS.md` |
+| **Core** (any shell; any agent that can read files) | `metra.ps1`, importable `scripts/Metra.psd1` (17 public commands + Get-Help), `projects.json` / local registries, `ctx` packs, profile import/export, this `AGENTS.md`, per-project `AGENTS.md` |
 | **Cursor integration** (first-class adapter) | `.cursor/rules` persona auto-load, Ask/Plan Teaching Mode, `chats` transcript search, optional multi-root `.code-workspace`, `sessionStart` Ops refresh (`.cursor/hooks`) |
 
 ## Naming
@@ -86,9 +86,47 @@ Preview without writing:
 .\metra.ps1 setup -Profile .\profiles\sample -Preview
 ```
 
+### PowerShell-native commands
+
+Import the module instead of (or alongside) the script dispatcher:
+
+```powershell
+Import-Module .\scripts\Metra.psd1
+Get-MetraProject -Root work -GitOnly
+Get-MetraRouting -Name TicketTracker
+Export-MetraContext -Query "ticket disk"
+```
+
+**Supported public surface** (17 commands - treat each addition as an API commitment):
+
+| Area | Commands |
+|------|----------|
+| Setup / validation | `Initialize-Metra`, `Test-MetraInstallation` |
+| Discovery | `Get-MetraProject`, `Get-MetraProjectRoot`, `Get-MetraRouting` |
+| Operations | `Get-MetraProjectStatus`, `Update-MetraProject`, `Invoke-MetraProjectCommand`, `Copy-MetraProjectFile`, `New-MetraProject` |
+| Workspace | `Update-MetraWorkspace` |
+| Context / AI | `Test-MetraProjectContext`, `Export-MetraSnapshot`, `Get-MetraChat`, `Export-MetraContext` |
+| Profiles | `Export-MetraProfile`, `Import-MetraProfile` |
+
+**Documentation:** `Get-Help <command> -Full` is the source of truth for parameters, examples, and outputs. This README stays workflow-oriented - do not expect a parallel hand-maintained API markdown file.
+
+Tab completion covers command and parameter names, project and root values, and fixed choices such as `Export-MetraContext -Format`. Add `Import-Module` with an absolute path to `$PROFILE` when the commands should load in every session.
+
+Common `metra.ps1` equivalents:
+
+- `setup` -> `Initialize-Metra`
+- `list` / `roots` / `routing` -> `Get-MetraProject` / `Get-MetraProjectRoot` / `Get-MetraRouting`
+- `status` / `pull` / `fetch` -> `Get-MetraProjectStatus` / `Update-MetraProject`
+- `run` / `apply` -> `Invoke-MetraProjectCommand` / `Copy-MetraProjectFile`
+- `audit` / `snapshot` / `chats` -> `Test-MetraProjectContext` / `Export-MetraSnapshot` / `Get-MetraChat`
+- `ctx` / `verify` -> `Export-MetraContext` / `Test-MetraInstallation`
+
+`Get-Command -Module Metra` also lists one-release compatibility helpers and former `*-Meta*` aliases. New scripts should use only the 17 commands above. `metra.ps1` remains fully supported.
+
 ### Optional: open in Cursor
 
 The repo ships a starter `Metra.code-workspace` (Metra folder only). After `setup`, reopen or reload that file so sibling projects appear. Workspace multi-root helps VS Code/Cursor; it is **not** required for CLI, routing, or `ctx`. If using Cursor, set the operator display name in `.cursor\rules\metra-persona.local.mdc` after importing a profile.
+
 ## Teaching Mode
 
 When exploring, planning, or onboarding (Cursor Ask/Plan are common cases), Metra leans into a slightly humorous professional college-professor delivery: answer first, one next step, link docs instead of pasting them, stop when you can execute. Guide the work, teach Metra vocabulary when needed, and recommend concrete options when you are stuck. After an ambiguous ask, Metra may offer one **Request Shaping** example of a more routeable future request - not prompt grades or unsolicited critique. Same persona as ops Metra - not a second character. Depth and pacing adapt to the conversation; Metra does not infer demographics or personal traits. Details: [docs/Customizing-Metra.md](docs/Customizing-Metra.md).
@@ -134,6 +172,8 @@ Personal-root `registryFile` is **not** auto-included - copy it with that root. 
 | Surface | Stability |
 |---------|-----------|
 | CLI commands (`setup`, `list`, `routing`, `ctx`, profile import/export, ...) | Intended stable |
+| Public PowerShell commands (the 17 above) | Intended stable; prefer extending an existing command over adding exports |
+| Compatibility functions and former `*-Meta*` aliases | One release; do not use in new scripts |
 | Persona rules (`.cursor/rules/metra-persona.mdc`) | Expected to evolve |
 | Sample overlays / `profiles/sample/` / `profiles/addons/` | Examples, not contracts |
 
@@ -186,7 +226,10 @@ _metra/
   AGENTS.md                  agent entry + Metra examples
   LICENSE                    MIT
   SECURITY.md
-  scripts/Metra.psm1          PowerShell helpers
+  scripts/Metra.psd1          PowerShell module manifest and explicit exports
+  scripts/Metra.psm1          Thin module loader and compatibility boundary
+  scripts/public/             Supported commands with full Get-Help documentation
+  scripts/private/            Domain implementation helpers
   docs/                      Brand, Decisions, routing, Integrations, Demo, ...
   integrations/cursor/       Metra Ops canvas template
   templates/basic/           default new-project template
@@ -248,7 +291,7 @@ Classify work, consult `.\metra.ps1 routing` or `.\metra.ps1 ctx`, load one proj
 
 ## Contributing
 
-Issues and PRs welcome. Keep machine-local files out of commits (see [SECURITY.md](SECURITY.md)). Prefer small, focused changes to routing, CLI, or docs. Persona growth for one operator belongs in the local overlay; promote to the base rule only when the change is meant for everyone using a fork.
+Issues and PRs welcome. Keep machine-local files out of commits (see [SECURITY.md](SECURITY.md)). Prefer small, focused changes to routing, CLI, or docs. New public module exports need a clear user-facing reason (each is an API commitment) - prefer private helpers or extending an existing command. Persona growth for one operator belongs in the local overlay; promote to the base rule only when the change is meant for everyone using a fork. Durable policy choices: [docs/Decisions.md](docs/Decisions.md).
 
 ## Notes
 

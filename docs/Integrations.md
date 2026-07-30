@@ -13,7 +13,7 @@ flowchart LR
 
 ## Runtime requirement
 
-- **PowerShell** - required for `metra.ps1` / `Metra.psm1` today.
+- **PowerShell** - required for `metra.ps1` and the `scripts/Metra.psd1` module.
 - **Cursor** - optional. Needed for automatic persona load (`.cursor/rules`), Ask/Plan Teaching Mode, `chats` transcript search, and `sessionStart` Ops refresh (`.cursor/hooks`).
 
 ## What works without Cursor

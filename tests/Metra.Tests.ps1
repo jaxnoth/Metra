@@ -3,12 +3,87 @@
 
 BeforeAll {
     $metraRoot = (Resolve-Path (Join-Path $PSScriptRoot '..')).Path
-    Import-Module (Join-Path $metraRoot 'scripts\Metra.psm1') -Force
+    Import-Module (Join-Path $metraRoot 'scripts\Metra.psd1') -Force
+    $publicCommands = @(
+        'Initialize-Metra',
+        'Get-MetraProject',
+        'Get-MetraProjectRoot',
+        'Get-MetraRouting',
+        'Get-MetraProjectStatus',
+        'Update-MetraProject',
+        'Invoke-MetraProjectCommand',
+        'Copy-MetraProjectFile',
+        'New-MetraProject',
+        'Update-MetraWorkspace',
+        'Test-MetraProjectContext',
+        'Export-MetraSnapshot',
+        'Get-MetraChat',
+        'Export-MetraContext',
+        'Export-MetraProfile',
+        'Import-MetraProfile',
+        'Test-MetraInstallation'
+    )
 }
 
-Describe 'Get-MetraRoutingTable' {
+Describe 'PowerShell command surface' {
+    It 'exports native commands with approved PowerShell verbs' {
+        $exported = @(Get-Command -Module Metra | Select-Object -ExpandProperty Name)
+        foreach ($name in $publicCommands) {
+            $exported | Should -Contain $name
+            (Get-Verb ($name -split '-', 2)[0]) | Should -Not -BeNullOrEmpty
+        }
+
+        $declared = @(& (Get-Module Metra) { $script:MetraPublicFunctions })
+        @(Compare-Object $publicCommands $declared).Count | Should -Be 0
+    }
+
+    It 'provides complete help for every supported public command' {
+        foreach ($name in $publicCommands) {
+            $help = Get-Help $name -Full
+            [string]$help.Synopsis | Should -Not -BeNullOrEmpty -Because "$name needs a synopsis"
+            @($help.Description.Text).Count | Should -BeGreaterThan 0 -Because "$name needs a description"
+            @($help.Examples.Example).Count | Should -BeGreaterThan 0 -Because "$name needs an example"
+            @($help.ReturnValues.ReturnValue).Count | Should -BeGreaterThan 0 -Because "$name needs outputs"
+
+            foreach ($parameter in @($help.Parameters.Parameter)) {
+                @($parameter.Description.Text).Count |
+                    Should -BeGreaterThan 0 -Because "$name -$($parameter.Name) needs parameter help"
+            }
+        }
+    }
+
+    It 'completes project names, including names with spaces' {
+        $line = 'Get-MetraProject -Name Col'
+        $matches = @(TabExpansion2 $line $line.Length).CompletionMatches
+
+        $matches.ListItemText | Should -Contain 'Colleague'
+        $matches.ListItemText | Should -Contain 'Colleague Migration'
+        ($matches | Where-Object ListItemText -eq 'Colleague Migration').CompletionText |
+            Should -Be "'Colleague Migration'"
+    }
+
+    It 'completes configured root names' {
+        $line = 'Get-MetraProject -Root w'
+        $matches = @(TabExpansion2 $line $line.Length).CompletionMatches
+
+        $matches.ListItemText | Should -Contain 'work'
+    }
+
+    It 'keeps former Meta names as compatibility aliases' {
+        (Get-Command Get-MetaRoutingTable).CommandType | Should -Be 'Alias'
+        @(Get-MetaRoutingTable -Name TicketTracker).Name | Should -Contain 'TicketTracker'
+    }
+
+    It 'does not export generic implementation helpers' {
+        Get-Command Invoke-AcrossProjects -ErrorAction SilentlyContinue | Should -BeNullOrEmpty
+        Get-Command Copy-AcrossProjects -ErrorAction SilentlyContinue | Should -BeNullOrEmpty
+        Get-Command Get-ProjectsRoot -ErrorAction SilentlyContinue | Should -BeNullOrEmpty
+    }
+}
+
+Describe 'Get-MetraRouting' {
     It 'returns TicketTracker, Solarwinds, and Trivia rows from shared/local registry' {
-        $rows = @(Get-MetraRoutingTable -Name @('TicketTracker', 'Solarwinds', 'Trivia'))
+        $rows = @(Get-MetraRouting -Name @('TicketTracker', 'Solarwinds', 'Trivia'))
         $rows.Count | Should -BeGreaterOrEqual 3
         ($rows.Name | Sort-Object -Unique) | Should -Contain 'TicketTracker'
         ($rows.Name | Sort-Object -Unique) | Should -Contain 'Solarwinds'
@@ -50,7 +125,7 @@ Describe 'Import-MetraProfile' {
     }
 }
 
-Describe 'Export-MetraContextPack' {
+Describe 'Export-MetraContext' {
     It 'Path - with Quiet does not rewrite docs/context-pack.md' {
         $packPath = Join-Path (Get-MetraRoot) 'docs\context-pack.md'
         $before = if (Test-Path -LiteralPath $packPath) {
@@ -61,7 +136,7 @@ Describe 'Export-MetraContextPack' {
         }
 
         Start-Sleep -Milliseconds 50
-        $result = Export-MetraContextPack -Query 'ticket' -Format markdown -Path '-' -Quiet |
+        $result = Export-MetraContext -Query 'ticket' -Format markdown -Path '-' -Quiet |
             Select-Object -Last 1
 
         $result.Path | Should -Be '-'
@@ -73,14 +148,14 @@ Describe 'Export-MetraContextPack' {
     }
 }
 
-Describe 'Invoke-MetraSetup' {
+Describe 'Initialize-Metra' {
     It 'Preview -Quiet returns structured result without seeding when config exists' {
         $preferred = Join-Path (Get-MetraRoot) 'metra.config.json'
         $legacy = Join-Path (Get-MetraRoot) 'meta.config.json'
         $hasConfig = (Test-Path -LiteralPath $preferred) -or (Test-Path -LiteralPath $legacy)
         $hasConfig | Should -BeTrue
 
-        $result = Invoke-MetraSetup -Preview -Quiet
+        $result = Initialize-Metra -Preview -Quiet
         $result.Preview | Should -BeTrue
         $result.WouldSeedConfig | Should -BeFalse
         $result.SeededConfig | Should -BeFalse
@@ -90,7 +165,7 @@ Describe 'Invoke-MetraSetup' {
 
     It 'Preview with sample Profile does not throw and keeps WouldSeedConfig false when config exists' {
         $sample = Join-Path (Get-MetraRoot) 'profiles\sample'
-        $result = Invoke-MetraSetup -Profile $sample -Preview -Quiet
+        $result = Initialize-Metra -Profile $sample -Preview -Quiet
         $result.Preview | Should -BeTrue
         $result.WouldSeedConfig | Should -BeFalse
         $result.Import | Should -Not -BeNullOrEmpty
@@ -98,9 +173,9 @@ Describe 'Invoke-MetraSetup' {
     }
 }
 
-Describe 'Invoke-MetraVerify' {
+Describe 'Test-MetraInstallation' {
     It 'returns structured PASS/WARN/FAIL with Ok when FailCount is 0' {
-        $report = Invoke-MetraVerify
+        $report = Test-MetraInstallation -Detailed
         $report.PassCount | Should -BeGreaterThan 0
         $report.FailCount | Should -BeGreaterOrEqual 0
         $report.Ok | Should -Be ($report.FailCount -eq 0)
@@ -109,7 +184,7 @@ Describe 'Invoke-MetraVerify' {
     }
 
     It 'passes on this machine (no FAIL rows)' {
-        $report = Invoke-MetraVerify
+        $report = Test-MetraInstallation -Detailed
         $report.FailCount | Should -Be 0
         $report.Ok | Should -BeTrue
     }
