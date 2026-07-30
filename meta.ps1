@@ -81,6 +81,7 @@ Usage:
   .\meta.ps1 pull [-Filter '*'] [-Root work]
   .\meta.ps1 fetch [-Filter '*'] [-Root work]
   .\meta.ps1 run <command...> [-Filter '*'] [-Name ...] [-Root ...] [-GitOnly] [-ContinueOnError]
+      Runs operator-provided shell text in each matching project (trusted input only - see SECURITY.md).
   .\meta.ps1 new <ProjectName> [-Description '...'] [-Template basic] [-Root personal] [-NoGit] [-Force]
   .\meta.ps1 apply <SourceFile> [-RelativePath path\in\project] [-Filter '*'] [-Root ...] [-Force]
   .\meta.ps1 workspace [-Months 6] [-ScanDepth 2] [-Preview]
