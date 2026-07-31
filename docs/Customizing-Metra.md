@@ -47,6 +47,8 @@ Base also ships Humor Policy, time-aware openings, decision tree, channels, and 
 
 `metra.config.json` **`roots`** are folders Metra scans for sibling projects. They are not Cursor workspace folders by themselves. After you change `roots` or `workspace.alwaysInclude`, run `.\metra.ps1 setup` (or `.\metra.ps1 workspace`) so `Metra.code-workspace` picks up siblings.
 
+Keep `workspace.outputs` to a **single** entry. Cursor tracks chat history per workspace identity, so generating a second copy of `Metra.code-workspace` in another folder splits your chat context between the two files. The generated workspace is gitignored; `Metra.code-workspace.example` is the tracked starter.
+
 The committed example and sample pack use a **work root only** (`path: ".."`). Add a personal or cloud root when you need one - JSON cannot comment entries out.
 
 ### Optional personal / cloud root

@@ -32,11 +32,6 @@
         "path": "Metra.code-workspace",
         "metraFolderPath": ".",
         "projectPathPrefix": "../"
-      },
-      {
-        "path": "../Metra.code-workspace",
-        "metraFolderPath": "_metra",
-        "projectPathPrefix": ""
       }
     ],
     "settings": {

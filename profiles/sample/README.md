@@ -7,7 +7,7 @@ Anonymized starter pack for newcomers. Same layout as `export-profile` / `import
 | File | Role |
 |------|------|
 | `metra-profile.json` | Manifest (id, file list, notes) |
-| `metra.config.json` | Starter roots config (work root `..` only); workspace outputs `Metra.code-workspace` |
+| `metra.config.json` | Starter roots config (work root `..` only); one workspace output, `Metra.code-workspace` in the checkout |
 | `projects.local.json` | Example private registry entry (`ExampleProject`) |
 | `.cursor/rules/metra-persona.local.mdc` | Operator overlay (display name placeholder: Alex) |
 
@@ -25,7 +25,7 @@ From the Metra checkout root (recommended `_metra`; older clones may use `_meta`
 # Edit .cursor\rules\metra-persona.local.mdc operator display name
 ```
 
-Open or reload `Metra.code-workspace` (orchestration folder labeled **Metra**). Preview only (no writes):
+Open or reload `Metra.code-workspace` in the Metra checkout (orchestration folder labeled **Metra**). `setup` generates that one file; the workspace is gitignored so your real project names stay local. Preview only (no writes):
 
 ```powershell
 .\metra.ps1 setup -Profile .\profiles\sample -Preview
