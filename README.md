@@ -1,10 +1,10 @@
 # Metra
 
-PowerShell portfolio operations for multi-root workspaces.
+**Desk partner for multi-root portfolios.**
 
-Metra combines **routing**, **context management**, and **communication discipline** into a single operating model. It helps humans and coding agents land in the right project first, gather the right context second, and communicate consistently afterward.
+Routing, context, and communication discipline - so you and your coding agent land in the right project, load bounded context, and keep chat useful while tickets and commits stay flat.
 
-Discover sibling projects, run commands across them, route work to **one project at a time**, and generate bounded context packs for Cursor, Claude Code, Codex, or other coding agents. Metra includes an ops-partner **communication model** (the Metra persona) that reinforces route-first behavior, Teaching Mode, and professional artifact boundaries - chat may have voice; tickets, commits, ADRs, and handoffs do not.
+Discover sibling projects, run commands across them with PowerShell (`metra.ps1` / importable module), route work to **one project at a time**, and generate context packs for Cursor, Claude Code, Codex, or other coding agents. The **Metra** persona is that desk partner in chat - route-first, Teaching Mode when exploring, and a professional sink so tickets, commits, ADRs, and handoffs stay flat.
 
 Not a monorepo build system. Not another "meta" multi-repo clone framework.
 
@@ -179,13 +179,21 @@ Routing gets you to the right folder. Context loads what matters. The communicat
 | Piece | Role |
 |-------|------|
 | Base persona | Route-first ops partner; answer-first; dry desk humor when it helps |
-| Teaching Mode | Exploring / planning / setup delivery - professor pacing under anti-lecture rules |
+| Teaching Mode | Same Metra when exploring or stuck - answer, one next step, then stop |
 | Professional sink | Chat may have voice; tickets, commits, ADRs, and coworker handoffs stay flat |
 | Overlay / add-ons | Your name and tone dials (`metra-persona.local.mdc`, humor-desk, teaching-gentle) - not routing policy |
 
 ### Teaching Mode
 
-When exploring, planning, or onboarding (Cursor Ask/Plan are common cases), Metra leans into a slightly humorous professional college-professor delivery: answer first, one next step, link docs instead of pasting them, stop when you can execute. Guide the work, teach Metra vocabulary when needed, and recommend concrete options when you are stuck. After an ambiguous ask, Metra may offer one **Request Shaping** example of a more routeable future request - not prompt grades or unsolicited critique. Same persona as ops Metra - not a second character. Depth and pacing adapt to the conversation; Metra does not infer demographics or personal traits. Details: [docs/Customizing-Metra.md](docs/Customizing-Metra.md).
+Routine work stays terse ops partner. Teaching Mode kicks in for "how does this work?", first-time setup, planning, or "I'm stuck" - Cursor Ask/Plan are common cases, but intent matters more than the mode name.
+
+Instead of dumping the README:
+
+1. Answer the question first
+2. Give **one** next command or edit
+3. Link the doc if you want depth - then stop
+
+If a request was too vague to route, Metra may offer one clearer future ask (name the project or trigger) - not a prompt critique. Same desk partner as ops Metra; incidents stay flat. Details: [docs/Customizing-Metra.md](docs/Customizing-Metra.md).
 
 ## Context pack (universal handoff)
 
@@ -338,9 +346,7 @@ C:\Projects\                 (work root)
 
 ## Agent routing
 
-Routing picks the stop; context loads the map; the communication model keeps the chat honest afterward.
-
-Classify the ask, consult `.\metra.ps1 routing` or `.\metra.ps1 ctx`, load **one** project `AGENTS.md` before scanning siblings. Personality never picks the folder - the registry does. Then Metra's voice applies: route banner, answer-first, Teaching Mode when exploring, professional sink for anything that leaves chat. Ticket work starts in TicketTracker when present. Keep work and personal roots isolated unless the user names a cross-root project. Prefer [docs/Decisions.md](docs/Decisions.md) for durable Metra policy before digging chats. Smoke fixtures: `.\metra.ps1 verify`. Details: [docs/Context-Routing.md](docs/Context-Routing.md), [docs/Integrations.md](docs/Integrations.md).
+Classify the ask, consult `.\metra.ps1 routing` or `.\metra.ps1 ctx`, load **one** project `AGENTS.md` before scanning siblings. Personality never picks the folder - the registry does. After that, Metra's voice applies in chat (route banner, answer-first, Teaching Mode when exploring); anything that leaves chat uses the professional sink. Ticket work starts in TicketTracker when present. Keep work and personal roots isolated unless the user names a cross-root project. Prefer [docs/Decisions.md](docs/Decisions.md) for durable Metra policy before digging chats. Smoke fixtures: `.\metra.ps1 verify`. Details: [docs/Context-Routing.md](docs/Context-Routing.md), [docs/Integrations.md](docs/Integrations.md).
 
 ```powershell
 .\metra.ps1 audit
