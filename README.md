@@ -41,6 +41,21 @@ Metra was designed to address both.
 
 **Routing** defines where work happens. **Context** defines what evidence is loaded. **Communication** defines how work is discussed once it gets there - including the professional sink that keeps durable writes flat.
 
+### Portfolio operations homes
+
+Every portfolio fact should have a home. The product triangle is the pitch; this table is the operator cheat sheet:
+
+| Question | Home |
+|----------|------|
+| Where? | Routing registry / `routing` |
+| What? | Context / `ctx`, project `AGENTS.md` |
+| Why? (operational) | Decision Registry + Why Here |
+| Why? (product policy) | [docs/Decisions.md](docs/Decisions.md) |
+| How? | OCC / `profile` + communication model |
+| Health? | Ops board / `audit` / `verify` |
+
+Prefer retrieval over dumping: route, then load only relevant context and decisions. Principles: [docs/Decisions.md](docs/Decisions.md) (Portfolio Operations Principles).
+
 PowerShell tooling is how you operate the portfolio. The Metra persona is how you stay aligned in agent chat. Neither is a bolt-on. Longer operating philosophy: [docs/Customizing-Metra.md](docs/Customizing-Metra.md) (Origin).
 
 ## Why not just use a coding agent?
