@@ -58,7 +58,7 @@ Every portfolio fact should have a home. The product triangle is the pitch; this
 | Why? (product policy) | [docs/Decisions.md](docs/Decisions.md) |
 | How? | OCC / `profile` + communication model |
 | For whom? | Project registry `serves` / `routing` / `ctx` |
-| Health? | Ops board / `audit` / `verify` |
+| Health? | Ops board / `audit` / `verify` (board also retrieves Why / For whom / How for review - not a second home) |
 
 Prefer retrieval over dumping: route, then load only relevant context and decisions. Principles: [docs/Decisions.md](docs/Decisions.md) (Portfolio Operations Principles). `serves` is audience of the work (roles/teams), never people memory.
 
@@ -282,7 +282,7 @@ Personal-root `registryFile` is **not** auto-included - copy it with that root. 
 | `apply <file>` | Copy a shared file into matching projects |
 | `workspace` | Rebuild multi-root workspace from recent activity (optional IDE helper) |
 | `audit` | Context/token audit + optional `-DriftOnly` vs registries |
-| `snapshot` | Write `docs/canvas-snapshot.json` and refresh / install Metra Ops canvas embed (`-Quick` skips deep audit/git) |
+| `snapshot` | Write `docs/canvas-snapshot.json` and refresh / install Metra Ops canvas (Route / Portfolio / Stewardship; `-Quick` skips deep audit/git/verify) |
 | `chats` | Search local Cursor agent transcripts (bounded) - prior session evidence |
 | `export-profile` | Pack local config / local registry / Metra overlay (+ Persona Add-ons / learned contract if present) |
 | `import-profile` | Restore a pack (`-Preview` or `-Force`) - ops bindings and persona overlay |

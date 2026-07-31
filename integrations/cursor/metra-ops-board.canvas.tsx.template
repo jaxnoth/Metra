@@ -4,7 +4,8 @@ import {
   Card,
   CardBody,
   CardHeader,
-  Checkbox,
+  Code,
+  CollapsibleSection,
   Divider,
   Grid,
   H1,
@@ -12,28 +13,42 @@ import {
   H3,
   Pill,
   Row,
+  Select,
   Spacer,
   Stack,
   Stat,
   Table,
   Text,
   TextInput,
-  TodoListCard,
+  useCanvasAction,
   useCanvasState,
   useHostTheme,
 } from "cursor/canvas";
-import type { ReactNode } from "react";
 
 type LargeFile = { path: string; kb: number };
+type WhyHereRow = {
+  id: string;
+  title: string;
+  decision: string;
+  why: string;
+  confidence: string;
+  project: string;
+};
 type ProjectRow = {
   name: string;
   purpose: string;
   triggers: string[];
+  serves: string[];
   entry: string;
   preferredPaths: string[];
   excludePaths: string[];
   related: string[];
   inRegistry: boolean;
+  registrySource: string;
+  root: string;
+  present: boolean;
+  optional: boolean;
+  capabilities: string[];
   hasAgentsMd: boolean;
   hasCursorIgnore: boolean;
   hasReadme: boolean;
@@ -42,21 +57,57 @@ type ProjectRow = {
   largeFiles: LargeFile[];
   status: string;
   pinned: boolean;
+  whyHere: WhyHereRow[];
   gitIsRepo: boolean;
   gitDirty: number;
   gitAhead: number;
   gitBehind: number;
   gitBranch: string;
   gitSummary: string;
+  gitChecked: boolean;
 };
-type MetaTodo = { id: string; project: string; content: string; status: "pending" | "in_progress" | "completed" | "cancelled" };
+type MetaTodo = {
+  id: string;
+  project: string;
+  content: string;
+  status: "pending" | "in_progress" | "completed" | "cancelled";
+  kind?: "drift" | "git" | "verify";
+};
+type DecisionBrief = {
+  id: string;
+  title: string;
+  decision?: string;
+  why?: string;
+  project?: string;
+  confidence?: string;
+  date?: string;
+};
+type ContractBrief = { id: string; text: string; date?: string };
+type AttentionItem = {
+  id: string;
+  project: string;
+  content: string;
+  command: string;
+  source: "portfolio" | "decision" | "contract";
+  kind: "verify" | "drift" | "git" | "decision" | "contract" | "other";
+  priority: number;
+  summary: string;
+  detail: string;
+  doneWhen: string;
+  askPrompt: string;
+};
 type MetaSnapshot = {
   generatedAt: string;
+  mode: "quick" | "full" | string;
+  gitChecked?: boolean;
+  verifyChecked?: boolean;
   projectCount: number;
   driftCount: number;
   driftProjects: number;
+  notInstalled?: number;
   missingAgents: number;
   missingIgnore: number;
+  roots?: { name: string; path: string; primary: boolean; exists: boolean }[];
   gitDirtyProjects: number;
   gitDirtyFiles: number;
   gitAheadProjects: number;
@@ -66,16 +117,54 @@ type MetaSnapshot = {
   ticketFirst: boolean;
   todos: MetaTodo[];
   projects: ProjectRow[];
+  decisions?: {
+    ledgerExists: boolean;
+    confirmedCount: number;
+    candidateCount: number;
+    supersededCount: number;
+    maxConfirmed: number;
+    recent: DecisionBrief[];
+    candidates: DecisionBrief[];
+  };
+  contract?: {
+    ledgerExists: boolean;
+    confirmedCount: number;
+    candidateCount: number;
+    maxConfirmed: number;
+    confirmed: ContractBrief[];
+    candidates: ContractBrief[];
+  };
+  coverage?: {
+    projectsWithServes: number;
+    projectsWithCapabilities: number;
+    projectsWithWhyHere: number;
+    projectsWithDecisions: number;
+    confirmedDecisionCount: number;
+    confirmedGuidelineCount: number;
+  };
+  verify?: {
+    checked: boolean;
+    status: string;
+    passCount: number;
+    warnCount: number;
+    failCount: number;
+    ok: boolean | null;
+  };
 };
 
 // <metra-ops-snapshot>
 const SNAPSHOT: MetaSnapshot = {
   generatedAt: "pending",
+  mode: "quick",
+  gitChecked: false,
+  verifyChecked: false,
   projectCount: 0,
   driftCount: 0,
   driftProjects: 0,
+  notInstalled: 0,
   missingAgents: 0,
   missingIgnore: 0,
+  roots: [],
   gitDirtyProjects: 0,
   gitDirtyFiles: 0,
   gitAheadProjects: 0,
@@ -85,61 +174,236 @@ const SNAPSHOT: MetaSnapshot = {
   ticketFirst: true,
   todos: [],
   projects: [],
+  decisions: {
+    ledgerExists: false,
+    confirmedCount: 0,
+    candidateCount: 0,
+    supersededCount: 0,
+    maxConfirmed: 50,
+    recent: [],
+    candidates: [],
+  },
+  contract: {
+    ledgerExists: false,
+    confirmedCount: 0,
+    candidateCount: 0,
+    maxConfirmed: 20,
+    confirmed: [],
+    candidates: [],
+  },
+  coverage: {
+    projectsWithServes: 0,
+    projectsWithCapabilities: 0,
+    projectsWithWhyHere: 0,
+    projectsWithDecisions: 0,
+    confirmedDecisionCount: 0,
+    confirmedGuidelineCount: 0,
+  },
+  verify: {
+    checked: false,
+    status: "skipped",
+    passCount: 0,
+    warnCount: 0,
+    failCount: 0,
+    ok: null,
+  },
 };
 // </metra-ops-snapshot>
 
-type TabId = "ops" | "triage";
+type TabId = "route" | "portfolio" | "stewardship";
 
-type Ranked = {
+type Scored = {
   project: ProjectRow;
   score: number;
-  matched: string[];
+  matchedTokens: string[];
+  hayLower: string;
 };
 
-function tokenize(text: string): string[] {
-  return text
+function tokenize(query: string): string[] {
+  return query
     .toLowerCase()
-    .split(/[^a-z0-9_+.-]+/)
+    .split(/\W+/)
     .map((t) => t.trim())
-    .filter((t) => t.length >= 2);
+    .filter((t) => t.length > 1);
 }
 
-function rankProjects(query: string): Ranked[] {
+/** Matches Get-MetraScoredRoutingProjects: present registry projects only. */
+function scoreProjects(query: string): Scored[] {
   const tokens = tokenize(query);
   if (tokens.length === 0) return [];
-  const ranked: Ranked[] = [];
+  const scored: Scored[] = [];
   for (const project of SNAPSHOT.projects) {
-    const matched: string[] = [];
+    if (!project.inRegistry || !project.present) continue;
+    const hay = [project.name, ...project.triggers, project.purpose].join(" ");
+    const hayLower = hay.toLowerCase();
     let score = 0;
-    const hay = [
-      project.name.toLowerCase(),
-      project.purpose.toLowerCase(),
-      ...project.triggers.map((t) => t.toLowerCase()),
-    ].join(" | ");
+    const matchedTokens: string[] = [];
     for (const token of tokens) {
-      for (const trigger of project.triggers) {
-        const t = trigger.toLowerCase();
-        if (t === token || t.includes(token) || token.includes(t)) {
-          score += t === token ? 5 : 3;
-          if (!matched.includes(trigger)) matched.push(trigger);
-        }
+      if (hayLower.includes(token)) {
+        score += 1;
+        if (!matchedTokens.includes(token)) matchedTokens.push(token);
       }
-      if (project.name.toLowerCase().includes(token)) score += 2;
-      if (hay.includes(token) && matched.length === 0) score += 1;
+      if (project.name.toLowerCase() === token) score += 2;
     }
-    if (project.pinned) score += 0.5;
-    if (score > 0) ranked.push({ project, score, matched });
+    if (score <= 0) continue;
+    scored.push({ project, score, matchedTokens, hayLower });
   }
-  return ranked.sort((a, b) => b.score - a.score).slice(0, 8);
+  return scored.sort((a, b) => {
+    if (b.score !== a.score) return b.score - a.score;
+    return a.project.name.localeCompare(b.project.name);
+  });
+}
+
+/** Matches Test-MetraRoutingAmbiguity. */
+function isAmbiguous(primaryScore: number, runnerUpScore: number): boolean {
+  if (runnerUpScore <= 0) return false;
+  if (primaryScore - runnerUpScore <= 1) return true;
+  if (primaryScore >= 2 && runnerUpScore >= Math.ceil(primaryScore * 0.5)) return true;
+  return false;
+}
+
+function favoredTokens(query: string, primary: Scored, runnerUp: Scored): string[] {
+  const tokens = tokenize(query);
+  const exclusive = tokens.filter(
+    (t) => primary.hayLower.includes(t) && !runnerUp.hayLower.includes(t),
+  );
+  if (exclusive.length > 0) return exclusive;
+  return [...new Set(primary.matchedTokens)];
 }
 
 function generatedLabel(iso: string): string {
-  if (!iso || iso === "pending") return "snapshot pending - run meta.ps1 snapshot";
+  if (!iso || iso === "pending") return "snapshot pending - run .\\metra.ps1 snapshot";
   try {
     return new Date(iso).toLocaleString();
   } catch {
     return iso;
   }
+}
+
+function quoteName(name: string): string {
+  return `"${name.replace(/"/g, '""')}"`;
+}
+
+function todoCommand(todo: MetaTodo): string {
+  if (todo.kind === "verify") return ".\\metra.ps1 verify";
+  if (todo.kind === "git") {
+    return `.\\metra.ps1 status -Name ${quoteName(todo.project)}`;
+  }
+  if (todo.project) {
+    return `.\\metra.ps1 audit -Name ${quoteName(todo.project)}`;
+  }
+  return ".\\metra.ps1 audit -DriftOnly";
+}
+
+function todoPriority(todo: MetaTodo): number {
+  if (todo.kind === "verify") return 0;
+  if (todo.kind === "drift") return 1;
+  if (todo.kind === "git") return 4;
+  return 2;
+}
+
+function briefingForTodo(todo: MetaTodo): Pick<
+  AttentionItem,
+  "kind" | "summary" | "detail" | "doneWhen" | "askPrompt"
+> {
+  const project = todo.project || "the portfolio";
+  const lower = (todo.content || "").toLowerCase();
+  if (todo.kind === "verify") {
+    return {
+      kind: "verify",
+      summary: "Installation smoke is not clean.",
+      detail:
+        "Verify checks routing fixtures, sample profile preview, and audit drift signals. Fix FAIL rows before trusting routing smoke.",
+      doneWhen: `.\\metra.ps1 verify reports PASS with no FAIL rows.`,
+      askPrompt: `Help me clear Metra verify findings from the Ops board. Start with .\\metra.ps1 verify and walk the FAIL/WARN rows.`,
+    };
+  }
+  if (todo.kind === "git") {
+    const dirty = lower.includes("dirty");
+    const behind = lower.includes("behind");
+    const ahead = lower.includes("ahead");
+    let summary = `${project} has git drift relative to its remote.`;
+    if (dirty && ahead) summary = `${project} has local uncommitted changes and commits not pushed.`;
+    else if (dirty) summary = `${project} has local uncommitted changes.`;
+    else if (behind) summary = `${project} is behind its remote.`;
+    else if (ahead) summary = `${project} has local commits not pushed.`;
+    return {
+      kind: "git",
+      summary,
+      detail:
+        "This is hygiene, not a routing failure. Inspect status, decide whether to commit, stash, pull, or push. Do not invent a commit unless asked.",
+      doneWhen: `.\\metra.ps1 status -Name ${quoteName(project)} shows a clean working tree for the concern listed.`,
+      askPrompt: `Help me resolve this Metra Ops attention item for ${project}: ${todo.content}. Inspect git status and recommend the next safe step. Do not commit unless I ask.`,
+    };
+  }
+  if (lower.includes("missing from registry")) {
+    return {
+      kind: "drift",
+      summary: `${project} exists on disk but is not in the Metra registry.`,
+      detail:
+        "Routing will not treat it as a first-class stop until it is registered (or intentionally left out). Prefer projects.local.json for machine-private entries; projects.json only for shared stubs.",
+      doneWhen: `${project} is either registered with purpose/triggers or intentionally excluded and no longer flagged.`,
+      askPrompt: `Help me resolve this Metra Ops attention item: ${todo.content}. Decide whether to register ${project} in projects.local.json or leave it out, then propose the concrete edit.`,
+    };
+  }
+  if (lower.includes(".cursorignore")) {
+    return {
+      kind: "drift",
+      summary: `${project} is missing a .cursorignore file.`,
+      detail:
+        "Without ignore rules, agents may load generated noise. Prefer the project's AGENTS.md excludePaths and sibling patterns before inventing a broad ignore.",
+      doneWhen: `${project} has a .cursorignore aligned with its excludePaths, or audit no longer flags it.`,
+      askPrompt: `Help me resolve this Metra Ops attention item: ${todo.content}. Propose a .cursorignore for ${project} based on AGENTS.md excludePaths and common generated folders.`,
+    };
+  }
+  if (lower.includes("agents.md")) {
+    return {
+      kind: "drift",
+      summary: `${project} is missing AGENTS.md.`,
+      detail:
+        "AGENTS.md is the agent entry for route-here triggers, preferred paths, and token rules. Without it, agents fall back to README and may scan too broadly.",
+      doneWhen: `${project}/AGENTS.md exists with Route here / Start here / Token rules sections.`,
+      askPrompt: `Help me resolve this Metra Ops attention item: ${todo.content}. Draft AGENTS.md for ${project} from its README and registry purpose.`,
+    };
+  }
+  return {
+    kind: todo.kind === "drift" ? "drift" : "other",
+    summary: todo.content,
+    detail:
+      "Portfolio audit flagged this item. Confirm the finding, then repair the registry, docs, or project layout so routing stays trustworthy.",
+    doneWhen: "A fresh snapshot no longer lists this attention item.",
+    askPrompt: `Help me resolve this Metra Ops attention item: ${todo.content}. Start with .\\metra.ps1 audit${todo.project ? ` -Name ${quoteName(todo.project)}` : " -DriftOnly"} and propose the smallest fix.`,
+  };
+}
+
+function briefingForDecision(decision: DecisionBrief): Pick<
+  AttentionItem,
+  "kind" | "summary" | "detail" | "doneWhen" | "askPrompt"
+> {
+  return {
+    kind: "decision",
+    summary: `Decision candidate needs review: ${decision.title}`,
+    detail:
+      decision.decision ||
+      "Harvested or noted candidate only. Promotion requires why, confidence, and evidence - never auto-promote.",
+    doneWhen:
+      "Candidate is promoted with why/confidence/evidence, superseded, or forgotten after review.",
+    askPrompt: `Help me review this Metra Decision Registry candidate: ${decision.title}${decision.project ? ` (${decision.project})` : ""}. Start with .\\metra.ps1 decisions show and recommend promote, revise, or forget.`,
+  };
+}
+
+function briefingForContract(guideline: ContractBrief): Pick<
+  AttentionItem,
+  "kind" | "summary" | "detail" | "doneWhen" | "askPrompt"
+> {
+  return {
+    kind: "contract",
+    summary: "Operator Communication Contract candidate needs confirmation.",
+    detail: guideline.text,
+    doneWhen:
+      "Guideline is promoted (soft preference only) or discarded. Portfolio-wide rules refuse personal promote.",
+    askPrompt: `Help me review this Metra Operator Communication Contract candidate: ${guideline.text}. Start with .\\metra.ps1 profile show and recommend promote or forget.`,
+  };
 }
 
 function MetraRouteMark() {
@@ -175,14 +439,7 @@ function MetraRouteMark() {
         strokeWidth="1.5"
       />
       <circle cx="88" cy="30" r="4" fill={theme.accent.primary} />
-      <rect
-        x="24"
-        y="2"
-        width="48"
-        height="20"
-        rx="10"
-        fill={theme.fill.tertiary}
-      />
+      <rect x="24" y="2" width="48" height="20" rx="10" fill={theme.fill.tertiary} />
       <text
         x="48"
         y="16"
@@ -198,295 +455,1017 @@ function MetraRouteMark() {
   );
 }
 
-const TRIAGE_STEPS = [
-  { id: "brief", label: "Identify ticket with TicketTracker brief (not raw data/tickets.json)" },
-  { id: "similar", label: "Check similar tickets and local notes" },
-  { id: "chats", label: "Search related Cursor chats (TicketTracker chats / meta.ps1 chats) for primary project clues" },
-  { id: "match", label: "Match RoutingTerms to one primary project" },
-  { id: "agents", label: "Open that project's AGENTS.md / preferred paths" },
-  { id: "investigate", label: "Investigate only in the primary project first" },
-  { id: "note", label: "Record note (cite chat uuid if used); add AI Recommendation only when supported" },
-] as const;
+function confidenceLabel(confidence: string): string {
+  const c = (confidence || "").toLowerCase();
+  if (!c || c === "high") return "";
+  return ` (${c})`;
+}
 
-export default function MetraOpsBoard() {
-  const theme = useHostTheme();
-  const [tab, setTab] = useCanvasState<TabId>("tab", "ops");
-  const [query, setQuery] = useCanvasState("recommendQuery", "");
-  const [primary, setPrimary] = useCanvasState<string>("primaryProject", "");
-  const [checks, setChecks] = useCanvasState<Record<string, boolean>>("triageChecks", {});
-
-  const ranked = rankProjects(query);
-  const top = ranked[0]?.project;
-  const activePrimary =
-    SNAPSHOT.projects.find((p) => p.name === primary) ||
-    top ||
-    SNAPSHOT.projects.find((p) => p.name === SNAPSHOT.defaultEntry);
-
-  const todos = SNAPSHOT.todos.map((t) => ({
-    id: t.id,
-    content: t.content,
-    status: t.status,
-  }));
-
-  const tableRows = SNAPSHOT.projects.map((p) => [
-    p.name,
-    p.pinned ? "pinned" : "",
-    p.hasAgentsMd ? "yes" : "no",
-    p.hasCursorIgnore ? "yes" : "no",
-    p.status,
-    p.gitIsRepo ? p.gitSummary : "n/a",
-    p.findings.slice(0, 2).join("; ") || "",
-  ]);
-  const rowTone = SNAPSHOT.projects.map((p) => {
-    if (p.drift) return "warning" as const;
-    if (p.gitIsRepo && (p.gitDirty > 0 || p.gitBehind > 0)) return "info" as const;
-    return "success" as const;
-  });
-
-  const pinnedPills: ReactNode[] = [];
-  for (const name of SNAPSHOT.pinned) {
-    pinnedPills.push(
-      <Pill active={primary === name} onClick={() => setPrimary(name)}>
-        {name}
-      </Pill>,
-    );
+function copyCommandToClipboard(command: string): Promise<void> {
+  if (typeof navigator === "undefined" || !navigator.clipboard?.writeText) {
+    return Promise.reject(new Error("clipboard unavailable"));
   }
+  return navigator.clipboard.writeText(command);
+}
 
-  const rankedCards: ReactNode[] = [];
-  for (const r of ranked) {
-    rankedCards.push(
-      <Card>
-        <CardHeader
-          trailing={
-            <Button
-              variant={primary === r.project.name ? "primary" : "secondary"}
-              onClick={() => setPrimary(r.project.name)}
-            >
-              Use primary
-            </Button>
+/** Prefer Ask Metra in chat; Copy is the optional self-serve terminal path. */
+function ActionPaths({
+  command,
+  askPrompt,
+  copyId,
+}: {
+  command: string;
+  askPrompt: string;
+  copyId: string;
+}) {
+  const dispatch = useCanvasAction();
+  const [copiedId, setCopiedId] = useCanvasState("copiedCommandId", "");
+  const copied = copiedId === copyId && Boolean(command);
+
+  return (
+    <Stack gap={8}>
+      <Text size="small" weight="semibold">
+        How to proceed
+      </Text>
+      <Text size="small" tone="secondary">
+        Prefer Ask Metra - I pick this up in chat and run or investigate from there. Copy is only
+        if you want to run the command yourself in a terminal.
+      </Text>
+      <Row gap={8} wrap>
+        <Button
+          variant="primary"
+          onClick={() =>
+            dispatch({
+              type: "newComposerChat",
+              userPrompt: askPrompt,
+            })
           }
         >
-          {r.project.name}
-        </CardHeader>
-        <CardBody>
-          <Stack gap={6}>
-            <Row gap={8} wrap>
-              <Pill size="sm">score {r.score.toFixed(1)}</Pill>
-              {r.project.pinned ? <Pill size="sm" active>pinned</Pill> : null}
-              <Pill size="sm" active={r.project.status === "healthy"}>
-                {r.project.status}
-              </Pill>
-            </Row>
-            <Text size="small">{r.project.purpose}</Text>
+          Ask Metra
+        </Button>
+        <Button
+          variant="secondary"
+          disabled={!command}
+          onClick={() => {
+            void copyCommandToClipboard(command)
+              .then(() => {
+                setCopiedId(copyId);
+                window.setTimeout(() => {
+                  setCopiedId((prev) => (prev === copyId ? "" : prev));
+                }, 1500);
+              })
+              .catch(() => {
+                setCopiedId("");
+              });
+          }}
+        >
+          {copied ? "Copied" : "Copy for terminal"}
+        </Button>
+      </Row>
+      {command ? (
+        <Text size="small" tone="tertiary">
+          Terminal command: <Code>{command}</Code>
+        </Text>
+      ) : null}
+    </Stack>
+  );
+}
+
+function WhyHereList({ rows, label }: { rows: WhyHereRow[]; label: string }) {
+  if (!rows || rows.length === 0) return null;
+  return (
+    <Stack gap={6}>
+      <Text weight="semibold" size="small">
+        {label}
+      </Text>
+      {rows.map((row) => (
+        <Stack key={row.id || row.title} gap={2}>
+          <Text size="small">
+            {row.title}
+            {confidenceLabel(row.confidence)}
+            {row.id ? ` [${row.id}]` : ""}
+          </Text>
+          {row.decision ? (
             <Text size="small" tone="secondary">
-              Entry: {r.project.entry}
-              {r.matched.length > 0 ? ` | matched: ${r.matched.join(", ")}` : ""}
+              {row.decision}
             </Text>
-            {r.project.related.length > 0 ? (
+          ) : null}
+          {row.why ? (
+            <Text size="small" tone="tertiary">
+              Why: {row.why}
+            </Text>
+          ) : null}
+        </Stack>
+      ))}
+    </Stack>
+  );
+}
+
+function HandoffCard({
+  project,
+  nextCommand,
+  askPrompt,
+  showTicketGuidance,
+  showActions = true,
+}: {
+  project: ProjectRow;
+  nextCommand: string;
+  askPrompt: string;
+  showTicketGuidance: boolean;
+  showActions?: boolean;
+}) {
+  return (
+    <Card>
+      <CardHeader trailing={<Pill size="sm">{project.status}</Pill>}>
+        Handoff: {project.name}
+      </CardHeader>
+      <CardBody>
+        <Stack gap={10}>
+          <Stack gap={2}>
+            <Text weight="semibold" size="small">
+              Where?
+            </Text>
+            <Text size="small">
+              Root {project.root || "unknown"} · {project.name}
+              {project.registrySource ? ` (${project.registrySource})` : ""}
+            </Text>
+            <Text size="small" tone="secondary">
+              Entry: {project.entry}
+            </Text>
+          </Stack>
+
+          <Stack gap={2}>
+            <Text weight="semibold" size="small">
+              What?
+            </Text>
+            {project.purpose ? <Text size="small">{project.purpose}</Text> : null}
+            {project.preferredPaths.length > 0 ? (
+              <Text size="small" tone="secondary">
+                Prefer: {project.preferredPaths.slice(0, 4).join(", ")}
+              </Text>
+            ) : null}
+            {project.excludePaths.length > 0 ? (
               <Text size="small" tone="tertiary">
-                Related: {r.project.related.join(", ")}
+                Avoid: {project.excludePaths.slice(0, 4).join(", ")}
+              </Text>
+            ) : null}
+            {project.capabilities.length > 0 ? (
+              <Text size="small" tone="secondary">
+                Capabilities: {project.capabilities.join(", ")}
               </Text>
             ) : null}
           </Stack>
-        </CardBody>
-      </Card>,
-    );
-  }
 
-  const triageChecks: ReactNode[] = [];
-  for (const step of TRIAGE_STEPS) {
-    triageChecks.push(
-      <Checkbox
-        checked={Boolean(checks[step.id])}
-        label={step.label}
-        onChange={(checked) =>
-          setChecks((prev) => ({
-            ...prev,
-            [step.id]: checked,
-          }))
-        }
-      />,
-    );
+          <WhyHereList rows={project.whyHere || []} label="Why?" />
+
+          {project.serves && project.serves.length > 0 ? (
+            <Stack gap={4}>
+              <Text weight="semibold" size="small">
+                For whom?
+              </Text>
+              <Row gap={6} wrap>
+                {project.serves.map((s) => (
+                  <Pill key={s} size="sm">
+                    {s}
+                  </Pill>
+                ))}
+              </Row>
+            </Stack>
+          ) : null}
+
+          {showActions ? (
+            <ActionPaths
+              command={nextCommand}
+              askPrompt={askPrompt}
+              copyId={`handoff:${project.name}:${nextCommand}`}
+            />
+          ) : null}
+
+          {showTicketGuidance ? (
+            <Callout tone="info" title="Ticket-first">
+              Identify with TicketTracker brief, check similar/notes/chats, then route to one
+              technical project. Do not open data/tickets.json or scan sibling repos first.
+            </Callout>
+          ) : null}
+
+          {project.related.length > 0 ? (
+            <Text size="small" tone="tertiary">
+              Related (same-root only if evidence requires): {project.related.join(", ")}
+            </Text>
+          ) : null}
+        </Stack>
+      </CardBody>
+    </Card>
+  );
+}
+
+export default function MetraOpsBoard() {
+  const theme = useHostTheme();
+  const [tab, setTab] = useCanvasState<TabId>("tab", "route");
+  const [query, setQuery] = useCanvasState("recommendQuery", "");
+  const [primary, setPrimary] = useCanvasState<string>("primaryProject", "");
+  const [attentionId, setAttentionId] = useCanvasState<string>("attentionItem", "");
+  const [rootFilter, setRootFilter] = useCanvasState<string>("rootFilter", "all");
+  const [selectedName, setSelectedName] = useCanvasState<string>("selectedProject", "");
+
+  const scored = scoreProjects(query);
+  const top = scored[0];
+  const runnerUp = scored[1];
+  const ambiguous =
+    top && runnerUp ? isAmbiguous(top.score, runnerUp.score) : false;
+  const favored =
+    top && runnerUp && ambiguous ? favoredTokens(query, top, runnerUp) : [];
+
+  const lockedPrimary = SNAPSHOT.projects.find((p) => p.name === primary);
+  const defaultProject =
+    SNAPSHOT.projects.find((p) => p.name === SNAPSHOT.defaultEntry) ||
+    SNAPSHOT.projects.find((p) => p.pinned && p.present) ||
+    SNAPSHOT.projects.find((p) => p.present);
+
+  const activePrimary = lockedPrimary || top?.project || defaultProject;
+  const routePrimary = lockedPrimary || top?.project;
+  const selected =
+    SNAPSHOT.projects.find((p) => p.name === selectedName) || activePrimary;
+
+  const gitChecked = Boolean(SNAPSHOT.gitChecked);
+  const verifyChecked = Boolean(SNAPSHOT.verifyChecked || SNAPSHOT.verify?.checked);
+  const modeLabel = SNAPSHOT.mode === "full" ? "full" : "quick";
+
+  const attentionTodos = SNAPSHOT.todos.filter((t) => {
+    if (t.kind === "git" && !gitChecked) return false;
+    return true;
+  });
+  const decisions = SNAPSHOT.decisions;
+  const contract = SNAPSHOT.contract;
+  const coverage = SNAPSHOT.coverage;
+  const attentionItems: AttentionItem[] = [
+    ...attentionTodos.map((todo) => {
+      const briefing = briefingForTodo(todo);
+      return {
+        id: todo.id,
+        project: todo.project,
+        content: todo.content,
+        command: todoCommand(todo),
+        source: "portfolio" as const,
+        priority: todoPriority(todo),
+        ...briefing,
+      };
+    }),
+    ...(decisions?.candidates || []).map((decision) => {
+      const briefing = briefingForDecision(decision);
+      return {
+        id: `decision:${decision.id || decision.title}`,
+        project: decision.project || "",
+        content: decision.title,
+        command: ".\\metra.ps1 decisions show",
+        source: "decision" as const,
+        priority: 2,
+        ...briefing,
+      };
+    }),
+    ...(contract?.candidates || []).map((guideline) => {
+      const briefing = briefingForContract(guideline);
+      return {
+        id: `contract:${guideline.id || guideline.text}`,
+        project: "",
+        content: guideline.text,
+        command: ".\\metra.ps1 profile show",
+        source: "contract" as const,
+        priority: 3,
+        ...briefing,
+      };
+    }),
+  ].sort((a, b) => a.priority - b.priority || a.content.localeCompare(b.content));
+  const visibleAttention = attentionItems.slice(0, 5);
+  const selectedAttention = attentionItems.find((item) => item.id === attentionId);
+
+  const rootOptions = [
+    { value: "all", label: "All roots" },
+    ...(SNAPSHOT.roots || []).map((r) => ({
+      value: r.name,
+      label: r.primary ? `${r.name} (primary)` : r.name,
+    })),
+  ];
+
+  const filteredProjects = SNAPSHOT.projects.filter((p) => {
+    if (rootFilter === "all") return true;
+    return (p.root || "").toLowerCase() === rootFilter.toLowerCase();
+  });
+
+  const exceptionProjects = filteredProjects.filter(
+    (p) =>
+      p.drift ||
+      !p.present ||
+      !p.inRegistry ||
+      (p.present && !p.hasAgentsMd) ||
+      (gitChecked && p.gitIsRepo && (p.gitDirty > 0 || p.gitBehind > 0)),
+  );
+
+  const ctxCommand = `.\\metra.ps1 ctx -Query "${query.trim()}"`;
+
+  const attentionProject = selectedAttention
+    ? SNAPSHOT.projects.find((p) => p.name === selectedAttention.project)
+    : undefined;
+
+  // Standing routes keep the home useful when the queue is empty and nothing is typed.
+  const jumpCandidates = [SNAPSHOT.defaultEntry, ...(SNAPSHOT.pinned || [])];
+  const jumpProjects = jumpCandidates
+    .map((name) => SNAPSHOT.projects.find((p) => p.name === name && p.present))
+    .filter((p): p is ProjectRow => Boolean(p))
+    .filter((p, index, list) => list.findIndex((x) => x.name === p.name) === index)
+    .slice(0, 6);
+  const fallbackJumps = SNAPSHOT.projects
+    .filter((p) => p.present && p.inRegistry)
+    .slice(0, 6);
+  const standingRoutes = jumpProjects.length > 0 ? jumpProjects : fallbackJumps;
+  const jumpProject =
+    !query.trim() && !selectedAttention ? lockedPrimary : undefined;
+
+  const resolutionProject = query.trim()
+    ? routePrimary
+    : selectedAttention
+      ? attentionProject
+      : jumpProject;
+  const resolutionCommand = query.trim()
+    ? routePrimary?.name.toLowerCase() === "tickettracker"
+      ? `.\\TicketTracker.ps1 brief <id>`
+      : ctxCommand
+    : selectedAttention
+      ? selectedAttention.command
+      : jumpProject
+        ? `.\\metra.ps1 routing -Name ${jumpProject.name}`
+        : "";
+  const resolutionAskPrompt = query.trim()
+    ? routePrimary?.name.toLowerCase() === "tickettracker"
+      ? `Route this ticket ask through TicketTracker first: ${query.trim()}. Start with .\\TicketTracker.ps1 brief <id>, then similar/notes/chats, then one technical project.`
+      : `Help me route and resolve this ask: ${query.trim()}. Start with .\\metra.ps1 routing -Query "${query.trim()}" and continue in the primary stop.`
+    : selectedAttention
+      ? selectedAttention.askPrompt
+      : jumpProject
+        ? `I want to work in ${jumpProject.name}. Load its AGENTS.md, confirm the route with .\\metra.ps1 routing -Name ${jumpProject.name}, and tell me where to start.`
+        : "";
+
+  function clearIssue() {
+    setQuery("");
+    setPrimary("");
+    setAttentionId("");
   }
 
   return (
     <Stack gap={16} style={{ padding: 16 }}>
+      {/* Sticky so the tab bar stays reachable from anywhere in a long tab. */}
       <div
         style={{
-          background: theme.fill.tertiary,
-          borderLeft: `3px solid ${theme.accent.primary}`,
+          position: "sticky",
+          top: 0,
+          zIndex: 2,
+          margin: "-16px -16px 0",
+          padding: "16px 16px 10px",
+          background: theme.bg.editor,
           borderBottom: `1px solid ${theme.stroke.tertiary}`,
-          padding: "14px 16px",
         }}
       >
-        <Stack gap={6}>
-          <Row gap={10} align="center">
-            <MetraRouteMark />
-            <H1>Metra Ops</H1>
+        <Stack gap={10}>
+          <div
+            style={{
+              background: theme.fill.tertiary,
+              borderLeft: `3px solid ${theme.accent.primary}`,
+              padding: "14px 16px",
+            }}
+          >
+            <Stack gap={6}>
+              <Row gap={10} align="center">
+                <MetraRouteMark />
+                <H1>Metra Ops</H1>
+              </Row>
+              <Text tone="secondary" size="small">
+                Find what needs you next, then route the issue to its working home.
+              </Text>
+              <Text tone="tertiary" size="small">
+                Snapshot {modeLabel} · {generatedLabel(SNAPSHOT.generatedAt)}
+              </Text>
+            </Stack>
+          </div>
+
+          <Row gap={8} wrap>
+            <Pill active={tab === "route"} onClick={() => setTab("route")}>
+              Route
+            </Pill>
+            <Pill active={tab === "portfolio"} onClick={() => setTab("portfolio")}>
+              Portfolio
+            </Pill>
+            <Pill active={tab === "stewardship"} onClick={() => setTab("stewardship")}>
+              Stewardship
+            </Pill>
           </Row>
-          <Text tone="secondary" size="small">
-            Portfolio health, project routing, and ticket triage. Snapshot:{" "}
-            {generatedLabel(SNAPSHOT.generatedAt)}
-          </Text>
         </Stack>
       </div>
 
-      <Row gap={8}>
-        <Pill active={tab === "ops"} onClick={() => setTab("ops")}>
-          Ops
-        </Pill>
-        <Pill active={tab === "triage"} onClick={() => setTab("triage")}>
-          Triage
-        </Pill>
-      </Row>
-
-      {tab === "ops" ? (
+      {tab === "route" ? (
         <Stack gap={16}>
-          <Grid columns={4} gap={12}>
-            <Stat value={String(SNAPSHOT.projectCount)} label="Projects" />
+          <Grid columns={2} gap={12}>
+            <Card>
+              <CardHeader
+                trailing={
+                  <Pill size="sm">
+                    {visibleAttention.length} of {attentionItems.length}
+                  </Pill>
+                }
+              >
+                Needs attention
+              </CardHeader>
+              <CardBody>
+                {visibleAttention.length > 0 ? (
+                  <Stack gap={0}>
+                    {visibleAttention.map((item, index) => (
+                      <div
+                        key={item.id}
+                        style={{
+                          padding: "9px 0",
+                          borderBottom:
+                            index < visibleAttention.length - 1
+                              ? `1px solid ${theme.stroke.tertiary}`
+                              : undefined,
+                        }}
+                      >
+                        <Row gap={10} align="center" justify="space-between">
+                          <Stack gap={3}>
+                            <Row gap={6} align="center" wrap>
+                              <Text size="small" weight="semibold">
+                                {item.content}
+                              </Text>
+                              <Pill size="sm">{item.source}</Pill>
+                            </Row>
+                          </Stack>
+                          <Button
+                            variant={attentionId === item.id ? "primary" : "secondary"}
+                            onClick={() => {
+                              // Item text is evidence, not a routing query.
+                              setQuery("");
+                              setPrimary(item.project);
+                              setAttentionId(item.id);
+                            }}
+                          >
+                            Resolve
+                          </Button>
+                        </Row>
+                      </div>
+                    ))}
+                  </Stack>
+                ) : (
+                  <Stack gap={8}>
+                    <Text size="small" weight="semibold">
+                      Nothing waiting.
+                    </Text>
+                    <Text size="small" tone="secondary">
+                      {gitChecked
+                        ? "Registry drift, git hygiene, and stewardship candidates are all clear as of this snapshot."
+                        : "This quick snapshot skipped git hygiene and verify, so dirty or unpushed repos would not appear here. Run a full snapshot to re-check."}
+                    </Text>
+                    <ActionPaths
+                      command=".\\metra.ps1 snapshot"
+                      askPrompt="Run a full .\\metra.ps1 snapshot (git and verify included) and tell me what needs attention across the portfolio."
+                      copyId="rescan:full-snapshot"
+                    />
+                  </Stack>
+                )}
+              </CardBody>
+            </Card>
+
+            <div
+              style={{
+                background: theme.fill.tertiary,
+                borderLeft: `3px solid ${theme.accent.primary}`,
+                padding: 16,
+              }}
+            >
+              <Stack gap={12}>
+                <Stack gap={4}>
+                  <H2>Resolve this</H2>
+                  {selectedAttention && !query.trim() ? (
+                    <Stack gap={6}>
+                      <Text weight="semibold" size="small">
+                        {selectedAttention.summary}
+                      </Text>
+                      <Text tone="secondary" size="small">
+                        {selectedAttention.detail}
+                      </Text>
+                      <Text tone="tertiary" size="small">
+                        Done when: {selectedAttention.doneWhen}
+                      </Text>
+                    </Stack>
+                  ) : (
+                    <Text tone="secondary" size="small">
+                      Describe a new symptom, ticket, or ask below - or pick Resolve on a waiting
+                      item for issue-specific guidance.
+                    </Text>
+                  )}
+                </Stack>
+                <TextInput
+                  value={query}
+                  onChange={(value) => {
+                    setQuery(value);
+                    setPrimary("");
+                    setAttentionId("");
+                  }}
+                  placeholder="e.g. orion disk alert DataOps / gateway msal / word search"
+                />
+                {selectedAttention && !query.trim() ? (
+                  <Stack gap={8}>
+                    <ActionPaths
+                      command={selectedAttention.command}
+                      askPrompt={selectedAttention.askPrompt}
+                      copyId={`working:${selectedAttention.id}`}
+                    />
+                    <Row gap={8}>
+                      <Button variant="ghost" onClick={clearIssue}>
+                        Clear item
+                      </Button>
+                    </Row>
+                  </Stack>
+                ) : query.trim() ? (
+                  <Stack gap={6}>
+                    <Text size="small" tone="secondary">
+                      Classification preview below. Prefer Ask Metra once a primary stop appears;
+                      Copy only if you want to run the command yourself.
+                    </Text>
+                    <Text size="small" tone="tertiary">
+                      Preview uses registry scoring; CLI evidence remains authoritative.
+                    </Text>
+                  </Stack>
+                ) : (
+                  <Text size="small" tone="tertiary">
+                    Ticket work starts in {SNAPSHOT.defaultEntry}; other asks route from registry
+                    triggers and project purpose.
+                  </Text>
+                )}
+              </Stack>
+            </div>
+          </Grid>
+
+          {!query.trim() && !selectedAttention && standingRoutes.length > 0 ? (
+            <Card>
+              <CardHeader trailing={<Pill size="sm">{standingRoutes.length}</Pill>}>
+                Standing routes
+              </CardHeader>
+              <CardBody>
+                <Stack gap={8}>
+                  <Text size="small" tone="secondary">
+                    No symptom to classify? Open a working home directly. Ticket work still starts
+                    in {SNAPSHOT.defaultEntry}.
+                  </Text>
+                  <Row gap={8} wrap>
+                    {standingRoutes.map((p) => (
+                      <Pill
+                        key={p.name}
+                        active={primary === p.name}
+                        onClick={() => {
+                          setAttentionId("");
+                          setPrimary(primary === p.name ? "" : p.name);
+                        }}
+                      >
+                        {p.name}
+                      </Pill>
+                    ))}
+                  </Row>
+                </Stack>
+              </CardBody>
+            </Card>
+          ) : null}
+
+          <CollapsibleSection title="Start here" defaultOpen={false}>
+            <Stack gap={4}>
+              <Text size="small">Pick Resolve on a waiting item for an issue-specific briefing.</Text>
+              <Text size="small">
+                Prefer Ask Metra so I continue in chat. Copy for terminal only if you want to run
+                the command yourself.
+              </Text>
+              <Text size="small" tone="tertiary">
+                This board retrieves from routing, portfolio, and stewardship homes. Durable
+                changes still happen in chat or the CLI.
+              </Text>
+            </Stack>
+          </CollapsibleSection>
+
+          {query.trim() || selectedAttention || jumpProject ? (
+            <Stack gap={12}>
+              <Divider />
+              <H2>Resolution path</H2>
+              {!query.trim() && selectedAttention ? (
+                <Text size="small" tone="secondary">
+                  Needs attention → {selectedAttention.project || "Stewardship"} → next action
+                </Text>
+              ) : null}
+              {jumpProject ? (
+                <Row gap={8} align="center" wrap>
+                  <Text size="small" tone="secondary">
+                    Standing route → {jumpProject.name} → next action
+                  </Text>
+                  <Button variant="ghost" onClick={clearIssue}>
+                    Clear route
+                  </Button>
+                </Row>
+              ) : null}
+              {query.trim() && top ? (
+                <Stack gap={8}>
+                  <Text size="small" tone="secondary">
+                    Request → {top.project.name}
+                    {ambiguous && runnerUp ? ` (close with ${runnerUp.project.name})` : ""} →
+                    next action
+                  </Text>
+                  <Row gap={8} wrap>
+                    {scored.slice(0, 5).map((s) => (
+                      <Pill
+                        key={s.project.name}
+                        active={
+                          (primary || top.project.name) === s.project.name
+                        }
+                        onClick={() => setPrimary(s.project.name)}
+                      >
+                        {s.project.name} · {s.score}
+                      </Pill>
+                    ))}
+                  </Row>
+                </Stack>
+              ) : query.trim() ? (
+                <Callout tone="warning" title="No route match">
+                  No present registry project scored for that query. Try different triggers, or
+                  run .\metra.ps1 routing -Query in chat.
+                </Callout>
+              ) : null}
+
+              {resolutionProject ? (
+                <HandoffCard
+                  project={resolutionProject}
+                  nextCommand={resolutionCommand}
+                  askPrompt={resolutionAskPrompt}
+                  showTicketGuidance={
+                    resolutionProject.name.toLowerCase() === "tickettracker"
+                  }
+                  showActions={Boolean(query.trim()) || !selectedAttention}
+                />
+              ) : selectedAttention ? (
+                <Callout tone="info" title={selectedAttention.content}>
+                  <Stack gap={8}>
+                    <Text size="small">{selectedAttention.summary}</Text>
+                    <Text size="small" tone="secondary">
+                      {selectedAttention.detail}
+                    </Text>
+                    <ActionPaths
+                      command={selectedAttention.command}
+                      askPrompt={selectedAttention.askPrompt}
+                      copyId={`orphan:${selectedAttention.id}`}
+                    />
+                  </Stack>
+                </Callout>
+              ) : null}
+
+              {query.trim() && ambiguous && runnerUp ? (
+                <Callout tone="warning" title={`Why not? ${runnerUp.project.name}`}>
+                  <Stack gap={6}>
+                    {favored.length > 0 ? (
+                      <Text size="small">
+                        Query tokens favored the primary for: {favored.join(", ")}
+                      </Text>
+                    ) : null}
+                    {(runnerUp.project.whyHere || []).length > 0 ? (
+                      <WhyHereList
+                        rows={runnerUp.project.whyHere}
+                        label={`Ledger context for ${runnerUp.project.name}`}
+                      />
+                    ) : (
+                      <Text size="small" tone="secondary">
+                        Scores are close. Confirm with .\metra.ps1 routing -Query before
+                        opening a second project.
+                      </Text>
+                    )}
+                  </Stack>
+                </Callout>
+              ) : null}
+            </Stack>
+          ) : null}
+        </Stack>
+      ) : null}
+
+      {tab === "portfolio" ? (
+        <Stack gap={16}>
+          <Row gap={8} wrap align="center">
+            <Pill size="sm">{modeLabel} snapshot</Pill>
+            {!gitChecked ? (
+              <Pill size="sm">git not checked</Pill>
+            ) : null}
+            {!verifyChecked ? (
+              <Pill size="sm">verify not checked</Pill>
+            ) : (
+              <Pill
+                size="sm"
+                active={SNAPSHOT.verify?.status === "PASS"}
+                tone={
+                  SNAPSHOT.verify?.status === "FAIL"
+                    ? "warning"
+                    : SNAPSHOT.verify?.status === "WARN"
+                      ? "warning"
+                      : "neutral"
+                }
+              >
+                verify {SNAPSHOT.verify?.status}
+              </Pill>
+            )}
+          </Row>
+
+          <Grid columns={3} gap={12}>
             <Stat
               value={String(SNAPSHOT.driftCount)}
               label="Drift signals"
               tone={SNAPSHOT.driftCount > 0 ? "warning" : "success"}
             />
             <Stat
-              value={String(SNAPSHOT.gitDirtyProjects ?? 0)}
-              label="Git dirty projects"
-              tone={(SNAPSHOT.gitDirtyProjects ?? 0) > 0 ? "warning" : "success"}
+              value={String(attentionTodos.length)}
+              label="Needs attention"
+              tone={attentionTodos.length > 0 ? "warning" : "success"}
             />
             <Stat
-              value={String(SNAPSHOT.gitDirtyFiles ?? 0)}
-              label="Dirty files"
-              tone={(SNAPSHOT.gitDirtyFiles ?? 0) > 0 ? "info" : "success"}
+              value={String(SNAPSHOT.projectCount)}
+              label="Projects"
             />
           </Grid>
 
-          <Row gap={8} wrap>
-            <Stat
-              value={String(SNAPSHOT.gitAheadProjects ?? 0)}
-              label="Ahead of remote"
-              tone={(SNAPSHOT.gitAheadProjects ?? 0) > 0 ? "info" : undefined}
-            />
-            <Stat
-              value={String(SNAPSHOT.gitBehindProjects ?? 0)}
-              label="Behind remote"
-              tone={(SNAPSHOT.gitBehindProjects ?? 0) > 0 ? "warning" : undefined}
-            />
-            <Stat
-              value={String(SNAPSHOT.missingAgents)}
-              label="Missing AGENTS.md"
-              tone={SNAPSHOT.missingAgents > 0 ? "warning" : "success"}
-            />
-            <Stat
-              value={String(SNAPSHOT.missingIgnore)}
-              label="Missing .cursorignore"
-              tone={SNAPSHOT.missingIgnore > 0 ? "warning" : "success"}
-            />
-          </Row>
-
-          <Row gap={8} wrap>
-            <Text weight="semibold">Pinned hubs</Text>
-            {pinnedPills}
-            {SNAPSHOT.ticketFirst ? <Pill active>ticket-first</Pill> : null}
-          </Row>
-
-          {todos.length > 0 ? (
-            <TodoListCard todos={todos} defaultExpanded />
+          {gitChecked ? (
+            <Row gap={8} wrap>
+              <Stat
+                value={String(SNAPSHOT.gitDirtyProjects)}
+                label="Git dirty projects"
+                tone={SNAPSHOT.gitDirtyProjects > 0 ? "warning" : "success"}
+              />
+              <Stat
+                value={String(SNAPSHOT.gitBehindProjects)}
+                label="Behind remote"
+                tone={SNAPSHOT.gitBehindProjects > 0 ? "warning" : undefined}
+              />
+              <Stat
+                value={String(SNAPSHOT.missingAgents)}
+                label="Missing AGENTS.md"
+                tone={SNAPSHOT.missingAgents > 0 ? "warning" : "success"}
+              />
+            </Row>
           ) : (
-            <Callout tone="success" title="Portfolio healthy">
-              No drift todos in the current snapshot. Re-run meta.ps1 snapshot after layout changes.
+            <Callout tone="info" title="Quick snapshot">
+              Git and verify were not checked. Run .\metra.ps1 snapshot (full) for those
+              conclusions.
             </Callout>
           )}
 
-          <Card>
-            <CardHeader>Project recommender</CardHeader>
-            <CardBody>
-              <Stack gap={12}>
-                <Text tone="secondary" size="small">
-                  Paste ticket keywords or TicketTracker brief RoutingTerms.
-                </Text>
-                <TextInput
-                  value={query}
-                  onChange={setQuery}
-                  placeholder="e.g. orion disk alert DataOps / pharos colleague slate"
-                />
-                {rankedCards.length > 0 ? (
-                  <Stack gap={8}>{rankedCards}</Stack>
-                ) : (
-                  <Text tone="tertiary" size="small">
-                    Type terms to rank projects from projects.json triggers.
-                  </Text>
-                )}
-              </Stack>
-            </CardBody>
-          </Card>
+          {attentionTodos.length > 0 ? (
+            <Card>
+              <CardHeader>Needs attention</CardHeader>
+              <CardBody>
+                <Stack gap={6}>
+                  {attentionTodos.slice(0, 12).map((t) => (
+                    <Text key={t.id} size="small">
+                      {t.content}
+                    </Text>
+                  ))}
+                </Stack>
+              </CardBody>
+            </Card>
+          ) : (
+            <Callout tone="success" title="Nothing urgent">
+              No drift or hygiene items in the current snapshot.
+            </Callout>
+          )}
 
           <Divider />
-          <H2>Project health</H2>
+          <H2>Projects</H2>
+          <Row gap={8} wrap align="center">
+            <Select
+              value={rootFilter}
+              onChange={setRootFilter}
+              options={rootOptions}
+            />
+            <Text size="small" tone="tertiary">
+              Cross-root related projects are labeled; never auto-handoff across roots.
+            </Text>
+          </Row>
+
           <Table
-            headers={["Project", "Pinned", "AGENTS", "Ignore", "Status", "Git", "Findings"]}
-            rows={tableRows}
-            rowTone={rowTone}
+            headers={["Project", "Root", "Status", "Audience", "Notes"]}
+            rows={exceptionProjects.slice(0, 30).map((p) => [
+              p.name,
+              p.root || "",
+              p.status,
+              (p.serves || []).slice(0, 2).join(", "),
+              p.findings.slice(0, 1).join("; ") ||
+                (gitChecked && p.gitSummary !== "n/a" && p.gitSummary !== "skipped"
+                  ? p.gitSummary
+                  : ""),
+            ])}
+            rowTone={exceptionProjects.slice(0, 30).map((p) =>
+              p.drift || !p.present ? ("warning" as const) : ("info" as const),
+            )}
             striped
             stickyHeader
           />
-        </Stack>
-      ) : (
-        <Stack gap={16}>
-          <Callout tone="info" title="Ticket-first session">
-            Start in TicketTracker, route to one technical project, broaden only when evidence requires it.
-          </Callout>
 
-          <Card>
-            <CardHeader>Primary project</CardHeader>
-            <CardBody>
-              {activePrimary ? (
+          <CollapsibleSection
+            title="All projects"
+            count={filteredProjects.length}
+            defaultOpen={exceptionProjects.length === 0}
+          >
+            <Stack gap={8}>
+              <Row gap={6} wrap>
+                {filteredProjects.map((p) => (
+                  <Pill
+                    key={p.name}
+                    active={selected?.name === p.name}
+                    onClick={() => setSelectedName(p.name)}
+                  >
+                    {p.name}
+                  </Pill>
+                ))}
+              </Row>
+            </Stack>
+          </CollapsibleSection>
+
+          {selected ? (
+            <Card>
+              <CardHeader
+                trailing={
+                  <Button variant="secondary" onClick={() => setPrimary(selected.name)}>
+                    Use as route primary
+                  </Button>
+                }
+              >
+                {selected.name}
+              </CardHeader>
+              <CardBody>
                 <Stack gap={8}>
-                  <Row gap={8} align="center">
-                    <H3>{activePrimary.name}</H3>
-                    <Pill active={activePrimary.status === "healthy"}>{activePrimary.status}</Pill>
-                  </Row>
-                  <Text size="small">{activePrimary.purpose}</Text>
+                  <Text size="small">{selected.purpose || "No purpose in registry."}</Text>
                   <Text size="small" tone="secondary">
-                    Open: {activePrimary.entry} then {activePrimary.preferredPaths.slice(0, 3).join(", ")}
+                    Root {selected.root || "unknown"} · status {selected.status} · entry{" "}
+                    {selected.entry}
                   </Text>
-                  {activePrimary.related.length > 0 ? (
+                  {selected.serves?.length ? (
+                    <Text size="small">For whom: {selected.serves.join(", ")}</Text>
+                  ) : null}
+                  {selected.related.length ? (
                     <Text size="small" tone="tertiary">
-                      Related only if needed: {activePrimary.related.join(", ")}
+                      Related: {selected.related.join(", ")}
                     </Text>
                   ) : null}
-                  {!primary && top ? (
-                    <Text size="small" tone="secondary">
-                      Using recommender top match. Set primary on the Ops tab to lock it.
-                    </Text>
-                  ) : null}
+                  <WhyHereList rows={selected.whyHere || []} label="Why here?" />
                 </Stack>
-              ) : (
-                <Text tone="secondary">
-                  Rank a project on the Ops tab, or rely on default entry {SNAPSHOT.defaultEntry}.
-                </Text>
-              )}
-            </CardBody>
-          </Card>
+              </CardBody>
+            </Card>
+          ) : null}
+        </Stack>
+      ) : null}
 
+      {tab === "stewardship" ? (
+        <Stack gap={16}>
           <Card>
-            <CardHeader>Session checklist</CardHeader>
+            <CardHeader>Portfolio Operating Model</CardHeader>
             <CardBody>
-              <Stack gap={10}>
-                {triageChecks}
+              <Stack gap={4}>
+                <Text size="small">Where? · Routing</Text>
+                <Text size="small">What? · Context</Text>
+                <Text size="small">Why? · Decisions</Text>
+                <Text size="small">How? · Communication</Text>
+                <Text size="small">For whom? · Serves</Text>
                 <Spacer />
-                <Button variant="secondary" onClick={() => setChecks({})}>
-                  Reset checklist
-                </Button>
+                <Text size="small" tone="tertiary">
+                  This board retrieves from those homes. It is not a second home.
+                </Text>
               </Stack>
             </CardBody>
           </Card>
 
-          <Callout tone="warning" title="Do not">
-            Do not open full catalog/index.json, inventory dumps, or TicketTracker data/tickets.json. Do not scan all sibling repos before routing.
+          <Callout tone="neutral" title="Audience boundary">
+            Roles, teams, and consumer systems are allowed. Individual profiling is not.
+            Ticket requester facts stay in TicketTracker evidence.
           </Callout>
+
+          {coverage ? (
+            <Grid columns={3} gap={12}>
+              <Stat
+                value={String(coverage.projectsWithServes)}
+                label="Projects with serves"
+              />
+              <Stat
+                value={String(coverage.confirmedDecisionCount)}
+                label="Confirmed decisions"
+              />
+              <Stat
+                value={String(coverage.confirmedGuidelineCount)}
+                label="OCC guidelines"
+              />
+            </Grid>
+          ) : null}
+
+          <H2>Decision Registry</H2>
+          {decisions?.ledgerExists === false ? (
+            <Text size="small" tone="secondary">
+              No local Decision Registry yet. Use .\metra.ps1 decisions note / harvest /
+              promote.
+            </Text>
+          ) : (
+            <Stack gap={10}>
+              <Text size="small" tone="secondary">
+                {decisions?.confirmedCount ?? 0} confirmed · {decisions?.candidateCount ?? 0}{" "}
+                candidates · max {decisions?.maxConfirmed ?? 50}
+              </Text>
+              {(decisions?.recent || []).length > 0 ? (
+                <Card>
+                  <CardHeader>Recent decisions</CardHeader>
+                  <CardBody>
+                    <Stack gap={8}>
+                      {decisions!.recent.map((d) => (
+                        <Stack key={d.id || d.title} gap={2}>
+                          <Text size="small" weight="semibold">
+                            {d.title}
+                            {d.project ? ` · ${d.project}` : ""}
+                          </Text>
+                          {d.decision ? (
+                            <Text size="small" tone="secondary">
+                              {d.decision}
+                            </Text>
+                          ) : null}
+                        </Stack>
+                      ))}
+                    </Stack>
+                  </CardBody>
+                </Card>
+              ) : null}
+              {(decisions?.candidates || []).length > 0 ? (
+                <Card>
+                  <CardHeader>Candidates awaiting review</CardHeader>
+                  <CardBody>
+                    <Stack gap={6}>
+                      {decisions!.candidates.map((c) => (
+                        <Text key={c.id || c.title} size="small">
+                          {c.title}
+                          {c.project ? ` · ${c.project}` : ""}
+                        </Text>
+                      ))}
+                      <Text size="small" tone="tertiary">
+                        Promote with .\metra.ps1 decisions promote (requires why,
+                        confidence, evidence).
+                      </Text>
+                    </Stack>
+                  </CardBody>
+                </Card>
+              ) : null}
+            </Stack>
+          )}
+
+          <Divider />
+          <H2>Operator Communication Contract</H2>
+          {contract?.ledgerExists === false && (contract?.confirmedCount ?? 0) === 0 ? (
+            <Text size="small" tone="secondary">
+              No confirmed guidelines yet. Soft preferences go through .\metra.ps1 profile
+              note / promote.
+            </Text>
+          ) : (
+            <Stack gap={10}>
+              <Text size="small" tone="secondary">
+                {contract?.confirmedCount ?? 0} confirmed · {contract?.candidateCount ?? 0}{" "}
+                candidates · max {contract?.maxConfirmed ?? 20}
+              </Text>
+              {(contract?.confirmed || []).length > 0 ? (
+                <Card>
+                  <CardHeader>Confirmed guidelines</CardHeader>
+                  <CardBody>
+                    <Stack gap={6}>
+                      {contract!.confirmed.map((g) => (
+                        <Text key={g.id || g.text} size="small">
+                          {g.text}
+                        </Text>
+                      ))}
+                    </Stack>
+                  </CardBody>
+                </Card>
+              ) : null}
+              {(contract?.candidates || []).length > 0 ? (
+                <Card>
+                  <CardHeader>Pending candidates</CardHeader>
+                  <CardBody>
+                    <Stack gap={6}>
+                      {contract!.candidates.map((g) => (
+                        <Text key={g.id || g.text} size="small">
+                          {g.text}
+                        </Text>
+                      ))}
+                      <Text size="small" tone="tertiary">
+                        Confirm with .\metra.ps1 profile promote. Portfolio-wide rules
+                        refuse personal promote.
+                      </Text>
+                    </Stack>
+                  </CardBody>
+                </Card>
+              ) : null}
+            </Stack>
+          )}
         </Stack>
-      )}
+      ) : null}
     </Stack>
   );
 }

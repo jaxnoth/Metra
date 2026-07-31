@@ -49,7 +49,23 @@ Base also ships Humor Policy, time-aware openings, decision tree, channels, and 
 
 ## Roots and workspace
 
-`metra.config.json` **`roots`** are folders Metra scans for sibling projects. They are not Cursor workspace folders by themselves. After you change `roots` or `workspace.alwaysInclude`, run `.\metra.ps1 setup` (or `.\metra.ps1 workspace`) so `Metra.code-workspace` picks up siblings.
+`metra.config.json` **`roots`** are folders Metra scans for sibling projects. They are not Cursor workspace folders by themselves. After you change `roots`, `workspace.alwaysInclude`, or `workspace.exclude`, run `.\metra.ps1 setup` (or `.\metra.ps1 workspace`) so `Metra.code-workspace` picks up siblings.
+
+| Key | Role |
+|-----|------|
+| `workspace.alwaysInclude` | Keep these project names in the generated workspace even when they fall outside the activity lookback |
+| `workspace.exclude` | Keep these project names **out** of the mounted workspace even when they are recent or always-included. They stay routable via the registry; their `AGENTS.md` does not load as an always-applied Cursor rule |
+| `workspace.months` / `scanDepth` | Activity window used to decide which siblings get mounted |
+| `workspace.outputs` | Workspace file(s) to write - keep a **single** entry |
+
+Use `workspace.exclude` for frozen review checkouts, upload packs, or other folders that should remain on disk and in the registry without competing with live Metra guidance in the open workspace. Reload the Cursor window after regenerating so the unmounted folder's rules stop applying.
+
+```json
+"workspace": {
+  "alwaysInclude": ["Solarwinds", "TicketTracker"],
+  "exclude": ["Metra-Bing-Review"]
+}
+```
 
 Keep `workspace.outputs` to a **single** entry. Cursor tracks chat history per workspace identity, so generating a second copy of `Metra.code-workspace` in another folder splits your chat context between the two files. The generated workspace is gitignored; `Metra.code-workspace.example` is the tracked starter.
 
