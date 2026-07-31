@@ -1,3 +1,7 @@
+<p align="center">
+  <img src="docs/assets/metra-mark.svg" width="160" alt="Metra">
+</p>
+
 # Metra
 
 **Portfolio operations for humans and coding agents. Route work, load context, preserve decisions, and communicate consistently.**

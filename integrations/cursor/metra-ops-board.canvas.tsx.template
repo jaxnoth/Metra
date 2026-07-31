@@ -144,27 +144,56 @@ function generatedLabel(iso: string): string {
 
 function MetraRouteMark() {
   const theme = useHostTheme();
-  // Brand intent: Signal Teal wayfinding via host accent (see docs/Brand.md dual-mode map).
+  // Brand intent: labeled interchange - Signal Teal wayfinding via host accent (docs/Brand.md Motif).
   return (
-    <svg width="72" height="16" viewBox="0 0 72 16" aria-hidden="true">
+    <svg width="96" height="40" viewBox="0 0 96 40" aria-hidden="true">
       <line
-        x1="4"
-        y1="8"
-        x2="68"
-        y2="8"
+        x1="8"
+        y1="30"
+        x2="88"
+        y2="30"
         stroke={theme.accent.primary}
         strokeWidth="2"
+        strokeLinecap="round"
       />
-      <circle cx="6" cy="8" r="4" fill={theme.accent.primary} />
+      <line
+        x1="48"
+        y1="24"
+        x2="48"
+        y2="30"
+        stroke={theme.accent.primary}
+        strokeWidth="2"
+        strokeLinecap="round"
+      />
+      <circle cx="8" cy="30" r="4" fill={theme.accent.primary} />
       <circle
-        cx="36"
-        cy="8"
+        cx="48"
+        cy="30"
         r="4"
-        fill={theme.fill.tertiary}
+        fill={theme.fill.primary}
         stroke={theme.accent.primary}
         strokeWidth="1.5"
       />
-      <circle cx="66" cy="8" r="4" fill={theme.accent.primary} />
+      <circle cx="88" cy="30" r="4" fill={theme.accent.primary} />
+      <rect
+        x="24"
+        y="2"
+        width="48"
+        height="20"
+        rx="10"
+        fill={theme.fill.tertiary}
+      />
+      <text
+        x="48"
+        y="16"
+        textAnchor="middle"
+        fill={theme.accent.primary}
+        fontSize="11"
+        fontWeight="700"
+        fontFamily="system-ui, Segoe UI, sans-serif"
+      >
+        Metra
+      </text>
     </svg>
   );
 }
@@ -294,9 +323,6 @@ export default function MetraOpsBoard() {
           <Row gap={10} align="center">
             <MetraRouteMark />
             <H1>Metra Ops</H1>
-            <Pill active size="sm">
-              Metra
-            </Pill>
           </Row>
           <Text tone="secondary" size="small">
             Portfolio health, project routing, and ticket triage. Snapshot:{" "}

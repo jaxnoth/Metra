@@ -1,0 +1,29 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="160" height="48" viewBox="0 0 160 48" role="img" aria-labelledby="title desc">
+  <title id="title">Metra</title>
+  <desc id="desc">Three-node route mark with Metra labeled at the middle interchange</desc>
+  <style>
+    .route { stroke: #0f766e; }
+    .node-terminal { fill: #0f766e; }
+    .node-open { fill: #ffffff; stroke: #0f766e; }
+    .pill { fill: #e6f4f1; }
+    .pill-text { fill: #0f766e; }
+    @media (prefers-color-scheme: dark) {
+      .route { stroke: #2dd4bf; }
+      .node-terminal { fill: #2dd4bf; }
+      .node-open { fill: #1f2937; stroke: #2dd4bf; }
+      .pill { fill: #263b3a; }
+      .pill-text { fill: #5eead4; }
+    }
+  </style>
+  <g stroke-width="2" stroke-linecap="round">
+    <path class="route" d="M14 34h132"/>
+    <path class="route" d="M80 28v6"/>
+    <circle class="node-terminal" cx="14" cy="34" r="4"/>
+    <circle class="node-open" cx="80" cy="34" r="4"/>
+    <circle class="node-terminal" cx="146" cy="34" r="4"/>
+  </g>
+  <g transform="translate(44 4)">
+    <rect class="pill" width="72" height="24" rx="12"/>
+    <text class="pill-text" x="36" y="17" text-anchor="middle" font-family="Segoe UI, Arial, sans-serif" font-size="12" font-weight="700">Metra</text>
+  </g>
+</svg>

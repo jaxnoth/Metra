@@ -18,6 +18,12 @@ Entry shape:
 
 ---
 
+## 2026-07-31 - Route-mark identity (paths and hubs)
+
+- Decision: Keep the public Metra mark as a teal three-node route with an open labeled center interchange ([`docs/assets/metra-mark.svg`](assets/metra-mark.svg)). Terminal nodes stay the same Signal Teal family as the line - no blue/amber/multicolor endpoints. Brand story stays short: Metra connects endpoints; the open center is classification before work moves on. Future operator-facing chrome prefers paths, nodes, routes, connections, hubs - not brains, robots, assistants, or mascots. Documented in [Brand.md](Brand.md) Motif.
+- Why: The geometry already matches portfolio operations (route → classify → continue). Extra endpoint colors and AI cliches dilute a mark that is unusually aligned with the product without needing a post-hoc story.
+- See: `docs/assets/metra-mark.svg`, `docs/Brand.md`, README header image
+
 ## 2026-07-31 - For whom? (project serves)
 
 - Decision: Ship **For whom?** as optional project-registry `serves` (`string[]`), same shape as `triggers` / `capabilities`. Audience of the work (roles, teams, consumer systems), never people memory - portfolio memory, not CRM. Surfaces: `routing -Name` / `routing -Query` print a **For whom?** question block when non-empty (before Why Here); `ctx` includes `serves` in JSON and markdown (`- serves:` per project; `## For whom?` for query primary). Full `routing` table stays quiet. Seed shared stubs TicketTracker and Solarwinds. Why Here stays Decision Registry; serves stays project registry (do not stuff audiences into the Decision Registry). v1 is plain strings only - no `{ name, kind }` objects.
