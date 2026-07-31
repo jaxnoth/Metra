@@ -778,6 +778,21 @@ Describe 'Update-MetraWorkspace' {
         }
     }
 
+    It 'ships a URL-only MCP binding example with no credentials' {
+        $example = Join-Path (Get-MetraRoot) 'integrations\cursor\mcp.example.json'
+        Test-Path -LiteralPath $example | Should -BeTrue
+
+        $raw = Get-Content -LiteralPath $example -Raw
+        $raw | Should -Not -Match '(?i)headers|authorization|api[_-]?key|token|secret'
+
+        $servers = (ConvertFrom-Json $raw).mcpServers
+        @($servers.PSObject.Properties).Count | Should -BeGreaterThan 0
+        foreach ($server in $servers.PSObject.Properties) {
+            @($server.Value.PSObject.Properties.Name) | Should -Be @('url')
+            [string]$server.Value.url | Should -Match '^https://'
+        }
+    }
+
     It 'ships workspace.exclude in the tracked config example' {
         $example = Join-Path (Get-MetraRoot) 'metra.config.example.json'
         $raw = Get-Content -LiteralPath $example -Raw

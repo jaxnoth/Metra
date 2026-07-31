@@ -40,6 +40,29 @@ flowchart LR
 | Prior chat search | `.\metra.ps1 chats` (reads Cursor agent transcripts) |
 | Stale Ops refresh on chat start | `.cursor/hooks.json` `sessionStart` -> `.cursor/hooks/session-snapshot.ps1` |
 
+## MCP tool bindings
+
+Routing decides **where** work happens; MCP servers decide **what tools** the agent can reach. Bindings are per-machine, so a clone of Metra does not inherit them. Tracked starter: [`integrations/cursor/mcp.example.json`](../integrations/cursor/mcp.example.json).
+
+| Server | Endpoint | Auth | Used for |
+|--------|----------|------|----------|
+| Canva | `https://mcp.canva.com/mcp` | Per-user browser OAuth | Brand kits, brand templates, design create / edit / export for printables |
+
+Install by copying the example into one of:
+
+| Target | Scope |
+|--------|-------|
+| `%USERPROFILE%\.cursor\mcp.json` | Every workspace on this machine |
+| `<checkout>\.cursor\mcp.json` | This checkout only |
+
+Reload MCP servers afterward; the first tool call opens the browser OAuth prompt.
+
+Rules for this repo:
+
+- Tracked files carry **URL-only** entries. Anything with `headers`, tokens, or API keys belongs in the local `mcp.json`, which is gitignored - see [SECURITY.md](../SECURITY.md).
+- Bindings are **optional**. When a server is absent, say it is not connected and continue with local tooling instead of inventing a workflow around it.
+- Per-user OAuth means each operator authorizes their own account. Sharing the pointer never shares access.
+
 ## sessionStart vs IDE load
 
 Cursor **project hooks** run on **agent chat session start**, not when you open the IDE window or reload the workspace.
