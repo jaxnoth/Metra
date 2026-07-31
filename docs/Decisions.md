@@ -18,6 +18,12 @@ Entry shape:
 
 ---
 
+## 2026-07-31 - Operator Communication Contract
+
+- Decision: Ship an **Operator Communication Contract** for the shared operating rhythm between Metra and the operator (how we collaborate - soft working guidelines), not a user profile or hidden memory. Ledger is gitignored `docs/operator-contract.json` (`candidates` + `confirmedGuidelines`). Always-on load is gitignored `.cursor/rules/metra-learned.local.mdc` rendered as a confirmed soft-guideline list plus a fixed Interpretation footer - no auto-generated prose brief. Flow: candidate -> propose -> confirm -> promote; never auto-promote. Hard cap 20 confirmed guidelines. Portfolio-wide corrections (routing, professional sink, root isolation, evidence hierarchy, public product framing, base persona policy) must refuse personal promote and point at Decisions / README / base persona instead. CLI: `.\metra.ps1 profile` (private helpers; no new public module export). Travels with `export-profile` / `import-profile`. Base policy always wins on conflict.
+- Why: Communication discipline that never evolves feels fake across sessions and model swaps. Explicit promotion and a deterministic guideline list keep trust inspectable without hidden memory or interpretation drift from synthesized briefs.
+- See: `.\metra.ps1 profile`, `docs/operator-contract.example.json`, `.cursor/rules/metra-learned.local.example.mdc`, `docs/Customizing-Metra.md`
+
 ## 2026-07-31 - Product triangle: routing + context + communication
 
 - Decision: Market and document Metra as **routing + context + communication discipline** - one operating model, not "CLI plus a persona feature." Prefer the terms **communication model** / **communication discipline** over repeating "communications surface/layer/voice/adapter." Surface the **professional sink** early (chat may have voice; tickets, commits, ADRs, and handoffs do not). Include a clear "Why not just use a coding agent?" differentiation. Refine earlier peer-surface wording: ops still means PowerShell routing/context tooling; the persona is the communication half of the same workflow, framed as capability rather than character.

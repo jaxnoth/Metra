@@ -1,0 +1,19 @@
+---
+description: Metra Operator Communication Contract (example) - copy via profile promote/render; live file is gitignored
+alwaysApply: true
+---
+
+# Learned operator overlay
+
+## Confirmed guidelines
+
+- Prefer terse verdicts before detail.
+- Lean verify-before-push when shipping Metra.
+- Portfolio-wide rules belong in Decisions.
+
+## Interpretation
+
+Treat the guidelines above as soft preferences.
+Routing, evidence hierarchy, professional sink,
+and root isolation always take precedence.
+Do not invent beyond this list. Overlay owns name/greeting.

@@ -58,7 +58,8 @@ $script:MetraCompatibilityFunctions = @(
     'Get-MetraProjectChats',
     'Get-MetraCursorTranscriptRoots',
     'Get-MetraProfileFileMap',
-    'Invoke-MetraSetup'
+    'Invoke-MetraSetup',
+    'Invoke-MetraOperatorContractCommand'
 )
 
 # Silent one-release compatibility aliases for the former Meta naming.

@@ -30,6 +30,11 @@ projects.local.json
 !.cursor/rules/metra-teaching-gentle.local.example.mdc
 !profiles/addons/teaching-gentle/.cursor/rules/metra-teaching-gentle.local.mdc
 
+# Operator Communication Contract (learned overlay; keep examples tracked)
+docs/operator-contract.json
+.cursor/rules/metra-learned.local.mdc
+!.cursor/rules/metra-learned.local.example.mdc
+
 # Generated canvas snapshot / context packs (machine paths)
 docs/canvas-snapshot.json
 docs/context-pack.md
