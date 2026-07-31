@@ -168,7 +168,7 @@ Common `metra.ps1` equivalents:
 
 ### Communication model in Cursor
 
-The repo ships a starter `Metra.code-workspace` (Metra folder only). After `setup`, reopen or reload that file so sibling projects appear. Workspace multi-root helps VS Code/Cursor; it is **not** required for CLI, routing, or `ctx`.
+`setup` generates one workspace file, `Metra.code-workspace`, in the Metra checkout. It is gitignored (the tracked starter is `Metra.code-workspace.example`), so your real project names never land in git. Reopen or reload that file after `setup` so sibling projects appear, and keep opening the same file - Cursor tracks chat history per workspace, so a second copy in another folder splits your chat context. Workspace multi-root helps VS Code/Cursor; it is **not** required for CLI, routing, or `ctx`.
 
 In Cursor, Metra's persona auto-loads from `.cursor/rules` - route first, stay in one project, Teaching Mode when exploring, professional sink for anything that leaves chat. Set your display name in `.cursor\rules\metra-persona.local.mdc` after importing a profile. Prefer a different coding agent? Same `routing` / `ctx` / `AGENTS.md` story still applies; follow `AGENTS.md` for Metra voice when your harness loads project guidance.
 
@@ -216,8 +216,8 @@ Writes a map of roots and present projects - enough to pick a stop without dumpi
 | `metra-persona.mdc` (full base) | `.cursor/rules/metra-persona.local.mdc` |
 | `profiles/addons/` (opt-in Persona Add-ons) | `.cursor/rules/metra-humor.local.mdc`, `metra-teaching-gentle.local.mdc` (after import) |
 | `*.example.json` / `*.local.example.mdc` | `docs/canvas-snapshot.json`, `docs/context-pack.*` |
-| `profiles/sample/` (ready-to-import pack) | regenerated multi-root workspace (after `.\metra.ps1 workspace`) |
-| `Metra.code-workspace` (Metra-only starter) | |
+| `profiles/sample/` (ready-to-import pack) | generated `Metra.code-workspace` (after `.\metra.ps1 workspace`) |
+| `Metra.code-workspace.example` (Metra-only starter) | |
 | `.cursor/hooks/` (sessionStart Ops refresh) | |
 | MIT LICENSE, public docs (Brand, Decisions, Integrations, ...) | |
 

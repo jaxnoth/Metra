@@ -18,6 +18,12 @@ Entry shape:
 
 ---
 
+## 2026-07-31 - One generated workspace file
+
+- Decision: `workspace.outputs` ships a single entry: `Metra.code-workspace` inside the Metra checkout (`metraFolderPath: "."`, `projectPathPrefix: "../"`). Do not generate a second copy beside the projects root. The generated file is gitignored; the tracked starter is `Metra.code-workspace.example`. Fresh clones run `.\metra.ps1 setup`, which writes the real workspace locally.
+- Why: Two generated copies split Cursor chat history, because Cursor tracks agent transcripts per workspace identity. The second copy also collided with a tracked starter of the same name, so a routine `git` restore silently reverted a generated workspace back to the Metra-only sample and dropped the operator's sibling folders. One generated, gitignored output keeps chat context stable and keeps real project names out of the repo.
+- See: `metra.config.example.json`, `profiles/sample/metra.config.json`, `.gitignore`, `Update-MetraWorkspace`
+
 ## 2026-07-31 - Operator Communication Contract
 
 - Decision: Ship an **Operator Communication Contract** for the shared operating rhythm between Metra and the operator (how we collaborate - soft working guidelines), not a user profile or hidden memory. Ledger is gitignored `docs/operator-contract.json` (`candidates` + `confirmedGuidelines`). Always-on load is gitignored `.cursor/rules/metra-learned.local.mdc` rendered as a confirmed soft-guideline list plus a fixed Interpretation footer - no auto-generated prose brief. Flow: candidate -> propose -> confirm -> promote; never auto-promote. Hard cap 20 confirmed guidelines. Portfolio-wide corrections (routing, professional sink, root isolation, evidence hierarchy, public product framing, base persona policy) must refuse personal promote and point at Decisions / README / base persona instead. CLI: `.\metra.ps1 profile` (private helpers; no new public module export). Travels with `export-profile` / `import-profile`. Base policy always wins on conflict.
