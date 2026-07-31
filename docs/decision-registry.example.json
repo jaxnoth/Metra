@@ -1,0 +1,27 @@
+{
+  "version": 1,
+  "candidateStaleDays": 30,
+  "maxConfirmed": 50,
+  "candidates": [],
+  "confirmed": [
+    {
+      "id": "d-example-host",
+      "date": "2026-07-31",
+      "title": "Example job host stays on the automation server",
+      "decision": "Never run the scheduled job entrypoint from a laptop.",
+      "why": "The credential store and host profile live on that server; local runs fail or use the wrong identity.",
+      "project": "ExampleProject",
+      "tags": ["etl", "host"],
+      "see": ["AGENTS.md"],
+      "source": "ExampleProject/AGENTS.md",
+      "origin": "backfill",
+      "confidence": "high",
+      "evidence": [
+        "ExampleProject/AGENTS.md",
+        "Operator confirmed"
+      ],
+      "status": "active",
+      "supersedes": null
+    }
+  ]
+}

@@ -35,6 +35,10 @@ docs/operator-contract.json
 .cursor/rules/metra-learned.local.mdc
 !.cursor/rules/metra-learned.local.example.mdc
 
+# Decision Registry / Operational Why Memory (keep example tracked)
+docs/decision-registry.json
+!docs/decision-registry.example.json
+
 # Generated canvas snapshot / context packs (machine paths)
 docs/canvas-snapshot.json
 docs/context-pack.md

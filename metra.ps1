@@ -36,7 +36,7 @@ param(
     [ValidateSet(
         'list', 'status', 'pull', 'fetch', 'run', 'new', 'apply', 'workspace',
         'audit', 'snapshot', 'chats', 'roots', 'routing',
-        'export-profile', 'import-profile', 'ctx', 'setup', 'verify', 'profile', 'help'
+        'export-profile', 'import-profile', 'ctx', 'setup', 'verify', 'profile', 'decisions', 'help'
     )]
     [string]$Command = 'help',
 
@@ -102,6 +102,8 @@ Usage:
       One-shot onboarding: seed config if missing, optional profile, roots, workspace, routing, ctx.
   .\metra.ps1 profile show|note|promote|forget|render|gc
       Operator Communication Contract (candidates -> promote -> soft guidelines).
+  .\metra.ps1 decisions show|note|promote|forget|search|get|supersede|gc|harvest|seed
+      Decision Registry / Operational Why Memory (candidates -> promote; retrieved via search/ctx).
   .\metra.ps1 verify
 
 Roots:
@@ -118,6 +120,7 @@ Operator profile:
   export-profile             pack local config / registry / overlays / learned contract
   import-profile             restore a pack (refuse overwrite unless -Force)
   profile                    Operator Communication Contract (learned soft guidelines)
+  decisions                  Decision Registry (operational why-we-chose; gitignored ledger)
 
 Examples:
   .\metra.ps1 list -GitOnly
@@ -142,6 +145,8 @@ Examples:
   .\metra.ps1 profile note 'Prefer terse verdicts before detail.'
   .\metra.ps1 profile promote 'Prefer terse verdicts before detail.'
   .\metra.ps1 profile show
+  .\metra.ps1 decisions search 'datamanager'
+  .\metra.ps1 decisions harvest -Preview
   .\metra.ps1 ctx
   .\metra.ps1 ctx -Query 'ticket disk'
   .\metra.ps1 ctx -Format json -Path `$env:TEMP\metra-ctx.json
@@ -387,6 +392,53 @@ switch ($Command) {
                 foreach ($c in @($result.Candidates)) {
                     Write-Host ("  [{0}] (count={1}) {2}" -f $c.id, $c.count, $c.text)
                 }
+            }
+            default {
+                $result | Format-List
+            }
+        }
+    }
+
+    'decisions' {
+        if (-not $Rest -or $Rest.Count -eq 0) {
+            throw "decisions requires a subcommand. Example: .\metra.ps1 decisions show"
+        }
+        $sub = $Rest[0]
+        $subArgs = @()
+        if ($Rest.Count -gt 1) {
+            $subArgs = @($Rest[1..($Rest.Count - 1)])
+        }
+        $result = Invoke-MetraDecisionRegistryCommand -Subcommand $sub -ArgsRest $subArgs -Name $Name -Preview:$Preview
+        switch ($sub.ToLowerInvariant()) {
+            'show' {
+                Write-Host ("Ledger: {0} (exists={1})" -f $result.LedgerPath, $result.LedgerExists)
+                Write-Host ("Confirmed {0}/{1} (superseded={2})" -f $result.ConfirmedCount, $result.MaxConfirmed, $result.SupersededCount)
+                Write-Host ("Candidates: {0}" -f $result.CandidateCount)
+                if ($result.ConfirmedCount -gt 0) {
+                    Write-Host ''
+                    Write-Host 'Active decisions:'
+                    foreach ($d in @($result.Confirmed | Where-Object { $_.status -eq 'active' })) {
+                        Write-Host ("  [{0}] {1} ({2}) conf={3}" -f $d.id, $d.title, $d.project, $d.confidence)
+                    }
+                }
+                if ($result.CandidateCount -gt 0) {
+                    Write-Host ''
+                    Write-Host 'Candidates:'
+                    foreach ($c in @($result.Candidates)) {
+                        Write-Host ("  [{0}] {1} ({2})" -f $c.id, $c.title, $c.project)
+                    }
+                }
+            }
+            'search' {
+                $result |
+                    Select-Object Score, Id, Project, Confidence, Title, Why |
+                    Format-Table -AutoSize
+            }
+            'harvest' {
+                Write-Host ("{0}: scanned={1} results={2}" -f $result.Action, $result.Scanned, $result.Count)
+                @($result.Results) |
+                    Select-Object Action, Project, Id, Title, Source |
+                    Format-Table -AutoSize
             }
             default {
                 $result | Format-List

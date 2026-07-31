@@ -315,3 +315,173 @@ Describe 'Operator Communication Contract' {
     }
 }
 
+Describe 'Decision Registry' {
+    BeforeEach {
+        $script:decisionRoot = Join-Path ([System.IO.Path]::GetTempPath()) ('metra-decisions-' + [guid]::NewGuid().ToString('N'))
+        New-Item -ItemType Directory -Path (Join-Path $script:decisionRoot 'docs') -Force | Out-Null
+    }
+
+    AfterEach {
+        if ($script:decisionRoot -and (Test-Path -LiteralPath $script:decisionRoot)) {
+            Remove-Item -LiteralPath $script:decisionRoot -Recurse -Force -ErrorAction SilentlyContinue
+        }
+    }
+
+    It 'maps decision registry path in Get-MetraProfileFileMap' {
+        InModuleScope Metra {
+            $map = @(Get-MetraProfileFileMap)
+            $map | Should -Contain 'docs/decision-registry.json'
+        }
+    }
+
+    It 'show works with missing ledger' {
+        $root = $script:decisionRoot
+        InModuleScope Metra -Parameters @{ DecisionRoot = $root } {
+            param($DecisionRoot)
+            $shown = Show-MetraDecisionRegistry -MetraRoot $DecisionRoot
+            $shown.LedgerExists | Should -BeFalse
+            $shown.ConfirmedCount | Should -Be 0
+            $shown.CandidateCount | Should -Be 0
+        }
+    }
+
+    It 'notes, promotes with why/confidence/evidence, searches, and forgets' {
+        $root = $script:decisionRoot
+        InModuleScope Metra -Parameters @{ DecisionRoot = $root } {
+            param($DecisionRoot)
+            $note = Add-MetraDecisionRegistryCandidate `
+                -Title 'Prefer brief over show' `
+                -Decision 'Prefer TicketTracker brief over show for triage.' `
+                -Why 'brief is plain text; show pulls heavy HTML.' `
+                -Project 'TicketTracker' `
+                -Tags 'ticket,brief' `
+                -Source 'TicketTracker/AGENTS.md' `
+                -Origin backfill `
+                -Confidence high `
+                -Evidence @('TicketTracker/AGENTS.md', 'Operator confirmed') `
+                -MetraRoot $DecisionRoot
+            $note.Action | Should -Be 'added'
+
+            $promoted = Promote-MetraDecisionRegistryEntry -IdOrTitle $note.Id -MetraRoot $DecisionRoot
+            $promoted.Action | Should -Be 'promoted'
+
+            $hits = @(Search-MetraDecisionRegistry -Query 'brief ticket' -MetraRoot $DecisionRoot)
+            $hits.Count | Should -BeGreaterThan 0
+            $hits[0].Title | Should -Match 'brief'
+
+            $got = Get-MetraDecisionRegistryEntry -IdOrTitle $promoted.Id -MetraRoot $DecisionRoot
+            $got.Bucket | Should -Be 'confirmed'
+            $got.Entry.why | Should -Match 'plain text'
+
+            $forgotten = Remove-MetraDecisionRegistryEntry -IdOrTitle $promoted.Id -MetraRoot $DecisionRoot
+            $forgotten.Action | Should -Be 'forgot'
+        }
+    }
+
+    It 'refuses promote without why' {
+        $root = $script:decisionRoot
+        InModuleScope Metra -Parameters @{ DecisionRoot = $root } {
+            param($DecisionRoot)
+            $note = Add-MetraDecisionRegistryCandidate `
+                -Title 'Missing why' `
+                -Decision 'Do a thing on a host.' `
+                -Confidence high `
+                -Evidence 'Operator confirmed' `
+                -MetraRoot $DecisionRoot
+            {
+                Promote-MetraDecisionRegistryEntry -IdOrTitle $note.Id -MetraRoot $DecisionRoot
+            } | Should -Throw '*requires a non-empty why*'
+        }
+    }
+
+    It 'refuses promote without evidence' {
+        $root = $script:decisionRoot
+        InModuleScope Metra -Parameters @{ DecisionRoot = $root } {
+            param($DecisionRoot)
+            $note = Add-MetraDecisionRegistryCandidate `
+                -Title 'Missing evidence' `
+                -Decision 'Do a thing on a host.' `
+                -Why 'Because the credential store lives there.' `
+                -Confidence high `
+                -MetraRoot $DecisionRoot
+            {
+                Promote-MetraDecisionRegistryEntry -IdOrTitle $note.Id -MetraRoot $DecisionRoot
+            } | Should -Throw '*at least one evidence*'
+        }
+    }
+
+    It 'harvest adds candidates only' {
+        $root = $script:decisionRoot
+        $proj = Join-Path $root 'FakeOps'
+        New-Item -ItemType Directory -Path $proj -Force | Out-Null
+        Set-Content -LiteralPath (Join-Path $proj 'AGENTS.md') -Value @"
+# FakeOps
+
+- Never run Start-Automation from the local workstation.
+- Prefer filtered catalog queries over opening index wholesale.
+"@ -Encoding UTF8
+
+        InModuleScope Metra -Parameters @{ DecisionRoot = $root; ProjPath = $proj } {
+            param($DecisionRoot, $ProjPath)
+            Mock Get-MetraProjects {
+                @([PSCustomObject]@{ Name = 'FakeOps'; Path = $ProjPath; Root = 'work'; IsGit = $false })
+            }
+
+            $before = Show-MetraDecisionRegistry -MetraRoot $DecisionRoot
+            $before.ConfirmedCount | Should -Be 0
+
+            $harvest = Invoke-MetraDecisionRegistryHarvest -MetraRoot $DecisionRoot
+            $harvest.Action | Should -Be 'harvest'
+            $harvest.Count | Should -BeGreaterThan 0
+
+            $after = Show-MetraDecisionRegistry -MetraRoot $DecisionRoot
+            $after.ConfirmedCount | Should -Be 0
+            $after.CandidateCount | Should -BeGreaterThan 0
+            @($after.Candidates)[0].origin | Should -Be 'harvest'
+            @($after.Candidates)[0].confidence | Should -Be 'low'
+        }
+    }
+
+    It 'ctx Query includes relatedDecisions; no-query omits them' {
+        $root = $script:decisionRoot
+        InModuleScope Metra -Parameters @{ DecisionRoot = $root } {
+            param($DecisionRoot)
+            # Seed a confirmed decision in the real Metra root would pollute; test search helper instead
+            # and verify Export-MetraContextPack relatedDecisions wiring via Search mock.
+            Mock Search-MetraDecisionRegistry {
+                param($Query, $Limit, $MetraRoot)
+                if ([string]::IsNullOrWhiteSpace($Query)) { return @() }
+                @([PSCustomObject]@{
+                        Id = 'd1'; Title = 'Prefer brief'; Decision = 'Prefer brief'; Why = 'lighter'
+                        Project = 'TicketTracker'; Confidence = 'high'; Source = 'AGENTS.md'
+                    })
+            }
+            Mock Get-MetraRoots { @([PSCustomObject]@{ Name = 'work'; Primary = $true; Exists = $true; Optional = $false; Path = 'C:\Projects'; RawPath = '..' }) }
+            Mock Get-MetraProjectRegistry { [PSCustomObject]@{ projects = @() } }
+            Mock Get-MetraProjects { @() }
+            Mock Get-MetraRoutingTable { @() }
+            Mock Get-MetraRoot { $DecisionRoot }
+
+            $withQuery = Export-MetraContextPack -Query 'brief' -Path '-' -Quiet -Format json
+            # Export returns summary; re-run pack build by calling search path through markdown quiet file
+            $packPath = Join-Path $DecisionRoot 'docs\context-pack.json'
+            Export-MetraContextPack -Query 'brief' -Path $packPath -Quiet -Format json | Out-Null
+            $json = Get-Content -LiteralPath $packPath -Raw | ConvertFrom-Json
+            @($json.relatedDecisions).Count | Should -Be 1
+
+            Export-MetraContextPack -Path (Join-Path $DecisionRoot 'docs\context-pack-noq.json') -Quiet -Format json | Out-Null
+            $json2 = Get-Content -LiteralPath (Join-Path $DecisionRoot 'docs\context-pack-noq.json') -Raw | ConvertFrom-Json
+            ($json2.PSObject.Properties.Name -contains 'relatedDecisions') | Should -BeFalse
+        }
+    }
+
+    It 'ships tracked example' {
+        $root = Get-MetraRoot
+        Test-Path -LiteralPath (Join-Path $root 'docs\decision-registry.example.json') | Should -BeTrue
+        $ex = Get-Content -LiteralPath (Join-Path $root 'docs\decision-registry.example.json') -Raw | ConvertFrom-Json
+        @($ex.confirmed)[0].why | Should -Not -BeNullOrEmpty
+        @($ex.confirmed)[0].confidence | Should -Not -BeNullOrEmpty
+        @($ex.confirmed)[0].evidence.Count | Should -BeGreaterThan 0
+    }
+}
+
