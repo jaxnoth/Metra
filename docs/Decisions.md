@@ -18,6 +18,25 @@ Entry shape:
 
 ---
 
+## 2026-07-31 - Portfolio Operations Principles
+
+- Decision: Adopt an explicit **portfolio operations** operating model for Metra. Lead rule: **every portfolio fact should have a home.** Homes map (operator cheat sheet; does not replace the marketed product triangle of routing + context + communication):
+
+  | Question | Home |
+  |---|---|
+  | Where? | Routing registry / `.\metra.ps1 routing` |
+  | What? | Context / `ctx`, project `AGENTS.md` |
+  | Why? (operational scars) | Decision Registry + Why Here |
+  | Why? (product policy) | `docs/Decisions.md` |
+  | How? (collaboration rhythm) | OCC / `profile` + communication model / professional sink |
+  | Health? | Ops board / `audit` / `verify` / status |
+  | For whom? | Parked (`serves` / consumers - not people profiling) |
+
+  Operating principles: (1) every portfolio fact has a home; (2) route before execute; (3) context is retrieved, not dumped; (4) decisions are preserved with rationale (ledger why + confidence + evidence; never invent operational why); (5) communication follows the same operating model as the tooling. Health is first-class for ops but is not a fourth marketing triangle leg. Metra overlaps portfolio management, knowledge management, and configuration-management ideas; it is an operating model for developers and agents, not a single Wikipedia discipline. Boundaries: product policy -> Decisions.md; operational scars -> Decision Registry; collaboration rhythm -> OCC; project-local guidance -> that project's `AGENTS.md`.
+- Why: Portfolio chaos is usually information with no obvious home. Naming the model keeps future features (relationships, For whom, Ops board wisdom) from inventing parallel homes or dumping wiki-scale knowledge into prompts.
+- See: `README.md` (Portfolio operations homes), Why Here / Decision Registry / OCC / product-triangle entries in this file
+- Future: see Why Here entry (relatedProjects, Ops board wisdom, For whom, and related items) - do not duplicate that list here
+
 ## 2026-07-31 - Why Here? routing explanations
 
 - Decision: Ship **Why Here?** as ledger-backed routing explanations attached when a primary stop is named or query-picked. Private helpers `Get-MetraWhyHere` / `Write-MetraWhyHere` / `Write-MetraWhyNot`; `Search-MetraDecisionRegistry -Project` scopes hits. Surfaces: `.\metra.ps1 routing -Name` (Why Here per present named project), `.\metra.ps1 routing -Query` (primary + Why Here; close runner-up + Why not), `ctx -Query` (markdown `## Why here?` / optional `## Why not?`; JSON `whyHereFor`, `relatedDecisions`, optional `whyNotFor` / `runnerUpDecisions`). Full `routing` table without Name/Query stays an index with no Why Here dump. Confidence shown only when not `high`. Ambiguity when score gap ≤ 1 or runner-up ≥ 50% of primary (primary ≥ 2). Persona may cite ledger Why Here / Why not; never invent operational why. No always-on decisions rule.
