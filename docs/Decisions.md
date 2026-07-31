@@ -18,6 +18,12 @@ Entry shape:
 
 ---
 
+## 2026-07-31 - Product triangle: routing + context + communication
+
+- Decision: Market and document Metra as **routing + context + communication discipline** - one operating model, not "CLI plus a persona feature." Prefer the terms **communication model** / **communication discipline** over repeating "communications surface/layer/voice/adapter." Surface the **professional sink** early (chat may have voice; tickets, commits, ADRs, and handoffs do not). Include a clear "Why not just use a coding agent?" differentiation. Refine earlier peer-surface wording: ops still means PowerShell routing/context tooling; the persona is the communication half of the same workflow, framed as capability rather than character.
+- Why: External README review - the differentiator is treating communication as part of the operating model. Risk is visitors reading Metra as "just another PowerShell toolkit," not "too much persona."
+- See: `README.md`, earlier Decision "Ops and communications are peer product surfaces"
+
 ## 2026-07-30 - Operator-private cloud continuity
 
 - Decision: Cross-device Cursor Cloud Agent continuity is **operator-private**, not a shared Metra product surface. Do not teach it in README, Demo, or Integrations. Optional code may stay in-tree but must stay inert without a personal API key; how-to belongs in gitignored `docs/*.local.md`. Shared product still owns the brainstorm-vs-implement persona rule and local `chats`.
