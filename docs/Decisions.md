@@ -248,6 +248,12 @@ Entry shape:
 - Why: A clean portfolio left the home blank, which read as a broken board. Standing routes restore direct access to working homes without reviving pinned hubs as a routing signal.
 - See: `integrations/cursor/metra-ops-board.canvas.tsx.template`, `docs/Brand.md`
 
+## 2026-07-31 - MCP tool bindings are documented pointers, never tracked credentials
+
+- Decision: External agent tool connections (first case: the Canva remote MCP server) are per-machine harness bindings. Metra tracks a URL-only `integrations/cursor/mcp.example.json` plus a table in Integrations; live `.cursor/mcp.json` is gitignored, and entries carrying `headers` / tokens / API keys stay local. Bindings are optional - when a server is absent, say so rather than inventing a workflow. Profile-pack syncing of `mcp.json` is deferred until a secrets guard exists.
+- Why: The connection that matters is a pointer plus per-user OAuth, so sharing it costs nothing and grants nothing. Shipping live config would either leak keys or hand forks an authorization prompt for a subscription they do not have.
+- See: `docs/Integrations.md`, `integrations/cursor/mcp.example.json`, `SECURITY.md`
+
 ## 2026-07-31 - workspace.exclude keeps folders routable but unmounted
 
 - Decision: `metra.config.json` `workspace.exclude` drops named projects from the generated `Metra.code-workspace` while leaving them in the routing registry. Document the key in Customizing-Metra; ship an empty array in `metra.config.example.json`.

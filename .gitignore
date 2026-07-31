@@ -39,6 +39,10 @@ docs/operator-contract.json
 docs/decision-registry.json
 !docs/decision-registry.example.json
 
+# MCP tool bindings (per-machine; keep the URL-only example tracked)
+.cursor/mcp.json
+!integrations/cursor/mcp.example.json
+
 # Generated canvas snapshot / context packs (machine paths)
 docs/canvas-snapshot.json
 docs/context-pack.md
