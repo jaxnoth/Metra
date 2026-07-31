@@ -40,7 +40,7 @@ Same jobs in **Cursor Light** and **Cursor Dark**. Host tokens vary; the mapping
 | Amber (attention) | Dirty, missing, drift > 0, behind remote | Same | Stat / row `tone="warning"` |
 | Healthy / zero issues | Calm success (often teal-green) | Same | Stat `tone="success"` |
 | Informational git counts | Quiet blue/info | Same | Stat `tone="info"` |
-| Route motif | 3 nodes + line in accent | Same, readable on charcoal | `MetraRouteMark` SVG |
+| Route motif | Teal line + terminal nodes; open labeled interchange | Same, with brighter teal on charcoal | [`assets/metra-mark.svg`](assets/metra-mark.svg) |
 
 **Daily default:** Cursor Dark is fine for long sessions.  
 **Demo / approval faceplate:** Cursor Light shows Mist + Signal Teal intent more clearly. Both must pass the checklist below.
@@ -72,6 +72,39 @@ Dark uses a slightly brighter teal for focus/links so the motif stays visible on
 
 A short **route line with nodes** - wayfinding, not a train logo and not Chicago transit Metra blue/orange. No mascot, no emoji chrome, no gradients, no box shadows.
 
+### Public mark (GitHub / docs)
+
+Canonical file: [`assets/metra-mark.svg`](assets/metra-mark.svg).
+
+Composition (locked):
+
+1. Horizontal teal route line
+2. Two filled terminal nodes (same Signal Teal family as the line)
+3. Open center node (interchange / classification point)
+4. Short stem from the open node up into a Mist pill labeled **Metra**
+
+Do **not** recolor the terminal nodes blue, amber, or other hues for “direction.” Geometry already carries origin → interchange → destination. Extra endpoint colors invent categories the product does not have and dilute brand coherence.
+
+Dark mode uses a brighter teal on charcoal; light mode uses Signal Teal + Mist. Prefer `prefers-color-scheme` in the SVG for GitHub README.
+
+### Brand story (short)
+
+The Metra mark represents a routed path between endpoints. Metra does not replace humans or coding agents; it connects them through routing, context, decisions, audiences (`serves`), and communication. The open center node is where work is classified before moving forward.
+
+The mark should read as **connection and flow** before anyone reads that sentence. Do not invent a longer mythology.
+
+### Visual vocabulary
+
+Prefer:
+
+- paths, nodes, routes, connections, hubs, interchanges
+
+Avoid as brand chrome:
+
+- brains, robots, assistants, chat bubbles, lightning bolts, mascots, emoji
+
+Those cliches say “AI product.” Metra’s distinctive claim is portfolio operations and wayfinding.
+
 ## Typography
 
 Use the host font. Monospace only for commands and paths (`.\metra.ps1`, folder names).
@@ -81,10 +114,12 @@ Use the host font. Monospace only for commands and paths (`.\metra.ps1`, folder 
 Faceplate (top strip):
 
 1. Left accent bar (`accent.primary`, ~3px)
-2. Route mark (accent)
-3. **Metra Ops** title + small **Metra** pill
+2. Integrated route mark (teal path, open center, **Metra** label on stem - same composition as [`assets/metra-mark.svg`](assets/metra-mark.svg); host tokens, no hardcoded hex)
+3. **Metra Ops** title
 4. One-line subtitle + snapshot timestamp
 5. Soft fill behind the strip (`fill.tertiary`) - Mist intent on light, elevated soft fill on dark
+
+Do not add a second standalone **Metra** pill beside the title - the label lives on the mark.
 
 Below that (unchanged jobs):
 
