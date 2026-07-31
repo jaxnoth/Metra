@@ -150,6 +150,23 @@ function Export-MetraContextPack {
         missingOptional = @($missingOptional)
     }
 
+    if ($tokens.Count -gt 0) {
+        $related = @(Search-MetraDecisionRegistry -Query $Query -Limit 3 -MetraRoot $metraRoot)
+        $pack['relatedDecisions'] = @(
+            $related | ForEach-Object {
+                [ordered]@{
+                    id         = $_.Id
+                    title      = $_.Title
+                    decision   = $_.Decision
+                    why        = $_.Why
+                    project    = $_.Project
+                    confidence = $_.Confidence
+                    source     = $_.Source
+                }
+            }
+        )
+    }
+
     $defaultMd = Join-Path $metraRoot 'docs\context-pack.md'
     $defaultJson = Join-Path $metraRoot 'docs\context-pack.json'
     $outPath = $Path
@@ -201,6 +218,16 @@ function Export-MetraContextPack {
         [void]$md.AppendLine('')
         foreach ($m in $missingOptional) {
             [void]$md.AppendLine(('- **{0}**: {1}' -f $m.name, $m.advice))
+        }
+    }
+    if ($pack.Contains('relatedDecisions') -and @($pack.relatedDecisions).Count -gt 0) {
+        [void]$md.AppendLine('')
+        [void]$md.AppendLine('## Related decisions (up to 3)')
+        [void]$md.AppendLine('')
+        foreach ($d in @($pack.relatedDecisions)) {
+            [void]$md.AppendLine(('- **{0}** [{1}] conf={2}' -f $d.title, $d.project, $d.confidence))
+            [void]$md.AppendLine(('  - decision: {0}' -f $d.decision))
+            [void]$md.AppendLine(('  - why: {0}' -f $d.why))
         }
     }
     $mdText = $md.ToString()

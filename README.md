@@ -215,7 +215,7 @@ Writes a map of roots and present projects - enough to pick a stop without dumpi
 | `projects.json` (example stubs) | `projects.local.json` |
 | `metra-persona.mdc` (full base) | `.cursor/rules/metra-persona.local.mdc` |
 | `profiles/addons/` (opt-in Persona Add-ons) | `.cursor/rules/metra-humor.local.mdc`, `metra-teaching-gentle.local.mdc` (after import) |
-| `*.example.json` / `*.local.example.mdc` | `docs/canvas-snapshot.json`, `docs/context-pack.*` |
+| `*.example.json` / `*.local.example.mdc` | `docs/canvas-snapshot.json`, `docs/context-pack.*`, `docs/decision-registry.json`, `docs/operator-contract.json` |
 | `profiles/sample/` (ready-to-import pack) | generated `Metra.code-workspace` (after `.\metra.ps1 workspace`) |
 | `Metra.code-workspace.example` (Metra-only starter) | |
 | `.cursor/hooks/` (sessionStart Ops refresh) | |
@@ -264,6 +264,7 @@ Personal-root `registryFile` is **not** auto-included - copy it with that root. 
 | `export-profile` | Pack local config / local registry / Metra overlay (+ Persona Add-ons / learned contract if present) |
 | `import-profile` | Restore a pack (`-Preview` or `-Force`) - ops bindings and persona overlay |
 | `profile` | Operator Communication Contract: `show` / `note` / `promote` / `forget` / `render` / `gc` |
+| `decisions` | Decision Registry (Operational Why Memory): `show` / `note` / `promote` / `forget` / `search` / `get` / `supersede` / `gc` / `harvest` / `seed` |
 | `verify` | Routing-Scenarios fixture smoke (`PASS`/`WARN`/`FAIL`; exit 1 on FAIL) |
 
 Focused Pester (optional; Pester 5+, PowerShell 7):

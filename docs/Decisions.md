@@ -18,6 +18,18 @@ Entry shape:
 
 ---
 
+## 2026-07-31 - Decision Registry (Operational Why Memory)
+
+- Decision: Ship an operator-private **Decision Registry** for operational why-we-chose memory, separate from `docs/Decisions.md` (product policy) and the Operator Communication Contract (collaboration rhythm). Ledger is gitignored `docs/decision-registry.json` (`candidates` + `confirmed`). Flow: note/harvest -> promote; never auto-promote. Required on promote: non-empty `why`, `confidence` (`high`|`medium`|`low`), and at least one `evidence` item. Also store `source` and `origin` (`operator`|`backfill`|`harvest`). Cap 50 active confirmed. Retrieved only via `.\metra.ps1 decisions search|get` and bounded `ctx -Query` top 3 `relatedDecisions` - no always-on `.mdc`. CLI also includes `harvest` (candidates only from project `AGENTS.md`) and `seed` (curated local backfill). Travels with `export-profile` / `import-profile`. Boundary test: would every Metra clone benefit? If yes, use Decisions.md instead.
+- Why: Institutional operational scars had no home that was neither routing, personality, nor product docs. Explicit promote plus retrieval-only load keeps trust and avoids memory soup in every prompt.
+- See: `.\metra.ps1 decisions`, `docs/decision-registry.example.json`, `scripts/private/DecisionRegistry.ps1`
+- Future / not in this release:
+  - Ops board related-decisions strip (max 3 links after routing/ctx; never a decisions tab or ledger dump)
+  - 1c portfolio-knowledge storytelling (board/README leverage without another dashboard)
+  - Cap headroom toward 100 if search + ctx stay useful
+  - Aging / revisit habit beyond write-time confidence
+  - Deprioritized: more persona add-ons; more Ops board metrics
+
 ## 2026-07-31 - One generated workspace file
 
 - Decision: `workspace.outputs` ships a single entry: `Metra.code-workspace` inside the Metra checkout (`metraFolderPath: "."`, `projectPathPrefix: "../"`). Do not generate a second copy beside the projects root. The generated file is gitignored; the tracked starter is `Metra.code-workspace.example`. Fresh clones run `.\metra.ps1 setup`, which writes the real workspace locally.
