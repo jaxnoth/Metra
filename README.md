@@ -14,12 +14,13 @@ MIT licensed. Public repo: [jaxnoth/Metra](https://github.com/jaxnoth/Metra).
 
 ## 90-second understanding
 
-If you only read four things:
+If you only read five things:
 
 1. **Routing + context + communication** - the product triangle. PowerShell tooling manages the portfolio; the Metra persona manages the conversation around that work.
 2. **Routing picks one project before work starts** - personality never chooses the folder; the registry does.
 3. **`ctx` creates agent handoff packs** - bounded maps you can open, paste, or `@` in any coding agent.
-4. **Professional sink** - chat may sound like Metra; tickets, commits, ADRs, and coworker handoffs do not.
+4. **Decisions and audiences stay inspectable** - Decision Registry / Why Here for operational why; registry `serves` for For whom? (roles/teams, not people memory).
+5. **Professional sink** - chat may sound like Metra; tickets, commits, ADRs, and coworker handoffs do not.
 
 ## Why Metra?
 
@@ -52,9 +53,10 @@ Every portfolio fact should have a home. The product triangle is the pitch; this
 | Why? (operational) | Decision Registry + Why Here |
 | Why? (product policy) | [docs/Decisions.md](docs/Decisions.md) |
 | How? | OCC / `profile` + communication model |
+| For whom? | Project registry `serves` / `routing` / `ctx` |
 | Health? | Ops board / `audit` / `verify` |
 
-Prefer retrieval over dumping: route, then load only relevant context and decisions. Principles: [docs/Decisions.md](docs/Decisions.md) (Portfolio Operations Principles).
+Prefer retrieval over dumping: route, then load only relevant context and decisions. Principles: [docs/Decisions.md](docs/Decisions.md) (Portfolio Operations Principles). `serves` is audience of the work (roles/teams), never people memory.
 
 PowerShell tooling is how you operate the portfolio. The Metra persona is how you stay aligned in agent chat. Neither is a bolt-on. Longer operating philosophy: [docs/Customizing-Metra.md](docs/Customizing-Metra.md) (Origin).
 
@@ -67,6 +69,8 @@ Metra helps decide:
 - which project owns the request
 - what context should be loaded
 - which evidence matters
+- why this stop (ledger Why Here when present)
+- who the work serves (registry `serves` audiences - not people memory)
 - how discussion and artifacts stay aligned
 
 Metra is not another coding agent. It is a routing, context, and communication layer that works **across** them.
@@ -88,7 +92,7 @@ Metra is not another coding agent. It is a routing, context, and communication l
 
 | Layer | What you get |
 |-------|----------------|
-| **Routing + context (ops)** | `metra.ps1`, importable `scripts/Metra.psd1` (17 public commands + Get-Help), `projects.json` / local registries, `ctx` packs, profile import/export |
+| **Routing + context (ops)** | `metra.ps1`, importable `scripts/Metra.psd1` (17 public commands + Get-Help), `projects.json` / local registries (`serves` / triggers), Decision Registry (`decisions`), `ctx` packs, profile import/export |
 | **Communication model** | Base Metra persona (`metra-persona.mdc` / this `AGENTS.md`), Teaching Mode, professional sink, per-project `AGENTS.md` |
 | **Cursor adapter** (nicest full load) | `.cursor/rules` auto-load, Ask/Plan Teaching Mode, `chats` transcript search, optional multi-root `.code-workspace`, `sessionStart` Ops refresh (`.cursor/hooks`) |
 
@@ -100,7 +104,7 @@ CLI-only operators get full routing and context value without Cursor. Agents in 
 |-------|------|
 | Product / GitHub repo | **Metra** |
 | Recommended local folder | **`_metra`** (also accepted: `_meta`, `Metra`, `metra`) |
-| CLI (routing + context) | `metra.ps1` |
+| CLI (routing + context) | `metra.ps1` (includes `routing`, `ctx`, `profile`, `decisions`) |
 | Communication model | **Metra** persona - base + overlay + optional add-ons + learned contract (`profile`) |
 | Workspace file | `Metra.code-workspace` (legacy `Meta.code-workspace` still honored if configured) |
 
@@ -173,7 +177,7 @@ Tab completion covers command and parameter names, project and root values, and 
 Common `metra.ps1` equivalents:
 
 - `setup` -> `Initialize-Metra`
-- `list` / `roots` / `routing` -> `Get-MetraProject` / `Get-MetraProjectRoot` / `Get-MetraRouting`
+- `list` / `roots` / `routing` -> `Get-MetraProject` / `Get-MetraProjectRoot` / `Get-MetraRouting` (For whom? / Why Here print on `.\metra.ps1 routing -Name` / `-Query`, not on the table cmdlet alone)
 - `status` / `pull` / `fetch` -> `Get-MetraProjectStatus` / `Update-MetraProject`
 - `run` / `apply` -> `Invoke-MetraProjectCommand` / `Copy-MetraProjectFile`
 - `audit` / `snapshot` / `chats` -> `Test-MetraProjectContext` / `Export-MetraSnapshot` / `Get-MetraChat`
@@ -265,7 +269,7 @@ Personal-root `registryFile` is **not** auto-included - copy it with that root. 
 | `setup` | One-shot onboarding: seed config if missing, optional `-Profile`, roots, workspace, routing, ctx |
 | `list` | Show project folders (optional `-GitOnly`, `-Filter`, `-Root`) |
 | `roots` | Show configured project roots and whether each exists |
-| `routing` | Show merged registry entries vs disk (`-SharedOnly`, `-MissingOnly`); `-Name` / `-Query` attach ledger-backed Why Here (and Why not when query scores are close) |
+| `routing` | Show merged registry entries vs disk (`-SharedOnly`, `-MissingOnly`); `-Name` / `-Query` attach For whom? (`serves`) and ledger-backed Why Here (and Why not when query scores are close) |
 | `ctx` | Bounded agent context pack (markdown/json; optional `-Query`) |
 | `status` | `git status -sb` in each git project |
 | `pull` / `fetch` | Fast-forward pull or fetch across git projects |
@@ -282,13 +286,13 @@ Personal-root `registryFile` is **not** auto-included - copy it with that root. 
 | `decisions` | Decision Registry (Operational Why Memory): `show` / `note` / `promote` / `forget` / `search` / `get` / `supersede` / `gc` / `harvest` / `seed` |
 | `verify` | Routing-Scenarios fixture smoke (`PASS`/`WARN`/`FAIL`; exit 1 on FAIL) |
 
-Why Here examples (Decision Registry must have confirmed entries for that project):
+Why Here / For whom examples (`serves` on registry; Decision Registry for Why Here):
 
 ```powershell
-.\metra.ps1 routing                          # full table; no Why Here dump
-.\metra.ps1 routing -Name TicketTracker      # named stop + Why here?
-.\metra.ps1 routing -Query "gateway msal"    # primary + Why here?; Why not? when scores are close
-.\metra.ps1 ctx -Query "ticket disk"         # pack includes ## Why here?
+.\metra.ps1 routing                          # full table; no For whom / Why Here dump
+.\metra.ps1 routing -Name TicketTracker      # named stop + For whom? + Why here?
+.\metra.ps1 routing -Query "gateway msal"    # primary + For whom?; Why here?; Why not? when scores are close
+.\metra.ps1 ctx -Query "ticket disk"         # pack includes serves / ## For whom? / ## Why here?
 ```
 
 Focused Pester (optional; Pester 5+, PowerShell 7):

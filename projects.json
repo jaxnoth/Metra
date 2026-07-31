@@ -1,6 +1,6 @@
 {
   "version": 2,
-  "updated": "2026-07-28",
+  "updated": "2026-07-31",
   "note": "Shared routing registry. Only entries meant for coworkers live here. Machine-private entries belong in projects.local.json; entries that travel with a project root belong in that root's registryFile (see metra.config.json).",
   "routing": {
     "ticketFirst": true,
@@ -36,6 +36,10 @@
         "ticket-history",
         "chat-search",
         "isupport-writeback"
+      ],
+      "serves": [
+        "Helpdesk",
+        "Incident Response"
       ],
       "whenPresent": "Identify the ticket with .\\TicketTracker.ps1 search or brief <id>. Persist findings with post / recommend so they reach iSupport; note is local only.",
       "whenMissing": "No local ticket tooling on this machine. Ask the user to paste the ticket text and id, record outcomes wherever they track work, and do not invent ticket numbers or claim anything was written back to iSupport.",
@@ -80,6 +84,10 @@
         "orion-catalog",
         "active-alerts",
         "alert-as-code"
+      ],
+      "serves": [
+        "Monitoring operators",
+        "Incident Response"
       ],
       "whenPresent": "Discover with .\\module\\public\\Get-OrionCatalog.ps1 -Type <type> -Name '<pattern>'. Edit under src/ only; never open catalog/index.json or index.yaml wholesale.",
       "whenMissing": "No Orion platform-as-code checkout here. Answer from the SolarWinds web console workflow instead, and do not reference src/ paths, catalog files, or module commands as if they exist locally.",

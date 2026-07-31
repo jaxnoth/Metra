@@ -11,6 +11,8 @@ Keep agent response time and token use low by routing to one project, then loadi
 | `projects.json` | Shared / public routing registry (example stubs OK) |
 | `projects.local.json` | Machine-private work entries (gitignored) |
 | Root `registryFile` | Optional per-root overlay (e.g. personal iCloud) |
+
+Registry project rows use the same optional arrays for consistency: `triggers`, `capabilities`, and `serves` (all `string[]`). `serves` is **For whom?** - audiences of the work (roles, teams, consumer systems), never people/requester memory. Omit or leave empty when unknown; `routing -Name` / `-Query` and `ctx` print a For whom? block only when non-empty.
 | `profiles/sample/` | Anonymized operator pack for `import-profile` |
 | `AGENTS.md` | Short human/agent fallback for the Metra checkout |
 | `.cursor/rules/project-routing.mdc` | Always-on routing rule |
