@@ -88,6 +88,8 @@ Refresh data after audits or layout changes:
 .\metra.ps1 snapshot -Quick   # hook-friendly; registry + light health only
 ```
 
+The live `.canvas.tsx` is generated. `snapshot` rewrites the data between the `<metra-ops-snapshot>` markers and reinstalls the surrounding component code whenever it differs from `integrations/cursor/metra-ops-board.canvas.tsx.template`. Edit the template, not the live canvas - local edits outside the markers are replaced on the next snapshot. Close and reopen the canvas panel to pick up a refreshed board.
+
 Agent chat `sessionStart` can run `-Quick` when the snapshot is stale - see [Integrations.md](Integrations.md). Do not auto-run `workspace` from that hook.
 
 Brand kit for the faceplate: [Brand.md](Brand.md).

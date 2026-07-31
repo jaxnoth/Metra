@@ -75,10 +75,46 @@ function Get-MetraOpsCanvasPath {
     return Join-Path $env:USERPROFILE (Join-Path '.cursor\projects' (Join-Path $slug 'canvases\metra-ops-board.canvas.tsx'))
 }
 
+function Get-MetraCanvasCodeShape {
+    <#
+    .SYNOPSIS
+        Returns canvas text with the embedded snapshot block removed, for template drift comparison.
+    #>
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory)][AllowEmptyString()][string]$Text
+    )
+
+    foreach ($pair in (Get-MetraCanvasMarkerPairs)) {
+        $bi = $Text.IndexOf($pair.Begin)
+        $ei = $Text.IndexOf($pair.End)
+        if ($bi -ge 0 -and $ei -gt $bi) {
+            $Text = $Text.Substring(0, $bi) + $Text.Substring($ei + $pair.End.Length)
+            break
+        }
+    }
+
+    return (($Text -replace "`r`n", "`n").Trim())
+}
+
+function Get-MetraCanvasMarkerPairs {
+    <#
+    .SYNOPSIS
+        Snapshot embed markers for the live canvas (legacy meta- prefix still accepted).
+    #>
+    [CmdletBinding()]
+    param()
+
+    return @(
+        @{ Begin = '// <metra-ops-snapshot>'; End = '// </metra-ops-snapshot>' },
+        @{ Begin = '// <meta-ops-snapshot>'; End = '// </meta-ops-snapshot>' }
+    )
+}
+
 function Install-MetraOpsCanvas {
     <#
     .SYNOPSIS
-        Ensures the live Metra Ops canvas exists, installing from the tracked template when needed.
+        Ensures the live Metra Ops canvas exists and matches the tracked template component code.
     #>
     [CmdletBinding()]
     param(
@@ -100,6 +136,15 @@ function Install-MetraOpsCanvas {
         }
         Copy-Item -LiteralPath $templatePath -Destination $CanvasPath -Force
         Write-Host ("Installed Metra Ops canvas from template: {0}" -f $CanvasPath) -ForegroundColor Green
+    }
+    elseif (Test-Path -LiteralPath $templatePath) {
+        # The embedded snapshot is rewritten right after this call, so only component code drift matters.
+        $liveShape = Get-MetraCanvasCodeShape -Text ([System.IO.File]::ReadAllText($CanvasPath))
+        $templateShape = Get-MetraCanvasCodeShape -Text ([System.IO.File]::ReadAllText($templatePath))
+        if ($liveShape -ne $templateShape) {
+            Copy-Item -LiteralPath $templatePath -Destination $CanvasPath -Force
+            Write-Host ("Refreshed Metra Ops canvas from template: {0}" -f $CanvasPath) -ForegroundColor Green
+        }
     }
 
     if ((Test-Path -LiteralPath $legacyPath) -and ($legacyPath -ne $CanvasPath)) {
@@ -476,10 +521,7 @@ function Export-MetraCanvasSnapshot {
     $canvasReady = Install-MetraOpsCanvas -CanvasPath $CanvasPath
     if ($canvasReady) {
         $canvas = [System.IO.File]::ReadAllText($CanvasPath)
-        $markerPairs = @(
-            @{ Begin = '// <metra-ops-snapshot>'; End = '// </metra-ops-snapshot>' },
-            @{ Begin = '// <meta-ops-snapshot>'; End = '// </meta-ops-snapshot>' }
-        )
+        $markerPairs = Get-MetraCanvasMarkerPairs
         $updatedEmbed = $false
         foreach ($pair in $markerPairs) {
             $begin = [string]$pair.Begin
