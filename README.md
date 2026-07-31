@@ -1,8 +1,10 @@
 # Metra
 
-PowerShell portfolio ops for multi-root project folders - built so humans *and* coding agents land in the right repo first.
+PowerShell portfolio operations for multi-root workspaces.
 
-Discover siblings, run commands across them, route work to **one project at a time**, and hand bounded context packs to Cursor, Claude Code, Codex, or whatever chat you use. The **Metra** ops-partner persona is the communications half of the same product: clear routing voice, Teaching Mode for exploring / planning / setup, and a professional sink for tickets and commits.
+Metra combines **routing**, **context management**, and **communication discipline** into a single operating model. It helps humans and coding agents land in the right project first, gather the right context second, and communicate consistently afterward.
+
+Discover sibling projects, run commands across them, route work to **one project at a time**, and generate bounded context packs for Cursor, Claude Code, Codex, or other coding agents. Metra includes an ops-partner **communication model** (the Metra persona) that reinforces route-first behavior, Teaching Mode, and professional artifact boundaries - chat may have voice; tickets, commits, ADRs, and handoffs do not.
 
 Not a monorepo build system. Not another "meta" multi-repo clone framework.
 
@@ -12,26 +14,51 @@ MIT licensed. Public repo: [jaxnoth/Metra](https://github.com/jaxnoth/Metra).
 
 ## 90-second understanding
 
-If you only read three things:
+If you only read four things:
 
-1. **Metra is ops + communications** - PowerShell CLI/module for portfolio work, plus a chat persona that keeps agent conversations route-first and human-readable.
+1. **Routing + context + communication** - the product triangle. PowerShell tooling manages the portfolio; the Metra persona manages the conversation around that work.
 2. **Routing picks one project before work starts** - personality never chooses the folder; the registry does.
 3. **`ctx` creates agent handoff packs** - bounded maps you can open, paste, or `@` in any coding agent.
+4. **Professional sink** - chat may sound like Metra; tickets, commits, ADRs, and coworker handoffs do not.
 
 ## Why Metra?
 
-Most portfolio mistakes happen before coding starts: the wrong repository, the wrong root, the wrong ticket, the wrong assumptions. Metra routes first, gathers just enough context, then works - whether that next step is you at a prompt or an agent in Cursor / Claude Code / Codex.
+Most portfolio mistakes happen before coding starts:
 
-Two surfaces, one product:
+- the wrong repository
+- the wrong root
+- the wrong ticket
+- the wrong assumption
 
-- **Ops** - `metra.ps1`, the importable module, registries, `ctx` packs
-- **Communications** - Metra persona, Teaching Mode, and the professional sink (chat may have voice; tickets/commits stay flat)
+Most AI workflow problems happen after routing fails:
 
-Neither is a bolt-on. The AI integration is not "Cursor theater with scripts underneath," and the CLI is not "a shell tool that happens to mention agents." Longer operating philosophy: [docs/Customizing-Metra.md](docs/Customizing-Metra.md) (Origin).
+- agents wander across projects
+- conversations lose context
+- ticket history gets ignored
+- artifacts drift from the discussion
+
+Metra was designed to address both.
+
+**Routing** defines where work happens. **Context** defines what evidence is loaded. **Communication** defines how work is discussed once it gets there - including the professional sink that keeps durable writes flat.
+
+PowerShell tooling is how you operate the portfolio. The Metra persona is how you stay aligned in agent chat. Neither is a bolt-on. Longer operating philosophy: [docs/Customizing-Metra.md](docs/Customizing-Metra.md) (Origin).
+
+## Why not just use a coding agent?
+
+Coding agents can write code.
+
+Metra helps decide:
+
+- which project owns the request
+- what context should be loaded
+- which evidence matters
+- how discussion and artifacts stay aligned
+
+Metra is not another coding agent. It is a routing, context, and communication layer that works **across** them.
 
 ## What Metra is / is not
 
-**Is:** a PowerShell portfolio orchestration layer (CLI + module + routing registry + `ctx`) paired with a Metra chat persona for agent communications (Teaching Mode, route-first voice, professional artifact sink).
+**Is:** a portfolio operations system - PowerShell CLI/module + routing registry + `ctx` packs + a Metra communication model (persona, Teaching Mode, professional sink).
 
 **Not:**
 
@@ -40,16 +67,17 @@ Neither is a bolt-on. The AI integration is not "Cursor theater with scripts und
 - a ticketing platform (optional TicketTracker stub only)
 - an MCP framework (CLI-first; `ctx` packs are files you can open, paste, or `@`)
 - a Cursor-only plugin (CLI and registries work without Cursor; persona auto-load is the Cursor adapter)
+- another coding agent (it routes and disciplines work *for* agents)
 
-## Ops, communications, and adapters
+## Operating model and adapters
 
 | Layer | What you get |
 |-------|----------------|
-| **Ops** (any shell) | `metra.ps1`, importable `scripts/Metra.psd1` (17 public commands + Get-Help), `projects.json` / local registries, `ctx` packs, profile import/export |
-| **Communications** (any agent that reads project guidance) | Base Metra persona (`metra-persona.mdc` / this `AGENTS.md`), Teaching Mode, professional sink for tickets and commits, per-project `AGENTS.md` |
+| **Routing + context (ops)** | `metra.ps1`, importable `scripts/Metra.psd1` (17 public commands + Get-Help), `projects.json` / local registries, `ctx` packs, profile import/export |
+| **Communication model** | Base Metra persona (`metra-persona.mdc` / this `AGENTS.md`), Teaching Mode, professional sink, per-project `AGENTS.md` |
 | **Cursor adapter** (nicest full load) | `.cursor/rules` auto-load, Ask/Plan Teaching Mode, `chats` transcript search, optional multi-root `.code-workspace`, `sessionStart` Ops refresh (`.cursor/hooks`) |
 
-CLI-only operators get full ops value without Cursor. Agents in other harnesses still get communications guidance from `AGENTS.md` and `ctx` when those files are in scope.
+CLI-only operators get full routing and context value without Cursor. Agents in other harnesses still pick up the communication model from `AGENTS.md` and `ctx` when those files are in scope.
 
 ## Naming
 
@@ -57,8 +85,8 @@ CLI-only operators get full ops value without Cursor. Agents in other harnesses 
 |-------|------|
 | Product / GitHub repo | **Metra** |
 | Recommended local folder | **`_metra`** (also accepted: `_meta`, `Metra`, `metra`) |
-| CLI (ops) | `metra.ps1` |
-| Chat persona (communications) | **Metra** - base rule + optional local overlay / Persona Add-ons |
+| CLI (routing + context) | `metra.ps1` |
+| Communication model | **Metra** persona - base rule + optional local overlay / Persona Add-ons |
 | Workspace file | `Metra.code-workspace` (legacy `Meta.code-workspace` still honored if configured) |
 
 Operator-facing brand kit (palette, motif, professional sink): [docs/Brand.md](docs/Brand.md). Coworker walkthrough (concepts + live, including a non-AI-friendly path): [docs/Demo-5min.md](docs/Demo-5min.md).
@@ -79,7 +107,7 @@ Set-ExecutionPolicy -Scope CurrentUser -ExecutionPolicy RemoteSigned
 # .\metra.ps1 setup
 ```
 
-After `setup`, you have a working CLI *and* an agent-ready map: open `docs/context-pack.md`, paste it into a chat, or `@` it in Cursor. Routing stubs in `projects.json` teach agents (and humans) which folder owns which ask. In Cursor (or any harness that loads `AGENTS.md`), Metra's communications voice kicks in - route first, then talk like a desk partner.
+After `setup`, you have a working CLI *and* an agent-ready map: open `docs/context-pack.md`, paste it into a chat, or `@` it in Cursor. Routing stubs in `projects.json` teach agents (and humans) which folder owns which ask. In Cursor (or any harness that loads `AGENTS.md`), the Metra communication model kicks in - route first, then talk like a desk partner.
 
 ### What setup did
 
@@ -88,7 +116,7 @@ After `setup`, you have a working CLI *and* an agent-ready map: open `docs/conte
 | `roots` | Disk locations Metra scans for sibling project folders |
 | `workspace` | Rebuilds `Metra.code-workspace` folder list from those roots (recent activity + `alwaysInclude`) |
 | `routing` | Named registry projects + triggers vs `Present` on disk (`whenMissing` advice if absent) |
-| `ctx` | Writes `docs/context-pack.md` - hand to any agent (feeds the communications half) |
+| `ctx` | Writes `docs/context-pack.md` - bounded context for any agent |
 
 Editing `roots` alone does **not** change Cursor folders until `setup` (or `.\metra.ps1 workspace`) runs again. Optional personal/cloud root snippets (iCloud, OneDrive, ...): [docs/Customizing-Metra.md](docs/Customizing-Metra.md).
 
@@ -138,15 +166,15 @@ Common `metra.ps1` equivalents:
 
 `Get-Command -Module Metra` also lists one-release compatibility helpers and former `*-Meta*` aliases. New scripts should use only the 17 commands above. `metra.ps1` remains fully supported.
 
-### Communications in Cursor
+### Communication model in Cursor
 
 The repo ships a starter `Metra.code-workspace` (Metra folder only). After `setup`, reopen or reload that file so sibling projects appear. Workspace multi-root helps VS Code/Cursor; it is **not** required for CLI, routing, or `ctx`.
 
-In Cursor, Metra's persona auto-loads from `.cursor/rules` - that is the communications surface (route first, stay in one project, Teaching Mode when exploring). Set your display name in `.cursor\rules\metra-persona.local.mdc` after importing a profile. Prefer a different coding agent? Same `routing` / `ctx` / `AGENTS.md` story still applies; follow `AGENTS.md` for Metra voice when your harness loads project guidance.
+In Cursor, Metra's persona auto-loads from `.cursor/rules` - route first, stay in one project, Teaching Mode when exploring, professional sink for anything that leaves chat. Set your display name in `.cursor\rules\metra-persona.local.mdc` after importing a profile. Prefer a different coding agent? Same `routing` / `ctx` / `AGENTS.md` story still applies; follow `AGENTS.md` for Metra voice when your harness loads project guidance.
 
-## Communications (Metra persona)
+## Communication model (Metra persona)
 
-Ops gets you to the right folder. Communications is how Metra *talks* once you are there.
+Routing gets you to the right folder. Context loads what matters. The communication model is how Metra *talks* once you are there - a workflow capability, not a character feature.
 
 | Piece | Role |
 |-------|------|
@@ -161,7 +189,7 @@ When exploring, planning, or onboarding (Cursor Ask/Plan are common cases), Metr
 
 ## Context pack (universal handoff)
 
-Ops output that feeds communications everywhere - not Cursor-only:
+Bounded context for any agent - the middle of the triangle:
 
 ```powershell
 .\metra.ps1 ctx
@@ -169,7 +197,7 @@ Ops output that feeds communications everywhere - not Cursor-only:
 .\metra.ps1 ctx -Format json -Path $env:TEMP\metra-ctx.json
 ```
 
-Writes a bounded map of roots and present projects - enough for an agent to pick a stop without dumping the whole portfolio. Pair it with Metra's persona / `AGENTS.md` so the chat stays route-first after the pack is loaded. Use it from Cursor, Claude Code, Codex, or any chat that accepts a file or paste. See [docs/Integrations.md](docs/Integrations.md).
+Writes a map of roots and present projects - enough to pick a stop without dumping the whole portfolio. Pair it with the Metra persona / `AGENTS.md` so chat stays route-first after the pack is loaded. Use it from Cursor, Claude Code, Codex, or any chat that accepts a file or paste. See [docs/Integrations.md](docs/Integrations.md).
 
 ## What ships vs stays local
 
@@ -185,7 +213,7 @@ Writes a bounded map of roots and present projects - enough for an agent to pick
 | `.cursor/hooks/` (sessionStart Ops refresh) | |
 | MIT LICENSE, public docs (Brand, Decisions, Integrations, ...) | |
 
-Bindings (paths, alwaysInclude, operator name) are local facts. Canonical routing stubs and the Metra base persona are shared product - ops registry plus communications voice.
+Bindings (paths, alwaysInclude, operator name) are local facts. Canonical routing stubs and the Metra base persona are shared product - routing registry plus communication model.
 
 Move yourself between machines:
 
@@ -201,10 +229,10 @@ Personal-root `registryFile` is **not** auto-included - copy it with that root. 
 
 | Surface | Stability |
 |---------|-----------|
-| CLI commands (`setup`, `list`, `routing`, `ctx`, profile import/export, ...) | Intended stable (ops) |
+| CLI commands (`setup`, `list`, `routing`, `ctx`, profile import/export, ...) | Intended stable (routing + context) |
 | Public PowerShell commands (the 17 above) | Intended stable; prefer extending an existing command over adding exports |
 | Compatibility functions and former `*-Meta*` aliases | One release; do not use in new scripts |
-| Persona / communications (`.cursor/rules/metra-persona.mdc`, `AGENTS.md` voice) | Product surface; expected to evolve carefully |
+| Communication model (`.cursor/rules/metra-persona.mdc`, `AGENTS.md` voice) | Product surface; expected to evolve carefully |
 | Sample overlays / `profiles/sample/` / `profiles/addons/` | Examples / tone dials, not routing contracts |
 
 ## Commands
@@ -214,8 +242,8 @@ Personal-root `registryFile` is **not** auto-included - copy it with that root. 
 | `setup` | One-shot onboarding: seed config if missing, optional `-Profile`, roots, workspace, routing, ctx |
 | `list` | Show project folders (optional `-GitOnly`, `-Filter`, `-Root`) |
 | `roots` | Show configured project roots and whether each exists |
-| `routing` | Show merged registry entries vs disk (`-SharedOnly`, `-MissingOnly`) - what agents should match |
-| `ctx` | Bounded agent context pack (markdown/json; optional `-Query`) - ops handoff into chat |
+| `routing` | Show merged registry entries vs disk (`-SharedOnly`, `-MissingOnly`) - which project owns which ask |
+| `ctx` | Bounded agent context pack (markdown/json; optional `-Query`) |
 | `status` | `git status -sb` in each git project |
 | `pull` / `fetch` | Fast-forward pull or fetch across git projects |
 | `run <cmd>` | Run operator-provided shell text in each matching project (trusted input only; see [SECURITY.md](SECURITY.md)) |
@@ -224,9 +252,9 @@ Personal-root `registryFile` is **not** auto-included - copy it with that root. 
 | `workspace` | Rebuild multi-root workspace from recent activity (optional IDE helper) |
 | `audit` | Context/token audit + optional `-DriftOnly` vs registries |
 | `snapshot` | Write `docs/canvas-snapshot.json` and refresh / install Metra Ops canvas embed (`-Quick` skips deep audit/git) |
-| `chats` | Search local Cursor agent transcripts (bounded) - prior communications evidence |
+| `chats` | Search local Cursor agent transcripts (bounded) - prior session evidence |
 | `export-profile` | Pack local config / local registry / Metra overlay (+ Persona Add-ons if present) |
-| `import-profile` | Restore a pack (`-Preview` or `-Force`) - brings ops bindings and communications overlay |
+| `import-profile` | Restore a pack (`-Preview` or `-Force`) - ops bindings and persona overlay |
 | `verify` | Routing-Scenarios fixture smoke (`PASS`/`WARN`/`FAIL`; exit 1 on FAIL) |
 
 Focused Pester (optional; Pester 5+, PowerShell 7):
@@ -247,13 +275,13 @@ pwsh -NoProfile -File .\tests\Invoke-MetraTests.ps1
 
 ```
 _metra/
-  metra.ps1                   Metra CLI entrypoint (ops)
+  metra.ps1                   Metra CLI entrypoint (routing + context)
   metra.config.example.json   starter config (live metra.config.json is gitignored)
   projects.json              shared agent routing registry (example stubs OK)
   projects.local.example.json
-  profiles/sample/           anonymized operator pack (ops + communications overlay)
+  profiles/sample/           anonymized operator pack (ops bindings + persona overlay)
   profiles/addons/           optional Persona Add-ons (tone dials; e.g. humor-desk)
-  AGENTS.md                  communications entry + Metra examples (any agent harness)
+  AGENTS.md                  communication model entry + Metra examples (any agent harness)
   LICENSE                    MIT
   SECURITY.md
   scripts/Metra.psd1          PowerShell module manifest and explicit exports
@@ -264,7 +292,7 @@ _metra/
   integrations/cursor/       Metra Ops canvas template
   templates/basic/           default new-project template
   shared/                    files to push into other projects via apply
-  .cursor/rules/             communications adapter: routing + Metra base (+ local overlay / add-ons gitignored)
+  .cursor/rules/             Cursor adapter: routing + Metra base (+ local overlay / add-ons gitignored)
   .cursor/hooks/             sessionStart stale-gated snapshot -Quick (no workspace rewrite)
 ```
 
@@ -289,7 +317,7 @@ C:\Projects\                 (work root)
 | `projects.json` | Shared routing stubs (public teaching examples) |
 | `projects.local.json` | Machine-private work routing (gitignored) |
 | Root `registryFile` | Travels with that root (e.g. personal cloud folder) |
-| `metra-persona.mdc` | Full base Metra communications voice (tracked; Cursor auto-loads) |
+| `metra-persona.mdc` | Full base Metra communication model (tracked; Cursor auto-loads) |
 | `metra-persona.local.mdc` | Operator name / greeting / team redistribution notes (gitignored) |
 | Persona Add-ons | Optional tone dials only - never change routing or the professional sink |
 
@@ -310,7 +338,7 @@ C:\Projects\                 (work root)
 
 ## Agent routing
 
-Ops picks the stop; communications keeps the chat honest afterward.
+Routing picks the stop; context loads the map; the communication model keeps the chat honest afterward.
 
 Classify the ask, consult `.\metra.ps1 routing` or `.\metra.ps1 ctx`, load **one** project `AGENTS.md` before scanning siblings. Personality never picks the folder - the registry does. Then Metra's voice applies: route banner, answer-first, Teaching Mode when exploring, professional sink for anything that leaves chat. Ticket work starts in TicketTracker when present. Keep work and personal roots isolated unless the user names a cross-root project. Prefer [docs/Decisions.md](docs/Decisions.md) for durable Metra policy before digging chats. Smoke fixtures: `.\metra.ps1 verify`. Details: [docs/Context-Routing.md](docs/Context-Routing.md), [docs/Integrations.md](docs/Integrations.md).
 
@@ -322,11 +350,11 @@ Classify the ask, consult `.\metra.ps1 routing` or `.\metra.ps1 ctx`, load **one
 .\metra.ps1 chats -Name Solarwinds -Query "disk alert"
 ```
 
-`chats` searches local Cursor transcripts when you need prior session clues; `ctx` is the portable handoff for any agent.
+`chats` searches local Cursor transcripts when you need prior session clues; `ctx` is the portable context handoff for any agent.
 
 ## Contributing
 
-Issues and PRs welcome. Keep machine-local files out of commits (see [SECURITY.md](SECURITY.md)). Prefer small, focused changes to routing, CLI, docs, or the communications rules. New public module exports need a clear user-facing reason (each is an API commitment) - prefer private helpers or extending an existing command. Persona growth for one operator belongs in the local overlay; promote to the base rule only when the change is meant for everyone using a fork. Durable policy choices: [docs/Decisions.md](docs/Decisions.md).
+Issues and PRs welcome. Keep machine-local files out of commits (see [SECURITY.md](SECURITY.md)). Prefer small, focused changes to routing, CLI, docs, or the communication model. New public module exports need a clear user-facing reason (each is an API commitment) - prefer private helpers or extending an existing command. Persona growth for one operator belongs in the local overlay; promote to the base rule only when the change is meant for everyone using a fork. Durable policy choices: [docs/Decisions.md](docs/Decisions.md).
 
 ## Notes
 
