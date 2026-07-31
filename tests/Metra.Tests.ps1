@@ -446,32 +446,107 @@ Describe 'Decision Registry' {
         $root = $script:decisionRoot
         InModuleScope Metra -Parameters @{ DecisionRoot = $root } {
             param($DecisionRoot)
-            # Seed a confirmed decision in the real Metra root would pollute; test search helper instead
-            # and verify Export-MetraContextPack relatedDecisions wiring via Search mock.
             Mock Search-MetraDecisionRegistry {
-                param($Query, $Limit, $MetraRoot)
+                param($Query, $Project, $Limit, $MetraRoot)
                 if ([string]::IsNullOrWhiteSpace($Query)) { return @() }
                 @([PSCustomObject]@{
                         Id = 'd1'; Title = 'Prefer brief'; Decision = 'Prefer brief'; Why = 'lighter'
                         Project = 'TicketTracker'; Confidence = 'high'; Source = 'AGENTS.md'
                     })
             }
+            Mock Get-MetraWhyHere {
+                param($Project, $Query, $Limit, $MetraRoot)
+                if ([string]::IsNullOrWhiteSpace($Query)) { return @() }
+                @([PSCustomObject]@{
+                        Id = 'd1'; Title = 'Prefer brief'; Decision = 'Prefer brief'; Why = 'lighter'
+                        Project = $Project; Confidence = 'high'; Source = 'AGENTS.md'
+                    })
+            }
+            Mock Get-MetraRoutingAmbiguity {
+                [PSCustomObject]@{
+                    Primary = $null; RunnerUp = $null; IsAmbiguous = $false; FavoredTokens = @()
+                }
+            }
             Mock Get-MetraRoots { @([PSCustomObject]@{ Name = 'work'; Primary = $true; Exists = $true; Optional = $false; Path = 'C:\Projects'; RawPath = '..' }) }
-            Mock Get-MetraProjectRegistry { [PSCustomObject]@{ projects = @() } }
-            Mock Get-MetraProjects { @() }
+            Mock Get-MetraProjectRegistry {
+                [PSCustomObject]@{
+                    projects = @(
+                        [PSCustomObject]@{
+                            name = 'TicketTracker'; purpose = 'tickets'; triggers = @('ticket'); capabilities = @(); entry = 'AGENTS.md'
+                        }
+                    )
+                }
+            }
+            Mock Get-MetraProjects {
+                @([PSCustomObject]@{ Name = 'TicketTracker'; Path = 'C:\Projects\TicketTracker'; Root = 'work'; IsGit = $true })
+            }
             Mock Get-MetraRoutingTable { @() }
             Mock Get-MetraRoot { $DecisionRoot }
 
-            $withQuery = Export-MetraContextPack -Query 'brief' -Path '-' -Quiet -Format json
-            # Export returns summary; re-run pack build by calling search path through markdown quiet file
             $packPath = Join-Path $DecisionRoot 'docs\context-pack.json'
-            Export-MetraContextPack -Query 'brief' -Path $packPath -Quiet -Format json | Out-Null
+            # Query must score the mock project's triggers/purpose so a primary stop exists.
+            Export-MetraContextPack -Query 'ticket' -Path $packPath -Quiet -Format json | Out-Null
             $json = Get-Content -LiteralPath $packPath -Raw | ConvertFrom-Json
             @($json.relatedDecisions).Count | Should -Be 1
+            $json.whyHereFor | Should -Be 'TicketTracker'
 
             Export-MetraContextPack -Path (Join-Path $DecisionRoot 'docs\context-pack-noq.json') -Quiet -Format json | Out-Null
             $json2 = Get-Content -LiteralPath (Join-Path $DecisionRoot 'docs\context-pack-noq.json') -Raw | ConvertFrom-Json
             ($json2.PSObject.Properties.Name -contains 'relatedDecisions') | Should -BeFalse
+            ($json2.PSObject.Properties.Name -contains 'whyHereFor') | Should -BeFalse
+        }
+    }
+
+    It 'Get-MetraWhyHere scopes by project and Format omits high confidence' {
+        $root = $script:decisionRoot
+        InModuleScope Metra -Parameters @{ DecisionRoot = $root } {
+            param($DecisionRoot)
+            Add-MetraDecisionRegistryCandidate `
+                -Title 'Prefer brief over show' `
+                -Decision 'Prefer TicketTracker brief over show for triage.' `
+                -Why 'brief is plain text; show pulls heavy HTML.' `
+                -Project 'TicketTracker' `
+                -Confidence high `
+                -Evidence @('TicketTracker/AGENTS.md') `
+                -Origin backfill `
+                -MetraRoot $DecisionRoot | Out-Null
+            $note = @(Show-MetraDecisionRegistry -MetraRoot $DecisionRoot).Candidates[0]
+            Promote-MetraDecisionRegistryEntry -IdOrTitle $note.id -MetraRoot $DecisionRoot | Out-Null
+
+            Add-MetraDecisionRegistryCandidate `
+                -Title 'Orion src only' `
+                -Decision 'Edit Solarwinds under src only.' `
+                -Why 'catalog dumps burn tokens.' `
+                -Project 'Solarwinds' `
+                -Confidence medium `
+                -Evidence @('Solarwinds/AGENTS.md') `
+                -Origin backfill `
+                -MetraRoot $DecisionRoot | Out-Null
+            $n2 = @(Show-MetraDecisionRegistry -MetraRoot $DecisionRoot).Candidates[0]
+            Promote-MetraDecisionRegistryEntry -IdOrTitle $n2.id -MetraRoot $DecisionRoot | Out-Null
+
+            $tt = @(Get-MetraWhyHere -Project TicketTracker -MetraRoot $DecisionRoot)
+            $tt.Count | Should -Be 1
+            $tt[0].Project | Should -Be 'TicketTracker'
+
+            $empty = @(Get-MetraWhyHere -Project MissingProj -MetraRoot $DecisionRoot)
+            $empty.Count | Should -Be 0
+
+            $highBlock = @(Format-MetraWhyHereBlock -Project TicketTracker -Decisions $tt)
+            ($highBlock -join "`n") | Should -Not -Match '\(high\)'
+
+            $sw = @(Get-MetraWhyHere -Project Solarwinds -MetraRoot $DecisionRoot)
+            $medBlock = @(Format-MetraWhyHereBlock -Project Solarwinds -Decisions $sw)
+            ($medBlock -join "`n") | Should -Match '\(medium\)'
+        }
+    }
+
+    It 'Test-MetraRoutingAmbiguity follows close-score rules' {
+        InModuleScope Metra {
+            Test-MetraRoutingAmbiguity -PrimaryScore 3 -RunnerUpScore 2 | Should -BeTrue
+            Test-MetraRoutingAmbiguity -PrimaryScore 4 -RunnerUpScore 1 | Should -BeFalse
+            Test-MetraRoutingAmbiguity -PrimaryScore 4 -RunnerUpScore 2 | Should -BeTrue
+            Test-MetraRoutingAmbiguity -PrimaryScore 2 -RunnerUpScore 0 | Should -BeFalse
         }
     }
 
