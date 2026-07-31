@@ -10,7 +10,9 @@ function Get-MetraProfileFileMap {
         'projects.local.json',
         '.cursor/rules/metra-persona.local.mdc',
         '.cursor/rules/metra-humor.local.mdc',
-        '.cursor/rules/metra-teaching-gentle.local.mdc'
+        '.cursor/rules/metra-teaching-gentle.local.mdc',
+        '.cursor/rules/metra-learned.local.mdc',
+        'docs/operator-contract.json'
     )
 }
 

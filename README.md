@@ -86,7 +86,7 @@ CLI-only operators get full routing and context value without Cursor. Agents in 
 | Product / GitHub repo | **Metra** |
 | Recommended local folder | **`_metra`** (also accepted: `_meta`, `Metra`, `metra`) |
 | CLI (routing + context) | `metra.ps1` |
-| Communication model | **Metra** persona - base rule + optional local overlay / Persona Add-ons |
+| Communication model | **Metra** persona - base + overlay + optional add-ons + learned contract (`profile`) |
 | Workspace file | `Metra.code-workspace` (legacy `Meta.code-workspace` still honored if configured) |
 
 Operator-facing brand kit (palette, motif, professional sink): [docs/Brand.md](docs/Brand.md). Coworker walkthrough (concepts + live, including a non-AI-friendly path): [docs/Demo-5min.md](docs/Demo-5min.md).
@@ -181,7 +181,7 @@ Routing gets you to the right folder. Context loads what matters. The communicat
 | Base persona | Route-first ops partner; answer-first; dry desk humor when it helps |
 | Teaching Mode | Same Metra when exploring or stuck - answer, one next step, then stop |
 | Professional sink | Chat may have voice; tickets, commits, ADRs, and coworker handoffs stay flat |
-| Overlay / add-ons | Your name and tone dials (`metra-persona.local.mdc`, humor-desk, teaching-gentle) - not routing policy |
+| Overlay / add-ons / learned | Name + tone dials; Operator Communication Contract (`profile`) for soft working guidelines |
 
 ### Teaching Mode
 
@@ -261,8 +261,9 @@ Personal-root `registryFile` is **not** auto-included - copy it with that root. 
 | `audit` | Context/token audit + optional `-DriftOnly` vs registries |
 | `snapshot` | Write `docs/canvas-snapshot.json` and refresh / install Metra Ops canvas embed (`-Quick` skips deep audit/git) |
 | `chats` | Search local Cursor agent transcripts (bounded) - prior session evidence |
-| `export-profile` | Pack local config / local registry / Metra overlay (+ Persona Add-ons if present) |
+| `export-profile` | Pack local config / local registry / Metra overlay (+ Persona Add-ons / learned contract if present) |
 | `import-profile` | Restore a pack (`-Preview` or `-Force`) - ops bindings and persona overlay |
+| `profile` | Operator Communication Contract: `show` / `note` / `promote` / `forget` / `render` / `gc` |
 | `verify` | Routing-Scenarios fixture smoke (`PASS`/`WARN`/`FAIL`; exit 1 on FAIL) |
 
 Focused Pester (optional; Pester 5+, PowerShell 7):

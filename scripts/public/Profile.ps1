@@ -32,7 +32,7 @@ function Export-MetraProfile {
         }
     }
     if ($present.Count -eq 0) {
-        throw 'Nothing to export: no metra.config.json, projects.local.json, metra-persona.local.mdc, metra-humor.local.mdc, or metra-teaching-gentle.local.mdc found.'
+        throw 'Nothing to export: no metra.config.json, projects.local.json, persona/learned local rules, or operator-contract.json found.'
     }
 
     $expanded = [System.Environment]::ExpandEnvironmentVariables($Path)

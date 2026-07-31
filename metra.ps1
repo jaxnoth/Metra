@@ -36,7 +36,7 @@ param(
     [ValidateSet(
         'list', 'status', 'pull', 'fetch', 'run', 'new', 'apply', 'workspace',
         'audit', 'snapshot', 'chats', 'roots', 'routing',
-        'export-profile', 'import-profile', 'ctx', 'setup', 'verify', 'help'
+        'export-profile', 'import-profile', 'ctx', 'setup', 'verify', 'profile', 'help'
     )]
     [string]$Command = 'help',
 
@@ -100,6 +100,8 @@ Usage:
   .\metra.ps1 ctx [-Query 'terms'] [-Path <file|->] [-Format markdown|json] [-Limit 25]
   .\metra.ps1 setup [-Profile <dir-or-zip>] [-Force] [-Preview] [-Months 6] [-ScanDepth 2]
       One-shot onboarding: seed config if missing, optional profile, roots, workspace, routing, ctx.
+  .\metra.ps1 profile show|note|promote|forget|render|gc
+      Operator Communication Contract (candidates -> promote -> soft guidelines).
   .\metra.ps1 verify
 
 Roots:
@@ -113,8 +115,9 @@ Registries:
 
 Operator profile:
   profiles/sample/           anonymized pack to import on a new machine
-  export-profile             pack local metra.config / projects.local / Metra overlay (+ humor add-on if present)
+  export-profile             pack local config / registry / overlays / learned contract
   import-profile             restore a pack (refuse overwrite unless -Force)
+  profile                    Operator Communication Contract (learned soft guidelines)
 
 Examples:
   .\metra.ps1 list -GitOnly
@@ -136,6 +139,9 @@ Examples:
   .\metra.ps1 import-profile -Path .\profiles\sample -Preview
   .\metra.ps1 import-profile -Path .\profiles\sample -Force
   .\metra.ps1 export-profile -Path `$env:TEMP\my-metra-profile.zip
+  .\metra.ps1 profile note 'Prefer terse verdicts before detail.'
+  .\metra.ps1 profile promote 'Prefer terse verdicts before detail.'
+  .\metra.ps1 profile show
   .\metra.ps1 ctx
   .\metra.ps1 ctx -Query 'ticket disk'
   .\metra.ps1 ctx -Format json -Path `$env:TEMP\metra-ctx.json
@@ -351,6 +357,40 @@ switch ($Command) {
         Write-Host ("PASS={0} WARN={1} FAIL={2}" -f $report.PassCount, $report.WarnCount, $report.FailCount)
         if (-not $report.Ok) {
             exit 1
+        }
+    }
+
+    'profile' {
+        if (-not $Rest -or $Rest.Count -eq 0) {
+            throw "profile requires a subcommand. Example: .\metra.ps1 profile show"
+        }
+        $sub = $Rest[0]
+        $subArgs = @()
+        if ($Rest.Count -gt 1) {
+            $subArgs = @($Rest[1..($Rest.Count - 1)])
+        }
+        $result = Invoke-MetraOperatorContractCommand -Subcommand $sub -ArgsRest $subArgs
+        switch ($sub.ToLowerInvariant()) {
+            'show' {
+                Write-Host ("Ledger:  {0} (exists={1})" -f $result.LedgerPath, $result.LedgerExists)
+                Write-Host ("Learned: {0} (exists={1})" -f $result.LearnedPath, $result.LearnedExists)
+                Write-Host ("Confirmed {0}/{1}" -f $result.ConfirmedCount, $result.MaxConfirmed)
+                if ($result.ConfirmedCount -gt 0) {
+                    Write-Host ''
+                    Write-Host 'Confirmed guidelines:'
+                    foreach ($g in @($result.ConfirmedGuidelines)) {
+                        Write-Host ("  [{0}] {1}" -f $g.id, $g.text)
+                    }
+                }
+                Write-Host ''
+                Write-Host ("Candidates: {0}" -f $result.CandidateCount)
+                foreach ($c in @($result.Candidates)) {
+                    Write-Host ("  [{0}] (count={1}) {2}" -f $c.id, $c.count, $c.text)
+                }
+            }
+            default {
+                $result | Format-List
+            }
         }
     }
 }

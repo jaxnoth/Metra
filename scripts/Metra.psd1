@@ -47,6 +47,7 @@
         'Get-MetraCursorTranscriptRoots'
         'Get-MetraProfileFileMap'
         'Invoke-MetraSetup'
+        'Invoke-MetraOperatorContractCommand'
     )
     CmdletsToExport   = @()
     VariablesToExport = @()

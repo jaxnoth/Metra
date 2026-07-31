@@ -218,3 +218,100 @@ Describe 'Test-MetraInstallation' {
     }
 }
 
+Describe 'Operator Communication Contract' {
+    BeforeEach {
+        $script:contractRoot = Join-Path ([System.IO.Path]::GetTempPath()) ('metra-contract-' + [guid]::NewGuid().ToString('N'))
+        New-Item -ItemType Directory -Path (Join-Path $script:contractRoot 'docs') -Force | Out-Null
+        New-Item -ItemType Directory -Path (Join-Path $script:contractRoot '.cursor\rules') -Force | Out-Null
+    }
+
+    AfterEach {
+        if ($script:contractRoot -and (Test-Path -LiteralPath $script:contractRoot)) {
+            Remove-Item -LiteralPath $script:contractRoot -Recurse -Force -ErrorAction SilentlyContinue
+        }
+    }
+
+    It 'maps learned contract paths in Get-MetraProfileFileMap' {
+        InModuleScope Metra {
+            $map = @(Get-MetraProfileFileMap)
+            $map | Should -Contain 'docs/operator-contract.json'
+            $map | Should -Contain '.cursor/rules/metra-learned.local.mdc'
+        }
+    }
+
+    It 'show works with missing ledger' {
+        $root = $script:contractRoot
+        InModuleScope Metra -Parameters @{ ContractRoot = $root } {
+            param($ContractRoot)
+            $shown = Show-MetraOperatorContract -MetraRoot $ContractRoot
+            $shown.LedgerExists | Should -BeFalse
+            $shown.ConfirmedCount | Should -Be 0
+            $shown.CandidateCount | Should -Be 0
+        }
+    }
+
+    It 'notes, promotes, renders guideline, and forgets' {
+        $root = $script:contractRoot
+        InModuleScope Metra -Parameters @{ ContractRoot = $root } {
+            param($ContractRoot)
+            $note = Add-MetraOperatorContractCandidate -Text 'Prefer terse verdicts before detail.' -MetraRoot $ContractRoot
+            $note.Action | Should -Be 'added'
+            $note.Id | Should -Not -BeNullOrEmpty
+
+            $promoted = Promote-MetraOperatorContractGuideline -IdOrText $note.Id -MetraRoot $ContractRoot
+            $promoted.Action | Should -Be 'promoted'
+            Test-Path -LiteralPath $promoted.LearnedPath | Should -BeTrue
+            (Get-Content -LiteralPath $promoted.LearnedPath -Raw) | Should -Match 'Prefer terse verdicts before detail'
+
+            $forgotten = Remove-MetraOperatorContractEntry -IdOrText $promoted.Id -MetraRoot $ContractRoot
+            $forgotten.Action | Should -Be 'forgot'
+            (Get-Content -LiteralPath (Join-Path $ContractRoot '.cursor\rules\metra-learned.local.mdc') -Raw) |
+                Should -Match '\(none yet'
+        }
+    }
+
+    It 'refuses portfolio-wide promotion' {
+        $root = $script:contractRoot
+        InModuleScope Metra -Parameters @{ ContractRoot = $root } {
+            param($ContractRoot)
+            {
+                Promote-MetraOperatorContractGuideline -IdOrText 'Enforce professional sink for every clone' -MetraRoot $ContractRoot
+            } | Should -Throw '*Portfolio-wide preference refused*'
+        }
+    }
+
+    It 'enforces confirmed guideline budget' {
+        $root = $script:contractRoot
+        InModuleScope Metra -Parameters @{ ContractRoot = $root } {
+            param($ContractRoot)
+            $contract = Get-MetraOperatorContract -MetraRoot $ContractRoot
+            $contract.maxConfirmed = 2
+            Save-MetraOperatorContract -Contract $contract -MetraRoot $ContractRoot
+
+            Promote-MetraOperatorContractGuideline -IdOrText 'Prefer terse verdicts before detail.' -MetraRoot $ContractRoot | Out-Null
+            Promote-MetraOperatorContractGuideline -IdOrText 'Lean verify-before-push when shipping Metra.' -MetraRoot $ContractRoot | Out-Null
+
+            {
+                Promote-MetraOperatorContractGuideline -IdOrText 'Prefer dry humor sparingly in routine ops.' -MetraRoot $ContractRoot
+            } | Should -Throw '*budget is full*'
+        }
+    }
+
+    It 'bumps candidate count on duplicate note' {
+        $root = $script:contractRoot
+        InModuleScope Metra -Parameters @{ ContractRoot = $root } {
+            param($ContractRoot)
+            Add-MetraOperatorContractCandidate -Text 'Prefer dry humor sparingly.' -MetraRoot $ContractRoot | Out-Null
+            $bump = Add-MetraOperatorContractCandidate -Text 'Prefer dry humor sparingly.' -MetraRoot $ContractRoot
+            $bump.Action | Should -Be 'bumped'
+            $bump.Count | Should -Be 2
+        }
+    }
+
+    It 'ships tracked examples' {
+        $root = Get-MetraRoot
+        Test-Path -LiteralPath (Join-Path $root 'docs\operator-contract.example.json') | Should -BeTrue
+        Test-Path -LiteralPath (Join-Path $root '.cursor\rules\metra-learned.local.example.mdc') | Should -BeTrue
+    }
+}
+

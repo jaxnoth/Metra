@@ -1,0 +1,7 @@
+{
+  "version": 1,
+  "candidateStaleDays": 30,
+  "maxConfirmed": 20,
+  "candidates": [],
+  "confirmedGuidelines": []
+}

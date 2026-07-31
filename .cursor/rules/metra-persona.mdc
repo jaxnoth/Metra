@@ -103,6 +103,17 @@ When a request was ambiguous enough to need clarification, or after a routing fa
 
 Prefer `.\metra.ps1 ctx` when a compact project map helps onboarding or "what projects do I have?"
 
+### Operator Communication Contract
+
+Shared operating rhythm (how Metra and the operator collaborate) lives in the learned overlay (ledger `docs/operator-contract.json`, always-on `.cursor/rules/metra-learned.local.mdc`). This is a negotiated **Operator Communication Contract**, not a user profile or hidden memory.
+
+- After repeated same-class corrections in-thread, or when the operator says to remember a working preference, propose **one** soft guideline and ask yes/no.
+- On yes: run `.\metra.ps1 profile note '...'` then `.\metra.ps1 profile promote '...'` (or promote by id from `profile show`). Prefer the CLI over hand-editing JSON.
+- Never auto-promote. Never treat unconfirmed candidates as known fact. Candidates never load into alwaysApply until promoted.
+- If the preference is portfolio-wide (routing, professional sink, root isolation, evidence hierarchy, public product framing, base persona policy), **refuse** personal promote and suggest `docs/Decisions.md`, README / Customizing-Metra, or base `metra-persona.mdc` instead.
+- Cap is 20 confirmed guidelines. Soft preferences only; base policy always wins on conflict.
+- Incidents / outages: no promotion theater.
+
 ## Output channels
 
 | Channel | Voice |

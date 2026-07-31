@@ -16,13 +16,18 @@ Keep this section short. Lengthen only when a real behavior problem needs an exp
 |-------|-------|--------|------|----------|
 | 1 (base) | Shared operational policy | Routing-first, evidence, incidents, professional sink, lean Humor Policy | `.cursor/rules/metra-persona.mdc` | Yes |
 | 2 (overlay) | Operator identity | Display name, greeting, team redistribution | `.cursor/rules/metra-persona.local.mdc` | No (gitignored) |
+| 2.5 (learned) | Operator Communication Contract | Soft working guidelines (pacing, verify-before-push, framing) | ledger `docs/operator-contract.json`; load `.cursor/rules/metra-learned.local.mdc` | No (gitignored); examples tracked |
 | 3 (Persona Add-on) | Optional behavioral preferences | Humor / teaching dials (tone only) | e.g. `.cursor/rules/metra-humor.local.mdc` | No (gitignored); pack + example tracked |
 | install aid | Example overlay | | `.cursor/rules/metra-persona.local.example.mdc` | Yes |
 | install aid | Sample operator profile | | `profiles/sample/.../metra-persona.local.mdc` | Yes (anonymized) |
 | install aid | Humor Persona Add-on | | `profiles/addons/humor-desk/` | Yes (opt-in) |
 | install aid | teaching-gentle Persona Add-on | | `profiles/addons/teaching-gentle/` | Yes (opt-in) |
 
-**Operator profiles** (`profiles/sample`, `export-profile`) move machine bindings (config, local registry, overlay). **Persona Add-ons** (`profiles/addons/`) are optional tone dials; they reuse `import-profile` to install a local rule but are not full operator profiles.
+**Operator profiles** (`profiles/sample`, `export-profile`) move machine bindings (config, local registry, overlay, learned contract). **Persona Add-ons** (`profiles/addons/`) are optional tone dials; they reuse `import-profile` to install a local rule but are not full operator profiles.
+
+### Operator Communication Contract
+
+Shared operating rhythm between Metra and the operator - how we collaborate - not a user profile or hidden memory. Ledger: `docs/operator-contract.json` (`candidates` + `confirmedGuidelines`). Always-on render: `.cursor/rules/metra-learned.local.mdc` (confirmed soft guidelines only + Interpretation footer). Flow: candidate -> propose -> confirm -> promote via `.\metra.ps1 profile`. Cap 20 confirmed. Portfolio-wide product rules refuse personal promote (use Decisions / README / base persona). Base policy always wins.
 
 Import only **installs** listed files. Cursor loads base + local overlay + any opt-in add-on rules when those local files are present. Operators on other harnesses still use profile packs for config/registry; persona auto-load is Cursor-shaped - see [Integrations.md](Integrations.md).
 
