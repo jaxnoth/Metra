@@ -18,6 +18,14 @@ Entry shape:
 
 ---
 
+## 2026-07-31 - For whom? (project serves)
+
+- Decision: Ship **For whom?** as optional project-registry `serves` (`string[]`), same shape as `triggers` / `capabilities`. Audience of the work (roles, teams, consumer systems), never people memory - portfolio memory, not CRM. Surfaces: `routing -Name` / `routing -Query` print a **For whom?** question block when non-empty (before Why Here); `ctx` includes `serves` in JSON and markdown (`- serves:` per project; `## For whom?` for query primary). Full `routing` table stays quiet. Seed shared stubs TicketTracker and Solarwinds. Why Here stays Decision Registry; serves stays project registry (do not stuff audiences into the Decision Registry). v1 is plain strings only - no `{ name, kind }` objects.
+- Guardrail: Metra may describe audiences served by work. Metra does not maintain memory of individuals, requesters, owners, approvers, performance history, or interpersonal relationships. Ticket requester facts stay in TicketTracker evidence when needed.
+- Why: Completes the homes map without inventing people-profiling Who. Stable role/team audiences teach the portfolio at route time.
+- See: `projects.json` (`serves`), `Write-MetraForWhom`, `.\metra.ps1 routing -Name Solarwinds`, `docs/Context-Routing.md`
+- Future: structured `{ name, kind }` only if string[] proves too weak; Decision Registry `for` remains out of scope until needed
+
 ## 2026-07-31 - Portfolio Operations Principles
 
 - Decision: Adopt an explicit **portfolio operations** operating model for Metra. Lead rule: **every portfolio fact should have a home.** Homes map (operator cheat sheet; does not replace the marketed product triangle of routing + context + communication):
@@ -30,12 +38,12 @@ Entry shape:
   | Why? (product policy) | `docs/Decisions.md` |
   | How? (collaboration rhythm) | OCC / `profile` + communication model / professional sink |
   | Health? | Ops board / `audit` / `verify` / status |
-  | For whom? | Parked (`serves` / consumers - not people profiling) |
+  | For whom? | Project registry `serves` / `routing` / `ctx` (not people profiling) |
 
   Operating principles: (1) every portfolio fact has a home; (2) route before execute; (3) context is retrieved, not dumped; (4) decisions are preserved with rationale (ledger why + confidence + evidence; never invent operational why); (5) communication follows the same operating model as the tooling. Health is first-class for ops but is not a fourth marketing triangle leg. Metra overlaps portfolio management, knowledge management, and configuration-management ideas; it is an operating model for developers and agents, not a single Wikipedia discipline. Boundaries: product policy -> Decisions.md; operational scars -> Decision Registry; collaboration rhythm -> OCC; project-local guidance -> that project's `AGENTS.md`.
-- Why: Portfolio chaos is usually information with no obvious home. Naming the model keeps future features (relationships, For whom, Ops board wisdom) from inventing parallel homes or dumping wiki-scale knowledge into prompts.
-- See: `README.md` (Portfolio operations homes), Why Here / Decision Registry / OCC / product-triangle entries in this file
-- Future: see Why Here entry (relatedProjects, Ops board wisdom, For whom, and related items) - do not duplicate that list here
+- Why: Portfolio chaos is usually information with no obvious home. Naming the model keeps future features (relationships, Ops board wisdom) from inventing parallel homes or dumping wiki-scale knowledge into prompts.
+- See: `README.md` (Portfolio operations homes), Why Here / For whom / Decision Registry / OCC / product-triangle entries in this file
+- Future: see Why Here entry (relatedProjects, Ops board wisdom, and related items) - do not duplicate that list here
 
 ## 2026-07-31 - Why Here? routing explanations
 
@@ -49,7 +57,7 @@ Entry shape:
   4. Project story + relatedProjects in ctx
   5. decisions review (knowledge decay)
   6. Cap headroom toward 100 if retrieval stays useful
-  7. **For whom?** - durable `serves` / consumers on projects or decisions (audience of the work). Refuse people-profiling Who (requester/owner/blame). Not CRM.
+  7. ~~**For whom?**~~ **Done** - see For whom? (project serves) entry
   - Deprioritized: more persona add-ons; more Ops board health metrics
 
 ## 2026-07-31 - Decision Registry (Operational Why Memory)

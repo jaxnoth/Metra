@@ -31,7 +31,7 @@ Shared operating rhythm between Metra and the operator - how we collaborate - no
 
 ### Decision Registry (Operational Why Memory)
 
-Operator-private operational why-we-chose memory - not product policy and not collaboration rhythm. Ledger: gitignored `docs/decision-registry.json`. Flow: `note` / `harvest` -> `promote` (requires `why`, `confidence`, `evidence`). Cap 50 active confirmed. Retrieved via `.\metra.ps1 decisions search|get`, `routing -Name` / `routing -Query` **Why Here?**, and `ctx -Query` - never an always-on rule. Boundary test: would every Metra clone benefit? If yes, use `docs/Decisions.md` instead. Every portfolio fact should have a home - see [Decisions.md](Decisions.md) (Portfolio Operations Principles).
+Operator-private operational why-we-chose memory - not product policy and not collaboration rhythm. Ledger: gitignored `docs/decision-registry.json`. Flow: `note` / `harvest` -> `promote` (requires `why`, `confidence`, `evidence`). Cap 50 active confirmed. Retrieved via `.\metra.ps1 decisions search|get`, `routing -Name` / `routing -Query` **Why Here?**, and `ctx -Query` - never an always-on rule. Boundary test: would every Metra clone benefit? If yes, use `docs/Decisions.md` instead. Every portfolio fact should have a home - see [Decisions.md](Decisions.md) (Portfolio Operations Principles). Project **For whom?** is registry `serves` (not Decision Registry).
 
 Import only **installs** listed files. Cursor loads base + local overlay + any opt-in add-on rules when those local files are present. Operators on other harnesses still use profile packs for config/registry; persona auto-load is Cursor-shaped - see [Integrations.md](Integrations.md).
 

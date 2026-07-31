@@ -82,6 +82,7 @@ function Export-MetraContextPack {
             purpose      = $purpose
             triggers     = @($triggers)
             capabilities = @(Get-MetraProp -Object $reg -Name 'capabilities' -Default @())
+            serves       = @(Get-MetraProp -Object $reg -Name 'serves' -Default @())
             entry        = [string](Get-MetraProp -Object $reg -Name 'entry' -Default 'AGENTS.md')
             score        = $score
         })
@@ -101,6 +102,7 @@ function Export-MetraContextPack {
                 purpose      = ''
                 triggers     = @()
                 capabilities = @()
+                serves       = @()
                 entry        = 'AGENTS.md'
                 score        = 0
             })
@@ -144,6 +146,7 @@ function Export-MetraContextPack {
                 purpose      = $_.purpose
                 triggers     = @($_.triggers)
                 capabilities = @($_.capabilities)
+                serves       = @($_.serves)
                 entry        = $_.entry
             }
         })
@@ -233,6 +236,10 @@ function Export-MetraContextPack {
         $purp = if ($proj.purpose) { $proj.purpose } else { '(no registry purpose)' }
         [void]$md.AppendLine(('- **{0}** [{1}] - {2}' -f $proj.name, $proj.root, $purp))
         [void]$md.AppendLine(('  - triggers: {0}' -f $trig))
+        $servesList = @($proj.serves | Where-Object { -not [string]::IsNullOrWhiteSpace([string]$_) })
+        if ($servesList.Count -gt 0) {
+            [void]$md.AppendLine(('  - serves: {0}' -f ($servesList -join ', ')))
+        }
         [void]$md.AppendLine(('  - entry: {0}' -f $proj.entry))
     }
     if ($missingOptional.Count -gt 0) {
@@ -241,6 +248,17 @@ function Export-MetraContextPack {
         [void]$md.AppendLine('')
         foreach ($m in $missingOptional) {
             [void]$md.AppendLine(('- **{0}**: {1}' -f $m.name, $m.advice))
+        }
+    }
+    if ($tokens.Count -gt 0 -and $projects.Count -gt 0) {
+        $primaryServes = @($projects[0].serves | Where-Object { -not [string]::IsNullOrWhiteSpace([string]$_) })
+        if ($primaryServes.Count -gt 0) {
+            [void]$md.AppendLine('')
+            [void]$md.AppendLine(('## For whom? {0}' -f $projects[0].name))
+            [void]$md.AppendLine('')
+            foreach ($s in $primaryServes) {
+                [void]$md.AppendLine(('- {0}' -f $s))
+            }
         }
     }
     if ($pack.Contains('relatedDecisions') -and @($pack.relatedDecisions).Count -gt 0) {

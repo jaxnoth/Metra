@@ -168,6 +168,7 @@ function Get-MetraRoutingTable {
             Entry        = [string](Get-MetraProp -Object $reg -Name 'entry' -Default 'AGENTS.md')
             Capabilities = @(Get-MetraProp -Object $reg -Name 'capabilities' -Default @())
             Triggers     = @(Get-MetraProp -Object $reg -Name 'triggers' -Default @())
+            Serves       = @(Get-MetraProp -Object $reg -Name 'serves' -Default @())
             Advice       = $advice
             Path         = if ($present) { [string]$onDisk.Path } else { '' }
         }
@@ -223,6 +224,7 @@ function Get-MetraScoredRoutingProjects {
 
         $purpose = [string](Get-MetraProp -Object $reg -Name 'purpose' -Default '')
         $triggers = @(Get-MetraProp -Object $reg -Name 'triggers' -Default @())
+        $serves = @(Get-MetraProp -Object $reg -Name 'serves' -Default @())
         $hay = (@($regName) + $triggers + @($purpose) | ForEach-Object { [string]$_ }) -join ' '
         $hayLower = $hay.ToLowerInvariant()
         $score = 0
@@ -242,6 +244,7 @@ function Get-MetraScoredRoutingProjects {
                 Path          = [string]$onDisk.Path
                 Purpose       = $purpose
                 Triggers      = @($triggers)
+                Serves        = @($serves)
                 Score         = $score
                 MatchedTokens = [string[]]@($matchedTokens.ToArray())
                 HayLower      = $hayLower
@@ -331,10 +334,29 @@ function Get-MetraRoutingAmbiguity {
     }
 }
 
+function Write-MetraForWhom {
+    <#
+    .SYNOPSIS
+        Writes a For whom? audience block to the host (omit when empty).
+    #>
+    [CmdletBinding()]
+    param(
+        [string[]]$Serves
+    )
+
+    $audiences = @($Serves | Where-Object { -not [string]::IsNullOrWhiteSpace([string]$_) })
+    if ($audiences.Count -eq 0) { return }
+
+    Write-Host 'For whom?'
+    foreach ($s in $audiences) {
+        Write-Host ("  {0}" -f $s)
+    }
+}
+
 function Show-MetraRoutingCli {
     <#
     .SYNOPSIS
-        CLI host output for routing (table and/or Why Here). Private - called from metra.ps1 via module scope.
+        CLI host output for routing (For whom? / Why Here). Compatibility export for metra.ps1.
     #>
     [CmdletBinding()]
     param(
@@ -357,6 +379,10 @@ function Show-MetraRoutingCli {
             Write-Host ("  {0}" -f $primary.Purpose)
         }
         Write-Host ("  triggers: {0}" -f ($(if ($primary.Triggers.Count -gt 0) { $primary.Triggers -join ', ' } else { '(none)' })))
+        if (@($primary.Serves).Count -gt 0) {
+            Write-Host ''
+            Write-MetraForWhom -Serves $primary.Serves
+        }
         $why = @(Get-MetraWhyHere -Project $primary.Name -Query $Query -Limit 3)
         if ($why.Count -gt 0) {
             Write-Host ''
@@ -366,6 +392,10 @@ function Show-MetraRoutingCli {
             $runner = $amb.RunnerUp
             Write-Host ''
             Write-Host ("Runner-up: {0} (score={1})" -f $runner.Name, $runner.Score) -ForegroundColor Yellow
+            if (@($runner.Serves).Count -gt 0) {
+                Write-MetraForWhom -Serves $runner.Serves
+                Write-Host ''
+            }
             $whyNot = @(Get-MetraWhyHere -Project $runner.Name -Query $Query -Limit 2)
             Write-MetraWhyNot -Project $runner.Name -Decisions $whyNot -FavoredTokens $amb.FavoredTokens
         }
@@ -387,9 +417,13 @@ function Show-MetraRoutingCli {
     }
     Write-Host ("{0} entr(ies); {1} present" -f $rows.Count, @($rows | Where-Object Present).Count)
 
-    # Why Here only when -Name scopes the stop (not full-table dump)
+    # For whom / Why Here only when -Name scopes the stop (not full-table dump)
     if ($Name -and $Name.Count -gt 0 -and -not $MissingOnly) {
         foreach ($row in @($rows | Where-Object Present)) {
+            if (@($row.Serves).Count -gt 0) {
+                Write-Host ''
+                Write-MetraForWhom -Serves $row.Serves
+            }
             $why = @(Get-MetraWhyHere -Project $row.Name -Query $Query -Limit 3)
             if ($why.Count -gt 0) {
                 Write-Host ''

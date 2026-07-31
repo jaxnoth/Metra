@@ -91,6 +91,20 @@ Describe 'Get-MetraRouting' {
         foreach ($row in $rows) {
             $row.PSObject.Properties.Name | Should -Contain 'Present'
             $row.PSObject.Properties.Name | Should -Contain 'Triggers'
+            $row.PSObject.Properties.Name | Should -Contain 'Serves'
+        }
+        $tt = @($rows | Where-Object Name -eq 'TicketTracker')[0]
+        @($tt.Serves) | Should -Contain 'Helpdesk'
+        $sw = @($rows | Where-Object Name -eq 'Solarwinds')[0]
+        @($sw.Serves) | Should -Contain 'Monitoring operators'
+    }
+
+    It 'Write-MetraForWhom omits empty audiences' {
+        InModuleScope Metra {
+            $empty = @(Write-MetraForWhom -Serves @() *>&1)
+            # Host writes return nothing useful to capture; Format via empty Serves no-throw
+            { Write-MetraForWhom -Serves @() } | Should -Not -Throw
+            { Write-MetraForWhom -Serves @('Helpdesk') } | Should -Not -Throw
         }
     }
 }
@@ -472,7 +486,7 @@ Describe 'Decision Registry' {
                 [PSCustomObject]@{
                     projects = @(
                         [PSCustomObject]@{
-                            name = 'TicketTracker'; purpose = 'tickets'; triggers = @('ticket'); capabilities = @(); entry = 'AGENTS.md'
+                            name = 'TicketTracker'; purpose = 'tickets'; triggers = @('ticket'); capabilities = @(); serves = @('Helpdesk'); entry = 'AGENTS.md'
                         }
                     )
                 }
@@ -489,11 +503,15 @@ Describe 'Decision Registry' {
             $json = Get-Content -LiteralPath $packPath -Raw | ConvertFrom-Json
             @($json.relatedDecisions).Count | Should -Be 1
             $json.whyHereFor | Should -Be 'TicketTracker'
+            @($json.projects[0].serves) | Should -Contain 'Helpdesk'
 
             Export-MetraContextPack -Path (Join-Path $DecisionRoot 'docs\context-pack-noq.json') -Quiet -Format json | Out-Null
             $json2 = Get-Content -LiteralPath (Join-Path $DecisionRoot 'docs\context-pack-noq.json') -Raw | ConvertFrom-Json
             ($json2.PSObject.Properties.Name -contains 'relatedDecisions') | Should -BeFalse
             ($json2.PSObject.Properties.Name -contains 'whyHereFor') | Should -BeFalse
+            # no-query still includes project serves when present on registry rows
+            $tt2 = @($json2.projects | Where-Object name -eq 'TicketTracker')[0]
+            @($tt2.serves) | Should -Contain 'Helpdesk'
         }
     }
 
