@@ -73,7 +73,15 @@ Usually re-run; rarely rewrite. Treat drift as a manual review signal rather tha
 
 ## Canvas Ops board (Metra Ops)
 
-Open the Cursor Canvas **Metra Ops** (`metra-ops-board`) beside chat for visual health + routing (Ops tab = health + recommender; Triage tab = session checklist).
+Open the Cursor Canvas **Metra Ops** (`metra-ops-board`) beside chat. One board, three tabs organized around operator questions:
+
+| Tab | Job |
+|-----|-----|
+| **Route** (default) | Classify a request and produce a bounded handoff (Where / What / Why / For whom / Next) |
+| **Portfolio** | What needs attention - drift, hygiene, root-filtered project detail |
+| **Stewardship** | What knowledge needs tending - Decision Registry, OCC, serves coverage |
+
+The board **retrieves from existing homes** (routing registry, Decision Registry, OCC, audit/verify). It does not become a second write surface; durable actions stay in CLI/chat.
 
 Typical local path (slug is path-derived from the checkout folder):
 
@@ -84,19 +92,17 @@ For a `_metra` checkout under `C:\Projects`, the slug is usually `c-Projects-met
 Refresh data after audits or layout changes:
 
 ```powershell
-.\metra.ps1 snapshot          # full audit + git
-.\metra.ps1 snapshot -Quick   # hook-friendly; registry + light health only
+.\metra.ps1 snapshot          # full audit + git + verify summary
+.\metra.ps1 snapshot -Quick   # hook-friendly; registry + light health; git/verify marked not checked
 ```
 
 The live `.canvas.tsx` is generated. `snapshot` rewrites the data between the `<metra-ops-snapshot>` markers and reinstalls the surrounding component code whenever it differs from `integrations/cursor/metra-ops-board.canvas.tsx.template`. Edit the template, not the live canvas - local edits outside the markers are replaced on the next snapshot. Close and reopen the canvas panel to pick up a refreshed board.
 
+Local snapshot also carries bounded Decision Registry / OCC summaries, per-project `serves` and Why Here snippets, and knowledge-coverage counts (not scores). Gitignored; fail-open when ledgers are missing.
+
 Agent chat `sessionStart` can run `-Quick` when the snapshot is stale - see [Integrations.md](Integrations.md). Do not auto-run `workspace` from that hook.
 
 Brand kit for the faceplate: [Brand.md](Brand.md).
-
-Snapshot health includes:
-- Agent routing coverage (`AGENTS.md`, `.cursorignore`, drift findings)
-- Git counts per project: dirty files, ahead/behind vs upstream (local only; no fetch), branch name, and a short summary (`clean` / `dirty N` / `ahead N` / `behind N`)
 
 Validate with [Routing-Scenarios.md](Routing-Scenarios.md).
 

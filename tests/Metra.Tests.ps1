@@ -633,3 +633,155 @@ Describe 'Metra Ops canvas install' {
     }
 }
 
+Describe 'Metra Ops snapshot stewardship' {
+    BeforeEach {
+        $script:snapRoot = Join-Path ([System.IO.Path]::GetTempPath()) ('metra-snap-' + [guid]::NewGuid().ToString('N'))
+        New-Item -ItemType Directory -Path (Join-Path $script:snapRoot 'docs') -Force | Out-Null
+    }
+
+    AfterEach {
+        if ($script:snapRoot -and (Test-Path -LiteralPath $script:snapRoot)) {
+            Remove-Item -LiteralPath $script:snapRoot -Recurse -Force -ErrorAction SilentlyContinue
+        }
+    }
+
+    It 'Get-MetraOpsStewardshipSummaries fails open with empty ledgers' {
+        $root = $script:snapRoot
+        InModuleScope Metra -Parameters @{ DecisionRoot = $root } {
+            param($DecisionRoot)
+            $projects = @(
+                [PSCustomObject]@{
+                    name         = 'TicketTracker'
+                    serves       = @('Helpdesk')
+                    capabilities = @('ticket-lookup')
+                    whyHere      = @()
+                }
+            )
+            $sum = Get-MetraOpsStewardshipSummaries -Projects $projects -MetraRoot $DecisionRoot
+            $sum.decisions.ledgerExists | Should -BeFalse
+            $sum.decisions.confirmedCount | Should -Be 0
+            $sum.contract.confirmedCount | Should -Be 0
+            $sum.coverage.projectsWithServes | Should -Be 1
+            $sum.coverage.projectsWithCapabilities | Should -Be 1
+        }
+    }
+
+    It 'stewardship summary includes confirmed decisions and OCC guidelines' {
+        $root = $script:snapRoot
+        InModuleScope Metra -Parameters @{ DecisionRoot = $root } {
+            param($DecisionRoot)
+            $null = Add-MetraDecisionRegistryCandidate `
+                -Title 'Prefer brief over show' `
+                -Decision 'Prefer TicketTracker brief over show for triage.' `
+                -Why 'brief is plain text; show pulls heavy HTML.' `
+                -Project 'TicketTracker' `
+                -Tags 'ticket,brief' `
+                -Source 'TicketTracker/AGENTS.md' `
+                -Origin backfill `
+                -Confidence high `
+                -Evidence @('TicketTracker/AGENTS.md', 'Operator confirmed') `
+                -MetraRoot $DecisionRoot
+            $null = Promote-MetraDecisionRegistryEntry -IdOrTitle 'Prefer brief over show' -MetraRoot $DecisionRoot
+
+            $null = Add-MetraOperatorContractCandidate -Text 'Prefer terse verdicts before detail.' -MetraRoot $DecisionRoot
+            $null = Promote-MetraOperatorContractGuideline -IdOrText 'Prefer terse verdicts before detail.' -MetraRoot $DecisionRoot
+
+            $projects = @(
+                [PSCustomObject]@{
+                    name         = 'TicketTracker'
+                    serves       = @('Helpdesk')
+                    capabilities = @('ticket-lookup')
+                    whyHere      = @(@{ id = 'd1'; title = 'Prefer brief over show' })
+                }
+            )
+            $sum = Get-MetraOpsStewardshipSummaries -Projects $projects -MetraRoot $DecisionRoot
+            $sum.decisions.ledgerExists | Should -BeTrue
+            $sum.decisions.confirmedCount | Should -BeGreaterThan 0
+            @($sum.decisions.recent).Count | Should -BeGreaterThan 0
+            $sum.contract.confirmedCount | Should -BeGreaterThan 0
+            @($sum.contract.confirmed)[0].text | Should -Match 'terse'
+            $sum.coverage.projectsWithWhyHere | Should -Be 1
+            $sum.coverage.projectsWithDecisions | Should -BeGreaterThan 0
+        }
+    }
+
+    It 'template declares Route Portfolio Stewardship interchange tabs' {
+        $template = Join-Path (Get-MetraRoot) 'integrations\cursor\metra-ops-board.canvas.tsx.template'
+        $raw = Get-Content -LiteralPath $template -Raw
+        $raw | Should -Match 'type TabId = "route" \| "portfolio" \| "stewardship"'
+        $raw | Should -Match 'Portfolio Operating Model'
+        $raw | Should -Match 'function scoreProjects'
+        $raw | Should -Match 'function isAmbiguous'
+        $raw | Should -Match 'serves'
+        $raw | Should -Match 'whyHere'
+        $raw | Should -Match 'gitChecked'
+        $raw | Should -Match 'Needs attention'
+        $raw | Should -Match 'Resolve this'
+        $raw | Should -Match 'position: "sticky"'
+        $raw | Should -Match 'visibleAttention = attentionItems\.slice\(0, 5\)'
+        $raw | Should -Match 'function ActionPaths'
+        $raw | Should -Match 'Ask Metra'
+        $raw | Should -Match 'useCanvasAction'
+        $raw | Should -Match 'briefingForTodo'
+        $raw | Should -Match 'Standing routes'
+        $raw | Should -Match 'standingRoutes'
+        $raw | Should -Not -Match '<Text weight="semibold">Pinned hubs</Text>'
+        $raw | Should -Not -Match 'function CommandRow'
+    }
+}
+
+Describe 'Update-MetraWorkspace' {
+    It 'drops workspace.exclude names from the generated folder list' {
+        InModuleScope Metra {
+            Mock Get-MetraConfig {
+                [PSCustomObject]@{
+                    workspace = [PSCustomObject]@{
+                        months     = 6
+                        scanDepth  = 2
+                        exclude    = @('Frozen-Review')
+                        outputs    = @(
+                            [PSCustomObject]@{
+                                path              = 'Metra.code-workspace'
+                                metraFolderPath   = '.'
+                                projectPathPrefix = '../'
+                            }
+                        )
+                        settings   = [PSCustomObject]@{}
+                        extensions = [PSCustomObject]@{}
+                    }
+                }
+            }
+            Mock Get-MetraRoots {
+                @([PSCustomObject]@{ Name = 'work'; Primary = $true })
+            }
+            Mock Get-RecentMetraProjects {
+                @(
+                    [PSCustomObject]@{
+                        Name         = 'Solarwinds'
+                        Path         = 'C:\Projects\Solarwinds'
+                        Root         = 'work'
+                        LastActivity = [datetime]'2026-07-01'
+                    },
+                    [PSCustomObject]@{
+                        Name         = 'Frozen-Review'
+                        Path         = 'C:\Projects\Frozen-Review'
+                        Root         = 'work'
+                        LastActivity = [datetime]'2026-07-01'
+                    }
+                )
+            }
+
+            $result = Update-MetraWorkspace -WhatIfPreview
+            $result.Projects | Should -Contain 'Solarwinds'
+            $result.Projects | Should -Not -Contain 'Frozen-Review'
+            @($result.Files).Count | Should -Be 0
+        }
+    }
+
+    It 'ships workspace.exclude in the tracked config example' {
+        $example = Join-Path (Get-MetraRoot) 'metra.config.example.json'
+        $raw = Get-Content -LiteralPath $example -Raw
+        $raw | Should -Match '"workspace"\s*:\s*\{[\s\S]*?"exclude"\s*:\s*\['
+    }
+}
+

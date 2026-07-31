@@ -6,7 +6,8 @@ function Update-MetraWorkspace {
         Rebuilds Metra.code-workspace file(s) with Metra plus projects active in the lookback window.
     .DESCRIPTION
         Finds recently active projects across configured roots, adds always-included projects,
-        and writes each workspace output configured in metra.config.json.
+        drops names listed in workspace.exclude, and writes each workspace output configured
+        in metra.config.json.
     .PARAMETER Months
         Number of months of project activity to include. Uses workspace.months when omitted.
     .PARAMETER ScanDepth
@@ -43,6 +44,16 @@ function Update-MetraWorkspace {
     }
 
     $recent = Get-RecentMetraProjects -Months $Months -ScanDepth $ScanDepth
+
+    # Registered projects can stay routable while staying out of the mounted workspace,
+    # so their AGENTS.md does not load as an always-applied rule.
+    $wsExclude = @(Get-MetraProp -Object $ws -Name 'exclude' -Default @())
+    if ($wsExclude.Count -gt 0) {
+        $excludeSet = [System.Collections.Generic.HashSet[string]]::new([System.StringComparer]::OrdinalIgnoreCase)
+        foreach ($name in $wsExclude) { [void]$excludeSet.Add([string]$name) }
+        $recent = @($recent | Where-Object { -not $excludeSet.Contains([string]$_.Name) })
+    }
+
     $outputs = @(Get-MetraProp -Object $ws -Name 'outputs' -Default @())
     if ($outputs.Count -eq 0) {
         throw 'workspace.outputs is empty in metra.config.json.'

@@ -26,6 +26,7 @@
   "workspace": {
     "months": 6,
     "alwaysInclude": [],
+    "exclude": [],
     "scanDepth": 2,
     "outputs": [
       {

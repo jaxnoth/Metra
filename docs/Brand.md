@@ -121,12 +121,19 @@ Faceplate (top strip):
 
 Do not add a second standalone **Metra** pill beside the title - the label lives on the mark.
 
-Below that (unchanged jobs):
+Below that:
 
-- Ops / Triage pills
-- Health stats (success / warning / info tones as above)
-- Pinned hubs
-- To-dos / recommender / health table
+- Route / Portfolio / Stewardship pills (Route is default)
+- Route: a capped Needs attention queue beside Resolve this; request preview and handoff by Where/What/Why/For whom/Next appear below
+- Needs attention retrieves actionable portfolio and stewardship work, prioritizes verify/drift before git hygiene, and gives each row one next command
+- Resolve this shows issue-specific summary / detail / done-when for a selected item; Ask Metra is the preferred path, Copy for terminal is optional self-serve
+- Standing routes appear only when the queue is empty and no query is typed: default entry plus pinned present projects, as a jump list into the normal handoff
+- An empty queue states why it is empty (quick snapshot skips git and verify) and offers a full re-scan
+- Pinned workspace folders are not a hub card on the Route home; workspace membership is not routing priority
+- A short collapsed Start here primer explains the board without turning the home into documentation
+- Portfolio: needs-attention summary, root-filtered exceptions, project detail
+- Stewardship: Portfolio Operating Model card, Decision Registry / OCC / coverage (read-only)
+- Faceplate and tab navigation stay visible while long tab content scrolls
 
 ## Surface adapters
 

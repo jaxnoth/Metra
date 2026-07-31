@@ -18,6 +18,12 @@ Entry shape:
 
 ---
 
+## 2026-07-31 - Metra Ops as one interchange (retrieval surface)
+
+- Decision: Keep **one** Metra Ops canvas with three tabs organized around operator questions: **Route** (default - classify request and hand off Where/What/Why/For whom/Next), **Portfolio** (what needs attention), **Stewardship** (what knowledge needs tending, including a compact Portfolio Operating Model card). The board **retrieves from existing homes rather than becoming a new home** - routing registry, Decision Registry, OCC, audit/verify stay canonical; the canvas is read-only for durable portfolio state. Route scoring in the board is a labeled preview of PowerShell routing; authoritative Why Here remains `routing -Query` / `ctx -Query`. Quick snapshots must mark git/verify as not checked rather than healthy zeroes.
+- Why: The first Ops board reported on Metra as a health dashboard. The operating model now needs a UI that *is* Metra - route before execute, illuminate homes, tend knowledge - without inventing a competing editor or second scoring system.
+- See: `integrations/cursor/metra-ops-board.canvas.tsx.template`, `scripts/private/Snapshot.ps1`, `docs/Context-Routing.md`, `docs/Brand.md`
+
 ## 2026-07-31 - Route-mark identity (paths and hubs)
 
 - Decision: Keep the public Metra mark as a teal three-node route with an open labeled center interchange ([`docs/assets/metra-mark.svg`](assets/metra-mark.svg)). Terminal nodes stay the same Signal Teal family as the line - no blue/amber/multicolor endpoints. Brand story stays short: Metra connects endpoints; the open center is classification before work moves on. Future operator-facing chrome prefers paths, nodes, routes, connections, hubs - not brains, robots, assistants, or mascots. Documented in [Brand.md](Brand.md) Motif.
@@ -58,7 +64,7 @@ Entry shape:
 - See: `.\metra.ps1 routing -Name TicketTracker`, `.\metra.ps1 routing -Query 'gateway msal'`, `scripts/private/DecisionRegistry.ps1`, `scripts/private/Routing.ps1`
 - Future / not in this release:
   1. ~~Why Here?~~ **Done** (this entry)
-  2. Ops board Recent Decisions / Portfolio Wisdom - bounded strip; health stays the board's job
+  2. ~~Ops board Recent Decisions / Portfolio Wisdom~~ **Done** - Stewardship tab on Metra Ops interchange (bounded strip; board remains a retrieval surface)
   3. Knowledge coverage visibility (not a score)
   4. Project story + relatedProjects in ctx
   5. decisions review (knowledge decay)
@@ -223,3 +229,27 @@ Entry shape:
 - Decision: Product name is **Metra**. Recommended checkout folder was `_meta` at the time (later updated to `_metra`; see 2026-07-30 Decision). Also accepted: `Metra`, `metra`. CLI was still `meta.ps1` at the time (renamed later; see 2026-07-30 CLI rename Decision). Do not rename the live folder for branding.
 - Why: Branding without breaking paths, remotes, or Cursor state slugs.
 - See: `docs/Brand.md`, `README.md`
+
+## 2026-07-31 - Ops home answers next and resolve
+
+- Decision: Make the Route home answer two operator questions first: what needs attention next, and where to resolve the current issue. Show a capped, prioritized queue with one next command per item beside the request classifier. Keep project inventory and operating-model evidence in Portfolio and Stewardship. Do not treat workspace pinned folders as routing favorites.
+- Why: The board is an operator work surface and Metra faceplate, not a telemetry wall. Wayfinding is the product identity: surface real work, classify the issue, and hand off to the existing home without inventing a second durable store.
+- See: `integrations/cursor/metra-ops-board.canvas.tsx.template`, `docs/Brand.md`, `docs/Integrations.md`
+
+## 2026-07-31 - Ask Metra preferred over terminal paste
+
+- Decision: On Resolve this, lead with issue-specific summary/detail/done-when. Prefer Ask Metra (`newComposerChat`) so the agent continues the work in chat. Offer Copy for terminal as the optional self-serve path. Do not put command/copy controls on Needs attention rows - Resolve opens the briefing instead.
+- Why: Operators were unsure whether the board expected paste-into-terminal or agent handoff. Metra's face is wayfinding into chat or CLI homes, not a command wallpaper.
+- See: `integrations/cursor/metra-ops-board.canvas.tsx.template`, `docs/Brand.md`
+
+## 2026-07-31 - Route home stays useful when the queue is clear
+
+- Decision: When Needs attention is empty and no query is typed, the Route home shows Standing routes (default entry plus pinned present projects) that open the normal handoff, and the empty queue explains why it is empty with a full-snapshot re-scan action.
+- Why: A clean portfolio left the home blank, which read as a broken board. Standing routes restore direct access to working homes without reviving pinned hubs as a routing signal.
+- See: `integrations/cursor/metra-ops-board.canvas.tsx.template`, `docs/Brand.md`
+
+## 2026-07-31 - workspace.exclude keeps folders routable but unmounted
+
+- Decision: `metra.config.json` `workspace.exclude` drops named projects from the generated `Metra.code-workspace` while leaving them in the routing registry. Document the key in Customizing-Metra; ship an empty array in `metra.config.example.json`.
+- Why: Frozen review checkouts (for example Metra-Bing-Review) need to stay discoverable without loading a stale `AGENTS.md` as an always-applied Cursor rule in the live workspace.
+- See: `scripts/public/Workspace.ps1`, `docs/Customizing-Metra.md`, `metra.config.example.json`

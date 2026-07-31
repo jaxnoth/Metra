@@ -36,7 +36,7 @@ flowchart LR
 | Always-on Metra persona + overlay | `.cursor/rules/metra-persona.mdc` (+ local overlay) |
 | Teaching Mode in Ask/Plan | Same rule; intent-based triggers also apply elsewhere |
 | Multi-root workspace file | `.\metra.ps1 workspace` -> `Metra.code-workspace` (optional; orchestration folder labeled **Metra**) |
-| Metra Ops board | `.\metra.ps1 snapshot` installs/refreshes `metra-ops-board.canvas.tsx` from `integrations/cursor/` (component code on template drift, data every run) |
+| Metra Ops board | `.\metra.ps1 snapshot` installs/refreshes one `metra-ops-board.canvas.tsx` (Route / Portfolio / Stewardship). Route opens with a capped Needs attention queue and Resolve this classifier; the sticky tab bar keeps all three views reachable. Component code refreshes on template drift; data every run. Board is a retrieval surface - durable writes stay in CLI/chat. |
 | Prior chat search | `.\metra.ps1 chats` (reads Cursor agent transcripts) |
 | Stale Ops refresh on chat start | `.cursor/hooks.json` `sessionStart` -> `.cursor/hooks/session-snapshot.ps1` |
 

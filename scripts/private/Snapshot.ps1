@@ -75,6 +75,171 @@ function Get-MetraOpsCanvasPath {
     return Join-Path $env:USERPROFILE (Join-Path '.cursor\projects' (Join-Path $slug 'canvases\metra-ops-board.canvas.tsx'))
 }
 
+function ConvertTo-MetraSnapshotWhyHere {
+    <#
+    .SYNOPSIS
+        Bounded Why Here rows for the Ops board snapshot (no evidence dumps).
+    #>
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory)][string]$Project,
+        [string]$MetraRoot = (Get-MetraRoot),
+        [int]$Limit = 3
+    )
+
+    $rows = @()
+    try {
+        $rows = @(Get-MetraWhyHere -Project $Project -Limit $Limit -MetraRoot $MetraRoot)
+    }
+    catch {
+        return @()
+    }
+
+    return @(
+        $rows | ForEach-Object {
+            [PSCustomObject]@{
+                id         = [string](Get-MetraProp -Object $_ -Name 'Id' -Default '')
+                title      = [string](Get-MetraProp -Object $_ -Name 'Title' -Default '')
+                decision   = [string](Get-MetraProp -Object $_ -Name 'Decision' -Default '')
+                why        = [string](Get-MetraProp -Object $_ -Name 'Why' -Default '')
+                confidence = [string](Get-MetraProp -Object $_ -Name 'Confidence' -Default '')
+                project    = [string](Get-MetraProp -Object $_ -Name 'Project' -Default $Project)
+            }
+        }
+    )
+}
+
+function Get-MetraOpsStewardshipSummaries {
+    <#
+    .SYNOPSIS
+        Bounded Decision Registry + OCC + coverage summaries for the Ops board.
+    #>
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory)]$Projects,
+        [string]$MetraRoot = (Get-MetraRoot)
+    )
+
+    $decisionSummary = [ordered]@{
+        ledgerExists      = $false
+        confirmedCount    = 0
+        candidateCount    = 0
+        supersededCount   = 0
+        maxConfirmed      = 50
+        recent            = @()
+        candidates        = @()
+    }
+    try {
+        $shown = Show-MetraDecisionRegistry -MetraRoot $MetraRoot
+        $decisionSummary.ledgerExists = [bool]$shown.LedgerExists
+        $decisionSummary.confirmedCount = [int]$shown.ConfirmedCount
+        $decisionSummary.candidateCount = [int]$shown.CandidateCount
+        $decisionSummary.supersededCount = [int]$shown.SupersededCount
+        $decisionSummary.maxConfirmed = [int]$shown.MaxConfirmed
+        $decisionSummary.recent = @(
+            @($shown.Confirmed) |
+                Where-Object {
+                    ([string](Get-MetraProp -Object $_ -Name 'status' -Default 'active')) -eq 'active'
+                } |
+                Sort-Object @{ Expression = { [string](Get-MetraProp -Object $_ -Name 'date' -Default '') }; Descending = $true },
+                @{ Expression = { [string](Get-MetraProp -Object $_ -Name 'title' -Default '') } } |
+                Select-Object -First 5 |
+                ForEach-Object {
+                    [PSCustomObject]@{
+                        id         = [string](Get-MetraProp -Object $_ -Name 'id' -Default '')
+                        title      = [string](Get-MetraProp -Object $_ -Name 'title' -Default '')
+                        decision   = [string](Get-MetraProp -Object $_ -Name 'decision' -Default '')
+                        why        = [string](Get-MetraProp -Object $_ -Name 'why' -Default '')
+                        project    = [string](Get-MetraProp -Object $_ -Name 'project' -Default '')
+                        confidence = [string](Get-MetraProp -Object $_ -Name 'confidence' -Default '')
+                        date       = [string](Get-MetraProp -Object $_ -Name 'date' -Default '')
+                    }
+                }
+        )
+        $decisionSummary.candidates = @(
+            @($shown.Candidates) |
+                Select-Object -First 5 |
+                ForEach-Object {
+                    [PSCustomObject]@{
+                        id      = [string](Get-MetraProp -Object $_ -Name 'id' -Default '')
+                        title   = [string](Get-MetraProp -Object $_ -Name 'title' -Default '')
+                        project = [string](Get-MetraProp -Object $_ -Name 'project' -Default '')
+                        date    = [string](Get-MetraProp -Object $_ -Name 'date' -Default '')
+                    }
+                }
+        )
+    }
+    catch {
+        # Fail-open: empty stewardship block when the ledger is unreadable.
+    }
+
+    $contractSummary = [ordered]@{
+        ledgerExists     = $false
+        confirmedCount   = 0
+        candidateCount   = 0
+        maxConfirmed     = 20
+        confirmed        = @()
+        candidates       = @()
+    }
+    try {
+        $contract = Show-MetraOperatorContract -MetraRoot $MetraRoot
+        $contractSummary.ledgerExists = [bool]$contract.LedgerExists
+        $contractSummary.confirmedCount = [int]$contract.ConfirmedCount
+        $contractSummary.candidateCount = [int]$contract.CandidateCount
+        $contractSummary.maxConfirmed = [int]$contract.MaxConfirmed
+        $contractSummary.confirmed = @(
+            @($contract.ConfirmedGuidelines) |
+                Select-Object -First 10 |
+                ForEach-Object {
+                    [PSCustomObject]@{
+                        id   = [string](Get-MetraProp -Object $_ -Name 'id' -Default '')
+                        text = [string](Get-MetraProp -Object $_ -Name 'text' -Default '')
+                        date = [string](Get-MetraProp -Object $_ -Name 'date' -Default '')
+                    }
+                }
+        )
+        $contractSummary.candidates = @(
+            @($contract.Candidates) |
+                Select-Object -First 5 |
+                ForEach-Object {
+                    [PSCustomObject]@{
+                        id   = [string](Get-MetraProp -Object $_ -Name 'id' -Default '')
+                        text = [string](Get-MetraProp -Object $_ -Name 'text' -Default '')
+                        date = [string](Get-MetraProp -Object $_ -Name 'date' -Default '')
+                    }
+                }
+        )
+    }
+    catch {
+        # Fail-open.
+    }
+
+    $decisionProjects = @(
+        @($decisionSummary.recent) |
+            ForEach-Object { [string]$_.project } |
+            Where-Object { $_ } |
+            Select-Object -Unique
+    )
+    $projectsWithServes = @($Projects | Where-Object { @($_.serves).Count -gt 0 }).Count
+    $projectsWithCapabilities = @($Projects | Where-Object { @($_.capabilities).Count -gt 0 }).Count
+    $projectsWithWhyHere = @($Projects | Where-Object { @($_.whyHere).Count -gt 0 }).Count
+
+    $coverage = [ordered]@{
+        projectsWithServes       = [int]$projectsWithServes
+        projectsWithCapabilities = [int]$projectsWithCapabilities
+        projectsWithWhyHere      = [int]$projectsWithWhyHere
+        projectsWithDecisions    = [int]$decisionProjects.Count
+        confirmedDecisionCount   = [int]$decisionSummary.confirmedCount
+        confirmedGuidelineCount  = [int]$contractSummary.confirmedCount
+    }
+
+    return [PSCustomObject]@{
+        decisions = [PSCustomObject]$decisionSummary
+        contract  = [PSCustomObject]$contractSummary
+        coverage  = [PSCustomObject]$coverage
+    }
+}
+
 function Get-MetraCanvasCodeShape {
     <#
     .SYNOPSIS
@@ -355,6 +520,7 @@ function Export-MetraCanvasSnapshot {
                     project = $name
                     content = "$name - $f"
                     status  = 'pending'
+                    kind    = 'drift'
                 }
             }
         }
@@ -364,13 +530,21 @@ function Export-MetraCanvasSnapshot {
                 project = $name
                 content = "$name - git $($git.summary)"
                 status  = 'pending'
+                kind    = 'git'
             }
+        }
+
+        $serves = @(Get-MetraProp -Object $reg -Name 'serves' -Default @())
+        $whyHere = @()
+        if ($report) {
+            $whyHere = @(ConvertTo-MetraSnapshotWhyHere -Project $name -MetraRoot $metraRoot -Limit 3)
         }
 
         [PSCustomObject]@{
             name            = $name
             purpose         = [string](Get-MetraProp -Object $reg -Name 'purpose' -Default '')
             triggers        = @(Get-MetraProp -Object $reg -Name 'triggers' -Default @())
+            serves          = @($serves)
             entry           = [string](Get-MetraProp -Object $reg -Name 'entry' -Default 'AGENTS.md')
             preferredPaths  = @(Get-MetraProp -Object $reg -Name 'preferredPaths' -Default @())
             excludePaths    = @(Get-MetraProp -Object $reg -Name 'excludePaths' -Default @())
@@ -389,12 +563,14 @@ function Export-MetraCanvasSnapshot {
             largeFiles      = $large
             status          = $status
             pinned          = ($pinned -contains $name)
+            whyHere         = $whyHere
             gitIsRepo       = [bool]$git.isGit
             gitDirty        = [int]$git.dirty
             gitAhead        = [int]$git.ahead
             gitBehind       = [int]$git.behind
             gitBranch       = [string]$git.branch
             gitSummary      = [string]$git.summary
+            gitChecked      = (-not $Quick)
         }
     }
 
@@ -415,6 +591,7 @@ function Export-MetraCanvasSnapshot {
                     project = [string]$r.Name
                     content = "$($r.Name) - $f"
                     status  = 'pending'
+                    kind    = 'drift'
                 }
             }
             if ($Quick) {
@@ -436,6 +613,7 @@ function Export-MetraCanvasSnapshot {
                     project = [string]$r.Name
                     content = "$($r.Name) - git $($git.summary)"
                     status  = 'pending'
+                    kind    = 'git'
                 }
             }
             $projects = @($projects) + @(
@@ -443,6 +621,7 @@ function Export-MetraCanvasSnapshot {
                     name            = [string]$r.Name
                     purpose         = ''
                     triggers        = @()
+                    serves          = @()
                     entry           = 'AGENTS.md'
                     preferredPaths  = @('README.md', 'AGENTS.md')
                     excludePaths    = @()
@@ -461,12 +640,14 @@ function Export-MetraCanvasSnapshot {
                     largeFiles      = @()
                     status          = 'drift'
                     pinned          = $false
+                    whyHere         = @()
                     gitIsRepo       = [bool]$git.isGit
                     gitDirty        = [int]$git.dirty
                     gitAhead        = [int]$git.ahead
                     gitBehind       = [int]$git.behind
                     gitBranch       = [string]$git.branch
                     gitSummary      = [string]$git.summary
+                    gitChecked      = (-not $Quick)
                 }
             )
         }
@@ -482,9 +663,48 @@ function Export-MetraCanvasSnapshot {
     $gitAheadProjects = @($projects | Where-Object { $_.gitIsRepo -and $_.gitAhead -gt 0 }).Count
     $gitBehindProjects = @($projects | Where-Object { $_.gitIsRepo -and $_.gitBehind -gt 0 }).Count
 
+    $stewardship = Get-MetraOpsStewardshipSummaries -Projects $projects -MetraRoot $metraRoot
+
+    $verifySummary = [ordered]@{
+        checked   = $false
+        status    = 'skipped'
+        passCount = 0
+        warnCount = 0
+        failCount = 0
+        ok        = $null
+    }
+    if (-not $Quick) {
+        try {
+            $verify = Invoke-MetraVerify
+            $status = if ([int]$verify.FailCount -gt 0) { 'FAIL' }
+            elseif ([int]$verify.WarnCount -gt 0) { 'WARN' }
+            else { 'PASS' }
+            $verifySummary = [ordered]@{
+                checked   = $true
+                status    = $status
+                passCount = [int]$verify.PassCount
+                warnCount = [int]$verify.WarnCount
+                failCount = [int]$verify.FailCount
+                ok        = [bool]$verify.Ok
+            }
+        }
+        catch {
+            $verifySummary = [ordered]@{
+                checked   = $true
+                status    = 'FAIL'
+                passCount = 0
+                warnCount = 0
+                failCount = 1
+                ok        = $false
+            }
+        }
+    }
+
     $snapshot = [ordered]@{
         generatedAt       = (Get-Date).ToString('o')
         mode              = $(if ($Quick) { 'quick' } else { 'full' })
+        gitChecked        = (-not $Quick)
+        verifyChecked     = (-not $Quick -and [bool]$verifySummary.checked)
         projectCount      = @($projects).Count
         driftCount        = [int]$auditDriftCount
         driftProjects     = $driftProjects
@@ -508,6 +728,10 @@ function Export-MetraCanvasSnapshot {
         ticketFirst       = [bool]$registry.routing.ticketFirst
         todos             = @($todos | Select-Object -First 40)
         projects          = @($projects | Sort-Object name)
+        decisions         = $stewardship.decisions
+        contract          = $stewardship.contract
+        coverage          = $stewardship.coverage
+        verify            = [PSCustomObject]$verifySummary
     }
 
     $dir = Split-Path -Parent $OutPath
