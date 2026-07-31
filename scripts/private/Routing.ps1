@@ -185,3 +185,217 @@ function Get-MetraRegistryProject {
     @($Registry.projects) | Where-Object { $_.name -eq $Name } | Select-Object -First 1
 }
 
+function Get-MetraQueryTokens {
+    param([string]$Query)
+    if ([string]::IsNullOrWhiteSpace($Query)) { return @() }
+    return @(
+        ($Query.ToLowerInvariant() -split '\W+') |
+            Where-Object { $_ -and $_.Length -gt 1 }
+    )
+}
+
+function Get-MetraScoredRoutingProjects {
+    <#
+    .SYNOPSIS
+        Scores present registry projects for a query (same rules as ctx).
+    #>
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory)][string]$Query,
+        [int]$Limit = 25
+    )
+
+    if ($Limit -lt 1) { $Limit = 25 }
+    $tokens = @(Get-MetraQueryTokens -Query $Query)
+    if ($tokens.Count -eq 0) { return @() }
+
+    $registry = Get-MetraProjectRegistry
+    $disk = @{}
+    foreach ($p in @(Get-MetraProjects)) {
+        $disk[$p.Name.ToLowerInvariant()] = $p
+    }
+
+    $scored = New-Object System.Collections.Generic.List[object]
+    foreach ($reg in @($registry.projects)) {
+        $regName = [string]$reg.name
+        $onDisk = $disk[$regName.ToLowerInvariant()]
+        if (-not $onDisk) { continue }
+
+        $purpose = [string](Get-MetraProp -Object $reg -Name 'purpose' -Default '')
+        $triggers = @(Get-MetraProp -Object $reg -Name 'triggers' -Default @())
+        $hay = (@($regName) + $triggers + @($purpose) | ForEach-Object { [string]$_ }) -join ' '
+        $hayLower = $hay.ToLowerInvariant()
+        $score = 0
+        $matchedTokens = New-Object System.Collections.Generic.List[string]
+        foreach ($t in $tokens) {
+            if ($hayLower.Contains($t)) {
+                $score++
+                [void]$matchedTokens.Add($t)
+            }
+            if ($regName.ToLowerInvariant() -eq $t) { $score += 2 }
+        }
+        if ($score -le 0) { continue }
+
+        [void]$scored.Add([PSCustomObject]@{
+                Name          = $regName
+                Root          = [string]$onDisk.Root
+                Path          = [string]$onDisk.Path
+                Purpose       = $purpose
+                Triggers      = @($triggers)
+                Score         = $score
+                MatchedTokens = [string[]]@($matchedTokens.ToArray())
+                HayLower      = $hayLower
+            })
+    }
+
+    return @(
+        $scored |
+            Sort-Object @{ Expression = 'Score'; Descending = $true }, Name |
+            Select-Object -First $Limit
+    )
+}
+
+function Test-MetraRoutingAmbiguity {
+    <#
+    .SYNOPSIS
+        True when primary and runner-up scores are close per Why Here v1 rules.
+    #>
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory)][int]$PrimaryScore,
+        [int]$RunnerUpScore
+    )
+
+    if ($RunnerUpScore -le 0) { return $false }
+    $diff = $PrimaryScore - $RunnerUpScore
+    if ($diff -le 1) { return $true }
+    if ($PrimaryScore -ge 2 -and $RunnerUpScore -ge ([math]::Ceiling($PrimaryScore * 0.5))) {
+        return $true
+    }
+    return $false
+}
+
+function Get-MetraRoutingAmbiguity {
+    <#
+    .SYNOPSIS
+        Picks primary (+ optional close runner-up) for a routing query.
+    #>
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory)][string]$Query
+    )
+
+    $scored = @(Get-MetraScoredRoutingProjects -Query $Query -Limit 10)
+    if ($scored.Count -eq 0) {
+        return [PSCustomObject]@{
+            Primary       = $null
+            RunnerUp      = $null
+            IsAmbiguous   = $false
+            FavoredTokens = @()
+        }
+    }
+
+    $primary = $scored[0]
+    $runnerUp = if ($scored.Count -gt 1) { $scored[1] } else { $null }
+    $ambiguous = $false
+    $favored = @()
+    if ($runnerUp) {
+        $ambiguous = Test-MetraRoutingAmbiguity -PrimaryScore ([int]$primary.Score) -RunnerUpScore ([int]$runnerUp.Score)
+        if ($ambiguous) {
+            $favoredList = New-Object System.Collections.Generic.List[string]
+            foreach ($t in @(Get-MetraQueryTokens -Query $Query)) {
+                $inPrimary = $primary.HayLower.Contains($t)
+                $inRunner = $runnerUp.HayLower.Contains($t)
+                if ($inPrimary -and -not $inRunner) {
+                    [void]$favoredList.Add($t)
+                }
+            }
+            # If none exclusive, show tokens that matched primary
+            if ($favoredList.Count -eq 0) {
+                foreach ($t in @($primary.MatchedTokens | Select-Object -Unique)) {
+                    [void]$favoredList.Add($t)
+                }
+            }
+            $favored = [string[]]@($favoredList.ToArray())
+        }
+        else {
+            $runnerUp = $null
+        }
+    }
+
+    return [PSCustomObject]@{
+        Primary       = $primary
+        RunnerUp      = $runnerUp
+        IsAmbiguous   = $ambiguous
+        FavoredTokens = $favored
+    }
+}
+
+function Show-MetraRoutingCli {
+    <#
+    .SYNOPSIS
+        CLI host output for routing (table and/or Why Here). Private - called from metra.ps1 via module scope.
+    #>
+    [CmdletBinding()]
+    param(
+        [string]$Query,
+        [string[]]$Name,
+        [switch]$SharedOnly,
+        [switch]$MissingOnly
+    )
+
+    if (-not [string]::IsNullOrWhiteSpace($Query) -and (-not $Name -or $Name.Count -eq 0) -and -not $SharedOnly -and -not $MissingOnly) {
+        $amb = Get-MetraRoutingAmbiguity -Query $Query
+        if (-not $amb.Primary) {
+            Write-Host ("No present projects matched query: {0}" -f $Query) -ForegroundColor Yellow
+            return
+        }
+
+        $primary = $amb.Primary
+        Write-Host ("Primary: {0} (score={1})" -f $primary.Name, $primary.Score) -ForegroundColor Cyan
+        if ($primary.Purpose) {
+            Write-Host ("  {0}" -f $primary.Purpose)
+        }
+        Write-Host ("  triggers: {0}" -f ($(if ($primary.Triggers.Count -gt 0) { $primary.Triggers -join ', ' } else { '(none)' })))
+        $why = @(Get-MetraWhyHere -Project $primary.Name -Query $Query -Limit 3)
+        if ($why.Count -gt 0) {
+            Write-Host ''
+            Write-MetraWhyHere -Project $primary.Name -Decisions $why
+        }
+        if ($amb.IsAmbiguous -and $amb.RunnerUp) {
+            $runner = $amb.RunnerUp
+            Write-Host ''
+            Write-Host ("Runner-up: {0} (score={1})" -f $runner.Name, $runner.Score) -ForegroundColor Yellow
+            $whyNot = @(Get-MetraWhyHere -Project $runner.Name -Query $Query -Limit 2)
+            Write-MetraWhyNot -Project $runner.Name -Decisions $whyNot -FavoredTokens $amb.FavoredTokens
+        }
+        return
+    }
+
+    $rows = @(Get-MetraRoutingTable -Name $Name -SharedOnly:$SharedOnly -MissingOnly:$MissingOnly)
+    if ($rows.Count -eq 0) {
+        Write-Host 'No registry entries matched.' -ForegroundColor Yellow
+        return
+    }
+
+    $rows |
+        Select-Object Name, Source, Root, Present, Optional,
+            @{ n = 'Triggers'; e = { ($_.Triggers -join ', ') } } |
+        Format-Table -AutoSize
+    foreach ($row in @($rows | Where-Object { -not $_.Present })) {
+        Write-Host ("{0}: {1}" -f $row.Name, $row.Advice) -ForegroundColor Yellow
+    }
+    Write-Host ("{0} entr(ies); {1} present" -f $rows.Count, @($rows | Where-Object Present).Count)
+
+    # Why Here only when -Name scopes the stop (not full-table dump)
+    if ($Name -and $Name.Count -gt 0 -and -not $MissingOnly) {
+        foreach ($row in @($rows | Where-Object Present)) {
+            $why = @(Get-MetraWhyHere -Project $row.Name -Query $Query -Limit 3)
+            if ($why.Count -gt 0) {
+                Write-Host ''
+                Write-MetraWhyHere -Project $row.Name -Decisions $why
+            }
+        }
+    }
+}
+

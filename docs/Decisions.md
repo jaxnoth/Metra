@@ -18,20 +18,27 @@ Entry shape:
 
 ---
 
+## 2026-07-31 - Why Here? routing explanations
+
+- Decision: Ship **Why Here?** as ledger-backed routing explanations attached when a primary stop is named or query-picked. Private helpers `Get-MetraWhyHere` / `Write-MetraWhyHere` / `Write-MetraWhyNot`; `Search-MetraDecisionRegistry -Project` scopes hits. Surfaces: `.\metra.ps1 routing -Name` (Why Here per present named project), `.\metra.ps1 routing -Query` (primary + Why Here; close runner-up + Why not), `ctx -Query` (markdown `## Why here?` / optional `## Why not?`; JSON `whyHereFor`, `relatedDecisions`, optional `whyNotFor` / `runnerUpDecisions`). Full `routing` table without Name/Query stays an index with no Why Here dump. Confidence shown only when not `high`. Ambiguity when score gap ≤ 1 or runner-up ≥ 50% of primary (primary ≥ 2). Persona may cite ledger Why Here / Why not; never invent operational why. No always-on decisions rule.
+- Why: Portfolio knowledge should appear as Why? at the moment of the stop pick, not as a separate hunt or model-generated lore.
+- See: `.\metra.ps1 routing -Name TicketTracker`, `.\metra.ps1 routing -Query 'gateway msal'`, `scripts/private/DecisionRegistry.ps1`, `scripts/private/Routing.ps1`
+- Future / not in this release:
+  1. ~~Why Here?~~ **Done** (this entry)
+  2. Ops board Recent Decisions / Portfolio Wisdom - bounded strip; health stays the board's job
+  3. Knowledge coverage visibility (not a score)
+  4. Project story + relatedProjects in ctx
+  5. decisions review (knowledge decay)
+  6. Cap headroom toward 100 if retrieval stays useful
+  7. **For whom?** - durable `serves` / consumers on projects or decisions (audience of the work). Refuse people-profiling Who (requester/owner/blame). Not CRM.
+  - Deprioritized: more persona add-ons; more Ops board health metrics
+
 ## 2026-07-31 - Decision Registry (Operational Why Memory)
 
 - Decision: Ship an operator-private **Decision Registry** for operational why-we-chose memory, separate from `docs/Decisions.md` (product policy) and the Operator Communication Contract (collaboration rhythm). Ledger is gitignored `docs/decision-registry.json` (`candidates` + `confirmed`). Flow: note/harvest -> promote; never auto-promote. Required on promote: non-empty `why`, `confidence` (`high`|`medium`|`low`), and at least one `evidence` item. Also store `source` and `origin` (`operator`|`backfill`|`harvest`). Cap 50 active confirmed. Retrieved only via `.\metra.ps1 decisions search|get` and bounded `ctx -Query` top 3 `relatedDecisions` - no always-on `.mdc`. CLI also includes `harvest` (candidates only from project `AGENTS.md`) and `seed` (curated local backfill). Travels with `export-profile` / `import-profile`. Boundary test: would every Metra clone benefit? If yes, use Decisions.md instead.
 - Why: Institutional operational scars had no home that was neither routing, personality, nor product docs. Explicit promote plus retrieval-only load keeps trust and avoids memory soup in every prompt.
 - See: `.\metra.ps1 decisions`, `docs/decision-registry.example.json`, `scripts/private/DecisionRegistry.ps1`
-- Future / not in this release (surface relationships, not more raw data - Bing 2026-07-31):
-  1. **Why Here?** - When routing picks a project, attach a short human-readable explanation from Decision Registry hits (decision + why + id/confidence), not persona improvisation. Signature follow-on to Decision Registry + ctx top-3.
-  2. **Ops board Recent Decisions / Portfolio Wisdom** - Bounded strip of highest-impact active decisions (titles only); health stays the board's job; no decisions tab or ledger dump.
-  3. **Knowledge coverage (visibility, not a score)** - e.g. projects / AGENTS / decisions / projects with no decisions; institutional-memory hygiene beside doc drift.
-  4. **Project story command** - e.g. richer `project`/`ctx` view: triggers + key decisions + related projects (topology), still bounded.
-  5. **relatedProjects in ctx** - after relatedDecisions; local portfolio topology for the primary stop.
-  6. **decisions review** - knowledge decay: stale refs, superseded, missing why, projects with no decisions.
-  7. Cap headroom toward 100 if search + ctx stay useful.
-  - Deprioritized: more persona add-ons; more Ops board health metrics.
+- Future: see Why Here entry (item 1 done); remaining relationship-surfacing items listed there.
 
 ## 2026-07-31 - One generated workspace file
 

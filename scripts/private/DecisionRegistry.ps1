@@ -573,6 +573,7 @@ function Search-MetraDecisionRegistry {
     [CmdletBinding()]
     param(
         [string]$Query,
+        [string]$Project,
         [int]$Limit = 10,
         [switch]$IncludeCandidates,
         [switch]$IncludeSuperseded,
@@ -588,6 +589,8 @@ function Search-MetraDecisionRegistry {
                 Where-Object { $_ -and $_.Length -gt 1 }
         )
     }
+    $projectFilter = Normalize-MetraDecisionText $Project
+    $projectFilterLower = if ($projectFilter) { $projectFilter.ToLowerInvariant() } else { '' }
 
     $rows = New-Object System.Collections.Generic.List[object]
     $buckets = @(
@@ -604,11 +607,17 @@ function Search-MetraDecisionRegistry {
                 continue
             }
 
+            $itemProject = [string](Get-MetraProp -Object $item -Name 'project' -Default '')
+            $itemProjectLower = $itemProject.ToLowerInvariant()
+            if ($projectFilterLower -and $itemProjectLower -ne $projectFilterLower) {
+                continue
+            }
+
             $hay = @(
                 [string](Get-MetraProp -Object $item -Name 'title' -Default ''),
                 [string](Get-MetraProp -Object $item -Name 'decision' -Default ''),
                 [string](Get-MetraProp -Object $item -Name 'why' -Default ''),
-                [string](Get-MetraProp -Object $item -Name 'project' -Default ''),
+                $itemProject,
                 (@(Get-MetraProp -Object $item -Name 'tags' -Default @()) -join ' '),
                 [string](Get-MetraProp -Object $item -Name 'source' -Default '')
             ) -join ' '
@@ -616,12 +625,18 @@ function Search-MetraDecisionRegistry {
             $score = 0
             if ($tokens.Count -eq 0) {
                 $score = 1
+                if ($projectFilterLower -and $itemProjectLower -eq $projectFilterLower) {
+                    $score += 5
+                }
             }
             else {
                 foreach ($t in $tokens) {
                     if ($hayLower.Contains($t)) { $score++ }
                 }
                 if ($score -le 0) { continue }
+                if ($projectFilterLower -and $itemProjectLower -eq $projectFilterLower) {
+                    $score += 5
+                }
             }
 
             [void]$rows.Add([PSCustomObject]@{
@@ -629,7 +644,7 @@ function Search-MetraDecisionRegistry {
                     Title      = [string](Get-MetraProp -Object $item -Name 'title' -Default '')
                     Decision   = [string](Get-MetraProp -Object $item -Name 'decision' -Default '')
                     Why        = [string](Get-MetraProp -Object $item -Name 'why' -Default '')
-                    Project    = [string](Get-MetraProp -Object $item -Name 'project' -Default '')
+                    Project    = $itemProject
                     Confidence = [string](Get-MetraProp -Object $item -Name 'confidence' -Default '')
                     Status     = $status
                     Origin     = [string](Get-MetraProp -Object $item -Name 'origin' -Default '')
@@ -648,6 +663,120 @@ function Search-MetraDecisionRegistry {
             Sort-Object @{ Expression = 'Score'; Descending = $true }, @{ Expression = 'Date'; Descending = $true }, Title |
             Select-Object -First $Limit
     )
+}
+
+function Get-MetraWhyHere {
+    <#
+    .SYNOPSIS
+        Bounded Decision Registry explanations for a routed project (ledger only).
+    #>
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory)][string]$Project,
+        [string]$Query,
+        [int]$Limit = 3,
+        [string]$MetraRoot = (Get-MetraRoot)
+    )
+
+    if ($Limit -lt 1) { $Limit = 3 }
+    $projectName = Normalize-MetraDecisionText $Project
+    if (-not $projectName) { return @() }
+
+    try {
+        return @(Search-MetraDecisionRegistry -Project $projectName -Query $Query -Limit $Limit -MetraRoot $MetraRoot)
+    }
+    catch {
+        return @()
+    }
+}
+
+function Format-MetraWhyHereConfidenceSuffix {
+    param([string]$Confidence)
+    $c = (Normalize-MetraDecisionText $Confidence).ToLowerInvariant()
+    if (-not $c -or $c -eq 'high') { return '' }
+    return (' ({0})' -f $c)
+}
+
+function Format-MetraWhyHereBlock {
+    <#
+    .SYNOPSIS
+        Builds human-readable Why here / Why not lines (decision + why; confidence only if not high).
+    #>
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory)][string]$Project,
+        [ValidateSet('Why here?', 'Why not?')][string]$Label = 'Why here?',
+        $Decisions,
+        [string[]]$FavoredTokens
+    )
+
+    $lines = New-Object System.Collections.Generic.List[string]
+    $hits = @($Decisions)
+    if ($hits.Count -eq 0 -and (-not $FavoredTokens -or $FavoredTokens.Count -eq 0)) {
+        return @()
+    }
+
+    [void]$lines.Add(('{0} {1}' -f $Label, $Project))
+    if ($Label -eq 'Why not?' -and $FavoredTokens -and $FavoredTokens.Count -gt 0) {
+        [void]$lines.Add(('  Query tokens favored the primary for: {0}' -f ($FavoredTokens -join ', ')))
+    }
+    foreach ($d in $hits) {
+        $title = [string](Get-MetraProp -Object $d -Name 'Title' -Default '')
+        if (-not $title) { $title = [string](Get-MetraProp -Object $d -Name 'title' -Default '') }
+        $decision = [string](Get-MetraProp -Object $d -Name 'Decision' -Default '')
+        if (-not $decision) { $decision = [string](Get-MetraProp -Object $d -Name 'decision' -Default '') }
+        $why = [string](Get-MetraProp -Object $d -Name 'Why' -Default '')
+        if (-not $why) { $why = [string](Get-MetraProp -Object $d -Name 'why' -Default '') }
+        $id = [string](Get-MetraProp -Object $d -Name 'Id' -Default '')
+        if (-not $id) { $id = [string](Get-MetraProp -Object $d -Name 'id' -Default '') }
+        $conf = [string](Get-MetraProp -Object $d -Name 'Confidence' -Default '')
+        if (-not $conf) { $conf = [string](Get-MetraProp -Object $d -Name 'confidence' -Default '') }
+        $confSuffix = Format-MetraWhyHereConfidenceSuffix -Confidence $conf
+        $idPart = if ($id) { ' [{0}]' -f $id } else { '' }
+        [void]$lines.Add(('  {0}{1}{2}' -f $title, $confSuffix, $idPart))
+        if ($decision) {
+            [void]$lines.Add(('  {0}' -f $decision))
+        }
+        if ($why) {
+            [void]$lines.Add(('  Why: {0}' -f $why))
+        }
+    }
+    return [string[]]@($lines.ToArray())
+}
+
+function Write-MetraWhyHere {
+    <#
+    .SYNOPSIS
+        Writes a Why here? block to the host.
+    #>
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory)][string]$Project,
+        $Decisions
+    )
+
+    $block = @(Format-MetraWhyHereBlock -Project $Project -Label 'Why here?' -Decisions $Decisions)
+    foreach ($line in $block) {
+        Write-Host $line
+    }
+}
+
+function Write-MetraWhyNot {
+    <#
+    .SYNOPSIS
+        Writes a Why not? runner-up block to the host.
+    #>
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory)][string]$Project,
+        $Decisions,
+        [string[]]$FavoredTokens
+    )
+
+    $block = @(Format-MetraWhyHereBlock -Project $Project -Label 'Why not?' -Decisions $Decisions -FavoredTokens $FavoredTokens)
+    foreach ($line in $block) {
+        Write-Host $line
+    }
 }
 
 function Get-MetraDecisionRegistryEntry {

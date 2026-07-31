@@ -1,8 +1,8 @@
 # Metra
 
-**Desk partner for multi-root portfolios.**
+**Portfolio operations for humans and coding agents. Route work, load context, preserve decisions, and communicate consistently.**
 
-Routing, context, and communication discipline - so you and your coding agent land in the right project, load bounded context, and keep chat useful while tickets and commits stay flat.
+Desk partner for multi-root portfolios: land in the right project, load bounded context, keep operational why inspectable, and keep chat useful while tickets and commits stay flat.
 
 Discover sibling projects, run commands across them with PowerShell (`metra.ps1` / importable module), route work to **one project at a time**, and generate context packs for Cursor, Claude Code, Codex, or other coding agents. The **Metra** persona is that desk partner in chat - route-first, Teaching Mode when exploring, and a professional sink so tickets, commits, ADRs, and handoffs stay flat.
 
@@ -250,7 +250,7 @@ Personal-root `registryFile` is **not** auto-included - copy it with that root. 
 | `setup` | One-shot onboarding: seed config if missing, optional `-Profile`, roots, workspace, routing, ctx |
 | `list` | Show project folders (optional `-GitOnly`, `-Filter`, `-Root`) |
 | `roots` | Show configured project roots and whether each exists |
-| `routing` | Show merged registry entries vs disk (`-SharedOnly`, `-MissingOnly`) - which project owns which ask |
+| `routing` | Show merged registry entries vs disk (`-SharedOnly`, `-MissingOnly`); `-Name` / `-Query` attach ledger-backed Why Here (and Why not when query scores are close) |
 | `ctx` | Bounded agent context pack (markdown/json; optional `-Query`) |
 | `status` | `git status -sb` in each git project |
 | `pull` / `fetch` | Fast-forward pull or fetch across git projects |
@@ -266,6 +266,15 @@ Personal-root `registryFile` is **not** auto-included - copy it with that root. 
 | `profile` | Operator Communication Contract: `show` / `note` / `promote` / `forget` / `render` / `gc` |
 | `decisions` | Decision Registry (Operational Why Memory): `show` / `note` / `promote` / `forget` / `search` / `get` / `supersede` / `gc` / `harvest` / `seed` |
 | `verify` | Routing-Scenarios fixture smoke (`PASS`/`WARN`/`FAIL`; exit 1 on FAIL) |
+
+Why Here examples (Decision Registry must have confirmed entries for that project):
+
+```powershell
+.\metra.ps1 routing                          # full table; no Why Here dump
+.\metra.ps1 routing -Name TicketTracker      # named stop + Why here?
+.\metra.ps1 routing -Query "gateway msal"    # primary + Why here?; Why not? when scores are close
+.\metra.ps1 ctx -Query "ticket disk"         # pack includes ## Why here?
+```
 
 Focused Pester (optional; Pester 5+, PowerShell 7):
 

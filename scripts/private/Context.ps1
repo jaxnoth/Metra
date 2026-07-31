@@ -150,8 +150,10 @@ function Export-MetraContextPack {
         missingOptional = @($missingOptional)
     }
 
-    if ($tokens.Count -gt 0) {
-        $related = @(Search-MetraDecisionRegistry -Query $Query -Limit 3 -MetraRoot $metraRoot)
+    if ($tokens.Count -gt 0 -and $projects.Count -gt 0) {
+        $primaryName = [string]$projects[0].name
+        $pack['whyHereFor'] = $primaryName
+        $related = @(Get-MetraWhyHere -Project $primaryName -Query $Query -Limit 3 -MetraRoot $metraRoot)
         $pack['relatedDecisions'] = @(
             $related | ForEach-Object {
                 [ordered]@{
@@ -165,6 +167,27 @@ function Export-MetraContextPack {
                 }
             }
         )
+
+        $amb = Get-MetraRoutingAmbiguity -Query $Query
+        if ($amb.IsAmbiguous -and $amb.RunnerUp) {
+            $runnerName = [string]$amb.RunnerUp.Name
+            $pack['whyNotFor'] = $runnerName
+            $pack['favoredTokens'] = @($amb.FavoredTokens)
+            $runnerHits = @(Get-MetraWhyHere -Project $runnerName -Query $Query -Limit 2 -MetraRoot $metraRoot)
+            $pack['runnerUpDecisions'] = @(
+                $runnerHits | ForEach-Object {
+                    [ordered]@{
+                        id         = $_.Id
+                        title      = $_.Title
+                        decision   = $_.Decision
+                        why        = $_.Why
+                        project    = $_.Project
+                        confidence = $_.Confidence
+                        source     = $_.Source
+                    }
+                }
+            )
+        }
     }
 
     $defaultMd = Join-Path $metraRoot 'docs\context-pack.md'
@@ -222,10 +245,28 @@ function Export-MetraContextPack {
     }
     if ($pack.Contains('relatedDecisions') -and @($pack.relatedDecisions).Count -gt 0) {
         [void]$md.AppendLine('')
-        [void]$md.AppendLine('## Related decisions (up to 3)')
+        $whyFor = if ($pack.Contains('whyHereFor')) { [string]$pack.whyHereFor } else { '' }
+        [void]$md.AppendLine(('## Why here?{0}' -f $(if ($whyFor) { ' ' + $whyFor } else { '' })))
         [void]$md.AppendLine('')
         foreach ($d in @($pack.relatedDecisions)) {
-            [void]$md.AppendLine(('- **{0}** [{1}] conf={2}' -f $d.title, $d.project, $d.confidence))
+            $conf = [string]$d.confidence
+            $confPart = if ($conf -and $conf.ToLowerInvariant() -ne 'high') { ' (' + $conf + ')' } else { '' }
+            [void]$md.AppendLine(('- **{0}**{1} [{2}]' -f $d.title, $confPart, $d.id))
+            [void]$md.AppendLine(('  - decision: {0}' -f $d.decision))
+            [void]$md.AppendLine(('  - why: {0}' -f $d.why))
+        }
+    }
+    if ($pack.Contains('whyNotFor')) {
+        [void]$md.AppendLine('')
+        [void]$md.AppendLine(('## Why not? {0}' -f $pack.whyNotFor))
+        [void]$md.AppendLine('')
+        if ($pack.Contains('favoredTokens') -and @($pack.favoredTokens).Count -gt 0) {
+            [void]$md.AppendLine(('- Query tokens favored the primary for: {0}' -f ($pack.favoredTokens -join ', ')))
+        }
+        foreach ($d in @($pack.runnerUpDecisions)) {
+            $conf = [string]$d.confidence
+            $confPart = if ($conf -and $conf.ToLowerInvariant() -ne 'high') { ' (' + $conf + ')' } else { '' }
+            [void]$md.AppendLine(('- **{0}**{1} [{2}]' -f $d.title, $confPart, $d.id))
             [void]$md.AppendLine(('  - decision: {0}' -f $d.decision))
             [void]$md.AppendLine(('  - why: {0}' -f $d.why))
         }

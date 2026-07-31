@@ -94,7 +94,10 @@ Usage:
   .\metra.ps1 snapshot [-ScanDepth 2] [-Quick]
   .\metra.ps1 chats [-Name ProjA,ProjB] [-Query 'terms'] [-Ticket 12345] [-Days 90] [-Limit 10] [-IncludeMetra]
   .\metra.ps1 roots
-  .\metra.ps1 routing [-Name ProjA] [-SharedOnly] [-MissingOnly]
+  .\metra.ps1 routing [-Name ProjA] [-Query 'terms'] [-SharedOnly] [-MissingOnly]
+      With -Query: primary stop + Why here? (and Why not? when scores are close).
+      With -Name: registry row(s) + Why here? for present named projects.
+      With neither: full registry table (no Why Here dump).
   .\metra.ps1 export-profile -Path <dir-or-zip>
   .\metra.ps1 import-profile -Path <dir-or-zip> [-Preview] [-Force]
   .\metra.ps1 ctx [-Query 'terms'] [-Path <file|->] [-Format markdown|json] [-Limit 25]
@@ -180,20 +183,8 @@ switch ($Command) {
     }
 
     'routing' {
-        $rows = @(Get-MetraRouting -Name $Name -SharedOnly:$SharedOnly -MissingOnly:$MissingOnly)
-        if ($rows.Count -eq 0) {
-            Write-Host 'No registry entries matched.' -ForegroundColor Yellow
-        }
-        else {
-            $rows |
-                Select-Object Name, Source, Root, Present, Optional,
-                    @{ n = 'Triggers'; e = { ($_.Triggers -join ', ') } } |
-                Format-Table -AutoSize
-            foreach ($row in @($rows | Where-Object { -not $_.Present })) {
-                Write-Host ("{0}: {1}" -f $row.Name, $row.Advice) -ForegroundColor Yellow
-            }
-            Write-Host ("{0} entr(ies); {1} present" -f $rows.Count, @($rows | Where-Object Present).Count)
-        }
+        # Why Here helpers stay private; Show-MetraRoutingCli is a thin compatibility export for the CLI.
+        Show-MetraRoutingCli -Query $Query -Name $Name -SharedOnly:$SharedOnly -MissingOnly:$MissingOnly
     }
 
     'status' {

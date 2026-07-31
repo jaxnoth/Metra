@@ -60,7 +60,8 @@ $script:MetraCompatibilityFunctions = @(
     'Get-MetraProfileFileMap',
     'Invoke-MetraSetup',
     'Invoke-MetraOperatorContractCommand',
-    'Invoke-MetraDecisionRegistryCommand'
+    'Invoke-MetraDecisionRegistryCommand',
+    'Show-MetraRoutingCli'
 )
 
 # Silent one-release compatibility aliases for the former Meta naming.
