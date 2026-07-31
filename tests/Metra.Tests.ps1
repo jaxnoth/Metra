@@ -578,3 +578,58 @@ Describe 'Decision Registry' {
     }
 }
 
+Describe 'Metra Ops canvas install' {
+    BeforeEach {
+        $script:canvasRoot = Join-Path ([System.IO.Path]::GetTempPath()) ('metra-canvas-' + [guid]::NewGuid().ToString('N'))
+        New-Item -ItemType Directory -Path $script:canvasRoot -Force | Out-Null
+        $script:canvasPath = Join-Path $script:canvasRoot 'metra-ops-board.canvas.tsx'
+        $script:templatePath = Join-Path (Get-MetraRoot) 'integrations\cursor\metra-ops-board.canvas.tsx.template'
+    }
+
+    AfterEach {
+        if ($script:canvasRoot -and (Test-Path -LiteralPath $script:canvasRoot)) {
+            Remove-Item -LiteralPath $script:canvasRoot -Recurse -Force -ErrorAction SilentlyContinue
+        }
+    }
+
+    It 'Get-MetraCanvasCodeShape ignores the embedded snapshot block' {
+        InModuleScope Metra {
+            $a = "before`n// <metra-ops-snapshot>`nconst SNAPSHOT = {`"a`":1};`n// </metra-ops-snapshot>`nafter"
+            $b = "before`n// <metra-ops-snapshot>`nconst SNAPSHOT = {`"b`":2};`n// </metra-ops-snapshot>`nafter"
+            Get-MetraCanvasCodeShape -Text $a | Should -Be (Get-MetraCanvasCodeShape -Text $b)
+            Get-MetraCanvasCodeShape -Text $a | Should -Not -Match 'SNAPSHOT'
+        }
+    }
+
+    It 'installs from template when the canvas is missing' {
+        $path = $script:canvasPath
+        InModuleScope Metra -Parameters @{ CanvasPath = $path } {
+            param($CanvasPath)
+            Install-MetraOpsCanvas -CanvasPath $CanvasPath 6>$null | Should -BeTrue
+        }
+        Test-Path -LiteralPath $path | Should -BeTrue
+    }
+
+    It 'refreshes stale component code but keeps an in-sync canvas embed' {
+        $path = $script:canvasPath
+        $template = [System.IO.File]::ReadAllText($script:templatePath)
+
+        # Stale install: component code differs from the template.
+        [System.IO.File]::WriteAllText($path, $template.Replace('function MetraRouteMark()', 'function MetraRouteMarkOld()'))
+        InModuleScope Metra -Parameters @{ CanvasPath = $path } {
+            param($CanvasPath)
+            Install-MetraOpsCanvas -CanvasPath $CanvasPath 6>$null | Should -BeTrue
+        }
+        [System.IO.File]::ReadAllText($path) | Should -Not -Match 'MetraRouteMarkOld'
+
+        # In-sync install: only the embedded snapshot differs, so the file must be left alone.
+        $withData = [System.IO.File]::ReadAllText($path) -replace '(?s)// <metra-ops-snapshot>.*?// </metra-ops-snapshot>', "// <metra-ops-snapshot>`nconst SNAPSHOT = { marker: 'keep-me' };`n// </metra-ops-snapshot>"
+        [System.IO.File]::WriteAllText($path, $withData)
+        InModuleScope Metra -Parameters @{ CanvasPath = $path } {
+            param($CanvasPath)
+            Install-MetraOpsCanvas -CanvasPath $CanvasPath 6>$null | Should -BeTrue
+        }
+        [System.IO.File]::ReadAllText($path) | Should -Match 'keep-me'
+    }
+}
+
