@@ -14,15 +14,17 @@ Not a monorepo build system. Not another "meta" multi-repo clone framework.
 
 MIT licensed. Public repo: [jaxnoth/Metra](https://github.com/jaxnoth/Metra).
 
+**Who this page is for:** operators and developers. Prefer plain language? Start at the **[Metra for everyone](https://jaxnoth.github.io/Metra/)** site (installer-first; no Git required).
+
 **Get Metra**
 
 | Who | Download |
 |-----|----------|
-| Non-technical (Windows) | **[MetraSetup.exe](https://github.com/jaxnoth/Metra/releases/latest/download/MetraSetup.exe)** - latest installer ([all releases](https://github.com/jaxnoth/Metra/releases)) |
+| Non-technical (Windows) | **[MetraSetup.exe](https://github.com/jaxnoth/Metra/releases/latest/download/MetraSetup.exe)** - latest installer · story: [Metra for everyone](https://jaxnoth.github.io/Metra/) |
 | Technical / no Git | Code → **Download ZIP**, then run `Metra-Setup.cmd` (see [ZIP notes](#no-git-download-the-zip)) |
 | Developer | `git clone` (see [Quick start](#quick-start-cli-first)) |
 
-The green **Code** button only offers clone + source ZIP. The Windows installer is under **Releases** (right sidebar: Metra 0.1.0) or the MetraSetup.exe link above.
+The green **Code** button only offers clone + source ZIP. The Windows installer is under **Releases** or the MetraSetup.exe link above.
 
 **Requirements:** PowerShell. Cursor is optional for full persona auto-load - see [docs/Integrations.md](docs/Integrations.md).
 
@@ -376,6 +378,7 @@ _metra/
   profiles/sample/           anonymized operator pack (ops bindings + persona overlay)
   profiles/addons/           optional Persona Add-ons (tone dials; e.g. humor-desk)
   packaging/                 Windows installer build (Build-MetraInstaller.ps1, inno/)
+  site/                      Plain-language landing (GitHub Pages - jaxnoth.github.io/Metra)
   AGENTS.md                  communication model entry + Metra examples (any agent harness)
   LICENSE                    MIT
   SECURITY.md
