@@ -14,6 +14,16 @@ Not a monorepo build system. Not another "meta" multi-repo clone framework.
 
 MIT licensed. Public repo: [jaxnoth/Metra](https://github.com/jaxnoth/Metra).
 
+**Get Metra**
+
+| Who | Download |
+|-----|----------|
+| Non-technical (Windows) | **[MetraSetup.exe](https://github.com/jaxnoth/Metra/releases/latest/download/MetraSetup.exe)** - latest installer ([all releases](https://github.com/jaxnoth/Metra/releases)) |
+| Technical / no Git | Code → **Download ZIP**, then run `Metra-Setup.cmd` (see [ZIP notes](#no-git-download-the-zip)) |
+| Developer | `git clone` (see [Quick start](#quick-start-cli-first)) |
+
+The green **Code** button only offers clone + source ZIP. The Windows installer is under **Releases** (right sidebar: Metra 0.1.0) or the MetraSetup.exe link above.
+
 **Requirements:** PowerShell. Cursor is optional for full persona auto-load - see [docs/Integrations.md](docs/Integrations.md).
 
 ## 90-second understanding
@@ -142,7 +152,7 @@ Set-ExecutionPolicy -Scope CurrentUser -ExecutionPolicy RemoteSigned
 
 Primary product-distribution path. No Git, ZIP, execution-policy, or unblock concepts for the user.
 
-1. Download `MetraSetup.exe` from [GitHub Releases](https://github.com/jaxnoth/Metra/releases), or build locally: `.\packaging\Build-MetraInstaller.ps1` (see [packaging/README.md](packaging/README.md)).
+1. Download **[MetraSetup.exe](https://github.com/jaxnoth/Metra/releases/latest/download/MetraSetup.exe)** (always the latest release), or build locally: `.\packaging\Build-MetraInstaller.ps1` (see [packaging/README.md](packaging/README.md)).
 2. Run the installer. Default folder is under **Documents\Metra**. Unsigned builds may show SmartScreen - **More info** -> **Run anyway**.
 3. Leave **Run Metra setup now** checked (default on first install and upgrade). That launches `Metra-Setup.cmd` and activates capabilities without changing machine ExecutionPolicy.
 4. Later upgrades: run a newer `MetraSetup.exe`. Product files are replaced; your config, local registry, Decision Registry, OCC, and Persona Add-on overlays are preserved; setup runs again (checked by default) so new features activate.
