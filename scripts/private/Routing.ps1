@@ -353,6 +353,130 @@ function Write-MetraForWhom {
     }
 }
 
+function Get-MetraRelatedProjects {
+    <#
+    .SYNOPSIS
+        Canonical same-root related neighbors for a registry project (topology only).
+    .DESCRIPTION
+        Preserves registry related order; dedupes case-insensitive (first wins); drops
+        unknown names; keeps same-root only; caps at Limit (default 6). Does not sort.
+        Related is topology, not permission to multi-repo search.
+    #>
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory)][string]$Name,
+        [string]$SourceRoot,
+        [object]$Registry,
+        [hashtable]$DiskByName,
+        [ValidateRange(1, 50)]
+        [int]$Limit = 6
+    )
+
+    if (-not $Registry) {
+        $Registry = Get-MetraProjectRegistry
+    }
+    if (-not $DiskByName) {
+        $DiskByName = @{}
+        foreach ($p in @(Get-MetraProjects)) {
+            $DiskByName[$p.Name.ToLowerInvariant()] = $p
+        }
+    }
+
+    $regByName = @{}
+    foreach ($reg in @($Registry.projects)) {
+        $key = ([string]$reg.name).ToLowerInvariant()
+        if (-not [string]::IsNullOrWhiteSpace($key)) {
+            $regByName[$key] = $reg
+        }
+    }
+
+    $sourceKey = $Name.ToLowerInvariant()
+    $sourceReg = $regByName[$sourceKey]
+    if (-not $sourceReg) { return @() }
+
+    $primaryRootName = ''
+    foreach ($r in @(Get-MetraRoots -IncludeMissing)) {
+        if ($r.Primary) {
+            $primaryRootName = [string]$r.Name
+            break
+        }
+    }
+    if ([string]::IsNullOrWhiteSpace($primaryRootName)) {
+        $first = @(Get-MetraRoots -IncludeMissing) | Select-Object -First 1
+        if ($first) { $primaryRootName = [string]$first.Name }
+    }
+
+    $resolveRoot = {
+        param($ProjectKey, $RegRow, $Disk, $FallbackRoot)
+        $onDisk = $Disk[$ProjectKey]
+        if ($onDisk -and -not [string]::IsNullOrWhiteSpace([string]$onDisk.Root)) {
+            return [string]$onDisk.Root
+        }
+        if ($RegRow) {
+            $explicit = [string](Get-MetraProp -Object $RegRow -Name 'root' -Default '')
+            if (-not [string]::IsNullOrWhiteSpace($explicit)) {
+                return $explicit
+            }
+        }
+        return $FallbackRoot
+    }
+
+    $resolvedSourceRoot = $SourceRoot
+    if ([string]::IsNullOrWhiteSpace($resolvedSourceRoot)) {
+        $resolvedSourceRoot = & $resolveRoot $sourceKey $sourceReg $DiskByName $primaryRootName
+    }
+    if ([string]::IsNullOrWhiteSpace($resolvedSourceRoot)) {
+        return @()
+    }
+
+    $rawRelated = @(Get-MetraProp -Object $sourceReg -Name 'related' -Default @())
+    $seen = @{}
+    $out = New-Object System.Collections.Generic.List[object]
+
+    foreach ($raw in $rawRelated) {
+        $relName = [string]$raw
+        if ([string]::IsNullOrWhiteSpace($relName)) { continue }
+        $relKey = $relName.ToLowerInvariant()
+        if ($seen.ContainsKey($relKey)) { continue }
+        $seen[$relKey] = $true
+
+        $relReg = $regByName[$relKey]
+        if (-not $relReg) { continue }
+
+        $relRoot = & $resolveRoot $relKey $relReg $DiskByName $primaryRootName
+        if ([string]::IsNullOrWhiteSpace($relRoot)) { continue }
+        if ($relRoot.ToLowerInvariant() -ne $resolvedSourceRoot.ToLowerInvariant()) { continue }
+
+        $canonicalName = [string]$relReg.name
+        if ([string]::IsNullOrWhiteSpace($canonicalName)) { $canonicalName = $relName }
+
+        [void]$out.Add([PSCustomObject]@{
+                Name    = $canonicalName
+                Present = [bool]$DiskByName.ContainsKey($relKey)
+            })
+        if ($out.Count -ge $Limit) { break }
+    }
+
+    return @($out.ToArray())
+}
+
+function Write-MetraRelatedProjects {
+    param(
+        [object[]]$Related
+    )
+
+    $rows = @($Related | Where-Object { $_ -and -not [string]::IsNullOrWhiteSpace([string]$_.Name) })
+    if ($rows.Count -eq 0) { return }
+    $parts = @(
+        $rows | ForEach-Object {
+            $label = [string]$_.Name
+            if (-not $_.Present) { $label = "$label (missing)" }
+            $label
+        }
+    )
+    Write-Host ("Related: {0}" -f ($parts -join ', '))
+}
+
 function Show-MetraRoutingCli {
     <#
     .SYNOPSIS
@@ -382,6 +506,11 @@ function Show-MetraRoutingCli {
         if (@($primary.Serves).Count -gt 0) {
             Write-Host ''
             Write-MetraForWhom -Serves $primary.Serves
+        }
+        $relatedTopo = @(Get-MetraRelatedProjects -Name $primary.Name -SourceRoot $primary.Root)
+        if ($relatedTopo.Count -gt 0) {
+            Write-Host ''
+            Write-MetraRelatedProjects -Related $relatedTopo
         }
         $why = @(Get-MetraWhyHere -Project $primary.Name -Query $Query -Limit 3)
         if ($why.Count -gt 0) {
@@ -423,6 +552,11 @@ function Show-MetraRoutingCli {
             if (@($row.Serves).Count -gt 0) {
                 Write-Host ''
                 Write-MetraForWhom -Serves $row.Serves
+            }
+            $relatedTopo = @(Get-MetraRelatedProjects -Name $row.Name -SourceRoot $row.Root)
+            if ($relatedTopo.Count -gt 0) {
+                Write-Host ''
+                Write-MetraRelatedProjects -Related $relatedTopo
             }
             $why = @(Get-MetraWhyHere -Project $row.Name -Query $Query -Limit 3)
             if ($why.Count -gt 0) {

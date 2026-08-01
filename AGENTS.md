@@ -71,7 +71,7 @@ Do not put Metra in user-global Cursor rules. Do not rename a live orchestration
 2. For tickets / helpdesk: start in **TicketTracker**, then route to one technical project.
 3. Load that project's `AGENTS.md` (or README if none). Do not scan other repos yet.
 4. Stay in that project's root. Cross-root only when the user names the other project.
-5. Broaden to same-root `related` only when evidence requires it.
+5. Broaden to same-root `related` only when evidence requires it. Ctx / routing **Related** and project story are topology only - not permission to multi-repo search.
 
 ## Shared vs local registry
 
@@ -122,8 +122,8 @@ Focused module tests (PowerShell 7 + Pester 5+): `pwsh -NoProfile -File .\tests\
 
 - Prefer [docs/Decisions.md](docs/Decisions.md) for durable Metra portfolio choices before digging agent transcripts.
 - Prefer `.\metra.ps1 decisions search` / `ctx -Query` related decisions for operational why-we-chose before transcript archaeology.
-- Do not open generated catalogs, inventory dumps, `node_modules`, or local ticket caches unless required.
-- Prefer project CLI filters (`Get-OrionCatalog`, TicketTracker `brief` / `chats`, `.\metra.ps1 ctx`) over reading large JSON/YAML or full agent transcripts wholesale.
+- When cloud chats are needed (`chats -Cloud`, mine a Cloud Agent thread) and the Cursor API key is missing from process **and** User/Machine environment, ask the operator for a **session** key before continuing - do not silently fall back to local-only. Prefer User env `CURSOR_API_KEY` when set (resolver checks process then User then Machine). See gitignored `docs/Cross-Device.local.md`. CLI never prompts for the key; chat does.
+- Do not open generated catalogs, inventory dumps, `node_modules`, or local ticket caches unless required.- Prefer project CLI filters (`Get-OrionCatalog`, TicketTracker `brief` / `chats`, `.\metra.ps1 ctx`) over reading large JSON/YAML or full agent transcripts wholesale.
 - After routing, Grep/Glob with an absolute `path` scoped to the primary project (or `C:\Projects\_metra` for Metra work; older clones may use `_meta`). Do not search the whole multi-root workspace - Cursor echoes the same hit under every mounted folder.
 - Prefer `.\metra.ps1 routing` / `.\metra.ps1 ctx` over portfolio-wide file search when choosing a project.
 - Keep Metra guidance short; project details stay local. Promote durable chat clues into TicketTracker `note` / `solutions/`.
