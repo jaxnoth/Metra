@@ -61,3 +61,7 @@ docs/*.local.md
 # PowerShell
 *.ps1xml.bak
 
+# Installer build output / staging (keep packaging scripts and .iss tracked)
+packaging/out/
+packaging/stage/
+
