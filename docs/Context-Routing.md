@@ -12,7 +12,7 @@ Keep agent response time and token use low by routing to one project, then loadi
 | `projects.local.json` | Machine-private work entries (gitignored) |
 | Root `registryFile` | Optional per-root overlay (e.g. personal iCloud) |
 
-Registry project rows use the same optional arrays for consistency: `triggers`, `capabilities`, and `serves` (all `string[]`). `serves` is **For whom?** - audiences of the work (roles, teams, consumer systems), never people/requester memory. Omit or leave empty when unknown; `routing -Name` / `-Query` and `ctx` print a For whom? block only when non-empty.
+Registry project rows use the same optional arrays for consistency: `triggers`, `capabilities`, `serves`, and `related` (all `string[]`). `serves` is **For whom?** - audiences of the work (roles, teams, consumer systems), never people/requester memory. Omit or leave empty when unknown; `routing -Name` / `-Query` and `ctx` print a For whom? block only when non-empty. `related` is same-root neighbor topology (preserve registry order; dedupe; cap 6 in `ctx` / routing via `Get-MetraRelatedProjects`). **Related is topology, not permission to multi-repo search** - open a related project only when evidence requires it.
 | `profiles/sample/` | Anonymized operator pack for `import-profile` |
 | `AGENTS.md` | Short human/agent fallback for the Metra checkout |
 | `.cursor/rules/project-routing.mdc` | Always-on routing rule |
@@ -31,7 +31,7 @@ Configured roots (see `metra.config.json` `roots`) stay separate:
 - Do not open another root unless the user names that project or asks to move material between them.
 - `related` lists must stay same-root. Cross-root ideas (for example Misc scratch sheets into Trivia, or a personal bible game borrowing a work printable) are chat opt-in only.
 
-`.\metra.ps1 routing` shows which registry entries resolved to a real folder. `.\metra.ps1 ctx` writes a bounded agent context pack (present projects + reminders). Optional shared stubs (TicketTracker, Solarwinds) return `whenMissing` advice when absent instead of counting as drift.
+`.\metra.ps1 routing` shows which registry entries resolved to a real folder. `.\metra.ps1 ctx` writes a bounded agent context pack (present projects + reminders). With `-Query`, `ctx` also composes a **Project story** for the primary stop from existing fields (`purpose`, `triggers`, `serves`, `related`, optional `whenPresent`) plus Why Here ledger hits - no separate story field. Optional shared stubs (TicketTracker, Solarwinds) return `whenMissing` advice when absent instead of counting as drift.
 
 ## Audit command
 

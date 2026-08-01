@@ -18,6 +18,23 @@ Entry shape:
 
 ---
 
+## 2026-08-01 - Project story + related in ctx
+
+- Decision: Surface registry **`related`** (reuse the existing field; do not add `relatedProjects`) and a bounded **project story** in `.\metra.ps1 ctx`. Story is a composition of existing metadata (`purpose`, `triggers`, `serves`, `related`, optional `whenPresent`) - no new registry story field and no generated prose. Canonical helper `Get-MetraRelatedProjects` preserves registry order, dedupes, drops unknowns, keeps same-root only, caps at 6, returns `{ Name, Present }`. Context pack and `routing -Name` / `-Query` primary consume that helper only. Related remains **topology, not permission** to multi-repo search.
+- Why: Agents need portfolio topology at the stop pick without inventing memory soup or auto-opening neighbors. Registry stays authoritative; story regenerates deterministically.
+- See: `scripts/private/Routing.ps1` (`Get-MetraRelatedProjects`), `scripts/private/Context.ps1`, `docs/Context-Routing.md`, `.\metra.ps1 ctx -Query "..."`
+
+## 2026-08-01 - Public GitHub vs non-coder audience (deferred)
+
+- Decision: Treat the **GitHub README / repo page as an operator and coder onboarding surface**, not the primary explainer for non-coders. Do not dilute the PowerShell-first README into plain-language marketing that fails both audiences. A **separate website** (or equivalent plain-language landing) is the planned home for non-coder understanding; that work is deferred, not in the current public-repo ship.
+- Why: Non-coder review of the live GitHub page - a teacher with some technical skills found the language not meaningful across the whole page and overwhelming. Feedback concluded a separate website is probably essential for that audience. Concrete vocabulary gaps that needed live explanation: what **PowerShell** is, and what it means to **create a base folder** (checkout / `_metra` / project root). Those terms must not be assumed on the non-coder surface. When creating a home folder, the natural choice was **Documents** (not a developer `C:\Projects`-style root) - treat that as a valid personal-root default in non-coder guidance. **Git was not installed** - `git clone` is a hard stop for that audience; the non-coder path must offer get-Metra without installing Git. The ZIP workaround then hit a second wall: files extracted from a downloaded ZIP carry the Windows mark-of-the-web, so `RemoteSigned` refuses to run unsigned `metra.ps1` even after the documented `Set-ExecutionPolicy` step. Any no-Git path must cover unblocking (ZIP Properties -> Unblock before extract, or `Unblock-File`); the README `Set-ExecutionPolicy` line alone is only sufficient for a real `git clone`.
+- See: `README.md`, [Brand.md](Brand.md) (public mark / GitHub), plan `github_public_audience_revision` (Cursor plans), operator index `docs/Future-Development.local.md` (Bucket A)
+- Future / not in this release:
+  1. Separate plain-language website (or landing) for non-coders - problem, value, and wayfinding without CLI/registry vocabulary; do not lead with PowerShell or "create a base folder" as assumed knowledge; if a home folder is needed, prefer **Documents** (or equivalent user-known place) over developer project roots; **get Metra without Git** (ZIP as interim; an **actual installer** is required for the durable non-coder path - installer should place files, avoid mark-of-the-web friction, and not require the user to understand PowerShell execution policy)
+  2. Keep GitHub README operator/coder-dense; optionally add a short "Who this page is for" pointer to the non-coder site when it exists; add an operator README note that ZIP download is supported for machines without Git **and requires unblocking** (mark-of-the-web vs `RemoteSigned`) until the installer replaces that path
+  3. Re-test the non-coder surface with a similar reviewer profile before calling it done
+  - Out of scope for that revision: rewriting Metra itself into a non-technical product; family/classroom ticketing (TicketTracker); persona add-ons as a substitute for plain docs; requiring Git for first-run non-coder setup; treating manual ZIP + Unblock as the final non-coder deploy story
+
 ## 2026-07-31 - Metra Ops as one interchange (retrieval surface)
 
 - Decision: Keep **one** Metra Ops canvas with three tabs organized around operator questions: **Route** (default - classify request and hand off Where/What/Why/For whom/Next), **Portfolio** (what needs attention), **Stewardship** (what knowledge needs tending, including a compact Portfolio Operating Model card). The board **retrieves from existing homes rather than becoming a new home** - routing registry, Decision Registry, OCC, audit/verify stay canonical; the canvas is read-only for durable portfolio state. Route scoring in the board is a labeled preview of PowerShell routing; authoritative Why Here remains `routing -Query` / `ctx -Query`. Quick snapshots must mark git/verify as not checked rather than healthy zeroes.
@@ -66,11 +83,12 @@ Entry shape:
   1. ~~Why Here?~~ **Done** (this entry)
   2. ~~Ops board Recent Decisions / Portfolio Wisdom~~ **Done** - Stewardship tab on Metra Ops interchange (bounded strip; board remains a retrieval surface)
   3. Knowledge coverage visibility (not a score)
-  4. Project story + relatedProjects in ctx
+  4. ~~Project story + relatedProjects in ctx~~ **Done** - see Project story + related in ctx entry
   5. decisions review (knowledge decay)
   6. Cap headroom toward 100 if retrieval stays useful
   7. ~~**For whom?**~~ **Done** - see For whom? (project serves) entry
   - Deprioritized: more persona add-ons; more Ops board health metrics
+  - Operator parking-lot index (gitignored): `docs/Future-Development.local.md`; Cursor plan `metra_future_development_buckets`
 
 ## 2026-07-31 - Decision Registry (Operational Why Memory)
 
@@ -247,6 +265,12 @@ Entry shape:
 - Decision: When Needs attention is empty and no query is typed, the Route home shows Standing routes (default entry plus pinned present projects) that open the normal handoff, and the empty queue explains why it is empty with a full-snapshot re-scan action.
 - Why: A clean portfolio left the home blank, which read as a broken board. Standing routes restore direct access to working homes without reviving pinned hubs as a routing signal.
 - See: `integrations/cursor/metra-ops-board.canvas.tsx.template`, `docs/Brand.md`
+
+## 2026-07-31 - Demo is face-first (Ops board before chat prompts)
+
+- Decision: Coworker demo leads with Metra Ops Route (Needs attention / Resolve this / Standing routes), then the routing CLI table, then Trivia chat + professional-sink draft. Rename `Demo-5min.md` to `Demo.md` (recommended ~8 min; keep a strict 5-minute cut). Do not demo Canva/MCP, Decision Registry, OCC, personal roots, or live ticket posts in the default talk.
+- Why: The Ops board is the product face for wayfinding; a chat-first script under-taught the desk and over-taught an AI primer.
+- See: `docs/Demo.md`, `docs/Brand.md`, `docs/Integrations.md`
 
 ## 2026-07-31 - MCP tool bindings are documented pointers, never tracked credentials
 

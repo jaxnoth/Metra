@@ -163,22 +163,38 @@ Describe 'Export-MetraContext' {
 }
 
 Describe 'Get-MetraChat cloud option' {
-    It 'accepts -Cloud and warns when CURSOR_API_KEY is unset' {
-        $prev = $env:CURSOR_API_KEY
+    It 'resolves CURSOR_API_KEY from User scope when process env is empty' {
+        $prevUser = [Environment]::GetEnvironmentVariable('CURSOR_API_KEY', 'User')
+        if ([string]::IsNullOrWhiteSpace($prevUser)) {
+            Set-ItResult -Skipped -Because 'User CURSOR_API_KEY not set on this machine'
+            return
+        }
+        $prevProc = $env:CURSOR_API_KEY
         try {
             if (Test-Path Env:CURSOR_API_KEY) {
                 Remove-Item Env:CURSOR_API_KEY
             }
-            $warns = $null
-            $rows = @(Get-MetraChat -IncludeMetra -Cloud -Limit 3 -WarningVariable warns -WarningAction SilentlyContinue)
-            @($warns | Where-Object { $_ -match 'CURSOR_API_KEY' }).Count | Should -BeGreaterThan 0
-            $rows | Should -Not -BeNullOrEmpty
-            $rows[0].PSObject.Properties.Name | Should -Contain 'Source'
+            $resolved = & (Get-Module Metra) { Get-MetraCursorApiKey }
+            $resolved | Should -Not -BeNullOrEmpty
+            [string]$env:CURSOR_API_KEY | Should -Not -BeNullOrEmpty
         }
         finally {
-            if ($null -ne $prev -and $prev -ne '') {
-                $env:CURSOR_API_KEY = $prev
+            if ($null -ne $prevProc -and $prevProc -ne '') {
+                $env:CURSOR_API_KEY = $prevProc
             }
+            elseif (Test-Path Env:CURSOR_API_KEY) {
+                Remove-Item Env:CURSOR_API_KEY -ErrorAction SilentlyContinue
+            }
+        }
+    }
+
+    It 'accepts -Cloud and warns when API key resolver returns null' {
+        InModuleScope Metra {
+            Mock Get-MetraCursorApiKey { $null }
+            $warns = $null
+            $cloudRows = @(Get-MetraCloudAgentChats -IncludeMetra -Limit 3 -WarningVariable warns -WarningAction SilentlyContinue)
+            @($warns | Where-Object { $_ -match 'CURSOR_API_KEY|session key' }).Count | Should -BeGreaterThan 0
+            $cloudRows.Count | Should -Be 0
         }
     }
 
@@ -481,18 +497,31 @@ Describe 'Decision Registry' {
                     Primary = $null; RunnerUp = $null; IsAmbiguous = $false; FavoredTokens = @()
                 }
             }
-            Mock Get-MetraRoots { @([PSCustomObject]@{ Name = 'work'; Primary = $true; Exists = $true; Optional = $false; Path = 'C:\Projects'; RawPath = '..' }) }
+            Mock Get-MetraRoots {
+                param($IncludeMissing)
+                @([PSCustomObject]@{ Name = 'work'; Primary = $true; Exists = $true; Optional = $false; Path = 'C:\Projects'; RawPath = '..' })
+            }
             Mock Get-MetraProjectRegistry {
                 [PSCustomObject]@{
                     projects = @(
                         [PSCustomObject]@{
-                            name = 'TicketTracker'; purpose = 'tickets'; triggers = @('ticket'); capabilities = @(); serves = @('Helpdesk'); entry = 'AGENTS.md'
+                            name = 'TicketTracker'; purpose = 'tickets'; triggers = @('ticket'); capabilities = @(); serves = @('Helpdesk')
+                            related = @('Solarwinds', 'Reporting'); whenPresent = 'Use brief.'; entry = 'AGENTS.md'
+                        }
+                        [PSCustomObject]@{
+                            name = 'Solarwinds'; purpose = 'orion'; triggers = @('orion'); capabilities = @(); serves = @(); related = @(); entry = 'AGENTS.md'
+                        }
+                        [PSCustomObject]@{
+                            name = 'Reporting'; purpose = 'reports'; triggers = @('report'); capabilities = @(); serves = @(); related = @(); entry = 'AGENTS.md'
                         }
                     )
                 }
             }
             Mock Get-MetraProjects {
-                @([PSCustomObject]@{ Name = 'TicketTracker'; Path = 'C:\Projects\TicketTracker'; Root = 'work'; IsGit = $true })
+                @(
+                    [PSCustomObject]@{ Name = 'TicketTracker'; Path = 'C:\Projects\TicketTracker'; Root = 'work'; IsGit = $true }
+                    [PSCustomObject]@{ Name = 'Solarwinds'; Path = 'C:\Projects\Solarwinds'; Root = 'work'; IsGit = $true }
+                )
             }
             Mock Get-MetraRoutingTable { @() }
             Mock Get-MetraRoot { $DecisionRoot }
@@ -504,14 +533,71 @@ Describe 'Decision Registry' {
             @($json.relatedDecisions).Count | Should -Be 1
             $json.whyHereFor | Should -Be 'TicketTracker'
             @($json.projects[0].serves) | Should -Contain 'Helpdesk'
+            @($json.projects[0].related) | Should -Contain 'Solarwinds'
+            @($json.projects[0].related) | Should -Contain 'Reporting'
+            $json.projectStoryFor | Should -Be 'TicketTracker'
+            $json.projectStory.whenPresent | Should -Be 'Use brief.'
+            @($json.projectStory.related).Count | Should -Be 2
+            @($json.projectStory.related)[0].name | Should -Be 'Solarwinds'
+            @($json.projectStory.related)[0].present | Should -BeTrue
+            @($json.projectStory.related)[1].name | Should -Be 'Reporting'
+            @($json.projectStory.related)[1].present | Should -BeFalse
 
             Export-MetraContextPack -Path (Join-Path $DecisionRoot 'docs\context-pack-noq.json') -Quiet -Format json | Out-Null
             $json2 = Get-Content -LiteralPath (Join-Path $DecisionRoot 'docs\context-pack-noq.json') -Raw | ConvertFrom-Json
             ($json2.PSObject.Properties.Name -contains 'relatedDecisions') | Should -BeFalse
             ($json2.PSObject.Properties.Name -contains 'whyHereFor') | Should -BeFalse
+            ($json2.PSObject.Properties.Name -contains 'projectStory') | Should -BeFalse
             # no-query still includes project serves when present on registry rows
             $tt2 = @($json2.projects | Where-Object name -eq 'TicketTracker')[0]
             @($tt2.serves) | Should -Contain 'Helpdesk'
+            @($tt2.related) | Should -Contain 'Solarwinds'
+        }
+    }
+
+    It 'Get-MetraRelatedProjects preserves order, dedupes, same-root, unknown drop, cap' {
+        InModuleScope Metra {
+            Mock Get-MetraRoots {
+                @(
+                    [PSCustomObject]@{ Name = 'work'; Primary = $true; Exists = $true; Optional = $false; Path = 'C:\Projects'; RawPath = 'C:\Projects' }
+                    [PSCustomObject]@{ Name = 'personal'; Primary = $false; Exists = $true; Optional = $true; Path = 'C:\Personal'; RawPath = 'C:\Personal' }
+                )
+            }
+
+            $registry = [PSCustomObject]@{
+                projects = @(
+                    [PSCustomObject]@{
+                        name = 'TicketTracker'
+                        related = @('Solarwinds', 'Solarwinds', 'UnknownX', 'HomeLab', 'Reporting', 'A', 'B', 'C', 'D', 'E')
+                    }
+                    [PSCustomObject]@{ name = 'Solarwinds'; related = @() }
+                    [PSCustomObject]@{ name = 'Reporting'; related = @() }
+                    [PSCustomObject]@{ name = 'A'; related = @() }
+                    [PSCustomObject]@{ name = 'B'; related = @() }
+                    [PSCustomObject]@{ name = 'C'; related = @() }
+                    [PSCustomObject]@{ name = 'D'; related = @() }
+                    [PSCustomObject]@{ name = 'E'; related = @() }
+                    [PSCustomObject]@{ name = 'HomeLab'; root = 'personal'; related = @() }
+                )
+            }
+            $disk = @{
+                'tickettracker' = [PSCustomObject]@{ Name = 'TicketTracker'; Root = 'work' }
+                'solarwinds'    = [PSCustomObject]@{ Name = 'Solarwinds'; Root = 'work' }
+                'reporting'     = [PSCustomObject]@{ Name = 'Reporting'; Root = 'work' }
+                'a'             = [PSCustomObject]@{ Name = 'A'; Root = 'work' }
+                'b'             = [PSCustomObject]@{ Name = 'B'; Root = 'work' }
+                'c'             = [PSCustomObject]@{ Name = 'C'; Root = 'work' }
+                'homelab'       = [PSCustomObject]@{ Name = 'HomeLab'; Root = 'personal' }
+            }
+
+            $rows = @(Get-MetraRelatedProjects -Name 'TicketTracker' -Registry $registry -DiskByName $disk -Limit 6)
+            $names = @($rows | ForEach-Object { $_.Name })
+            $names | Should -Be @('Solarwinds', 'Reporting', 'A', 'B', 'C', 'D')
+            $names | Should -Not -Contain 'UnknownX'
+            $names | Should -Not -Contain 'HomeLab'
+            $names | Should -Not -Contain 'E'
+            @($rows | Where-Object Name -eq 'Solarwinds')[0].Present | Should -BeTrue
+            @($rows | Where-Object Name -eq 'D')[0].Present | Should -BeFalse
         }
     }
 

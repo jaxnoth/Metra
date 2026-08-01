@@ -62,6 +62,7 @@ function Export-MetraContextPack {
 
         $purpose = [string](Get-MetraProp -Object $reg -Name 'purpose' -Default '')
         $triggers = @(Get-MetraProp -Object $reg -Name 'triggers' -Default @())
+        $whenPresent = [string](Get-MetraProp -Object $reg -Name 'whenPresent' -Default '')
         $score = 0
         if ($tokens.Count -gt 0) {
             $hay = (@($regName) + $triggers + @($purpose) | ForEach-Object { [string]$_ }) -join ' '
@@ -76,6 +77,8 @@ function Export-MetraContextPack {
             $score = 1
         }
 
+        $relatedRows = @(Get-MetraRelatedProjects -Name $regName -SourceRoot ([string]$onDisk.Root) -Registry $registry -DiskByName $disk)
+
         [void]$scored.Add([PSCustomObject]@{
             name         = $regName
             root         = [string]$onDisk.Root
@@ -83,6 +86,8 @@ function Export-MetraContextPack {
             triggers     = @($triggers)
             capabilities = @(Get-MetraProp -Object $reg -Name 'capabilities' -Default @())
             serves       = @(Get-MetraProp -Object $reg -Name 'serves' -Default @())
+            whenPresent  = $whenPresent
+            related      = @($relatedRows)
             entry        = [string](Get-MetraProp -Object $reg -Name 'entry' -Default 'AGENTS.md')
             score        = $score
         })
@@ -103,6 +108,8 @@ function Export-MetraContextPack {
                 triggers     = @()
                 capabilities = @()
                 serves       = @()
+                whenPresent  = ''
+                related      = @()
                 entry        = 'AGENTS.md'
                 score        = 0
             })
@@ -136,6 +143,7 @@ function Export-MetraContextPack {
             'Route to one primary project; load that project AGENTS.md before broad search.',
             'Ticket/helpdesk: TicketTracker first when present, then one technical project.',
             'Keep work and personal roots isolated unless the user names a cross-root handoff.',
+            'Related projects in ctx are topology only - open them only when evidence requires it.',
             'CLI: .\metra.ps1 routing | audit | chats | ctx'
         )
         roots       = @($roots)
@@ -147,6 +155,7 @@ function Export-MetraContextPack {
                 triggers     = @($_.triggers)
                 capabilities = @($_.capabilities)
                 serves       = @($_.serves)
+                related      = @($_.related | ForEach-Object { [string]$_.Name })
                 entry        = $_.entry
             }
         })
@@ -155,10 +164,30 @@ function Export-MetraContextPack {
 
     if ($tokens.Count -gt 0 -and $projects.Count -gt 0) {
         $primaryName = [string]$projects[0].name
+        $primaryProj = $projects[0]
         $pack['whyHereFor'] = $primaryName
-        $related = @(Get-MetraWhyHere -Project $primaryName -Query $Query -Limit 3 -MetraRoot $metraRoot)
+        $pack['projectStoryFor'] = $primaryName
+        $story = [ordered]@{
+            purpose  = [string]$primaryProj.purpose
+            triggers = @($primaryProj.triggers)
+            serves   = @($primaryProj.serves)
+            related  = @(
+                $primaryProj.related | ForEach-Object {
+                    [ordered]@{
+                        name    = [string]$_.Name
+                        present = [bool]$_.Present
+                    }
+                }
+            )
+        }
+        if (-not [string]::IsNullOrWhiteSpace([string]$primaryProj.whenPresent)) {
+            $story['whenPresent'] = [string]$primaryProj.whenPresent
+        }
+        $pack['projectStory'] = $story
+
+        $whyHits = @(Get-MetraWhyHere -Project $primaryName -Query $Query -Limit 3 -MetraRoot $metraRoot)
         $pack['relatedDecisions'] = @(
-            $related | ForEach-Object {
+            $whyHits | ForEach-Object {
                 [ordered]@{
                     id         = $_.Id
                     title      = $_.Title
@@ -240,6 +269,10 @@ function Export-MetraContextPack {
         if ($servesList.Count -gt 0) {
             [void]$md.AppendLine(('  - serves: {0}' -f ($servesList -join ', ')))
         }
+        $relatedNames = @($proj.related | ForEach-Object { [string]$_.Name } | Where-Object { $_ })
+        if ($relatedNames.Count -gt 0) {
+            [void]$md.AppendLine(('  - related: {0}' -f ($relatedNames -join ', ')))
+        }
         [void]$md.AppendLine(('  - entry: {0}' -f $proj.entry))
     }
     if ($missingOptional.Count -gt 0) {
@@ -258,6 +291,34 @@ function Export-MetraContextPack {
             [void]$md.AppendLine('')
             foreach ($s in $primaryServes) {
                 [void]$md.AppendLine(('- {0}' -f $s))
+            }
+        }
+
+        if ($pack.Contains('projectStory')) {
+            $story = $pack.projectStory
+            [void]$md.AppendLine('')
+            [void]$md.AppendLine(('## Project story {0}' -f $pack.projectStoryFor))
+            [void]$md.AppendLine('')
+            $storyPurp = if ($story.purpose) { [string]$story.purpose } else { '(no registry purpose)' }
+            [void]$md.AppendLine(('- purpose: {0}' -f $storyPurp))
+            $storyTrig = if (@($story.triggers).Count -gt 0) { (@($story.triggers) -join ', ') } else { '(none)' }
+            [void]$md.AppendLine(('- triggers: {0}' -f $storyTrig))
+            $storyServes = @($story.serves | Where-Object { -not [string]::IsNullOrWhiteSpace([string]$_) })
+            if ($storyServes.Count -gt 0) {
+                [void]$md.AppendLine(('- serves: {0}' -f ($storyServes -join ', ')))
+            }
+            $storyRelatedParts = @(
+                @($story.related) | ForEach-Object {
+                    $n = [string]$_.name
+                    if ([string]::IsNullOrWhiteSpace($n)) { return }
+                    if ($_.present) { '{0} (present)' -f $n } else { '{0} (missing)' -f $n }
+                }
+            )
+            if ($storyRelatedParts.Count -gt 0) {
+                [void]$md.AppendLine(('- related: {0}' -f ($storyRelatedParts -join ', ')))
+            }
+            if ($story.Contains('whenPresent') -and -not [string]::IsNullOrWhiteSpace([string]$story.whenPresent)) {
+                [void]$md.AppendLine(('- whenPresent: {0}' -f $story.whenPresent))
             }
         }
     }
