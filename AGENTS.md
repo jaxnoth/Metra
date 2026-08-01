@@ -111,6 +111,7 @@ Optional entries may be absent: follow `whenMissing` advice instead of inventing
 .\metra.ps1 profile promote "Prefer terse verdicts before detail."
 .\metra.ps1 decisions search "datamanager"
 .\metra.ps1 decisions harvest -Preview
+.\metra.ps1 coverage
 .\metra.ps1 routing -Name TicketTracker
 .\metra.ps1 routing -Query "gateway msal"
 .\metra.ps1 verify

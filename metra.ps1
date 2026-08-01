@@ -36,7 +36,7 @@ param(
     [ValidateSet(
         'list', 'status', 'pull', 'fetch', 'run', 'new', 'apply', 'workspace',
         'audit', 'snapshot', 'chats', 'roots', 'routing',
-        'export-profile', 'import-profile', 'ctx', 'setup', 'verify', 'profile', 'decisions', 'help'
+        'export-profile', 'import-profile', 'ctx', 'setup', 'verify', 'profile', 'decisions', 'coverage', 'help'
     )]
     [string]$Command = 'help',
 
@@ -107,6 +107,8 @@ Usage:
       Operator Communication Contract (candidates -> promote -> soft guidelines).
   .\metra.ps1 decisions show|note|promote|forget|search|get|supersede|gc|harvest|seed
       Decision Registry / Operational Why Memory (candidates -> promote; retrieved via search/ctx).
+  .\metra.ps1 coverage
+      Knowledge coverage visibility (AGENTS / serves / decisions / uncovered) - counts and gap lists, not a score.
   .\metra.ps1 verify
 
 Roots:
@@ -388,6 +390,11 @@ switch ($Command) {
                 $result | Format-List
             }
         }
+    }
+
+    'coverage' {
+        # Helper stays private; Show-MetraKnowledgeCoverageCli is a thin compatibility export for the CLI.
+        Show-MetraKnowledgeCoverageCli
     }
 
     'decisions' {

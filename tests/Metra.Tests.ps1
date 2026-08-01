@@ -719,6 +719,74 @@ Describe 'Metra Ops canvas install' {
     }
 }
 
+Describe 'Metra knowledge coverage' {
+    It 'marks uncovered only when missing AGENTS + serves + decisions' {
+        InModuleScope Metra {
+            $projects = @(
+                [PSCustomObject]@{ name = 'Alpha'; present = $true; hasAgentsMd = $false; serves = @() }
+                [PSCustomObject]@{ name = 'Beta'; present = $true; hasAgentsMd = $true; serves = @() }
+                [PSCustomObject]@{ name = 'Gamma'; present = $true; hasAgentsMd = $false; serves = @('Ops') }
+            )
+            $cov = Get-MetraKnowledgeCoverage -Projects $projects -DecisionProjectSet @{} -GapLimit 12
+            $cov.UncoveredCount | Should -Be 1
+            @($cov.Uncovered) | Should -Be @('Alpha')
+            @($cov.Uncovered) | Should -Not -Contain 'Beta'
+            @($cov.Uncovered) | Should -Not -Contain 'Gamma'
+        }
+    }
+
+    It 'does not treat covered-by-one as uncovered' {
+        InModuleScope Metra {
+            $projects = @(
+                [PSCustomObject]@{ name = 'AgentsOnly'; present = $true; hasAgentsMd = $true; serves = @() }
+                [PSCustomObject]@{ name = 'ServesOnly'; present = $true; hasAgentsMd = $false; serves = @('Team') }
+                [PSCustomObject]@{ name = 'DecisionsOnly'; present = $true; hasAgentsMd = $false; serves = @() }
+            )
+            $set = @{ 'decisionsonly' = $true }
+            $cov = Get-MetraKnowledgeCoverage -Projects $projects -DecisionProjectSet $set -GapLimit 12
+            $cov.UncoveredCount | Should -Be 0
+            @($cov.Uncovered).Count | Should -Be 0
+            $cov.WithAgents | Should -Be 1
+            $cov.WithServes | Should -Be 1
+            $cov.WithDecisions | Should -Be 1
+        }
+    }
+
+    It 'caps gap lists at 12 while keeping full counts' {
+        InModuleScope Metra {
+            $projects = 1..15 | ForEach-Object {
+                [PSCustomObject]@{
+                    name       = ('Gap{0:D2}' -f $_)
+                    present    = $true
+                    hasAgentsMd = $false
+                    serves     = @()
+                }
+            }
+            $cov = Get-MetraKnowledgeCoverage -Projects $projects -DecisionProjectSet @{} -GapLimit 12
+            $cov.MissingAgentsCount | Should -Be 15
+            $cov.UncoveredCount | Should -Be 15
+            @($cov.MissingAgents).Count | Should -Be 12
+            @($cov.Uncovered).Count | Should -Be 12
+            @($cov.MissingAgents)[0] | Should -Be 'Gap01'
+            @($cov.MissingAgents)[11] | Should -Be 'Gap12'
+        }
+    }
+
+    It 'skips absent projects and sorts names alphabetically' {
+        InModuleScope Metra {
+            $projects = @(
+                [PSCustomObject]@{ name = 'Zebra'; present = $true; hasAgentsMd = $false; serves = @() }
+                [PSCustomObject]@{ name = 'Absent'; present = $false; hasAgentsMd = $false; serves = @() }
+                [PSCustomObject]@{ name = 'Apple'; present = $true; hasAgentsMd = $false; serves = @() }
+            )
+            $cov = Get-MetraKnowledgeCoverage -Projects $projects -DecisionProjectSet @{} -GapLimit 12
+            $cov.ProjectCount | Should -Be 2
+            @($cov.ProjectNames) | Should -Be @('Apple', 'Zebra')
+            @($cov.Uncovered) | Should -Be @('Apple', 'Zebra')
+        }
+    }
+}
+
 Describe 'Metra Ops snapshot stewardship' {
     BeforeEach {
         $script:snapRoot = Join-Path ([System.IO.Path]::GetTempPath()) ('metra-snap-' + [guid]::NewGuid().ToString('N'))
@@ -811,6 +879,8 @@ Describe 'Metra Ops snapshot stewardship' {
         $raw | Should -Match 'briefingForTodo'
         $raw | Should -Match 'Standing routes'
         $raw | Should -Match 'standingRoutes'
+        $raw | Should -Match 'Coverage gaps \(visibility only\)'
+        $raw | Should -Match 'uncoveredCount'
         $raw | Should -Not -Match '<Text weight="semibold">Pinned hubs</Text>'
         $raw | Should -Not -Match 'function CommandRow'
     }
