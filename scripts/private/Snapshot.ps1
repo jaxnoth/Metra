@@ -109,6 +109,215 @@ function ConvertTo-MetraSnapshotWhyHere {
     )
 }
 
+function Get-MetraKnowledgeCoverage {
+    <#
+    .SYNOPSIS
+        Knowledge coverage visibility for present registry-on-disk projects (not a score).
+    .DESCRIPTION
+        Builds one project population, then derives every with/missing/uncovered dimension
+        from that set only. WithDecisions counts projects that have at least one active
+        confirmed Decision Registry row tagged to that project (not candidates, not
+        superseded). Gap name lists are alphabetical, deduped, and capped; counts are full.
+    #>
+    [CmdletBinding()]
+    param(
+        [object[]]$Projects,
+        [string]$MetraRoot = (Get-MetraRoot),
+        [ValidateRange(1, 100)]
+        [int]$GapLimit = 12,
+        [hashtable]$DecisionProjectSet
+    )
+
+    $population = New-Object System.Collections.Generic.List[object]
+
+    if ($null -ne $Projects -and @($Projects).Count -gt 0) {
+        foreach ($p in @($Projects)) {
+            $presentProp = Get-MetraProp -Object $p -Name 'present' -Default $null
+            if ($null -eq $presentProp) {
+                $presentProp = Get-MetraProp -Object $p -Name 'Present' -Default $null
+            }
+            if ($null -ne $presentProp -and -not [bool]$presentProp) { continue }
+
+            $name = [string](Get-MetraProp -Object $p -Name 'name' -Default '')
+            if ([string]::IsNullOrWhiteSpace($name)) {
+                $name = [string](Get-MetraProp -Object $p -Name 'Name' -Default '')
+            }
+            if ([string]::IsNullOrWhiteSpace($name)) { continue }
+
+            $hasAgents = $null
+            if ($null -ne (Get-MetraProp -Object $p -Name 'hasAgentsMd' -Default $null)) {
+                $hasAgents = [bool](Get-MetraProp -Object $p -Name 'hasAgentsMd' -Default $false)
+            }
+            $path = [string](Get-MetraProp -Object $p -Name 'path' -Default '')
+            if ([string]::IsNullOrWhiteSpace($path)) {
+                $path = [string](Get-MetraProp -Object $p -Name 'Path' -Default '')
+            }
+            $entry = [string](Get-MetraProp -Object $p -Name 'entry' -Default 'AGENTS.md')
+            if ([string]::IsNullOrWhiteSpace($entry)) { $entry = 'AGENTS.md' }
+            if ($null -eq $hasAgents) {
+                if (-not [string]::IsNullOrWhiteSpace($path)) {
+                    $hasAgents = Test-Path -LiteralPath (Join-Path $path $entry)
+                }
+                else {
+                    $hasAgents = $false
+                }
+            }
+
+            $serves = @(
+                @(Get-MetraProp -Object $p -Name 'serves' -Default @()) |
+                    Where-Object { -not [string]::IsNullOrWhiteSpace([string]$_) }
+            )
+
+            [void]$population.Add([PSCustomObject]@{
+                    Name      = $name
+                    HasAgents = [bool]$hasAgents
+                    HasServes = (@($serves).Count -gt 0)
+                })
+        }
+    }
+    else {
+        $registry = Get-MetraProjectRegistry
+        $disk = @{}
+        foreach ($d in @(Get-MetraProjects)) {
+            $disk[$d.Name.ToLowerInvariant()] = $d
+        }
+        foreach ($reg in @($registry.projects)) {
+            $name = [string]$reg.name
+            if ([string]::IsNullOrWhiteSpace($name)) { continue }
+            $onDisk = $disk[$name.ToLowerInvariant()]
+            if (-not $onDisk) { continue }
+            $entry = [string](Get-MetraProp -Object $reg -Name 'entry' -Default 'AGENTS.md')
+            if ([string]::IsNullOrWhiteSpace($entry)) { $entry = 'AGENTS.md' }
+            $hasAgents = Test-Path -LiteralPath (Join-Path $onDisk.Path $entry)
+            $serves = @(
+                @(Get-MetraProp -Object $reg -Name 'serves' -Default @()) |
+                    Where-Object { -not [string]::IsNullOrWhiteSpace([string]$_) }
+            )
+            [void]$population.Add([PSCustomObject]@{
+                    Name      = $name
+                    HasAgents = [bool]$hasAgents
+                    HasServes = (@($serves).Count -gt 0)
+                })
+        }
+    }
+
+    $pop = @($population | Sort-Object Name)
+    $projectNames = @($pop | ForEach-Object { $_.Name })
+
+    if (-not $DecisionProjectSet) {
+        $DecisionProjectSet = @{}
+        try {
+            $shown = Show-MetraDecisionRegistry -MetraRoot $MetraRoot
+            foreach ($row in @($shown.Confirmed)) {
+                $status = [string](Get-MetraProp -Object $row -Name 'status' -Default 'active')
+                if ($status.ToLowerInvariant() -ne 'active') { continue }
+                $proj = [string](Get-MetraProp -Object $row -Name 'project' -Default '')
+                if ([string]::IsNullOrWhiteSpace($proj)) { continue }
+                $DecisionProjectSet[$proj.ToLowerInvariant()] = $true
+            }
+        }
+        catch {
+            # Fail-open: treat as no decisions.
+        }
+    }
+
+    $missingAgentsFull = New-Object System.Collections.Generic.List[string]
+    $missingServesFull = New-Object System.Collections.Generic.List[string]
+    $missingDecisionsFull = New-Object System.Collections.Generic.List[string]
+    $uncoveredFull = New-Object System.Collections.Generic.List[string]
+    $withAgents = 0
+    $withServes = 0
+    $withDecisions = 0
+
+    foreach ($row in $pop) {
+        $hasDecision = $DecisionProjectSet.ContainsKey($row.Name.ToLowerInvariant())
+        if ($row.HasAgents) { $withAgents++ } else { [void]$missingAgentsFull.Add($row.Name) }
+        if ($row.HasServes) { $withServes++ } else { [void]$missingServesFull.Add($row.Name) }
+        if ($hasDecision) { $withDecisions++ } else { [void]$missingDecisionsFull.Add($row.Name) }
+        if ((-not $row.HasAgents) -and (-not $row.HasServes) -and (-not $hasDecision)) {
+            [void]$uncoveredFull.Add($row.Name)
+        }
+    }
+
+    return [PSCustomObject]@{
+        ProjectCount          = $pop.Count
+        ProjectNames          = @($projectNames)
+        WithAgents            = $withAgents
+        MissingAgents         = @(
+            $missingAgentsFull |
+                Sort-Object -Unique |
+                Select-Object -First $GapLimit
+        )
+        MissingAgentsCount    = $missingAgentsFull.Count
+        WithServes            = $withServes
+        MissingServes         = @(
+            $missingServesFull |
+                Sort-Object -Unique |
+                Select-Object -First $GapLimit
+        )
+        MissingServesCount    = $missingServesFull.Count
+        WithDecisions         = $withDecisions
+        MissingDecisions      = @(
+            $missingDecisionsFull |
+                Sort-Object -Unique |
+                Select-Object -First $GapLimit
+        )
+        MissingDecisionsCount = $missingDecisionsFull.Count
+        Uncovered             = @(
+            $uncoveredFull |
+                Sort-Object -Unique |
+                Select-Object -First $GapLimit
+        )
+        UncoveredCount        = $uncoveredFull.Count
+    }
+}
+
+function Write-MetraKnowledgeCoverage {
+    <#
+    .SYNOPSIS
+        Host output for knowledge coverage visibility (counts + capped gap lists).
+    #>
+    [CmdletBinding()]
+    param(
+        $Coverage
+    )
+
+    if (-not $Coverage) {
+        Write-Host 'No coverage data.' -ForegroundColor Yellow
+        return
+    }
+
+    Write-Host ("Knowledge coverage (visibility only; not a score)") -ForegroundColor Cyan
+    Write-Host ("  Present projects: {0}" -f $Coverage.ProjectCount)
+    Write-Host ("  With AGENTS: {0}  | missing: {1}" -f $Coverage.WithAgents, $Coverage.MissingAgentsCount)
+    if (@($Coverage.MissingAgents).Count -gt 0) {
+        Write-Host ("    MissingAgents: {0}" -f ($Coverage.MissingAgents -join ', '))
+    }
+    Write-Host ("  With serves: {0}  | missing: {1}" -f $Coverage.WithServes, $Coverage.MissingServesCount)
+    if (@($Coverage.MissingServes).Count -gt 0) {
+        Write-Host ("    MissingServes: {0}" -f ($Coverage.MissingServes -join ', '))
+    }
+    Write-Host ("  With decisions (active confirmed): {0}  | missing: {1}" -f $Coverage.WithDecisions, $Coverage.MissingDecisionsCount)
+    if (@($Coverage.MissingDecisions).Count -gt 0) {
+        Write-Host ("    MissingDecisions: {0}" -f ($Coverage.MissingDecisions -join ', '))
+    }
+    Write-Host ("  Uncovered (missing AGENTS + serves + decisions): {0}" -f $Coverage.UncoveredCount)
+    if (@($Coverage.Uncovered).Count -gt 0) {
+        Write-Host ("    Uncovered: {0}" -f ($Coverage.Uncovered -join ', '))
+    }
+}
+
+function Show-MetraKnowledgeCoverageCli {
+    <#
+    .SYNOPSIS
+        CLI host output for knowledge coverage. Compatibility export for metra.ps1.
+    #>
+    [CmdletBinding()]
+    param()
+
+    Write-MetraKnowledgeCoverage -Coverage (Get-MetraKnowledgeCoverage)
+}
+
 function Get-MetraOpsStewardshipSummaries {
     <#
     .SYNOPSIS
@@ -214,23 +423,33 @@ function Get-MetraOpsStewardshipSummaries {
         # Fail-open.
     }
 
-    $decisionProjects = @(
-        @($decisionSummary.recent) |
-            ForEach-Object { [string]$_.project } |
-            Where-Object { $_ } |
-            Select-Object -Unique
-    )
-    $projectsWithServes = @($Projects | Where-Object { @($_.serves).Count -gt 0 }).Count
+    $presentProjects = @($Projects | Where-Object {
+            $p = Get-MetraProp -Object $_ -Name 'present' -Default $null
+            if ($null -eq $p) { $true } else { [bool]$p }
+        })
+    # Snapshot rows always set present; keep capabilities/whyHere on full list for board compat.
     $projectsWithCapabilities = @($Projects | Where-Object { @($_.capabilities).Count -gt 0 }).Count
     $projectsWithWhyHere = @($Projects | Where-Object { @($_.whyHere).Count -gt 0 }).Count
 
+    $kc = Get-MetraKnowledgeCoverage -Projects $presentProjects -MetraRoot $MetraRoot
+
     $coverage = [ordered]@{
-        projectsWithServes       = [int]$projectsWithServes
+        projectsWithServes       = [int]$kc.WithServes
         projectsWithCapabilities = [int]$projectsWithCapabilities
         projectsWithWhyHere      = [int]$projectsWithWhyHere
-        projectsWithDecisions    = [int]$decisionProjects.Count
+        projectsWithDecisions    = [int]$kc.WithDecisions
         confirmedDecisionCount   = [int]$decisionSummary.confirmedCount
         confirmedGuidelineCount  = [int]$contractSummary.confirmedCount
+        projectCount             = [int]$kc.ProjectCount
+        withAgents               = [int]$kc.WithAgents
+        missingAgents            = @($kc.MissingAgents)
+        missingAgentsCount       = [int]$kc.MissingAgentsCount
+        missingServes             = @($kc.MissingServes)
+        missingServesCount        = [int]$kc.MissingServesCount
+        missingDecisions         = @($kc.MissingDecisions)
+        missingDecisionsCount    = [int]$kc.MissingDecisionsCount
+        uncovered                = @($kc.Uncovered)
+        uncoveredCount           = [int]$kc.UncoveredCount
     }
 
     return [PSCustomObject]@{

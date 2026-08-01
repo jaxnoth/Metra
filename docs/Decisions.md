@@ -18,6 +18,12 @@ Entry shape:
 
 ---
 
+## 2026-08-01 - Knowledge coverage visibility (not a score)
+
+- Decision: Ship knowledge coverage as **visibility only** via canonical helper `Get-MetraKnowledgeCoverage`. One present registry-on-disk population feeds every with/missing/uncovered dimension. Dimensions: AGENTS on disk, non-empty `serves`, and at least one **active confirmed** Decision Registry row (not candidates, not superseded). `Uncovered` means missing all three. Surfaces: `.\metra.ps1 coverage`, Ops Stewardship Gaps strip, and snapshot `coverage` (keep existing aggregate counts; add capped gap lists). Gap name lists are alphabetical, deduped, capped at 12; counts stay full. No percent, grade, or health score. Out of scope: decisions review/decay, cap-100, auto-filling serves/AGENTS.
+- Why: Stewardship already showed aggregate coverage counts without listing AGENTS gaps or uncovered projects, and there was no CLI without the canvas. Operators need the gap names to tend knowledge without inventing a second scoring system.
+- See: `scripts/private/Snapshot.ps1` (`Get-MetraKnowledgeCoverage`, `Write-MetraKnowledgeCoverage`), `.\metra.ps1 coverage`, `integrations/cursor/metra-ops-board.canvas.tsx.template`, `docs/Context-Routing.md`
+
 ## 2026-08-01 - Project story + related in ctx
 
 - Decision: Surface registry **`related`** (reuse the existing field; do not add `relatedProjects`) and a bounded **project story** in `.\metra.ps1 ctx`. Story is a composition of existing metadata (`purpose`, `triggers`, `serves`, `related`, optional `whenPresent`) - no new registry story field and no generated prose. Canonical helper `Get-MetraRelatedProjects` preserves registry order, dedupes, drops unknowns, keeps same-root only, caps at 6, returns `{ Name, Present }`. Context pack and `routing -Name` / `-Query` primary consume that helper only. Related remains **topology, not permission** to multi-repo search.
@@ -82,7 +88,7 @@ Entry shape:
 - Future / not in this release:
   1. ~~Why Here?~~ **Done** (this entry)
   2. ~~Ops board Recent Decisions / Portfolio Wisdom~~ **Done** - Stewardship tab on Metra Ops interchange (bounded strip; board remains a retrieval surface)
-  3. Knowledge coverage visibility (not a score)
+  3. ~~Knowledge coverage visibility (not a score)~~ **Done** - see Knowledge coverage visibility entry
   4. ~~Project story + relatedProjects in ctx~~ **Done** - see Project story + related in ctx entry
   5. decisions review (knowledge decay)
   6. Cap headroom toward 100 if retrieval stays useful

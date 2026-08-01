@@ -61,7 +61,8 @@ $script:MetraCompatibilityFunctions = @(
     'Invoke-MetraSetup',
     'Invoke-MetraOperatorContractCommand',
     'Invoke-MetraDecisionRegistryCommand',
-    'Show-MetraRoutingCli'
+    'Show-MetraRoutingCli',
+    'Show-MetraKnowledgeCoverageCli'
 )
 
 # Silent one-release compatibility aliases for the former Meta naming.
