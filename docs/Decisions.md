@@ -18,6 +18,12 @@ Entry shape:
 
 ---
 
+## 2026-08-01 - ZIP mark-of-the-web unblock path (interim)
+
+- Decision: Ship a lean no-Git ZIP recovery path: root `Metra-Setup.cmd` launches `scripts/bootstrap/Start-MetraSetup.ps1` under **process-scoped** `-ExecutionPolicy Bypass` (never mutates machine policy), clears Zone.Identifier via `Unblock-MetraCheckout`, then runs `setup`. CLI `.\metra.ps1 unblock` is the recovery/diagnostics anchor; return shape is `BlockedDetected` / `FilesUnblocked` / `AlreadyClean` / `Failed`. `verify` WARNs (does not FAIL) when checkout scripts still carry mark-of-the-web. Prefer unblocking the `.zip` before extract when possible. Script signing stays out of scope. An actual installer remains the durable non-technical distribution channel; ZIP is a correct fallback, not the primary non-coder story.
+- Why: Extracted GitHub ZIPs preserve mark-of-the-web, so `RemoteSigned` blocks unsigned `metra.ps1` before setup can run. Detection inside `metra.ps1` cannot be the primary rescue; a `.cmd` bootstrap can. Unblock tooling also helps OneDrive / email / copied archives after day one.
+- See: `Metra-Setup.cmd`, `scripts/bootstrap/Start-MetraSetup.ps1`, `scripts/private/Install.ps1`, `.\metra.ps1 unblock`, `.\metra.ps1 verify`, `README.md` (No Git? Download the ZIP)
+
 ## 2026-08-01 - Decisions review (knowledge decay visibility)
 
 - Decision: Ship **`.\metra.ps1 decisions review`** as ledger-hygiene **visibility only**. Canonical helper `Get-MetraDecisionRegistryReview` reports three work classes: stale candidates (same cutoff as `decisions gc` via shared `Split-MetraDecisionRegistryCandidatesByStale`), superseded confirmed inventory, and MissingWhy (blank why on candidates or confirmed; unique by id). Gap lists alphabetical/stable, capped at 12; counts full. CLI writer derives command hints from facts; snapshot/Stewardship "Ledger hygiene" strip carries facts only (no SuggestedCommands, no score, no age averages). Review never mutates; operator still runs `gc` / `promote` / `forget`.
@@ -43,7 +49,7 @@ Entry shape:
 - See: `README.md`, [Brand.md](Brand.md) (public mark / GitHub), plan `github_public_audience_revision` (Cursor plans), operator index `docs/Future-Development.local.md` (Bucket A)
 - Future / not in this release:
   1. Separate plain-language website (or landing) for non-coders - problem, value, and wayfinding without CLI/registry vocabulary; do not lead with PowerShell or "create a base folder" as assumed knowledge; if a home folder is needed, prefer **Documents** (or equivalent user-known place) over developer project roots; **get Metra without Git** (ZIP as interim; an **actual installer** is required for the durable non-coder path - installer should place files, avoid mark-of-the-web friction, and not require the user to understand PowerShell execution policy)
-  2. Keep GitHub README operator/coder-dense; optionally add a short "Who this page is for" pointer to the non-coder site when it exists; add an operator README note that ZIP download is supported for machines without Git **and requires unblocking** (mark-of-the-web vs `RemoteSigned`) until the installer replaces that path
+  2. Keep GitHub README operator/coder-dense; optionally add a short "Who this page is for" pointer to the non-coder site when it exists; ~~add an operator README note that ZIP download is supported for machines without Git **and requires unblocking** (mark-of-the-web vs `RemoteSigned`) until the installer replaces that path~~ **done** (`Metra-Setup.cmd`, `.\metra.ps1 unblock`, README ZIP subsection)
   3. Re-test the non-coder surface with a similar reviewer profile before calling it done
   - Out of scope for that revision: rewriting Metra itself into a non-technical product; family/classroom ticketing (TicketTracker); persona add-ons as a substitute for plain docs; requiring Git for first-run non-coder setup; treating manual ZIP + Unblock as the final non-coder deploy story
 

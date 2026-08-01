@@ -60,6 +60,27 @@ function Invoke-MetraVerify {
         }
     }
 
+    # Mark-of-the-web on checkout scripts (WARN only - recoverable via unblock)
+    try {
+        $blockedScripts = @(
+            Get-MetraCheckoutScriptFiles -Path $metraRoot |
+                Where-Object { Test-MetraBlockedFile -Path $_.FullName }
+        )
+        if ($blockedScripts.Count -eq 0) {
+            Add-VerifyResult -Name 'mark-of-the-web scripts' -Status 'PASS' -Detail 'no Zone.Identifier on checkout scripts'
+        }
+        else {
+            $sample = @($blockedScripts | Select-Object -First 3 | ForEach-Object { $_.Name }) -join ', '
+            $more = if ($blockedScripts.Count -gt 3) { '...' } else { '' }
+            Add-VerifyResult -Name 'mark-of-the-web scripts' -Status 'WARN' -Detail (
+                ("{0} blocked; run .\metra.ps1 unblock ({1}{2})" -f $blockedScripts.Count, $sample, $more)
+            )
+        }
+    }
+    catch {
+        Add-VerifyResult -Name 'mark-of-the-web scripts' -Status 'WARN' -Detail $_.Exception.Message
+    }
+
     # Soft sibling paths from Routing-Scenarios fixtures
     $null = Test-SoftSiblingPath -Name 'TicketTracker/AGENTS.md' -RelativeUnderProjectsRoot 'TicketTracker\AGENTS.md'
     $null = Test-SoftSiblingPath -Name 'Trivia/AGENTS.md' -RelativeUnderProjectsRoot 'Trivia\AGENTS.md'

@@ -32,6 +32,18 @@ function Invoke-MetraSetup {
     $roots = @()
     $routingRows = @()
 
+    if (-not $Quiet) {
+        $blockedScripts = @(
+            Get-MetraCheckoutScriptFiles -Path $metraRoot |
+                Where-Object { Test-MetraBlockedFile -Path $_.FullName }
+        )
+        if ($blockedScripts.Count -gt 0) {
+            Write-Host ''
+            Write-Host ("Mark-of-the-web: {0} script file(s) still blocked (ZIP / download)." -f $blockedScripts.Count) -ForegroundColor Yellow
+            Write-Host '  Hint: .\metra.ps1 unblock   (or double-click Metra-Setup.cmd on a fresh ZIP extract)' -ForegroundColor Yellow
+        }
+    }
+
     if ($Profile) {
         if (-not $Quiet) {
             Write-Host ''

@@ -130,6 +130,25 @@ Set-ExecutionPolicy -Scope CurrentUser -ExecutionPolicy RemoteSigned
 # .\metra.ps1 setup
 ```
 
+### No Git? Download the ZIP
+
+Technical consumers without Git can use **Code -> Download ZIP** on GitHub. Prefer `git clone` when you have Git. An installer is the planned non-technical path; ZIP is a fallback.
+
+1. **Cheapest:** before extracting, right-click the `.zip` -> Properties -> check **Unblock** -> OK, then extract.
+2. **Automatic:** extract, then double-click `Metra-Setup.cmd` (clears mark-of-the-web under a process-scoped Bypass, then runs `setup`). Does not change your machine ExecutionPolicy.
+3. **Manual recovery** (if the CLI already runs under Bypass or after a partial unblock):
+
+```powershell
+cd <extracted-metra-folder>
+.\metra.ps1 unblock
+# Optional day-2 policy (your choice - Metra never sets this for you):
+# Set-ExecutionPolicy -Scope CurrentUser -ExecutionPolicy RemoteSigned
+.\metra.ps1 setup
+.\metra.ps1 verify
+```
+
+Downloaded / synced copies (ZIP, OneDrive, email) can leave mark-of-the-web on scripts; `.\metra.ps1 verify` WARNs when that remains, and `.\metra.ps1 unblock` is the recovery anchor.
+
 After `setup`, you have a working CLI *and* an agent-ready map: open `docs/context-pack.md`, paste it into a chat, or `@` it in Cursor. Routing stubs in `projects.json` teach agents (and humans) which folder owns which ask. In Cursor (or any harness that loads `AGENTS.md`), the Metra communication model kicks in - route first, then talk like a desk partner.
 
 ### What setup did
@@ -271,6 +290,7 @@ Personal-root `registryFile` is **not** auto-included - copy it with that root. 
 | Command | Purpose |
 |---------|---------|
 | `setup` | One-shot onboarding: seed config if missing, optional `-Profile`, roots, workspace, routing, ctx |
+| `unblock` | Clear mark-of-the-web from checkout scripts (`-Preview` supported); ZIP / download recovery |
 | `list` | Show project folders (optional `-GitOnly`, `-Filter`, `-Root`) |
 | `roots` | Show configured project roots and whether each exists |
 | `routing` | Show merged registry entries vs disk (`-SharedOnly`, `-MissingOnly`); `-Name` / `-Query` attach For whom? (`serves`) and ledger-backed Why Here (and Why not when query scores are close) |
@@ -318,6 +338,7 @@ pwsh -NoProfile -File .\tests\Invoke-MetraTests.ps1
 
 ```
 _metra/
+  Metra-Setup.cmd             ZIP / first-run double-click bootstrap (optional)
   metra.ps1                   Metra CLI entrypoint (routing + context)
   metra.config.example.json   starter config (live metra.config.json is gitignored)
   projects.json              shared agent routing registry (example stubs OK)
@@ -327,6 +348,7 @@ _metra/
   AGENTS.md                  communication model entry + Metra examples (any agent harness)
   LICENSE                    MIT
   SECURITY.md
+  scripts/bootstrap/          Start-MetraSetup.ps1 used by Metra-Setup.cmd
   scripts/Metra.psd1          PowerShell module manifest and explicit exports
   scripts/Metra.psm1          Thin module loader and compatibility boundary
   scripts/public/             Supported commands with full Get-Help documentation
