@@ -111,15 +111,26 @@ a:hover {
   letter-spacing: -0.02em;
 }
 
-.hero-lede {
+.hero-define {
   margin: 0 auto 1.75rem;
   max-width: 32rem;
   color: var(--ink-soft);
-  font-size: 1.15rem;
+  font-size: 1.2rem;
+  font-weight: 500;
 }
 
 .hero-cta {
+  margin: 0 0 0.75rem;
+}
+
+.hero-meta {
   margin: 0;
+  font-size: 0.95rem;
+  color: var(--ink-soft);
+}
+
+.hero-meta a {
+  font-weight: 500;
 }
 
 .button {
@@ -169,6 +180,77 @@ main {
 .panel p {
   margin: 0 0 1rem;
   color: var(--ink-soft);
+}
+
+.route-figure {
+  margin: 1.25rem 0 0;
+  padding: 1rem 0.5rem 0.25rem;
+  border-radius: 0.5rem;
+  background: rgba(230, 244, 241, 0.55);
+}
+
+.route-diagram {
+  display: block;
+  width: 100%;
+  max-width: 36rem;
+  height: auto;
+  margin: 0 auto;
+}
+
+.route-diagram .place {
+  fill: #ffffff;
+  stroke: #0f766e;
+  stroke-width: 2;
+}
+
+.route-diagram .place-chosen {
+  fill: #e6f4f1;
+  stroke-width: 2.75;
+}
+
+.route-diagram .place-label {
+  fill: #1f2937;
+  font-family: Outfit, "Segoe UI", sans-serif;
+  font-size: 18px;
+  font-weight: 600;
+}
+
+.route-diagram .hub {
+  fill: #e6f4f1;
+  stroke: #0f766e;
+  stroke-width: 2.5;
+}
+
+.route-diagram .hub-label {
+  fill: #0f766e;
+  font-family: Outfit, "Segoe UI", sans-serif;
+  font-size: 16px;
+  font-weight: 700;
+}
+
+.route-diagram .path {
+  fill: none;
+  stroke: #0f766e;
+  stroke-width: 2.5;
+  stroke-linecap: round;
+}
+
+.route-diagram .path-soft {
+  fill: none;
+  stroke: #0f766e;
+  stroke-width: 1.75;
+  stroke-dasharray: 5 5;
+  opacity: 0.45;
+}
+
+.route-diagram .caption {
+  fill: #4b5563;
+  font-family: Outfit, "Segoe UI", sans-serif;
+  font-size: 14px;
+}
+
+.idea {
+  padding-top: 2.5rem;
 }
 
 .steps {
