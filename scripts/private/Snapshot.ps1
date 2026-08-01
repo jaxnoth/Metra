@@ -433,6 +433,53 @@ function Get-MetraOpsStewardshipSummaries {
 
     $kc = Get-MetraKnowledgeCoverage -Projects $presentProjects -MetraRoot $MetraRoot
 
+    $reviewSummary = [ordered]@{
+        ledgerExists           = [bool]$decisionSummary.ledgerExists
+        candidateStaleDays     = 30
+        staleCandidatesCount   = 0
+        staleCandidates        = @()
+        supersededCount        = 0
+        superseded             = @()
+        missingWhyCount        = 0
+        missingWhy             = @()
+    }
+    try {
+        $rev = Get-MetraDecisionRegistryReview -MetraRoot $MetraRoot
+        $reviewSummary.ledgerExists = [bool]$rev.LedgerExists
+        $reviewSummary.candidateStaleDays = [int]$rev.CandidateStaleDays
+        $reviewSummary.staleCandidatesCount = [int]$rev.StaleCandidatesCount
+        $reviewSummary.staleCandidates = @(
+            @($rev.StaleCandidates) | ForEach-Object {
+                [PSCustomObject]@{
+                    id    = [string]$_.id
+                    title = [string]$_.title
+                }
+            }
+        )
+        $reviewSummary.supersededCount = [int]$rev.SupersededCount
+        $reviewSummary.superseded = @(
+            @($rev.Superseded) | ForEach-Object {
+                [PSCustomObject]@{
+                    id    = [string]$_.id
+                    title = [string]$_.title
+                }
+            }
+        )
+        $reviewSummary.missingWhyCount = [int]$rev.MissingWhyCount
+        $reviewSummary.missingWhy = @(
+            @($rev.MissingWhy) | ForEach-Object {
+                [PSCustomObject]@{
+                    id     = [string]$_.id
+                    title  = [string]$_.title
+                    bucket = [string]$_.bucket
+                }
+            }
+        )
+    }
+    catch {
+        # Fail-open.
+    }
+
     $coverage = [ordered]@{
         projectsWithServes       = [int]$kc.WithServes
         projectsWithCapabilities = [int]$projectsWithCapabilities
@@ -456,6 +503,7 @@ function Get-MetraOpsStewardshipSummaries {
         decisions = [PSCustomObject]$decisionSummary
         contract  = [PSCustomObject]$contractSummary
         coverage  = [PSCustomObject]$coverage
+        review    = [PSCustomObject]$reviewSummary
     }
 }
 
@@ -950,6 +998,7 @@ function Export-MetraCanvasSnapshot {
         decisions         = $stewardship.decisions
         contract          = $stewardship.contract
         coverage          = $stewardship.coverage
+        review            = $stewardship.review
         verify            = [PSCustomObject]$verifySummary
     }
 

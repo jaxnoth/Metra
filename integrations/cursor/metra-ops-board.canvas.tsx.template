@@ -82,6 +82,7 @@ type DecisionBrief = {
   confidence?: string;
   date?: string;
 };
+type ReviewBrief = { id: string; title: string; bucket?: string };
 type ContractBrief = { id: string; text: string; date?: string };
 type AttentionItem = {
   id: string;
@@ -152,6 +153,16 @@ type MetaSnapshot = {
     uncovered?: string[];
     uncoveredCount?: number;
   };
+  review?: {
+    ledgerExists: boolean;
+    candidateStaleDays: number;
+    staleCandidatesCount: number;
+    staleCandidates: ReviewBrief[];
+    supersededCount: number;
+    superseded: ReviewBrief[];
+    missingWhyCount: number;
+    missingWhy: ReviewBrief[];
+  };
   verify?: {
     checked: boolean;
     status: string;
@@ -218,6 +229,16 @@ const SNAPSHOT: MetaSnapshot = {
     missingDecisionsCount: 0,
     uncovered: [],
     uncoveredCount: 0,
+  },
+  review: {
+    ledgerExists: false,
+    candidateStaleDays: 30,
+    staleCandidatesCount: 0,
+    staleCandidates: [],
+    supersededCount: 0,
+    superseded: [],
+    missingWhyCount: 0,
+    missingWhy: [],
   },
   verify: {
     checked: false,
@@ -718,6 +739,7 @@ export default function MetraOpsBoard() {
   const decisions = SNAPSHOT.decisions;
   const contract = SNAPSHOT.contract;
   const coverage = SNAPSHOT.coverage;
+  const review = SNAPSHOT.review;
   const attentionItems: AttentionItem[] = [
     ...attentionTodos.map((todo) => {
       const briefing = briefingForTodo(todo);
@@ -1422,6 +1444,60 @@ export default function MetraOpsBoard() {
                 {decisions?.confirmedCount ?? 0} confirmed · {decisions?.candidateCount ?? 0}{" "}
                 candidates · max {decisions?.maxConfirmed ?? 50}
               </Text>
+              {(review?.staleCandidatesCount ?? 0) > 0 ||
+              (review?.missingWhyCount ?? 0) > 0 ||
+              (review?.supersededCount ?? 0) > 0 ? (
+                <Card>
+                  <CardHeader>Ledger hygiene</CardHeader>
+                  <CardBody>
+                    <Stack gap={8}>
+                      <Text size="small" tone="secondary">
+                        Inventory only - not a health score. Mutate with decisions gc /
+                        promote / forget.
+                      </Text>
+                      {(review?.staleCandidatesCount ?? 0) > 0 ? (
+                        <Stack gap={4}>
+                          <Text size="small">
+                            Stale candidates: {review!.staleCandidatesCount}
+                          </Text>
+                          {(review!.staleCandidates || []).map((r) => (
+                            <Text key={r.id || r.title} size="small" tone="secondary">
+                              {r.id ? `${r.id} ` : ""}
+                              {r.title}
+                            </Text>
+                          ))}
+                        </Stack>
+                      ) : null}
+                      {(review?.missingWhyCount ?? 0) > 0 ? (
+                        <Stack gap={4}>
+                          <Text size="small">
+                            Missing why: {review!.missingWhyCount}
+                          </Text>
+                          {(review!.missingWhy || []).map((r) => (
+                            <Text key={r.id || r.title} size="small" tone="secondary">
+                              {r.id ? `${r.id} ` : ""}
+                              {r.title}
+                            </Text>
+                          ))}
+                        </Stack>
+                      ) : null}
+                      {(review?.supersededCount ?? 0) > 0 ? (
+                        <Stack gap={4}>
+                          <Text size="small">
+                            Superseded: {review!.supersededCount}
+                          </Text>
+                          {(review!.superseded || []).map((r) => (
+                            <Text key={r.id || r.title} size="small" tone="secondary">
+                              {r.id ? `${r.id} ` : ""}
+                              {r.title}
+                            </Text>
+                          ))}
+                        </Stack>
+                      ) : null}
+                    </Stack>
+                  </CardBody>
+                </Card>
+              ) : null}
               {(decisions?.recent || []).length > 0 ? (
                 <Card>
                   <CardHeader>Recent decisions</CardHeader>
