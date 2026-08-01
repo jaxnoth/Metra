@@ -30,26 +30,29 @@
       <h2 id="idea">The idea</h2>
       <p>Different kinds of work live in different places. Metra remembers which is which, so the assistant starts in the correct one.</p>
       <figure class="route-figure">
-        <svg class="route-diagram" viewBox="0 0 560 220" role="img" aria-labelledby="diagram-title diagram-desc">
+        <svg class="route-diagram" viewBox="0 0 560 240" role="img" aria-labelledby="diagram-title diagram-desc">
           <title id="diagram-title">Metra routes an ask to the right place</title>
-          <desc id="diagram-desc">Lessons, events, and tickets sit in separate places. An ask arrives at the center, then continues to the matching place - here, Lessons.</desc>
+          <desc id="diagram-desc">Three folders labeled Lessons, Events, and Tickets. An Ask in the middle points to Lessons as the matching place.</desc>
           <defs>
-            <marker id="arrow" markerWidth="8" markerHeight="8" refX="6" refY="3" orient="auto">
-              <path d="M0,0 L6,3 L0,6 Z" fill="#0f766e" />
+            <marker id="arrow" markerWidth="10" markerHeight="10" refX="8" refY="4" orient="auto">
+              <path d="M0,0 L8,4 L0,8 Z" fill="#0f766e" />
             </marker>
           </defs>
-          <rect class="place place-chosen" x="24" y="28" width="140" height="56" rx="10" />
-          <text class="place-label" x="94" y="62" text-anchor="middle">Lessons</text>
-          <rect class="place" x="210" y="28" width="140" height="56" rx="10" />
-          <text class="place-label" x="280" y="62" text-anchor="middle">Events</text>
-          <rect class="place" x="396" y="28" width="140" height="56" rx="10" />
-          <text class="place-label" x="466" y="62" text-anchor="middle">Tickets</text>
-          <circle class="hub" cx="280" cy="148" r="28" />
-          <text class="hub-label" x="280" y="153" text-anchor="middle">Ask</text>
-          <path class="path" d="M252 140 L118 84" marker-end="url(#arrow)" />
-          <path class="path-soft" d="M280 120 V84" />
-          <path class="path-soft" d="M308 140 L442 84" />
-          <text class="caption" x="280" y="206" text-anchor="middle">Metra picks the matching place before work starts</text>
+          <!-- Places -->
+          <rect x="24" y="36" width="140" height="58" rx="10" fill="#e6f4f1" stroke="#0f766e" stroke-width="3" />
+          <text x="94" y="72" text-anchor="middle" fill="#0f766e" font-family="Segoe UI, Arial, sans-serif" font-size="20" font-weight="700">Lessons</text>
+          <rect x="210" y="36" width="140" height="58" rx="10" fill="#ffffff" stroke="#0f766e" stroke-width="2" />
+          <text x="280" y="72" text-anchor="middle" fill="#1f2937" font-family="Segoe UI, Arial, sans-serif" font-size="20" font-weight="600">Events</text>
+          <rect x="396" y="36" width="140" height="58" rx="10" fill="#ffffff" stroke="#0f766e" stroke-width="2" />
+          <text x="466" y="72" text-anchor="middle" fill="#1f2937" font-family="Segoe UI, Arial, sans-serif" font-size="20" font-weight="600">Tickets</text>
+          <!-- Ask hub -->
+          <circle cx="280" cy="168" r="32" fill="#ffffff" stroke="#0f766e" stroke-width="3" />
+          <text x="280" y="174" text-anchor="middle" fill="#0f766e" font-family="Segoe UI, Arial, sans-serif" font-size="18" font-weight="700">Ask</text>
+          <!-- Chosen route to Lessons; other places stay available but not chosen -->
+          <path d="M255 148 L118 94" fill="none" stroke="#0f766e" stroke-width="3" stroke-linecap="round" marker-end="url(#arrow)" />
+          <path d="M280 136 V94" fill="none" stroke="#0f766e" stroke-width="2" stroke-dasharray="5 5" opacity="0.35" />
+          <path d="M305 148 L442 94" fill="none" stroke="#0f766e" stroke-width="2" stroke-dasharray="5 5" opacity="0.35" />
+          <text x="280" y="226" text-anchor="middle" fill="#4b5563" font-family="Segoe UI, Arial, sans-serif" font-size="15">Metra picks the matching place before work starts</text>
         </svg>
       </figure>
     </section>
