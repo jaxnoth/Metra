@@ -141,7 +141,7 @@ a:hover {
 }
 
 main {
-  max-width: 40rem;
+  max-width: 44rem;
   margin: 0 auto;
   padding: 0 1.5rem 4rem;
 }
@@ -159,27 +159,96 @@ main {
   letter-spacing: -0.015em;
 }
 
+.panel h3 {
+  margin: 0 0 0.5rem;
+  font-family: var(--font-display);
+  font-size: 1.25rem;
+  font-weight: 600;
+}
+
 .panel p {
   margin: 0 0 1rem;
   color: var(--ink-soft);
 }
 
-.plain-list,
 .steps {
-  margin: 0;
+  margin: 0 0 1rem;
   padding-left: 1.25rem;
   color: var(--ink-soft);
 }
 
-.plain-list li,
 .steps li {
   margin-bottom: 0.55rem;
 }
 
+.use-grid {
+  display: grid;
+  gap: 1rem;
+  margin-top: 1.25rem;
+}
+
+.use-card {
+  padding: 1.15rem 1.2rem 1rem;
+  border: 1px solid rgba(15, 118, 110, 0.22);
+  border-radius: 0.45rem;
+  background: rgba(255, 255, 255, 0.72);
+}
+
+.use-card > p {
+  margin-bottom: 0.65rem;
+}
+
+.use-card details {
+  margin-top: 0.35rem;
+}
+
+.use-card summary {
+  cursor: pointer;
+  font-weight: 600;
+  color: var(--teal);
+  list-style: none;
+}
+
+.use-card summary::-webkit-details-marker {
+  display: none;
+}
+
+.use-card summary::after {
+  content: " +";
+  font-weight: 500;
+}
+
+.use-card details[open] summary::after {
+  content: " -";
+}
+
+.example {
+  margin: 0.75rem 0 0.25rem;
+  padding-left: 1.15rem;
+  color: var(--ink-soft);
+  font-size: 1rem;
+}
+
+.example li {
+  margin-bottom: 0.55rem;
+}
+
+.example strong {
+  color: var(--graphite);
+  font-weight: 600;
+}
+
+.how,
 .install {
   border-top: 1px solid rgba(15, 118, 110, 0.18);
   margin-top: 2rem;
   padding-top: 2.5rem;
+}
+
+@media (min-width: 720px) {
+  .use-grid {
+    grid-template-columns: 1fr;
+  }
 }
 
 .glossary dl {
