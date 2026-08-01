@@ -36,7 +36,7 @@ param(
     [ValidateSet(
         'list', 'status', 'pull', 'fetch', 'run', 'new', 'apply', 'workspace',
         'audit', 'snapshot', 'chats', 'roots', 'routing',
-        'export-profile', 'import-profile', 'ctx', 'setup', 'verify', 'profile', 'decisions', 'coverage', 'help'
+        'export-profile', 'import-profile', 'ctx', 'setup', 'verify', 'unblock', 'profile', 'decisions', 'coverage', 'help'
     )]
     [string]$Command = 'help',
 
@@ -103,6 +103,8 @@ Usage:
   .\metra.ps1 ctx [-Query 'terms'] [-Path <file|->] [-Format markdown|json] [-Limit 25]
   .\metra.ps1 setup [-Profile <dir-or-zip>] [-Force] [-Preview] [-Months 6] [-ScanDepth 2]
       One-shot onboarding: seed config if missing, optional profile, roots, workspace, routing, ctx.
+  .\metra.ps1 unblock [-Preview]
+      Clear mark-of-the-web from checkout script files (ZIP / OneDrive / email). Supports -Preview.
   .\metra.ps1 profile show|note|promote|forget|render|gc
       Operator Communication Contract (candidates -> promote -> soft guidelines).
   .\metra.ps1 decisions show|note|promote|forget|search|get|supersede|gc|review|harvest|seed
@@ -158,6 +160,8 @@ Examples:
   .\metra.ps1 setup
   .\metra.ps1 setup -Profile .\profiles\sample -Force
   .\metra.ps1 setup -Preview
+  .\metra.ps1 unblock
+  .\metra.ps1 unblock -Preview
   .\metra.ps1 verify
 "@ | Write-Host
 }
@@ -356,6 +360,11 @@ switch ($Command) {
         if (-not $report.Ok) {
             exit 1
         }
+    }
+
+    'unblock' {
+        # Helper stays private; Show-MetraUnblockCli is a thin compatibility export for the CLI.
+        Show-MetraUnblockCli -Preview:$Preview | Format-List Path, Preview, ScannedCount, BlockedDetected, FilesUnblocked, AlreadyClean, Failed
     }
 
     'profile' {

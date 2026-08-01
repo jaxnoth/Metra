@@ -50,7 +50,8 @@
         'Invoke-MetraOperatorContractCommand',
         'Invoke-MetraDecisionRegistryCommand',
         'Show-MetraRoutingCli',
-        'Show-MetraKnowledgeCoverageCli'
+        'Show-MetraKnowledgeCoverageCli',
+        'Show-MetraUnblockCli'
     )
     CmdletsToExport   = @()
     VariablesToExport = @()

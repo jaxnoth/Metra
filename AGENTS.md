@@ -113,6 +113,7 @@ Optional entries may be absent: follow `whenMissing` advice instead of inventing
 .\metra.ps1 decisions harvest -Preview
 .\metra.ps1 decisions review
 .\metra.ps1 coverage
+.\metra.ps1 unblock
 .\metra.ps1 routing -Name TicketTracker
 .\metra.ps1 routing -Query "gateway msal"
 .\metra.ps1 verify

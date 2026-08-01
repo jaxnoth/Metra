@@ -246,6 +246,82 @@ Describe 'Test-MetraInstallation' {
         $report.FailCount | Should -Be 0
         $report.Ok | Should -BeTrue
     }
+
+    It 'includes mark-of-the-web scripts row' {
+        $report = Test-MetraInstallation -Detailed
+        $row = @($report.Results | Where-Object Name -eq 'mark-of-the-web scripts')
+        $row.Count | Should -Be 1
+        $row[0].Status | Should -BeIn @('PASS', 'WARN')
+    }
+}
+
+Describe 'Metra install unblock' {
+    BeforeEach {
+        $script:unblockRoot = Join-Path ([System.IO.Path]::GetTempPath()) ('metra-unblock-' + [guid]::NewGuid().ToString('N'))
+        New-Item -ItemType Directory -Path $script:unblockRoot -Force | Out-Null
+    }
+
+    AfterEach {
+        if ($script:unblockRoot -and (Test-Path -LiteralPath $script:unblockRoot)) {
+            Remove-Item -LiteralPath $script:unblockRoot -Recurse -Force -ErrorAction SilentlyContinue
+        }
+    }
+
+    It 'detects a real Zone.Identifier stream' {
+        $root = $script:unblockRoot
+        $file = Join-Path $root 'blocked.ps1'
+        Set-Content -LiteralPath $file -Value '# test' -Encoding utf8
+        Set-Content -LiteralPath ($file + ':Zone.Identifier') -Value "[ZoneTransfer]`r`nZoneId=3" -Encoding ascii
+
+        InModuleScope Metra -Parameters @{ FilePath = $file } {
+            param($FilePath)
+            Test-MetraBlockedFile -Path $FilePath | Should -BeTrue
+        }
+    }
+
+    It 'Preview reports BlockedDetected without clearing streams' {
+        $root = $script:unblockRoot
+        $blocked = Join-Path $root 'blocked.ps1'
+        $clean = Join-Path $root 'clean.ps1'
+        Set-Content -LiteralPath $blocked -Value '# blocked' -Encoding utf8
+        Set-Content -LiteralPath $clean -Value '# clean' -Encoding utf8
+        Set-Content -LiteralPath ($blocked + ':Zone.Identifier') -Value "[ZoneTransfer]`r`nZoneId=3" -Encoding ascii
+
+        InModuleScope Metra -Parameters @{ Root = $root; Blocked = $blocked } {
+            param($Root, $Blocked)
+            $preview = Unblock-MetraCheckout -Path $Root -Preview
+            $preview.BlockedDetected | Should -Be 1
+            $preview.FilesUnblocked | Should -Be 0
+            $preview.AlreadyClean | Should -Be 1
+            $preview.Failed | Should -Be 0
+            Test-MetraBlockedFile -Path $Blocked | Should -BeTrue
+        }
+    }
+
+    It 'unblocks streams and is idempotent on clean files' {
+        $root = $script:unblockRoot
+        $blocked = Join-Path $root 'blocked.ps1'
+        $clean = Join-Path $root 'clean.psm1'
+        Set-Content -LiteralPath $blocked -Value '# blocked' -Encoding utf8
+        Set-Content -LiteralPath $clean -Value '# clean' -Encoding utf8
+        Set-Content -LiteralPath ($blocked + ':Zone.Identifier') -Value "[ZoneTransfer]`r`nZoneId=3" -Encoding ascii
+
+        InModuleScope Metra -Parameters @{ Root = $root; Blocked = $blocked } {
+            param($Root, $Blocked)
+            $first = Unblock-MetraCheckout -Path $Root
+            $first.BlockedDetected | Should -Be 1
+            $first.FilesUnblocked | Should -Be 1
+            $first.AlreadyClean | Should -Be 1
+            $first.Failed | Should -Be 0
+            Test-MetraBlockedFile -Path $Blocked | Should -BeFalse
+
+            $second = Unblock-MetraCheckout -Path $Root
+            $second.BlockedDetected | Should -Be 0
+            $second.FilesUnblocked | Should -Be 0
+            $second.AlreadyClean | Should -Be 2
+            $second.Failed | Should -Be 0
+        }
+    }
 }
 
 Describe 'Operator Communication Contract' {
