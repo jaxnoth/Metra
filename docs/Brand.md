@@ -74,6 +74,8 @@ A short **route line with nodes** - wayfinding, not a train logo and not Chicago
 
 ### Public mark (GitHub / docs)
 
+GitHub README stays operator/coder-facing. A separate plain-language website for non-coders is deferred - see [Decisions.md](Decisions.md) (2026-08-01 public audience) and the Cursor plan `github_public_audience_revision`.
+
 Canonical file: [`assets/metra-mark.svg`](assets/metra-mark.svg).
 
 Composition (locked):
@@ -177,7 +179,7 @@ Pass = both columns feel like one product at different times of day. Fail = dark
 
 ## Related
 
-- [Demo-5min.md](Demo-5min.md) - coworker walkthrough (concepts for low AI experience + live demo)
+- [Demo.md](Demo.md) - coworker walkthrough (Ops board face-first + live)
 - [Customizing-Metra.md](Customizing-Metra.md) - persona, Origin, and overlays
 - [Decisions.md](Decisions.md) - append-only portfolio decisions (incl. brand bounds)
 - [Integrations.md](Integrations.md) - core vs Cursor
