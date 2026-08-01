@@ -116,6 +116,14 @@ Operator-facing brand kit (palette, motif, professional sink): [docs/Brand.md](d
 
 ## Quick start (CLI first)
 
+Metra has three get paths (different audiences, not polish levels):
+
+| Audience | Channel |
+|----------|---------|
+| Developer / contributor | `git clone` (below) |
+| Technical consumer | [Download ZIP](#no-git-download-the-zip) + `Metra-Setup.cmd` |
+| Non-technical consumer | [Windows installer](#windows-installer-non-technical) (`MetraSetup.exe`) |
+
 ```powershell
 cd C:\Projects   # or your work root
 git clone https://github.com/jaxnoth/Metra.git _metra
@@ -130,9 +138,21 @@ Set-ExecutionPolicy -Scope CurrentUser -ExecutionPolicy RemoteSigned
 # .\metra.ps1 setup
 ```
 
+### Windows installer (non-technical)
+
+Primary product-distribution path. No Git, ZIP, execution-policy, or unblock concepts for the user.
+
+1. Download `MetraSetup.exe` from [GitHub Releases](https://github.com/jaxnoth/Metra/releases), or build locally: `.\packaging\Build-MetraInstaller.ps1` (see [packaging/README.md](packaging/README.md)).
+2. Run the installer. Default folder is under **Documents\Metra**. Unsigned builds may show SmartScreen - **More info** -> **Run anyway**.
+3. Leave **Run Metra setup now** checked (default on first install and upgrade). That launches `Metra-Setup.cmd` and activates capabilities without changing machine ExecutionPolicy.
+4. Later upgrades: run a newer `MetraSetup.exe`. Product files are replaced; your config, local registry, Decision Registry, OCC, and Persona Add-on overlays are preserved; setup runs again (checked by default) so new features activate.
+5. Optional tone packs after install (not installer checkboxes): `.\metra.ps1 import-profile -Path .\profiles\addons\humor-desk -Force` (or `teaching-gentle`). Start Menu **Metra Setup** re-runs setup any time.
+
+Boundary: installer owns product files; you own machine-local state; `setup` reconciles capabilities.
+
 ### No Git? Download the ZIP
 
-Technical consumers without Git can use **Code -> Download ZIP** on GitHub. Prefer `git clone` when you have Git. An installer is the planned non-technical path; ZIP is a fallback.
+Technical consumers without Git can use **Code -> Download ZIP** on GitHub. Prefer `git clone` when you have Git. Prefer the [Windows installer](#windows-installer-non-technical) for non-technical installs; ZIP is a source-distribution fallback.
 
 1. **Cheapest:** before extracting, right-click the `.zip` -> Properties -> check **Unblock** -> OK, then extract.
 2. **Automatic:** extract, then double-click `Metra-Setup.cmd` (clears mark-of-the-web under a process-scoped Bypass, then runs `setup`). Does not change your machine ExecutionPolicy.
@@ -338,13 +358,14 @@ pwsh -NoProfile -File .\tests\Invoke-MetraTests.ps1
 
 ```
 _metra/
-  Metra-Setup.cmd             ZIP / first-run double-click bootstrap (optional)
+  Metra-Setup.cmd             ZIP / installer / Start Menu bootstrap
   metra.ps1                   Metra CLI entrypoint (routing + context)
   metra.config.example.json   starter config (live metra.config.json is gitignored)
   projects.json              shared agent routing registry (example stubs OK)
   projects.local.example.json
   profiles/sample/           anonymized operator pack (ops bindings + persona overlay)
   profiles/addons/           optional Persona Add-ons (tone dials; e.g. humor-desk)
+  packaging/                 Windows installer build (Build-MetraInstaller.ps1, inno/)
   AGENTS.md                  communication model entry + Metra examples (any agent harness)
   LICENSE                    MIT
   SECURITY.md
