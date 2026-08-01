@@ -105,8 +105,8 @@ Usage:
       One-shot onboarding: seed config if missing, optional profile, roots, workspace, routing, ctx.
   .\metra.ps1 profile show|note|promote|forget|render|gc
       Operator Communication Contract (candidates -> promote -> soft guidelines).
-  .\metra.ps1 decisions show|note|promote|forget|search|get|supersede|gc|harvest|seed
-      Decision Registry / Operational Why Memory (candidates -> promote; retrieved via search/ctx).
+  .\metra.ps1 decisions show|note|promote|forget|search|get|supersede|gc|review|harvest|seed
+      Decision Registry / Operational Why Memory (candidates -> promote; review = hygiene visibility).
   .\metra.ps1 coverage
       Knowledge coverage visibility (AGENTS / serves / decisions / uncovered) - counts and gap lists, not a score.
   .\metra.ps1 verify
@@ -426,6 +426,9 @@ switch ($Command) {
                         Write-Host ("  [{0}] {1} ({2})" -f $c.id, $c.title, $c.project)
                     }
                 }
+            }
+            'review' {
+                # Host output already written inside Invoke-MetraDecisionRegistryCommand.
             }
             'search' {
                 $result |

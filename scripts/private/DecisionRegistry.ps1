@@ -524,6 +524,81 @@ function Remove-MetraDecisionRegistryEntry {
     }
 }
 
+function Get-MetraDecisionRegistryUtcDateTime {
+    <#
+    .SYNOPSIS
+        Normalizes a DateTime to UTC so Kind-safe comparisons succeed under StrictMode.
+    #>
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory)][datetime]$Value
+    )
+
+    if ($Value.Kind -eq [DateTimeKind]::Utc) { return $Value }
+    if ($Value.Kind -eq [DateTimeKind]::Unspecified) {
+        return [datetime]::SpecifyKind($Value, [DateTimeKind]::Utc)
+    }
+    return $Value.ToUniversalTime()
+}
+
+function Get-MetraDecisionRegistryCandidateTimestamp {
+    <#
+    .SYNOPSIS
+        Parses candidate updatedAt (else createdAt) as UTC DateTime, or $null.
+    #>
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory)]$Candidate
+    )
+
+    $updated = [string](Get-MetraProp -Object $Candidate -Name 'updatedAt' -Default '')
+    $created = [string](Get-MetraProp -Object $Candidate -Name 'createdAt' -Default '')
+    $stampText = if ($updated) { $updated } else { $created }
+    if (-not $stampText) { return $null }
+    try {
+        $parsed = [datetime]::Parse($stampText, $null, [System.Globalization.DateTimeStyles]::RoundtripKind)
+        return (Get-MetraDecisionRegistryUtcDateTime -Value $parsed)
+    }
+    catch {
+        return $null
+    }
+}
+
+function Split-MetraDecisionRegistryCandidatesByStale {
+    <#
+    .SYNOPSIS
+        Partitions candidates into stale vs kept using candidateStaleDays (shared by review and gc).
+    #>
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory)]$Registry,
+        [datetime]$AsOf = (Get-Date).ToUniversalTime()
+    )
+
+    $days = [int](Get-MetraProp -Object $Registry -Name 'candidateStaleDays' -Default $script:MetraDecisionRegistryStaleDays)
+    if ($days -le 0) { $days = $script:MetraDecisionRegistryStaleDays }
+    $asOfUtc = Get-MetraDecisionRegistryUtcDateTime -Value $AsOf
+    $cutoff = $asOfUtc.AddDays(-1 * $days)
+    $stale = New-Object System.Collections.Generic.List[object]
+    $kept = New-Object System.Collections.Generic.List[object]
+    foreach ($c in @($Registry.candidates)) {
+        $stamp = Get-MetraDecisionRegistryCandidateTimestamp -Candidate $c
+        if ($null -ne $stamp -and $stamp -lt $cutoff) {
+            [void]$stale.Add($c)
+        }
+        else {
+            [void]$kept.Add($c)
+        }
+    }
+    return [PSCustomObject]@{
+        Days   = $days
+        Cutoff = $cutoff
+        AsOf   = $asOfUtc
+        Stale  = @($stale.ToArray())
+        Kept   = @($kept.ToArray())
+    }
+}
+
 function Clear-MetraDecisionRegistryStaleCandidates {
     <#
     .SYNOPSIS
@@ -535,33 +610,174 @@ function Clear-MetraDecisionRegistryStaleCandidates {
     )
 
     $registry = Get-MetraDecisionRegistry -MetraRoot $MetraRoot
-    $days = [int]$registry.candidateStaleDays
-    if ($days -le 0) { $days = $script:MetraDecisionRegistryStaleDays }
-    $cutoff = (Get-Date).ToUniversalTime().AddDays(-1 * $days)
-    $kept = New-Object System.Collections.Generic.List[object]
-    $removed = 0
-    foreach ($c in @($registry.candidates)) {
-        $updated = [string](Get-MetraProp -Object $c -Name 'updatedAt' -Default '')
-        $created = [string](Get-MetraProp -Object $c -Name 'createdAt' -Default '')
-        $stampText = if ($updated) { $updated } else { $created }
-        $stamp = $null
-        if ($stampText) {
-            try { $stamp = [datetime]::Parse($stampText, $null, [System.Globalization.DateTimeStyles]::RoundtripKind) } catch { $stamp = $null }
-        }
-        if ($stamp -and $stamp -lt $cutoff) {
-            $removed++
-        }
-        else {
-            [void]$kept.Add($c)
-        }
-    }
-    $registry.candidates = @($kept)
+    $split = Split-MetraDecisionRegistryCandidatesByStale -Registry $registry
+    $registry.candidates = @($split.Kept)
     Save-MetraDecisionRegistry -Registry $registry -MetraRoot $MetraRoot
     return [PSCustomObject]@{
         Action  = 'gc'
-        Removed = $removed
-        Kept    = $kept.Count
-        Days    = $days
+        Removed = @($split.Stale).Count
+        Kept    = @($split.Kept).Count
+        Days    = [int]$split.Days
+    }
+}
+
+function Get-MetraDecisionRegistryReview {
+    <#
+    .SYNOPSIS
+        Ledger hygiene visibility (facts only; not a score). Does not mutate the ledger.
+    .DESCRIPTION
+        StaleCandidates uses the same cutoff rules as decisions gc. MissingWhy is unique by id.
+        Gap lists are capped; counts remain full. Command hints are derived by the CLI writer only.
+    #>
+    [CmdletBinding()]
+    param(
+        [string]$MetraRoot = (Get-MetraRoot),
+        [ValidateRange(1, 100)]
+        [int]$GapLimit = 12,
+        $Registry,
+        [datetime]$AsOf = (Get-Date).ToUniversalTime()
+    )
+
+    $paths = Get-MetraDecisionRegistryPaths -MetraRoot $MetraRoot
+    $ledgerExists = [bool](Test-Path -LiteralPath $paths.LedgerPath)
+    if ($null -eq $Registry) {
+        $Registry = Get-MetraDecisionRegistry -MetraRoot $MetraRoot
+        if (-not $ledgerExists) {
+            return [PSCustomObject]@{
+                LedgerExists           = $false
+                CandidateStaleDays     = [int]$Registry.candidateStaleDays
+                StaleCandidatesCount   = 0
+                StaleCandidates        = @()
+                SupersededCount        = 0
+                Superseded             = @()
+                MissingWhyCount        = 0
+                MissingWhy             = @()
+            }
+        }
+    }
+
+    $split = Split-MetraDecisionRegistryCandidatesByStale -Registry $Registry -AsOf $AsOf
+    $staleRows = @(
+        @($split.Stale) |
+            ForEach-Object {
+                [PSCustomObject]@{
+                    id    = [string](Get-MetraProp -Object $_ -Name 'id' -Default '')
+                    title = [string](Get-MetraProp -Object $_ -Name 'title' -Default '')
+                }
+            } |
+            Sort-Object id, title
+    )
+
+    $supersededRows = @(
+        @($Registry.confirmed) |
+            Where-Object {
+                ([string](Get-MetraProp -Object $_ -Name 'status' -Default '')) -eq 'superseded'
+            } |
+            ForEach-Object {
+                [PSCustomObject]@{
+                    id    = [string](Get-MetraProp -Object $_ -Name 'id' -Default '')
+                    title = [string](Get-MetraProp -Object $_ -Name 'title' -Default '')
+                }
+            } |
+            Sort-Object id, title
+    )
+
+    $missingById = [ordered]@{}
+    foreach ($bucket in @(
+            [PSCustomObject]@{ Name = 'candidates'; Items = @($Registry.candidates) },
+            [PSCustomObject]@{ Name = 'confirmed'; Items = @($Registry.confirmed) }
+        )) {
+        foreach ($row in @($bucket.Items)) {
+            $why = [string](Get-MetraProp -Object $row -Name 'why' -Default '')
+            if (-not [string]::IsNullOrWhiteSpace($why)) { continue }
+            $id = [string](Get-MetraProp -Object $row -Name 'id' -Default '')
+            if ([string]::IsNullOrWhiteSpace($id)) { continue }
+            if ($missingById.Contains($id)) { continue }
+            $missingById[$id] = [PSCustomObject]@{
+                id     = $id
+                title  = [string](Get-MetraProp -Object $row -Name 'title' -Default '')
+                bucket = [string]$bucket.Name
+            }
+        }
+    }
+    $missingWhyRows = @($missingById.Values | Sort-Object id, title)
+
+    return [PSCustomObject]@{
+        LedgerExists         = $true
+        CandidateStaleDays   = [int]$split.Days
+        StaleCandidatesCount = $staleRows.Count
+        StaleCandidates      = @($staleRows | Select-Object -First $GapLimit)
+        SupersededCount      = $supersededRows.Count
+        Superseded           = @($supersededRows | Select-Object -First $GapLimit)
+        MissingWhyCount      = $missingWhyRows.Count
+        MissingWhy           = @($missingWhyRows | Select-Object -First $GapLimit)
+    }
+}
+
+function Write-MetraDecisionRegistryReview {
+    <#
+    .SYNOPSIS
+        Host output for decision registry hygiene (facts + derived command hints).
+    #>
+    [CmdletBinding()]
+    param(
+        $Review
+    )
+
+    if (-not $Review) {
+        Write-Host 'No decision registry review data.' -ForegroundColor Yellow
+        return
+    }
+
+    Write-Host ('Decision registry review (visibility only; not a score)') -ForegroundColor Cyan
+    if (-not $Review.LedgerExists) {
+        Write-Host '  No local Decision Registry ledger yet.'
+        Write-Host '  Hint: .\metra.ps1 decisions note / harvest / promote'
+        return
+    }
+
+    Write-Host ("  Candidate stale days: {0}" -f $Review.CandidateStaleDays)
+    Write-Host ("  Stale candidates: {0}" -f $Review.StaleCandidatesCount)
+    foreach ($row in @($Review.StaleCandidates)) {
+        Write-Host ("    [{0}] {1}" -f $row.id, $row.title)
+    }
+    Write-Host ("  Missing why: {0}" -f $Review.MissingWhyCount)
+    foreach ($row in @($Review.MissingWhy)) {
+        Write-Host ("    [{0}] {1} ({2})" -f $row.id, $row.title, $row.bucket)
+    }
+    Write-Host ("  Superseded: {0}" -f $Review.SupersededCount)
+    foreach ($row in @($Review.Superseded)) {
+        Write-Host ("    [{0}] {1}" -f $row.id, $row.title)
+    }
+
+    $hints = New-Object System.Collections.Generic.List[string]
+    if ([int]$Review.StaleCandidatesCount -gt 0) {
+        [void]$hints.Add('.\metra.ps1 decisions gc')
+    }
+    if ([int]$Review.MissingWhyCount -gt 0) {
+        $sample = @($Review.MissingWhy) | Select-Object -First 1
+        if ($sample -and $sample.bucket -eq 'candidates' -and $sample.id) {
+            [void]$hints.Add((".\metra.ps1 decisions promote {0} -Why '...'" -f $sample.id))
+        }
+        else {
+            [void]$hints.Add(".\metra.ps1 decisions promote <id> -Why '...'")
+        }
+    }
+    if ([int]$Review.SupersededCount -gt 0) {
+        $sample = @($Review.Superseded) | Select-Object -First 1
+        if ($sample -and $sample.id) {
+            [void]$hints.Add((".\metra.ps1 decisions forget {0}" -f $sample.id))
+        }
+        else {
+            [void]$hints.Add('.\metra.ps1 decisions forget <id>')
+        }
+    }
+    if ($hints.Count -gt 0) {
+        Write-Host ''
+        Write-Host 'Hints (operator runs these; review does not mutate):'
+        foreach ($h in @($hints)) {
+            Write-Host ("  {0}" -f $h)
+        }
     }
 }
 
@@ -1342,6 +1558,11 @@ function Invoke-MetraDecisionRegistryCommand {
         'gc' {
             return Clear-MetraDecisionRegistryStaleCandidates -MetraRoot $MetraRoot
         }
+        'review' {
+            $rev = Get-MetraDecisionRegistryReview -MetraRoot $MetraRoot
+            Write-MetraDecisionRegistryReview -Review $rev
+            return $rev
+        }
         'harvest' {
             $params = @{ MetraRoot = $MetraRoot; Preview = $Preview }
             if ($Name) { $params.Name = $Name }
@@ -1374,7 +1595,7 @@ function Invoke-MetraDecisionRegistryCommand {
             return Import-MetraDecisionRegistrySeedCatalog -MetraRoot $MetraRoot -CandidatesOnly:$candidatesOnly
         }
         default {
-            throw "Unknown decisions subcommand '$Subcommand'. Use: show, note, promote, forget, search, get, supersede, gc, harvest, seed"
+            throw "Unknown decisions subcommand '$Subcommand'. Use: show, note, promote, forget, search, get, supersede, gc, review, harvest, seed"
         }
     }
 }

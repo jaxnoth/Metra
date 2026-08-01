@@ -18,6 +18,12 @@ Entry shape:
 
 ---
 
+## 2026-08-01 - Decisions review (knowledge decay visibility)
+
+- Decision: Ship **`.\metra.ps1 decisions review`** as ledger-hygiene **visibility only**. Canonical helper `Get-MetraDecisionRegistryReview` reports three work classes: stale candidates (same cutoff as `decisions gc` via shared `Split-MetraDecisionRegistryCandidatesByStale`), superseded confirmed inventory, and MissingWhy (blank why on candidates or confirmed; unique by id). Gap lists alphabetical/stable, capped at 12; counts full. CLI writer derives command hints from facts; snapshot/Stewardship "Ledger hygiene" strip carries facts only (no SuggestedCommands, no score, no age averages). Review never mutates; operator still runs `gc` / `promote` / `forget`.
+- Why: Stewardship already showed recent decisions and candidates without a preview of what `gc` would remove, or of missing-why debt and superseded inventory. Operators need the same cutoff as gc so review and mutate cannot disagree.
+- See: `scripts/private/DecisionRegistry.ps1`, `.\metra.ps1 decisions review`, `integrations/cursor/metra-ops-board.canvas.tsx.template`, `docs/Context-Routing.md`
+
 ## 2026-08-01 - Knowledge coverage visibility (not a score)
 
 - Decision: Ship knowledge coverage as **visibility only** via canonical helper `Get-MetraKnowledgeCoverage`. One present registry-on-disk population feeds every with/missing/uncovered dimension. Dimensions: AGENTS on disk, non-empty `serves`, and at least one **active confirmed** Decision Registry row (not candidates, not superseded). `Uncovered` means missing all three. Surfaces: `.\metra.ps1 coverage`, Ops Stewardship Gaps strip, and snapshot `coverage` (keep existing aggregate counts; add capped gap lists). Gap name lists are alphabetical, deduped, capped at 12; counts stay full. No percent, grade, or health score. Out of scope: decisions review/decay, cap-100, auto-filling serves/AGENTS.
@@ -90,7 +96,7 @@ Entry shape:
   2. ~~Ops board Recent Decisions / Portfolio Wisdom~~ **Done** - Stewardship tab on Metra Ops interchange (bounded strip; board remains a retrieval surface)
   3. ~~Knowledge coverage visibility (not a score)~~ **Done** - see Knowledge coverage visibility entry
   4. ~~Project story + relatedProjects in ctx~~ **Done** - see Project story + related in ctx entry
-  5. decisions review (knowledge decay)
+  5. ~~decisions review (knowledge decay)~~ **Done** - see Decisions review entry
   6. Cap headroom toward 100 if retrieval stays useful
   7. ~~**For whom?**~~ **Done** - see For whom? (project serves) entry
   - Deprioritized: more persona add-ons; more Ops board health metrics

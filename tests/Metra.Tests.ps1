@@ -664,6 +664,136 @@ Describe 'Decision Registry' {
     }
 }
 
+Describe 'Metra decision registry review' {
+    It 'flags stale candidates with the same cutoff as gc split' {
+        InModuleScope Metra {
+            $asOf = [datetime]::Parse('2026-08-01T12:00:00Z').ToUniversalTime()
+            $registry = [PSCustomObject]@{
+                version            = 1
+                candidateStaleDays = 30
+                maxConfirmed       = 50
+                candidates         = @(
+                    [PSCustomObject]@{
+                        id        = 'c-stale'
+                        title     = 'Old candidate'
+                        why       = 'has why'
+                        updatedAt = $asOf.AddDays(-31).ToString('o')
+                    }
+                    [PSCustomObject]@{
+                        id        = 'c-fresh'
+                        title     = 'Fresh candidate'
+                        why       = 'has why'
+                        updatedAt = $asOf.AddDays(-10).ToString('o')
+                    }
+                )
+                confirmed          = @()
+            }
+            $split = Split-MetraDecisionRegistryCandidatesByStale -Registry $registry -AsOf $asOf
+            $rev = Get-MetraDecisionRegistryReview -Registry $registry -AsOf $asOf -GapLimit 12
+            @($split.Stale | ForEach-Object { $_.id }) | Should -Be @('c-stale')
+            $rev.StaleCandidatesCount | Should -Be 1
+            @($rev.StaleCandidates | ForEach-Object { $_.id }) | Should -Be @('c-stale')
+            @(Compare-Object @($split.Stale | ForEach-Object { $_.id }) @($rev.StaleCandidates | ForEach-Object { $_.id })).Count |
+                Should -Be 0
+        }
+    }
+
+    It 'lists superseded and missing-why without flagging filled why' {
+        InModuleScope Metra {
+            $registry = [PSCustomObject]@{
+                version            = 1
+                candidateStaleDays = 30
+                maxConfirmed       = 50
+                candidates         = @(
+                    [PSCustomObject]@{ id = 'c-missing'; title = 'Needs why'; why = ''; updatedAt = (Get-Date).ToUniversalTime().ToString('o') }
+                    [PSCustomObject]@{ id = 'c-ok'; title = 'Has why'; why = 'because'; updatedAt = (Get-Date).ToUniversalTime().ToString('o') }
+                )
+                confirmed          = @(
+                    [PSCustomObject]@{ id = 'd-old'; title = 'Superseded one'; why = 'old why'; status = 'superseded' }
+                    [PSCustomObject]@{ id = 'd-active'; title = 'Active one'; why = 'active why'; status = 'active' }
+                )
+            }
+            $rev = Get-MetraDecisionRegistryReview -Registry $registry -GapLimit 12
+            $rev.SupersededCount | Should -Be 1
+            @($rev.Superseded | ForEach-Object { $_.id }) | Should -Be @('d-old')
+            $rev.MissingWhyCount | Should -Be 1
+            @($rev.MissingWhy | ForEach-Object { $_.id }) | Should -Be @('c-missing')
+            @($rev.MissingWhy | ForEach-Object { $_.id }) | Should -Not -Contain 'c-ok'
+            @($rev.MissingWhy | ForEach-Object { $_.id }) | Should -Not -Contain 'd-active'
+        }
+    }
+
+    It 'dedupes MissingWhy by id across buckets' {
+        InModuleScope Metra {
+            $registry = [PSCustomObject]@{
+                version            = 1
+                candidateStaleDays = 30
+                maxConfirmed       = 50
+                candidates         = @(
+                    [PSCustomObject]@{ id = 'dup-1'; title = 'Candidate copy'; why = '  '; updatedAt = (Get-Date).ToUniversalTime().ToString('o') }
+                )
+                confirmed          = @(
+                    [PSCustomObject]@{ id = 'dup-1'; title = 'Confirmed copy'; why = ''; status = 'active' }
+                )
+            }
+            $rev = Get-MetraDecisionRegistryReview -Registry $registry -GapLimit 12
+            $rev.MissingWhyCount | Should -Be 1
+            @($rev.MissingWhy).Count | Should -Be 1
+            @($rev.MissingWhy)[0].id | Should -Be 'dup-1'
+        }
+    }
+
+    It 'caps hygiene lists at 12 while keeping full counts' {
+        InModuleScope Metra {
+            $candidates = 1..15 | ForEach-Object {
+                [PSCustomObject]@{
+                    id        = ('c{0:D2}' -f $_)
+                    title     = ('Gap {0:D2}' -f $_)
+                    why       = ''
+                    updatedAt = (Get-Date).ToUniversalTime().ToString('o')
+                }
+            }
+            $registry = [PSCustomObject]@{
+                version            = 1
+                candidateStaleDays = 30
+                maxConfirmed       = 50
+                candidates         = @($candidates)
+                confirmed          = @()
+            }
+            $rev = Get-MetraDecisionRegistryReview -Registry $registry -GapLimit 12
+            $rev.MissingWhyCount | Should -Be 15
+            @($rev.MissingWhy).Count | Should -Be 12
+            @($rev.MissingWhy)[0].id | Should -Be 'c01'
+            @($rev.MissingWhy)[11].id | Should -Be 'c12'
+        }
+    }
+
+    It 'review does not mutate the ledger when called via MetraRoot' {
+        $root = Join-Path ([System.IO.Path]::GetTempPath()) ('metra-rev-' + [guid]::NewGuid().ToString('N'))
+        New-Item -ItemType Directory -Path (Join-Path $root 'docs') -Force | Out-Null
+        try {
+            InModuleScope Metra -Parameters @{ DecisionRoot = $root } {
+                param($DecisionRoot)
+                $null = Add-MetraDecisionRegistryCandidate `
+                    -Title 'Review no write' `
+                    -Decision 'Stay a candidate.' `
+                    -Why '' `
+                    -Project 'TicketTracker' `
+                    -Origin operator `
+                    -MetraRoot $DecisionRoot
+                $before = Get-MetraDecisionRegistry -MetraRoot $DecisionRoot
+                $beforeCount = @($before.candidates).Count
+                $null = Get-MetraDecisionRegistryReview -MetraRoot $DecisionRoot
+                $after = Get-MetraDecisionRegistry -MetraRoot $DecisionRoot
+                @($after.candidates).Count | Should -Be $beforeCount
+            }
+        }
+        finally {
+            Remove-Item -LiteralPath $root -Recurse -Force -ErrorAction SilentlyContinue
+        }
+    }
+}
+
 Describe 'Metra Ops canvas install' {
     BeforeEach {
         $script:canvasRoot = Join-Path ([System.IO.Path]::GetTempPath()) ('metra-canvas-' + [guid]::NewGuid().ToString('N'))
@@ -856,6 +986,9 @@ Describe 'Metra Ops snapshot stewardship' {
             @($sum.contract.confirmed)[0].text | Should -Match 'terse'
             $sum.coverage.projectsWithWhyHere | Should -Be 1
             $sum.coverage.projectsWithDecisions | Should -BeGreaterThan 0
+            $sum.review | Should -Not -BeNullOrEmpty
+            $sum.review.PSObject.Properties.Name | Should -Contain 'staleCandidatesCount'
+            $sum.review.PSObject.Properties.Name | Should -Contain 'missingWhyCount'
         }
     }
 
@@ -881,6 +1014,8 @@ Describe 'Metra Ops snapshot stewardship' {
         $raw | Should -Match 'standingRoutes'
         $raw | Should -Match 'Coverage gaps \(visibility only\)'
         $raw | Should -Match 'uncoveredCount'
+        $raw | Should -Match 'Ledger hygiene'
+        $raw | Should -Match 'staleCandidatesCount'
         $raw | Should -Not -Match '<Text weight="semibold">Pinned hubs</Text>'
         $raw | Should -Not -Match 'function CommandRow'
     }

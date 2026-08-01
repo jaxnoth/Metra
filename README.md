@@ -287,7 +287,7 @@ Personal-root `registryFile` is **not** auto-included - copy it with that root. 
 | `export-profile` | Pack local config / local registry / Metra overlay (+ Persona Add-ons / learned contract if present) |
 | `import-profile` | Restore a pack (`-Preview` or `-Force`) - ops bindings and persona overlay |
 | `profile` | Operator Communication Contract: `show` / `note` / `promote` / `forget` / `render` / `gc` |
-| `decisions` | Decision Registry (Operational Why Memory): `show` / `note` / `promote` / `forget` / `search` / `get` / `supersede` / `gc` / `harvest` / `seed` |
+| `decisions` | Decision Registry (Operational Why Memory): `show` / `note` / `promote` / `forget` / `search` / `get` / `supersede` / `gc` / `review` / `harvest` / `seed` |
 | `coverage` | Knowledge coverage visibility (AGENTS / serves / decisions / uncovered) - counts and capped gap lists, not a score |
 | `verify` | Routing-Scenarios fixture smoke (`PASS`/`WARN`/`FAIL`; exit 1 on FAIL) |
 
