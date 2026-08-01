@@ -18,6 +18,12 @@ Entry shape:
 
 ---
 
+## 2026-08-01 - Plain-language landing (GitHub Pages)
+
+- Decision: Ship a **separate** plain-language landing under `site/` on GitHub Pages (`https://jaxnoth.github.io/Metra/`), not by rewriting the operator README. Content: problem/value, Windows installer CTA, Documents home folder, one short PowerShell glossary - no CLI/registry dump. README gets a short **Who this page is for** pointer plus Get Metra link. Treat the Pages URL as a portable stop; a fuller marketing host may replace it later without changing product architecture.
+- Why: Non-coder review found the GitHub README overwhelming; installer alone does not explain what Metra is. A thin linked site keeps audiences split while staying in-repo for now.
+- See: `site/index.html`, `site/styles.css`, `README.md`, [Brand.md](Brand.md)
+
 ## 2026-08-01 - Product installer with full upgrades (architecture)
 
 - Decision: Treat the Windows installer as **product distribution architecture**, not optional polish. Three channels stay separate: developers use `git clone`; technical consumers may use ZIP + `Metra-Setup.cmd` / `unblock`; non-technical consumers use `MetraSetup.exe`. **Installer owns product files** (stable AppId `B7C8D9E0-1A2B-4C5D-8E9F-0A1B2C3D4E5F`, `UsePreviousAppDir`, version from `scripts/Metra.psd1` ModuleVersion). **User owns state** (config, `projects.local.json`, Decision Registry, OCC, `*.local.mdc`, generated packs - never staged in the payload). **`setup` reconciles capabilities** - wizard task "Run Metra setup now" is checked by default on first install and upgrade and launches `Metra-Setup.cmd` (Start Menu the same). Optional Persona Add-ons remain `import-profile` / `setup -Profile` - no Inno feature checkboxes. Process-scoped Bypass only; never mutate machine ExecutionPolicy. No v1 auto-adopt of an existing git/ZIP tree. Unsigned SmartScreen: document More info -> Run anyway; signing deferred.
@@ -54,8 +60,8 @@ Entry shape:
 - Why: Non-coder review of the live GitHub page - a teacher with some technical skills found the language not meaningful across the whole page and overwhelming. Feedback concluded a separate website is probably essential for that audience. Concrete vocabulary gaps that needed live explanation: what **PowerShell** is, and what it means to **create a base folder** (checkout / `_metra` / project root). Those terms must not be assumed on the non-coder surface. When creating a home folder, the natural choice was **Documents** (not a developer `C:\Projects`-style root) - treat that as a valid personal-root default in non-coder guidance. **Git was not installed** - `git clone` is a hard stop for that audience; the non-coder path must offer get-Metra without installing Git. The ZIP workaround then hit a second wall: files extracted from a downloaded ZIP carry the Windows mark-of-the-web, so `RemoteSigned` refuses to run unsigned `metra.ps1` even after the documented `Set-ExecutionPolicy` step. Any no-Git path must cover unblocking (ZIP Properties -> Unblock before extract, or `Unblock-File`); the README `Set-ExecutionPolicy` line alone is only sufficient for a real `git clone`.
 - See: `README.md`, [Brand.md](Brand.md) (public mark / GitHub), plan `github_public_audience_revision` (Cursor plans), operator index `docs/Future-Development.local.md` (Bucket A)
 - Future / not in this release:
-  1. Separate plain-language website (or landing) for non-coders - problem, value, and wayfinding without CLI/registry vocabulary; do not lead with PowerShell or "create a base folder" as assumed knowledge; if a home folder is needed, prefer **Documents** (or equivalent user-known place) over developer project roots; **get Metra without Git** (~~ZIP as interim; an **actual installer** is required~~ **installer shipped** - ZIP remains technical fallback)
-  2. Keep GitHub README operator/coder-dense; optionally add a short "Who this page is for" pointer to the non-coder site when it exists; ZIP unblock README note **done**; installer README section **done**
+  1. ~~Separate plain-language website (or landing) for non-coders~~ **done** (`site/` + GitHub Pages; may move host later)
+  2. Keep GitHub README operator/coder-dense; ~~Who-this-is-for pointer~~ **done**; ZIP unblock and installer README **done**
   3. Re-test the non-coder surface with a similar reviewer profile before calling it done
   - Out of scope for that revision: rewriting Metra itself into a non-technical product; family/classroom ticketing (TicketTracker); persona add-ons as a substitute for plain docs; requiring Git for first-run non-coder setup; treating manual ZIP + Unblock as the final non-coder deploy story
 

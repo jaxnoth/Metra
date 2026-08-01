@@ -74,7 +74,7 @@ A short **route line with nodes** - wayfinding, not a train logo and not Chicago
 
 ### Public mark (GitHub / docs)
 
-GitHub README stays operator/coder-facing. A separate plain-language website for non-coders is deferred - see [Decisions.md](Decisions.md) (2026-08-01 public audience) and the Cursor plan `github_public_audience_revision`.
+GitHub README stays operator/coder-facing. Plain-language landing for non-coders: [`site/`](../site/) published as GitHub Pages at [jaxnoth.github.io/Metra](https://jaxnoth.github.io/Metra/). May move to a fuller host later; keep the README pointer current. See [Decisions.md](Decisions.md) (public audience / plain-language site).
 
 Canonical file: [`assets/metra-mark.svg`](assets/metra-mark.svg).
 
