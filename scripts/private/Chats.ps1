@@ -175,15 +175,25 @@ function Get-MetraCursorApiKey {
     .SYNOPSIS
         Resolves a Cursor API key for Cloud Agents reads.
     .DESCRIPTION
-        Prefers $env:CURSOR_API_KEY. Never prompts and never writes secrets to disk.
-        Returns $null when unset so callers can skip cloud search quietly.
+        Prefers process $env:CURSOR_API_KEY, then User scope, then Machine scope.
+        Cursor agent shells often miss User vars set after the IDE started - User lookup
+        covers that. Never prompts and never writes secrets to disk. Returns $null when
+        unset so callers can skip cloud search quietly.
     #>
     [CmdletBinding()]
     param()
 
-    $fromEnv = [string]$env:CURSOR_API_KEY
-    if (-not [string]::IsNullOrWhiteSpace($fromEnv)) {
-        return $fromEnv.Trim()
+    foreach ($candidate in @(
+            [string]$env:CURSOR_API_KEY
+            [Environment]::GetEnvironmentVariable('CURSOR_API_KEY', 'User')
+            [Environment]::GetEnvironmentVariable('CURSOR_API_KEY', 'Machine')
+        )) {
+        if (-not [string]::IsNullOrWhiteSpace($candidate)) {
+            $trimmed = $candidate.Trim()
+            # Keep process env warm for later calls in this session
+            $env:CURSOR_API_KEY = $trimmed
+            return $trimmed
+        }
     }
     return $null
 }
@@ -280,7 +290,7 @@ function Get-MetraCloudAgentChats {
         $ApiKey = Get-MetraCursorApiKey
     }
     if ([string]::IsNullOrWhiteSpace($ApiKey)) {
-        Write-Warning 'Cloud chat search skipped: set $env:CURSOR_API_KEY (Cursor Dashboard -> API Keys).'
+        Write-Warning 'Cloud chat search skipped: no CURSOR_API_KEY. Ask the operator for a session key (Cursor Dashboard -> API Keys), then set $env:CURSOR_API_KEY for this session.'
         return @()
     }
 

@@ -175,7 +175,7 @@ Profile packs do **not** include a personal root's `registryFile` (for example `
 - [Decisions.md](Decisions.md) - append-only portfolio decisions
 - [Integrations.md](Integrations.md) - core vs Cursor; ctx handoff
 - [Routing-Scenarios.md](Routing-Scenarios.md) - persona smoke + `.\metra.ps1 verify`
-- [Demo-5min.md](Demo-5min.md) - coworker walkthrough
+- [Demo.md](Demo.md) - coworker walkthrough (Ops board face-first)
 - [Search-Echo.md](Search-Echo.md) - multi-root Grep echo
 - [SECURITY.md](../SECURITY.md) - what not to commit
 - [Context-Routing.md](Context-Routing.md) - registry and audit cadence

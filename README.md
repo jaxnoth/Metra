@@ -112,7 +112,7 @@ CLI-only operators get full routing and context value without Cursor. Agents in 
 | Communication model | **Metra** persona - base + overlay + optional add-ons + learned contract (`profile`) |
 | Workspace file | `Metra.code-workspace` (legacy `Meta.code-workspace` still honored if configured) |
 
-Operator-facing brand kit (palette, motif, professional sink): [docs/Brand.md](docs/Brand.md). Coworker walkthrough (concepts + live, including a non-AI-friendly path): [docs/Demo-5min.md](docs/Demo-5min.md).
+Operator-facing brand kit (palette, motif, professional sink): [docs/Brand.md](docs/Brand.md). Coworker walkthrough (Ops board face-first + live): [docs/Demo.md](docs/Demo.md).
 
 ## Quick start (CLI first)
 
