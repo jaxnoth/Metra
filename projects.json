@@ -82,7 +82,8 @@
         "helpdesk",
         "incident",
         "work item",
-        "AI Recommendation"
+        "AI Recommendation",
+        "Metra AI Recommendation"
       ],
       "entry": "AGENTS.md",
       "capabilities": [
