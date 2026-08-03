@@ -1,13 +1,41 @@
 # Generated from the original Metra.psm1 domain split. Edit this file directly.
 
+function Get-MetraOrchestrationProject {
+    <#
+    .SYNOPSIS
+        Returns the live Metra checkout as a destination project (Name=Metra).
+    .DESCRIPTION
+        Sibling root scans skip the orchestration folder (_meta / _metra / Metra).
+        This injects it back as the product destination so routing and the Ops desk
+        can treat Metra as a real place to stand.
+    #>
+    [CmdletBinding()]
+    param()
+
+    $path = Get-MetraRoot
+    $primaryRoot = @(Get-MetraRoots) | Where-Object { $_.Primary } | Select-Object -First 1
+    $rootName = if ($primaryRoot) { [string]$primaryRoot.Name } else { 'work' }
+
+    return [PSCustomObject]@{
+        Name          = 'Metra'
+        Path          = $path
+        IsGit         = [bool](Test-Path -LiteralPath (Join-Path $path '.git'))
+        Root          = $rootName
+        Primary       = $true
+        Shadowed      = $false
+        Orchestration = $true
+    }
+}
+
 function Get-MetraProjects {
     <#
     .SYNOPSIS
-        Lists project directories across every configured root.
+        Lists project folders across every configured root.
     .DESCRIPTION
         Roots are scanned in configuration order. When the same folder name appears in more
         than one root, the earlier root wins and the later one is marked Shadowed (surfaced
         only with -IncludeShadowed) so a duplicate never silently replaces the primary copy.
+        Always includes Metra (orchestration checkout) as Name=Metra when the filter matches.
     #>
     [CmdletBinding()]
     param(
@@ -51,7 +79,15 @@ function Get-MetraProjects {
             }
     }
 
-    return @($items | Sort-Object Name, Root)
+    $list = @($items)
+    $home = Get-MetraOrchestrationProject
+    if ($home.Name -like $Filter) {
+        if (-not ($GitOnly -and -not $home.IsGit)) {
+            $list = @($home) + @($list | Where-Object { $_.Name -ne 'Metra' })
+        }
+    }
+
+    return @($list | Sort-Object Name, Root)
 }
 
 function Resolve-MetraProjectSet {
@@ -277,7 +313,7 @@ function Get-RecentMetraProjects {
         $rootDepths[$r.Name] = if ($null -ne $r.ScanDepth) { [int]$r.ScanDepth } else { $ScanDepth }
     }
 
-    $projects = Get-MetraProjects | ForEach-Object {
+    $projects = Get-MetraProjects | Where-Object { -not $_.Orchestration } | ForEach-Object {
         $depth = if ($rootDepths.ContainsKey($_.Root)) { $rootDepths[$_.Root] } else { $ScanDepth }
         $last = Get-ProjectLastActivity -Path $_.Path -ScanDepth $depth
         $forced = $always -contains $_.Name
@@ -298,4 +334,3 @@ function Get-RecentMetraProjects {
     }
     return @($projects | Where-Object Recent | Sort-Object Name)
 }
-

@@ -47,6 +47,12 @@ docs/decision-registry.json
 docs/canvas-snapshot.json
 docs/context-pack.md
 docs/context-pack.json
+docs/ops-preferences.local.json
+docs/ops-ask-log.local.json
+
+# Ops desk: track dist for end users; ignore node_modules via ops/.gitignore + root rule
+ops/node_modules/
+engines/cursor/node_modules/
 
 # Operator-private notes (not for public/team clones)
 docs/*.local.md

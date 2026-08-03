@@ -186,12 +186,80 @@ function Get-MetraRegistryProject {
     @($Registry.projects) | Where-Object { $_.name -eq $Name } | Select-Object -First 1
 }
 
+function Get-MetraHomeDestinationName {
+    <#
+    .SYNOPSIS
+        Registry home destination name (defaults to Metra).
+    #>
+    [CmdletBinding()]
+    param()
+
+    $registry = Get-MetraProjectRegistry
+    $name = [string](Get-MetraProp -Object $registry.routing -Name 'homeDestination' -Default '')
+    if ([string]::IsNullOrWhiteSpace($name)) {
+        $name = [string](Get-MetraProp -Object $registry.routing -Name 'defaultEntry' -Default 'Metra')
+    }
+    if ([string]::IsNullOrWhiteSpace($name)) { $name = 'Metra' }
+    return $name
+}
+
+function New-MetraHomeScoredProject {
+    <#
+    .SYNOPSIS
+        Builds a scored routing row for the Metra home destination.
+    #>
+    [CmdletBinding()]
+    param(
+        [int]$Score = 0
+    )
+
+    $homeName = Get-MetraHomeDestinationName
+    $onDisk = Get-MetraOrchestrationProject
+    $registry = Get-MetraProjectRegistry
+    $reg = @($registry.projects | Where-Object { [string]$_.name -eq $homeName } | Select-Object -First 1)
+    $purpose = if ($reg) { [string](Get-MetraProp -Object $reg -Name 'purpose' -Default '') } else { 'Portfolio orchestration home.' }
+    $triggers = if ($reg) { @(Get-MetraProp -Object $reg -Name 'triggers' -Default @()) } else { @('metra') }
+    $serves = if ($reg) { @(Get-MetraProp -Object $reg -Name 'serves' -Default @()) } else { @() }
+
+    return [PSCustomObject]@{
+        Name          = $homeName
+        Root          = [string]$onDisk.Root
+        Path          = [string]$onDisk.Path
+        Purpose       = $purpose
+        Triggers      = @($triggers)
+        Serves        = @($serves)
+        Score         = $Score
+        MatchedTokens = @()
+        HayLower      = (@($homeName) + $triggers + @($purpose) | ForEach-Object { [string]$_ }) -join ' '
+        IsHomeDefault = $true
+    }
+}
+
+function Get-MetraRoutingStopWords {
+    <#
+    .SYNOPSIS
+        Common English tokens that must not score registry haystacks via substring noise.
+    #>
+    return [System.Collections.Generic.HashSet[string]]::new(
+        [string[]]@(
+            'a', 'an', 'and', 'as', 'at', 'be', 'by', 'do', 'for', 'from', 'get', 'got',
+            'how', 'if', 'in', 'into', 'is', 'it', 'its', 'me', 'my', 'no', 'not', 'of', 'on',
+            'or', 'our', 'out', 'so', 'than', 'that', 'the', 'then', 'there', 'these', 'this',
+            'those', 'to', 'up', 'us', 'via', 'we', 'what', 'when', 'where', 'who', 'why',
+            'with', 'you', 'your', 'today', 'now', 'here', 'please', 'help', 'try', 'find',
+            'need', 'needs', 'want', 'like', 'also', 'any', 'all', 'just', 'about', 'into'
+        ),
+        [StringComparer]::OrdinalIgnoreCase
+    )
+}
+
 function Get-MetraQueryTokens {
     param([string]$Query)
     if ([string]::IsNullOrWhiteSpace($Query)) { return @() }
+    $stop = Get-MetraRoutingStopWords
     return @(
         ($Query.ToLowerInvariant() -split '\W+') |
-            Where-Object { $_ -and $_.Length -gt 1 }
+            Where-Object { $_ -and $_.Length -gt 1 -and -not $stop.Contains($_) }
     )
 }
 
@@ -199,6 +267,10 @@ function Get-MetraScoredRoutingProjects {
     <#
     .SYNOPSIS
         Scores present registry projects for a query (same rules as ctx).
+    .DESCRIPTION
+        Tokens match whole words in the project name / triggers / purpose haystack - not
+        substrings. Stop words are dropped first so "to" / "in" / "the" / "or" cannot steal
+        the primary route from noise inside purpose text (e.g. "get-together", "authority").
     #>
     [CmdletBinding()]
     param(
@@ -216,6 +288,7 @@ function Get-MetraScoredRoutingProjects {
         $disk[$p.Name.ToLowerInvariant()] = $p
     }
 
+    $qLower = $Query.ToLowerInvariant()
     $scored = New-Object System.Collections.Generic.List[object]
     foreach ($reg in @($registry.projects)) {
         $regName = [string]$reg.name
@@ -227,15 +300,32 @@ function Get-MetraScoredRoutingProjects {
         $serves = @(Get-MetraProp -Object $reg -Name 'serves' -Default @())
         $hay = (@($regName) + $triggers + @($purpose) | ForEach-Object { [string]$_ }) -join ' '
         $hayLower = $hay.ToLowerInvariant()
+        $hayWords = [System.Collections.Generic.HashSet[string]]::new([StringComparer]::OrdinalIgnoreCase)
+        foreach ($w in @($hayLower -split '\W+')) {
+            if ($w) { [void]$hayWords.Add($w) }
+        }
+
         $score = 0
         $matchedTokens = New-Object System.Collections.Generic.List[string]
         foreach ($t in $tokens) {
-            if ($hayLower.Contains($t)) {
+            if ($hayWords.Contains($t)) {
                 $score++
                 [void]$matchedTokens.Add($t)
             }
             if ($regName.ToLowerInvariant() -eq $t) { $score += 2 }
         }
+
+        # Multi-word / distinctive triggers beat scattered word noise when the query names them.
+        foreach ($tr in $triggers) {
+            $trLower = ([string]$tr).ToLowerInvariant().Trim()
+            if ([string]::IsNullOrWhiteSpace($trLower)) { continue }
+            if ($trLower.Length -lt 3) { continue }
+            if ($qLower.Contains($trLower)) {
+                $score += 3
+                [void]$matchedTokens.Add("phrase:$trLower")
+            }
+        }
+
         if ($score -le 0) { continue }
 
         [void]$scored.Add([PSCustomObject]@{
@@ -282,6 +372,10 @@ function Get-MetraRoutingAmbiguity {
     <#
     .SYNOPSIS
         Picks primary (+ optional close runner-up) for a routing query.
+    .DESCRIPTION
+        Metra is the home destination until another project wins with a confident score
+        (score >= 2). Weak incidental matches do not displace Metra.
+        Ticket/helpdesk work still prefers TicketTracker when ticketFirst scoring wins.
     #>
     [CmdletBinding()]
     param(
@@ -289,17 +383,36 @@ function Get-MetraRoutingAmbiguity {
     )
 
     $scored = @(Get-MetraScoredRoutingProjects -Query $Query -Limit 10)
-    if ($scored.Count -eq 0) {
+    $homeName = Get-MetraHomeDestinationName
+    $tokens = @(Get-MetraQueryTokens -Query $Query)
+    $confident = $scored | Where-Object { [int]$_.Score -ge 2 } | Select-Object -First 1
+
+    if (-not $confident) {
+        # Ticket-first only on explicit ticket vocabulary - not incidental substring hits.
+        $ticketTokens = @('ticket', 'tickets', 'isupport', 'helpdesk', 'incident', 'incidents')
+        $hasTicketToken = @($tokens | Where-Object { $ticketTokens -contains $_ }).Count -gt 0
+        if ($hasTicketToken) {
+            $ticket = $scored | Where-Object { $_.Name -eq 'TicketTracker' -and [int]$_.Score -ge 1 } | Select-Object -First 1
+            if ($ticket) {
+                $confident = $ticket
+            }
+        }
+    }
+
+    if (-not $confident) {
+        $homeFromScore = $scored | Where-Object { $_.Name -eq $homeName } | Select-Object -First 1
+        $primary = if ($homeFromScore) { $homeFromScore } else { New-MetraHomeScoredProject -Score 0 }
         return [PSCustomObject]@{
-            Primary       = $null
+            Primary       = $primary
             RunnerUp      = $null
             IsAmbiguous   = $false
             FavoredTokens = @()
         }
     }
 
-    $primary = $scored[0]
-    $runnerUp = if ($scored.Count -gt 1) { $scored[1] } else { $null }
+    $primary = $confident
+    # Keep original order for runner-up among remaining scored rows
+    $runnerUp = $scored | Where-Object { $_.Name -ne $primary.Name } | Select-Object -First 1
     $ambiguous = $false
     $favored = @()
     if ($runnerUp) {
@@ -313,7 +426,6 @@ function Get-MetraRoutingAmbiguity {
                     [void]$favoredList.Add($t)
                 }
             }
-            # If none exclusive, show tokens that matched primary
             if ($favoredList.Count -eq 0) {
                 foreach ($t in @($primary.MatchedTokens | Select-Object -Unique)) {
                     [void]$favoredList.Add($t)

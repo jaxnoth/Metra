@@ -35,7 +35,7 @@ param(
     [Parameter(Position = 0)]
     [ValidateSet(
         'list', 'status', 'pull', 'fetch', 'run', 'new', 'apply', 'workspace',
-        'audit', 'snapshot', 'chats', 'roots', 'routing',
+        'audit', 'snapshot', 'ops', 'host', 'chats', 'roots', 'routing',
         'export-profile', 'import-profile', 'ctx', 'setup', 'verify', 'unblock', 'profile', 'decisions', 'coverage', 'help'
     )]
     [string]$Command = 'help',
@@ -70,7 +70,12 @@ param(
     [switch]$Cloud,
     [switch]$SharedOnly,
     [switch]$MissingOnly,
-    [switch]$Quick
+    [switch]$Quick,
+    [switch]$NoBrowser,
+    [switch]$NoRefresh,
+    [switch]$Full,
+    [switch]$Stop,
+    [int]$Port = 7380
 )
 
 $ErrorActionPreference = 'Stop'
@@ -92,6 +97,11 @@ Usage:
   .\metra.ps1 workspace [-Months 6] [-ScanDepth 2] [-Preview]
   .\metra.ps1 audit [-Filter '*'] [-Name ProjA,ProjB] [-Root ...] [-DriftOnly] [-ScanDepth 4]
   .\metra.ps1 snapshot [-ScanDepth 2] [-Quick]
+  .\metra.ps1 ops [-Quick] [-Full] [-Port 7380] [-NoBrowser] [-NoRefresh] [-Stop]
+      Console Ops desk (operator/debug). -Stop frees the port when a desk outlived its console.
+  .\metra.ps1 host [-Port 7380] [-NoBrowser] [-NoRefresh] [-Quick] [-Stop]
+      User-session tray host so Metra stays alive without a console. Host starts Ops only (Ops owns Ask).
+      Second launch opens the browser when the desk is already up.
   .\metra.ps1 chats [-Name ProjA,ProjB] [-Query 'terms'] [-Ticket 12345] [-Days 90] [-Limit 10] [-IncludeMetra]
   .\metra.ps1 roots
   .\metra.ps1 routing [-Name ProjA] [-Query 'terms'] [-SharedOnly] [-MissingOnly]
@@ -269,6 +279,35 @@ switch ($Command) {
         }
         if ($ScanDepth -ge 0) { $params.ScanDepth = $ScanDepth }
         Export-MetraSnapshot @params | Format-List
+    }
+
+    'ops' {
+        if ($Stop) {
+            Stop-MetraOpsServer -Port $Port
+            return
+        }
+        $params = @{
+            Port      = $Port
+            Quick     = [bool]$Quick
+            Full      = [bool]$Full
+            NoBrowser = [bool]$NoBrowser
+            NoRefresh = [bool]$NoRefresh
+        }
+        Start-MetraOpsServer @params
+    }
+
+    'host' {
+        if ($Stop) {
+            Stop-MetraOpsHost -Port $Port
+            return
+        }
+        $params = @{
+            Port      = $Port
+            NoBrowser = [bool]$NoBrowser
+            NoRefresh = [bool]$NoRefresh
+            Quick     = [bool]$Quick
+        }
+        Start-MetraOpsHost @params
     }
 
     'chats' {

@@ -63,7 +63,32 @@ $script:MetraCompatibilityFunctions = @(
     'Invoke-MetraDecisionRegistryCommand',
     'Show-MetraRoutingCli',
     'Show-MetraKnowledgeCoverageCli',
-    'Show-MetraUnblockCli'
+    'Show-MetraUnblockCli',
+    'Start-MetraOpsServer',
+    'Stop-MetraOpsServer',
+    'Test-MetraOpsDeskResponding',
+    'Start-MetraOpsHost',
+    'Stop-MetraOpsHost',
+    'Get-MetraOpsHostState',
+    'Test-MetraOpsHostRunning',
+    'Set-MetraOpsHostStartup',
+    'Install-MetraOpsStartMenuShortcuts',
+    'Start-MetraOpsDeskIfDown',
+    'Test-MetraOpsDeskAlive',
+    'Get-MetraDeskPayload',
+    'Get-MetraDeskHandoff',
+    'Get-MetraDeskAskResult',
+    'Test-MetraDeskGreeting',
+    'Get-MetraAskCapability',
+    'Get-MetraAskSettings',
+    'Invoke-MetraAskEngine',
+    'Start-MetraAskEngine',
+    'Stop-MetraAskEngine',
+    'Get-MetraOrchestrationProject',
+    'Get-MetraHomeDestinationName',
+    'Get-MetraRoutingAmbiguity',
+    'Get-MetraDeskPreferences',
+    'Set-MetraDeskPreferences'
 )
 
 # Silent one-release compatibility aliases for the former Meta naming.

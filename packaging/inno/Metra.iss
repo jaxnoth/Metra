@@ -39,6 +39,8 @@ VersionInfoProductName={#MyAppName}
 VersionInfoProductVersion={#MyAppVersion}
 ; Unsigned builds may show SmartScreen - document More info -> Run anyway.
 SetupLogging=yes
+SetupIconFile=..\..\docs\assets\metra.ico
+UninstallDisplayIcon={app}\docs\assets\metra.ico
 
 [Languages]
 Name: "english"; MessagesFile: "compiler:Default.isl"
@@ -52,8 +54,11 @@ Name: "runsetup"; Description: "Run Metra setup now"; GroupDescription: "After i
 Source: "..\stage\*"; DestDir: "{app}"; Flags: ignoreversion recursesubdirs createallsubdirs
 
 [Icons]
-Name: "{group}\Metra Setup"; Filename: "{app}\{#MyAppExeName}"; WorkingDir: "{app}"
-Name: "{autoprograms}\Metra Setup"; Filename: "{app}\{#MyAppExeName}"; WorkingDir: "{app}"
+Name: "{group}\Metra Ops"; Filename: "{app}\Metra-Ops.cmd"; WorkingDir: "{app}"; IconFilename: "{app}\docs\assets\metra.ico"
+Name: "{autoprograms}\Metra Ops"; Filename: "{app}\Metra-Ops.cmd"; WorkingDir: "{app}"; IconFilename: "{app}\docs\assets\metra.ico"
+Name: "{group}\Metra Ops (console)"; Filename: "{app}\Metra-Ops-Console.cmd"; WorkingDir: "{app}"; IconFilename: "{app}\docs\assets\metra.ico"
+Name: "{group}\Metra Setup"; Filename: "{app}\{#MyAppExeName}"; WorkingDir: "{app}"; IconFilename: "{app}\docs\assets\metra.ico"
+Name: "{autoprograms}\Metra Setup"; Filename: "{app}\{#MyAppExeName}"; WorkingDir: "{app}"; IconFilename: "{app}\docs\assets\metra.ico"
 Name: "{group}\Uninstall Metra"; Filename: "{uninstallexe}"
 
 [Run]

@@ -78,6 +78,8 @@ $excludeRelativeExact = [System.Collections.Generic.HashSet[string]]::new([Strin
     'docs/context-pack.md',
     'docs/context-pack.json',
     'docs/canvas-snapshot.json',
+    'docs/ops-preferences.local.json',
+    'docs/ops-ask-log.local.json',
     '.cursor/mcp.json'
 ) | ForEach-Object { [void]$excludeRelativeExact.Add(($_ -replace '/', '\')) }
 
@@ -169,7 +171,17 @@ Get-ChildItem -LiteralPath $MetraRoot -Force | ForEach-Object {
 }
 
 # Ensure required bootstrap entry points exist in the stage.
-foreach ($required in @('Metra-Setup.cmd', 'metra.ps1', 'scripts\bootstrap\Start-MetraSetup.ps1', 'scripts\Metra.psd1')) {
+foreach ($required in @(
+        'Metra-Setup.cmd'
+        'Metra-Ops.cmd'
+        'Metra-Ops-Console.cmd'
+        'metra.ps1'
+        'scripts\bootstrap\Start-MetraSetup.ps1'
+        'scripts\bootstrap\Start-MetraOps.ps1'
+        'scripts\bootstrap\Start-MetraOpsHost.ps1'
+        'scripts\Metra.psd1'
+        'docs\assets\metra.ico'
+    )) {
     $p = Join-Path $stageRoot $required
     if (-not (Test-Path -LiteralPath $p)) {
         throw "Staged payload missing required file: $required"

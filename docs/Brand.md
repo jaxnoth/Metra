@@ -8,14 +8,17 @@ How far Metra goes into Cursor:
 
 | Layer | Stance |
 |-------|--------|
-| Metra Ops canvas | Customize deeply (layout, motif, dual-mode intent) |
+| HTML Ops desk (`ops/`) | Primary product face - Brand hex OK (Signal Teal / Mist / Graphite) |
+| Metra Ops canvas | Advanced IDE face - customize deeply; map brand via `useHostTheme()` |
 | CLI help colors | Light touch (Cyan / Yellow / Red) |
 | Naming (`Metra`, workspace label) | Yes |
 | Optional local accent override | Allowed - Signal Teal into host accent only |
 | Full Cursor color theme extension | Out of scope (optional personal experiment only) |
 | Activity bar / title bar takeover | No |
 
-Host-following stays the rule for canvases: map brand **intent** through `useHostTheme()` - no hardcoded hex in `.canvas.tsx`. Reference hex below is for docs, approval screenshots, and optional local Cursor accent overrides.
+**Primary vs advanced:** For non-technical users, installer + HTML Ops is the front door. Cursor (including the Ops canvas) is an advanced interface. See [Decisions.md](Decisions.md) (HTML Ops primary desk).
+
+Host-following stays the rule for canvases: map brand **intent** through `useHostTheme()` - no hardcoded hex in `.canvas.tsx`. HTML Ops may use the reference hex below directly. Reference hex is also for docs, approval screenshots, and optional local Cursor accent overrides.
 
 ## Palette (reference)
 
@@ -76,7 +79,7 @@ A short **route line with nodes** - wayfinding, not a train logo and not Chicago
 
 GitHub README stays operator/coder-facing. Plain-language landing for non-coders: [`site/`](../site/) published as GitHub Pages at [jaxnoth.github.io/Metra](https://jaxnoth.github.io/Metra/). May move to a fuller host later; keep the README pointer current. See [Decisions.md](Decisions.md) (public audience / plain-language site).
 
-Canonical file: [`assets/metra-mark.svg`](assets/metra-mark.svg).
+Canonical file: [`assets/metra-mark.svg`](assets/metra-mark.svg). Tray / Start Menu bitmap: [`assets/metra.ico`](assets/metra.ico) (square crop of the route mark for NotifyIcon and installer shortcuts).
 
 Composition (locked):
 
@@ -94,6 +97,12 @@ Dark mode uses a brighter teal on charcoal; light mode uses Signal Teal + Mist. 
 The Metra mark represents a routed path between endpoints. Metra does not replace humans or coding agents; it connects them through routing, context, decisions, audiences (`serves`), and communication. The open center node is where work is classified before moving forward.
 
 The mark should read as **connection and flow** before anyone reads that sentence. Do not invent a longer mythology.
+
+### Desk presence mark
+
+The HTML Ops desk uses a larger wordmark-first treatment than the compact public mark: **Metra** text is the primary signal; the route line, stem, terminals, and open interchange sit beneath as motif. Do not trap the desk wordmark in a small pill.
+
+The desk implementation keeps the mark in a dedicated presence component with `idle`, `listening`, and `speaking` visual states. Voice remains optional. While Ask (or Classify) is in flight, the HTML desk sets `listening` so the interchange node pulses, and the subtitle under the mark reads Working... Motion belongs to the route and interchange geometry, never a face, mascot, or separate avatar. The idle state does not move, and all active motion must honor `prefers-reduced-motion`.
 
 ### Visual vocabulary
 
@@ -179,7 +188,7 @@ Pass = both columns feel like one product at different times of day. Fail = dark
 
 ## Related
 
-- [Demo.md](Demo.md) - coworker walkthrough (Ops board face-first + live)
+- [Demo.md](Demo.md) - coworker pitch (middle path + optional live proof)
 - [Customizing-Metra.md](Customizing-Metra.md) - persona, Origin, and overlays
 - [Decisions.md](Decisions.md) - append-only portfolio decisions (incl. brand bounds)
 - [Integrations.md](Integrations.md) - core vs Cursor

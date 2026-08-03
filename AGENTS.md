@@ -113,11 +113,20 @@ Optional entries may be absent: follow `whenMissing` advice instead of inventing
 .\metra.ps1 decisions harvest -Preview
 .\metra.ps1 decisions review
 .\metra.ps1 coverage
+.\metra.ps1 ops
 .\metra.ps1 unblock
 .\packaging\Build-MetraInstaller.ps1
 .\metra.ps1 routing -Name TicketTracker
 .\metra.ps1 routing -Query "gateway msal"
 .\metra.ps1 verify
+```
+
+HTML Ops desk contributors:
+
+```powershell
+cd ops
+npm install
+npm run build
 ```
 
 Focused module tests (PowerShell 7 + Pester 5+): `pwsh -NoProfile -File .\tests\Invoke-MetraTests.ps1`
