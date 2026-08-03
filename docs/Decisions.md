@@ -18,6 +18,18 @@ Entry shape:
 
 ---
 
+## 2026-08-03 - Ops supervision adopts, retries, and reports
+
+- Decision: The tray supervisor keeps the desk up under three rules. **Adopt:** any live desk on the supervised port is supervised, including one started by console `ops` or restarted outside the tray - the host no longer declines to watch a child it did not spawn. **Retry with backoff, never surrender:** a dead desk is restarted on a widening interval (5s, 15s, 60s, then 300s) until it answers or the operator chooses **Stop desk**; the previous one-restart budget is gone. **Report:** `ops-host-state.json` carries a heartbeat (`updatedAt`, `childPid`, `consecutiveFailures`, `hostPid`) written on change or every 30 seconds, and supervision events append to `%LOCALAPPDATA%\Metra\ops-host.log` (rotates at 256 KB). Process liveness stays the health signal, so a desk busy with a long Ask is never restarted. Reboot coverage is the per-user Startup shortcut ("Start with Windows"); a Scheduled Task that also revives a dead **tray host** mid-session stays deferred.
+- Why: The board went offline for hours while the tray sat healthy. Two latches caused it: the tick returned early whenever the child was not host-owned, and a single failed restart disabled supervision permanently. Neither wrote state or a log, so the state file still read "running" and there was no evidence of when the desk died.
+- See: `scripts/private/OpsHost.ps1` (tray tick, `Get-MetraOpsHostRestartDelaySeconds`, `Update-MetraOpsHostHeartbeat`, `Write-MetraOpsHostLog`), `tests/Metra.Tests.ps1` (Metra Ops host)
+
+## 2026-08-03 - Canvas board stays alongside the HTML Ops desk
+
+- Decision: Keep the Cursor canvas Ops board as a supported surface for now. The HTML Ops desk remains the primary board, and the canvas stays a read-mostly in-editor view refreshed by `snapshot`. Retiring the canvas is not scheduled; revisit only if maintaining both surfaces starts costing more than the in-editor view returns.
+- Why: The canvas is useful when the desk is not open or the operator is already in Cursor, and it survives desk restarts. Removing it now would trade a working surface for a small maintenance saving.
+- See: `scripts/private/Snapshot.ps1` (canvas embed), `docs/canvas-snapshot.json`, `.\metra.ps1 snapshot`
+
 ## 2026-08-03 - Durable-write home classification (before propose)
 
 - Decision: When Metra would recommend a durable write (remember / promote / playbook / note), **classify the home first**, then propose only that home. Do not default to OCC. Classification:

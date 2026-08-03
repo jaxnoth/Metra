@@ -17,6 +17,35 @@ function Get-MetraOpsHostStatePath {
     return Join-Path (Get-MetraOpsHostDataDir) 'ops-host-state.json'
 }
 
+function Get-MetraOpsHostLogPath {
+    return Join-Path (Get-MetraOpsHostDataDir) 'ops-host.log'
+}
+
+function Write-MetraOpsHostLog {
+    <#
+    .SYNOPSIS
+        Appends one supervision event to the host log so a desk that died overnight leaves a trace.
+    .DESCRIPTION
+        The tray runs hidden with no console, so restarts and failures are otherwise invisible.
+        Rotates at 256 KB to one .old file. Never throws - logging must not break supervision.
+    #>
+    param(
+        [Parameter(Mandatory)][string]$Message,
+        [string]$Level = 'info'
+    )
+
+    try {
+        $path = Get-MetraOpsHostLogPath
+        $existing = Get-Item -LiteralPath $path -ErrorAction SilentlyContinue
+        if ($existing -and $existing.Length -gt 256KB) {
+            Move-Item -LiteralPath $path -Destination "$path.old" -Force -ErrorAction SilentlyContinue
+        }
+        $stamp = [datetime]::Now.ToString('yyyy-MM-dd HH:mm:ss')
+        Add-Content -LiteralPath $path -Value ("{0} [{1}] pid {2} - {3}" -f $stamp, $Level, $PID, $Message) -Encoding UTF8
+    }
+    catch { }
+}
+
 function Get-MetraOpsHostStartupShortcutPath {
     $startup = [Environment]::GetFolderPath('Startup')
     return Join-Path $startup 'Metra Ops.lnk'
@@ -191,7 +220,9 @@ function Write-MetraOpsHostState {
         [int]$OpsPort = 7380,
         [int]$RestartCount = 0,
         [string]$LastFailure = $null,
-        [string]$StartedAt = $null
+        [string]$StartedAt = $null,
+        [int]$ChildPid = 0,
+        [int]$ConsecutiveFailures = 0
     )
 
     $path = Get-MetraOpsHostStatePath
@@ -208,14 +239,66 @@ function Write-MetraOpsHostState {
     }
 
     $obj = [PSCustomObject]@{
-        status       = $Status
-        startedAt    = $StartedAt
-        restartCount = $RestartCount
-        lastFailure  = $LastFailure
-        opsPort      = $OpsPort
-        updatedAt    = [datetime]::UtcNow.ToString('o')
+        status              = $Status
+        startedAt           = $StartedAt
+        restartCount        = $RestartCount
+        lastFailure         = $LastFailure
+        opsPort             = $OpsPort
+        childPid            = $ChildPid
+        consecutiveFailures = $ConsecutiveFailures
+        hostPid             = $PID
+        updatedAt           = [datetime]::UtcNow.ToString('o')
     }
     ($obj | ConvertTo-Json -Depth 4) | Set-Content -LiteralPath $path -Encoding UTF8
+}
+
+function Get-MetraOpsHostRestartDelaySeconds {
+    <#
+    .SYNOPSIS
+        Backoff delay before the next desk restart attempt, by consecutive failure count.
+    .DESCRIPTION
+        The supervisor never gives up permanently: a desk that cannot start right now (build in
+        flight, port briefly held, machine waking) is retried on a widening interval instead.
+    #>
+    param([int]$FailureStreak)
+
+    switch ($FailureStreak) {
+        { $_ -le 1 } { return 5 }
+        2 { return 15 }
+        3 { return 60 }
+        default { return 300 }
+    }
+}
+
+function Update-MetraOpsHostHeartbeat {
+    <#
+    .SYNOPSIS
+        Writes host state on change, or every 30 seconds, so an offline desk is observable.
+    .DESCRIPTION
+        Without a heartbeat the state file keeps the last transition forever and a desk that died
+        hours ago still reads "running". Throttled to keep the tray cheap.
+    #>
+    param(
+        [Parameter(Mandatory)][string]$Status,
+        [int]$ChildPid = 0,
+        [string]$LastFailure = $null
+    )
+
+    $now = [datetime]::UtcNow
+    $changed = ($Status -ne $script:MetraOpsLastStatus) -or ($ChildPid -ne $script:MetraOpsLastHeartbeatChildPid)
+    if (-not $changed -and $script:MetraOpsLastHeartbeatUtc -ne [datetime]::MinValue -and
+        ($now - $script:MetraOpsLastHeartbeatUtc).TotalSeconds -lt 30) {
+        return
+    }
+
+    $script:MetraOpsLastStatus = $Status
+    $script:MetraOpsLastHeartbeatChildPid = $ChildPid
+    $script:MetraOpsLastHeartbeatUtc = $now
+
+    Write-MetraOpsHostState -Status $Status -OpsPort $script:MetraOpsHostPort `
+        -RestartCount $script:MetraOpsRestartCount -LastFailure $LastFailure `
+        -StartedAt $script:MetraOpsHostStartedAt -ChildPid $ChildPid `
+        -ConsecutiveFailures $script:MetraOpsFailureStreak
 }
 
 function Get-MetraOpsHostState {
@@ -451,10 +534,16 @@ function Start-MetraOpsHost {
     $script:MetraOpsHostRoot = $MetraRoot
     $script:MetraOpsChildPid = $null
     $script:MetraOpsOwnedChild = $false
-    $script:MetraOpsRestartUsed = $false
     $script:MetraOpsRestartCount = 0
     $script:MetraOpsDeskStopped = $false
     $script:MetraOpsHostStartedAt = [datetime]::UtcNow.ToString('o')
+    $script:MetraOpsFailureStreak = 0
+    $script:MetraOpsLastError = $null
+    $script:MetraOpsNextAttemptUtc = [datetime]::MinValue
+    $script:MetraOpsLastHeartbeatUtc = [datetime]::MinValue
+    $script:MetraOpsLastHeartbeatChildPid = 0
+    $script:MetraOpsLastStatus = $null
+    Write-MetraOpsHostLog "Ops host starting on port $Port (root $MetraRoot)."
 
     Set-Content -LiteralPath (Get-MetraOpsHostPidFile) -Value $PID -Encoding ASCII
 
@@ -498,7 +587,8 @@ function Start-MetraOpsHost {
                 if ($ensure.Started) {
                     $script:MetraOpsChildPid = $ensure.ChildPid
                     $script:MetraOpsOwnedChild = $true
-                    $script:MetraOpsRestartUsed = $false
+                    $script:MetraOpsFailureStreak = 0
+                    $script:MetraOpsNextAttemptUtc = [datetime]::MinValue
                     $script:MetraOpsDeskStopped = $false
                     Write-MetraOpsHostState -Status 'running' -OpsPort $script:MetraOpsHostPort -RestartCount $script:MetraOpsRestartCount -StartedAt $script:MetraOpsHostStartedAt
                 }
@@ -514,7 +604,8 @@ function Start-MetraOpsHost {
     $restartItem.Text = 'Restart desk'
     $restartItem.Add_Click({
             try { Stop-MetraOpsServer -Port $script:MetraOpsHostPort } catch { }
-            $script:MetraOpsRestartUsed = $false
+            $script:MetraOpsFailureStreak = 0
+            $script:MetraOpsNextAttemptUtc = [datetime]::MinValue
             $script:MetraOpsDeskStopped = $false
             $ensure = Start-MetraOpsDeskIfDown -Port $script:MetraOpsHostPort -MetraRoot $script:MetraOpsHostRoot
             if ($ensure.Ok) {
@@ -587,42 +678,59 @@ function Start-MetraOpsHost {
             # Liveness is process-based on purpose: a desk serving a long Ask blocks its accept
             # loop and cannot answer /api/meta. Probing alone would kill work in flight.
             $childPid = Get-MetraOpsChildProcessId -Port $script:MetraOpsHostPort
+            if (-not $childPid -and (Test-MetraOpsDeskResponding -Port $script:MetraOpsHostPort -TimeoutSec 3)) {
+                $childPid = -1
+            }
+
             if ($childPid) {
-                $script:MetraOpsChildPid = $childPid
-                $script:MetraOpsRestartUsed = $false
-                return
-            }
-
-            if (-not $script:MetraOpsOwnedChild) { return }
-
-            # No live child: confirm nothing else owns the port before restarting.
-            if (Test-MetraOpsDeskResponding -Port $script:MetraOpsHostPort -TimeoutSec 3) {
-                $script:MetraOpsRestartUsed = $false
-                return
-            }
-
-            if (-not $script:MetraOpsRestartUsed) {
-                $script:MetraOpsRestartUsed = $true
-                $script:MetraOpsRestartCount++
-                try {
-                    # Stop Ask only via Ops cleanup; never start the Ask engine from the host.
-                    try { Stop-MetraOpsServer -Port $script:MetraOpsHostPort } catch { }
-                    $child = Start-MetraOpsChildProcess -MetraRoot $script:MetraOpsHostRoot -Port $script:MetraOpsHostPort -Quick
-                    $script:MetraOpsChildPid = $child.Id
-                    Write-MetraOpsHostState -Status 'running' -OpsPort $script:MetraOpsHostPort -RestartCount $script:MetraOpsRestartCount -StartedAt $script:MetraOpsHostStartedAt
-                    $notify.ShowBalloonTip(4000, 'Metra Ops', 'Desk restarted.', [System.Windows.Forms.ToolTipIcon]::Info)
+                # Adopt whatever desk is up, including one started by console ops. Declining to
+                # supervise an unowned child is what let the board sit offline for hours.
+                $livePid = if ($childPid -gt 0) { $childPid } else { 0 }
+                if ($livePid) { $script:MetraOpsChildPid = $livePid }
+                $script:MetraOpsOwnedChild = $true
+                if ($script:MetraOpsFailureStreak -gt 0) {
+                    Write-MetraOpsHostLog "Desk healthy again (child $livePid) after $($script:MetraOpsFailureStreak) failed attempt(s)."
+                    $script:MetraOpsFailureStreak = 0
                 }
-                catch {
-                    Write-MetraOpsHostState -Status 'failed' -OpsPort $script:MetraOpsHostPort -RestartCount $script:MetraOpsRestartCount -LastFailure $_.Exception.Message -StartedAt $script:MetraOpsHostStartedAt
-                    $notify.ShowBalloonTip(5000, 'Metra Ops', 'Desk stopped. Restart failed.', [System.Windows.Forms.ToolTipIcon]::Warning)
-                    $script:MetraOpsOwnedChild = $false
-                }
+                $script:MetraOpsNextAttemptUtc = [datetime]::MinValue
+                Update-MetraOpsHostHeartbeat -Status 'running' -ChildPid $livePid
                 return
             }
 
-            Write-MetraOpsHostState -Status 'failed' -OpsPort $script:MetraOpsHostPort -RestartCount $script:MetraOpsRestartCount -LastFailure 'Ops child died after one restart attempt' -StartedAt $script:MetraOpsHostStartedAt
-            $notify.ShowBalloonTip(5000, 'Metra Ops', 'Desk stopped.', [System.Windows.Forms.ToolTipIcon]::Warning)
-            $script:MetraOpsOwnedChild = $false
+            if ([datetime]::UtcNow -lt $script:MetraOpsNextAttemptUtc) {
+                Update-MetraOpsHostHeartbeat -Status 'restarting' -LastFailure $script:MetraOpsLastError
+                return
+            }
+
+            $script:MetraOpsRestartCount++
+            try {
+                # Stop Ask only via Ops cleanup; never start the Ask engine from the host.
+                try { Stop-MetraOpsServer -Port $script:MetraOpsHostPort } catch { }
+                $child = Start-MetraOpsChildProcess -MetraRoot $script:MetraOpsHostRoot -Port $script:MetraOpsHostPort -Quick
+                $script:MetraOpsChildPid = $child.Id
+                $script:MetraOpsOwnedChild = $true
+                $wasFailing = $script:MetraOpsFailureStreak -gt 0
+                $script:MetraOpsFailureStreak = 0
+                $script:MetraOpsNextAttemptUtc = [datetime]::MinValue
+                $script:MetraOpsLastError = $null
+                Write-MetraOpsHostLog "Restarted desk (child $($child.Id)); restart #$($script:MetraOpsRestartCount)."
+                Update-MetraOpsHostHeartbeat -Status 'running' -ChildPid $child.Id
+                if ($wasFailing) {
+                    $notify.ShowBalloonTip(4000, 'Metra Ops', 'Desk is back online.', [System.Windows.Forms.ToolTipIcon]::Info)
+                }
+            }
+            catch {
+                $script:MetraOpsFailureStreak++
+                $script:MetraOpsLastError = $_.Exception.Message
+                $delay = Get-MetraOpsHostRestartDelaySeconds -FailureStreak $script:MetraOpsFailureStreak
+                $script:MetraOpsNextAttemptUtc = [datetime]::UtcNow.AddSeconds($delay)
+                Write-MetraOpsHostLog "Desk restart failed (attempt $($script:MetraOpsFailureStreak)); retrying in ${delay}s - $($script:MetraOpsLastError)" 'warn'
+                Update-MetraOpsHostHeartbeat -Status 'restarting' -LastFailure $script:MetraOpsLastError
+                # Balloon once per outage, not once per retry.
+                if ($script:MetraOpsFailureStreak -eq 1) {
+                    $notify.ShowBalloonTip(5000, 'Metra Ops', 'Desk went down. Retrying automatically.', [System.Windows.Forms.ToolTipIcon]::Warning)
+                }
+            }
         })
     $timer.Start()
 
