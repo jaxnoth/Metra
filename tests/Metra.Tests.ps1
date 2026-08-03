@@ -1433,8 +1433,61 @@ Describe 'Metra Ops host' {
         # Open must revive a dead desk instead of opening a browser at a closed port.
         $source | Should -Match 'Start-MetraOpsDeskIfDown'
         $source | Should -Match "restartItem\.Text = 'Restart desk'"
-        # Healthy poll refreshes the one-restart budget so a later crash can still recover.
-        $source | Should -Match '\$script:MetraOpsRestartUsed = \$false'
+        # A healthy poll clears the failure streak so a later crash still gets fast recovery.
+        $source | Should -Match '\$script:MetraOpsFailureStreak = 0'
+    }
+
+    It 'keeps retrying a dead desk instead of giving up after one attempt' {
+        $source = Get-Content -LiteralPath (Join-Path (Get-MetraRoot) 'scripts\private\OpsHost.ps1') -Raw
+        # An unowned child (console ops, or a desk restarted outside the tray) must still be supervised.
+        $source | Should -Not -Match 'if \(-not \$script:MetraOpsOwnedChild\) \{ return \}'
+        $source | Should -Match 'Get-MetraOpsHostRestartDelaySeconds'
+        # Only the operator's Stop desk ends supervision.
+        $source | Should -Match 'if \(\$script:MetraOpsDeskStopped\) \{ return \}'
+    }
+
+    It 'backs off on repeated restart failures without giving up' {
+        InModuleScope Metra {
+            Get-MetraOpsHostRestartDelaySeconds -FailureStreak 1 | Should -Be 5
+            Get-MetraOpsHostRestartDelaySeconds -FailureStreak 2 | Should -Be 15
+            Get-MetraOpsHostRestartDelaySeconds -FailureStreak 3 | Should -Be 60
+            Get-MetraOpsHostRestartDelaySeconds -FailureStreak 9 | Should -Be 300
+        }
+    }
+
+    It 'records desk pid and failure count in host state' {
+        InModuleScope Metra {
+            $realLocalAppData = $env:LOCALAPPDATA
+            $env:LOCALAPPDATA = Join-Path ([IO.Path]::GetTempPath()) ("metra-host-" + [guid]::NewGuid().ToString('n'))
+            try {
+                Write-MetraOpsHostState -Status 'restarting' -OpsPort 7380 -RestartCount 2 `
+                    -StartedAt '2026-08-01T00:00:00Z' -ChildPid 4321 -ConsecutiveFailures 3
+                $state = Get-MetraOpsHostState
+                $state.childPid | Should -Be 4321
+                $state.consecutiveFailures | Should -Be 3
+                $state.hostPid | Should -Be $PID
+            }
+            finally {
+                Remove-Item -LiteralPath $env:LOCALAPPDATA -Recurse -Force -ErrorAction SilentlyContinue
+                $env:LOCALAPPDATA = $realLocalAppData
+            }
+        }
+    }
+
+    It 'logs supervision events so a hidden tray leaves a trace' {
+        InModuleScope Metra {
+            $realLocalAppData = $env:LOCALAPPDATA
+            $env:LOCALAPPDATA = Join-Path ([IO.Path]::GetTempPath()) ("metra-host-" + [guid]::NewGuid().ToString('n'))
+            try {
+                Write-MetraOpsHostLog 'desk restarted in test'
+                $log = Get-Content -LiteralPath (Get-MetraOpsHostLogPath) -Raw
+                $log | Should -Match 'desk restarted in test'
+            }
+            finally {
+                Remove-Item -LiteralPath $env:LOCALAPPDATA -Recurse -Force -ErrorAction SilentlyContinue
+                $env:LOCALAPPDATA = $realLocalAppData
+            }
+        }
     }
 
     It 'treats a live desk process as alive without an HTTP probe' {
