@@ -18,6 +18,23 @@ Entry shape:
 
 ---
 
+## 2026-08-03 - Durable-write home classification (before propose)
+
+- Decision: When Metra would recommend a durable write (remember / promote / playbook / note), **classify the home first**, then propose only that home. Do not default to OCC. Classification:
+
+  | Kind of durable fact | Home | Not |
+  |---|---|---|
+  | Soft collaboration rhythm across the portfolio | OCC / `profile` | Project playbooks |
+  | Portfolio-wide product / routing / persona policy | `docs/Decisions.md` or base `metra-persona.mdc` | OCC |
+  | Project-local how-to / triage / runbook | That project's `AGENTS.md` (or README) | OCC, Decision Registry |
+  | Recurring ticket pattern with reusable write-up | TicketTracker `solutions/` (+ index) | OCC |
+  | Operator-private why-we-chose scar for a stop | Decision Registry | OCC, AGENTS.md dump |
+  | Ticket evidence / session outcome | TicketTracker `note` / `post` / `recommend` | OCC |
+
+  OCC refuse list expands beyond portfolio-wide product rules: also **refuse** OCC promote for project-local playbooks, module runbooks, single-project triage order, and TicketTracker solution write-ups. Name the correct home and ask whether to write there instead. When proposing a durable write in chat, say the home explicitly (e.g. "Colleague AGENTS.md, not OCC").
+- Why: A stuck-Colleague playbook was almost proposed as an OCC soft guideline. OCC is always-on and capped; stuffing per-module runbooks there blurs homes and bloats the learned overlay. The Portfolio Operations Principles map already named the homes; agents still needed an explicit classify-before-propose rule.
+- See: `.cursor/rules/metra-persona.mdc` (Operator Communication Contract), `AGENTS.md`, [Customizing-Metra.md](Customizing-Metra.md), Portfolio Operations Principles in this file
+
 ## 2026-08-01 - Ops host is a desktop app before a service
 
 - Decision: Metra behaves like a **desktop application** before it behaves like a **Windows Service**. The normal front door is a **user-session tray supervisor** (`.\metra.ps1 host` / Start Menu Metra Ops) that keeps the HTML Ops desk alive without a console window. Ownership chain is mandatory: **Host -> Ops -> Ask** - the tray starts and stops only the Ops child; Ops alone starts and stops the Ask engine. Second Start Menu click opens the browser when the desk is already up (no second instance, no bind conflict). Optional "Start with Windows" lives in the tray menu only - no installer checkbox or SCM registration in this bite. Console `.\metra.ps1 ops` remains the operator/debug escape hatch. A true Windows Service, Tailscale/non-loopback bind, and installer-bundled Node stay deferred until installer packaging, AI engines, and user-state ownership are fully settled. Host debug state lives in `%LOCALAPPDATA%\Metra\ops-host-state.json`.

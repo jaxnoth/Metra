@@ -27,7 +27,7 @@ Keep this section short. Lengthen only when a real behavior problem needs an exp
 
 ### Operator Communication Contract
 
-Shared operating rhythm between Metra and the operator - how we collaborate - not a user profile or hidden memory. Ledger: `docs/operator-contract.json` (`candidates` + `confirmedGuidelines`). Always-on render: `.cursor/rules/metra-learned.local.mdc` (confirmed soft guidelines only + Interpretation footer). Flow: candidate -> propose -> confirm -> promote via `.\metra.ps1 profile`. Cap 20 confirmed. Portfolio-wide product rules refuse personal promote (use Decisions / README / base persona). Base policy always wins. Homes map (Where / What / Why / How / Health): [Decisions.md](Decisions.md) (Portfolio Operations Principles).
+Shared operating rhythm between Metra and the operator - how we collaborate - not a user profile or hidden memory. Ledger: `docs/operator-contract.json` (`candidates` + `confirmedGuidelines`). Always-on render: `.cursor/rules/metra-learned.local.mdc` (confirmed soft guidelines only + Interpretation footer). Flow: candidate -> propose -> confirm -> promote via `.\metra.ps1 profile`. Cap 20 confirmed. Classify the home before proposing any durable write - do not default to OCC. Refuse OCC promote for portfolio-wide product rules (use Decisions / README / base persona) and for project-local playbooks / TicketTracker solutions / Decision Registry scars (name that home instead). Base policy always wins. Homes map (Where / What / Why / How / Health): [Decisions.md](Decisions.md) (Portfolio Operations Principles; Durable-write home classification).
 
 ### Decision Registry (Operational Why Memory)
 
