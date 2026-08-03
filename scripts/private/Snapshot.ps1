@@ -1168,15 +1168,18 @@ function Get-MetraDeskAskLogPath {
 function Get-MetraDeskPreferences {
     <#
     .SYNOPSIS
-        Loads HTML Ops desk preferences (deskMode general|advanced).
+        Loads HTML Ops desk preferences (deskMode, optional Ops URL binding).
     #>
     [CmdletBinding()]
     param([string]$MetraRoot = (Get-MetraRoot))
 
     $path = Get-MetraDeskPreferencesPath -MetraRoot $MetraRoot
     $defaults = [ordered]@{
-        deskMode  = 'general'
-        updatedAt = $null
+        deskMode           = 'general'
+        opsPort            = $null
+        browserHost        = $null
+        preferFriendlyUrl  = $null
+        updatedAt          = $null
     }
     if (-not (Test-Path -LiteralPath $path)) {
         return [PSCustomObject]$defaults
@@ -1185,9 +1188,24 @@ function Get-MetraDeskPreferences {
         $raw = Get-Content -LiteralPath $path -Raw -ErrorAction Stop | ConvertFrom-Json
         $mode = [string](Get-MetraProp -Object $raw -Name 'deskMode' -Default 'general')
         if ($mode -notin @('general', 'advanced')) { $mode = 'general' }
+        $opsPort = Get-MetraProp -Object $raw -Name 'opsPort' -Default $null
+        if ($null -ne $opsPort -and "$opsPort" -match '^\d+$') {
+            $opsPort = [int]$opsPort
+            if ($opsPort -lt 1 -or $opsPort -gt 65535) { $opsPort = $null }
+        }
+        else {
+            $opsPort = $null
+        }
+        $prefer = Get-MetraProp -Object $raw -Name 'preferFriendlyUrl' -Default $null
+        if ($null -ne $prefer) {
+            $prefer = [bool]$prefer
+        }
         return [PSCustomObject]@{
-            deskMode  = $mode
-            updatedAt = (Get-MetraProp -Object $raw -Name 'updatedAt' -Default $null)
+            deskMode          = $mode
+            opsPort           = $opsPort
+            browserHost       = (Get-MetraProp -Object $raw -Name 'browserHost' -Default $null)
+            preferFriendlyUrl = $prefer
+            updatedAt         = (Get-MetraProp -Object $raw -Name 'updatedAt' -Default $null)
         }
     }
     catch {
@@ -1204,12 +1222,24 @@ function Set-MetraDeskPreferences {
     param(
         [ValidateSet('general', 'advanced')]
         [string]$DeskMode,
+        [int]$OpsPort,
+        [string]$BrowserHost,
+        [bool]$PreferFriendlyUrl,
         [string]$MetraRoot = (Get-MetraRoot)
     )
 
     $current = Get-MetraDeskPreferences -MetraRoot $MetraRoot
     if ($PSBoundParameters.ContainsKey('DeskMode')) {
         $current.deskMode = $DeskMode
+    }
+    if ($PSBoundParameters.ContainsKey('OpsPort')) {
+        $current.opsPort = $OpsPort
+    }
+    if ($PSBoundParameters.ContainsKey('BrowserHost')) {
+        $current.browserHost = $BrowserHost
+    }
+    if ($PSBoundParameters.ContainsKey('PreferFriendlyUrl')) {
+        $current.preferFriendlyUrl = $PreferFriendlyUrl
     }
     $current.updatedAt = (Get-Date).ToString('o')
     $path = Get-MetraDeskPreferencesPath -MetraRoot $MetraRoot

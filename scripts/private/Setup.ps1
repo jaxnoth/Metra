@@ -70,6 +70,10 @@ function Invoke-MetraSetup {
                 Write-Host '  Profile import previewed above (no files written)'
             }
             Write-Host '  Would regenerate Metra.code-workspace, print routing, write ctx'
+            try {
+                $null = Initialize-MetraOpsDeskBinding -MetraRoot $metraRoot -Preview -Quiet:$Quiet
+            }
+            catch { }
         }
         if ($configPresent) {
             try {
@@ -197,6 +201,16 @@ function Invoke-MetraSetup {
         }
     }
 
+    $deskBinding = $null
+    try {
+        $deskBinding = Initialize-MetraOpsDeskBinding -MetraRoot $metraRoot -Interactive:(-not $Quiet) -Quiet:$Quiet
+    }
+    catch {
+        if (-not $Quiet) {
+            Write-Warning "Ops desk URL setup skipped: $($_.Exception.Message)"
+        }
+    }
+
     if (-not $Quiet) {
         Write-Host ''
         Write-Host 'Next:' -ForegroundColor Yellow
@@ -205,6 +219,9 @@ function Invoke-MetraSetup {
         Write-Host '  - Optional personal/cloud root snippets: docs/Customizing-Metra.md'
         Write-Host '  - If using Cursor: set operator display name in .cursor/rules/metra-persona.local.mdc'
         Write-Host '  - Front door: Start Menu Metra Ops (or .\metra.ps1 host)'
+        if ($deskBinding -and $deskBinding.Binding) {
+            Write-Host ("  - Ops desk URL: {0}" -f $deskBinding.Binding.BrowserUrl)
+        }
     }
 
     return [PSCustomObject]@{
@@ -218,6 +235,7 @@ function Invoke-MetraSetup {
         Workspace       = $workspaceResult
         ContextPack     = $ctxResult
         StartMenu       = $startMenu
+        DeskBinding     = $deskBinding
     }
 }
 

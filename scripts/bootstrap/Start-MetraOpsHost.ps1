@@ -9,7 +9,7 @@ param(
     [switch]$NoRefresh,
     [switch]$Quick,
     [switch]$Stop,
-    [int]$Port = 7380
+    [int]$Port = 0
 )
 
 $ErrorActionPreference = 'Stop'
@@ -17,6 +17,10 @@ $metraRoot = (Resolve-Path -LiteralPath (Join-Path $PSScriptRoot '..\..')).Path
 Set-Location -LiteralPath $metraRoot
 
 Import-Module (Join-Path $metraRoot 'scripts\Metra.psd1') -Force
+
+if ($Port -le 0) {
+    $Port = [int](Resolve-MetraOpsDeskBinding -MetraRoot $metraRoot).Port
+}
 
 if ($Stop) {
     Stop-MetraOpsHost -Port $Port

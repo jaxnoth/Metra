@@ -347,7 +347,7 @@ function Start-MetraOpsServer {
     #>
     [CmdletBinding()]
     param(
-        [int]$Port = 7380,
+        [int]$Port = 0,
         [switch]$Quick,
         [switch]$Full,
         [switch]$NoBrowser,
@@ -355,11 +355,27 @@ function Start-MetraOpsServer {
         [string]$MetraRoot = (Get-MetraRoot)
     )
 
+    $binding = $null
+    if ($Port -le 0) {
+        $binding = Resolve-MetraOpsDeskBinding -MetraRoot $MetraRoot
+        $Port = [int]$binding.Port
+    }
+    else {
+        $binding = Get-MetraOpsLoopbackBinding -Port $Port
+        if ($Port -eq 80) {
+            $friendly = Get-MetraOpsFriendlyBinding
+            # Prefer dual prefixes when binding explicitly to 80 so http://metra/ works if hosts is set.
+            if (Test-MetraHostsEntry -HostName 'metra') {
+                $binding = $friendly
+            }
+        }
+    }
+
     if ($Port -lt 1 -or $Port -gt 65535) {
         throw "Invalid port: $Port"
     }
 
-    $url = "http://127.0.0.1:$Port"
+    $url = [string]$binding.BrowserUrl
     if (Test-MetraOpsDeskResponding -Port $Port) {
         Write-Host ("Metra Ops desk already serving {0}" -f $url) -ForegroundColor Green
         Write-Host ("Restart it with: .\metra.ps1 ops -Stop -Port {0}" -f $Port) -ForegroundColor DarkGray
@@ -379,9 +395,10 @@ function Start-MetraOpsServer {
         $null = Get-MetraDeskPayload -Refresh -Full:$Full -MetraRoot $MetraRoot
     }
 
-    $prefix = "http://127.0.0.1:$Port/"
     $listener = New-Object System.Net.HttpListener
-    $listener.Prefixes.Add($prefix)
+    foreach ($prefix in @($binding.ListenerPrefixes)) {
+        $listener.Prefixes.Add($prefix)
+    }
     try {
         $listener.Start()
     }
@@ -391,9 +408,9 @@ function Start-MetraOpsServer {
             "Process $held still holds it (a desk whose console closed?). Free it with: .\metra.ps1 ops -Stop -Port $Port"
         }
         else {
-            "Try -Port with another number."
+            "Try -Port with another number, or run Initialize-MetraOpsDeskBinding after elevating for port 80."
         }
-        throw "Could not bind $prefix - $($_.Exception.Message). $hint"
+        throw "Could not bind $($binding.ListenerPrefixes -join ', ') - $($_.Exception.Message). $hint"
     }
 
     $pidFile = Get-MetraOpsPidFile -Port $Port
