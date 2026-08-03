@@ -75,7 +75,7 @@ param(
     [switch]$NoRefresh,
     [switch]$Full,
     [switch]$Stop,
-    [int]$Port = 7380
+    [int]$Port = 0
 )
 
 $ErrorActionPreference = 'Stop'
@@ -282,6 +282,9 @@ switch ($Command) {
     }
 
     'ops' {
+        if ($Port -le 0) {
+            $Port = [int](Resolve-MetraOpsDeskBinding).Port
+        }
         if ($Stop) {
             Stop-MetraOpsServer -Port $Port
             return
@@ -297,6 +300,9 @@ switch ($Command) {
     }
 
     'host' {
+        if ($Port -le 0) {
+            $Port = [int](Resolve-MetraOpsDeskBinding).Port
+        }
         if ($Stop) {
             Stop-MetraOpsHost -Port $Port
             return

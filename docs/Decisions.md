@@ -18,6 +18,12 @@ Entry shape:
 
 ---
 
+## 2026-08-03 - Ops desk prefers http://metra/ when port 80 is free
+
+- Decision: Prefer a port-free Ops URL **`http://metra/`** when TCP port 80 is free and hosts + HTTP.sys URL ACL can be set for the current user. Persist the choice in `docs/ops-preferences.local.json` (`opsPort`, `browserHost`, `preferFriendlyUrl`). When port 80 is busy or elevation fails, fall back to **`http://127.0.0.1:7380/`** (safe default for every install). Interactive `.\metra.ps1 setup` asks once when port 80 is free; non-interactive setup auto-prefers friendly when free. Explicit CLI `-Port` still wins. HttpListener registers both `http://127.0.0.1:80/` and `http://metra:80/` so probes and the hostname URL work. Ask sidecar stays on 7381.
+- Why: Operators should not memorize 7380. Port 80 cannot be a hard product default because coworkers may already run IIS/Docker there - detect and ask/fallback instead.
+- See: `scripts/private/OpsBinding.ps1`, `Initialize-MetraOpsDeskBinding`, `Invoke-MetraSetup`, `docs/ops-preferences.local.json`
+
 ## 2026-08-03 - Ops supervision adopts, retries, and reports
 
 - Decision: The tray supervisor keeps the desk up under three rules. **Adopt:** any live desk on the supervised port is supervised, including one started by console `ops` or restarted outside the tray - the host no longer declines to watch a child it did not spawn. **Retry with backoff, never surrender:** a dead desk is restarted on a widening interval (5s, 15s, 60s, then 300s) until it answers or the operator chooses **Stop desk**; the previous one-restart budget is gone. **Report:** `ops-host-state.json` carries a heartbeat (`updatedAt`, `childPid`, `consecutiveFailures`, `hostPid`) written on change or every 30 seconds, and supervision events append to `%LOCALAPPDATA%\Metra\ops-host.log` (rotates at 256 KB). Process liveness stays the health signal, so a desk busy with a long Ask is never restarted. Reboot coverage is the per-user Startup shortcut ("Start with Windows"); a Scheduled Task that also revives a dead **tray host** mid-session stays deferred.

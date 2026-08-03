@@ -331,11 +331,28 @@ function Test-MetraOpsHostRunning {
 }
 
 function Open-MetraOpsDeskBrowser {
-    param([int]$Port = 7380)
+    param(
+        [int]$Port = 0,
+        [string]$MetraRoot = (Get-MetraRoot),
+        [string]$Url = $null
+    )
 
-    $url = "http://127.0.0.1:$Port"
+    if ([string]::IsNullOrWhiteSpace($Url)) {
+        if ($Port -gt 0) {
+            $binding = Resolve-MetraOpsDeskBinding -MetraRoot $MetraRoot
+            if ([int]$binding.Port -eq $Port) {
+                $Url = [string]$binding.BrowserUrl
+            }
+            else {
+                $Url = "http://127.0.0.1:$Port"
+            }
+        }
+        else {
+            $Url = Get-MetraOpsDeskUrl -MetraRoot $MetraRoot
+        }
+    }
     try {
-        Start-Process $url | Out-Null
+        Start-Process $Url | Out-Null
     }
     catch {
         Write-Warning "Could not open browser: $($_.Exception.Message)"
@@ -350,10 +367,14 @@ function Start-MetraOpsChildProcess {
     [CmdletBinding()]
     param(
         [string]$MetraRoot = (Get-MetraRoot),
-        [int]$Port = 7380,
+        [int]$Port = 0,
         [switch]$NoRefresh,
         [switch]$Quick
     )
+
+    if ($Port -le 0) {
+        $Port = [int](Resolve-MetraOpsDeskBinding -MetraRoot $MetraRoot).Port
+    }
 
     $bootstrap = Join-Path $MetraRoot 'scripts\bootstrap\Start-MetraOps.ps1'
     if (-not (Test-Path -LiteralPath $bootstrap)) {
@@ -504,12 +525,16 @@ function Start-MetraOpsHost {
     #>
     [CmdletBinding()]
     param(
-        [int]$Port = 7380,
+        [int]$Port = 0,
         [switch]$NoBrowser,
         [switch]$NoRefresh,
         [switch]$Quick,
         [string]$MetraRoot = (Get-MetraRoot)
     )
+
+    if ($Port -le 0) {
+        $Port = [int](Resolve-MetraOpsDeskBinding -MetraRoot $MetraRoot).Port
+    }
 
     if ($Port -lt 1 -or $Port -gt 65535) {
         throw "Invalid port: $Port"

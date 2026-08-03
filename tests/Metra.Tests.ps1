@@ -1200,6 +1200,41 @@ Describe 'HTML Ops desk payload' {
         $null = Set-MetraDeskPreferences -DeskMode general
     }
 
+    It 'persists Ops desk binding fields in preferences' {
+        InModuleScope Metra {
+            $temp = Join-Path ([IO.Path]::GetTempPath()) ("metra-prefs-" + [guid]::NewGuid().ToString('n'))
+            New-Item -ItemType Directory -Path (Join-Path $temp 'docs') -Force | Out-Null
+            try {
+                $null = Set-MetraDeskPreferences -MetraRoot $temp -OpsPort 80 -BrowserHost metra -PreferFriendlyUrl $true -DeskMode general
+                $prefs = Get-MetraDeskPreferences -MetraRoot $temp
+                $prefs.opsPort | Should -Be 80
+                $prefs.browserHost | Should -Be 'metra'
+                $prefs.preferFriendlyUrl | Should -BeTrue
+                $binding = Resolve-MetraOpsDeskBinding -MetraRoot $temp
+                $binding.Port | Should -Be 80
+                $binding.BrowserUrl | Should -Be 'http://metra/'
+                $binding.ListenerPrefixes | Should -Contain 'http://127.0.0.1:80/'
+                $binding.ListenerPrefixes | Should -Contain 'http://metra:80/'
+            }
+            finally {
+                Remove-Item -LiteralPath $temp -Recurse -Force -ErrorAction SilentlyContinue
+            }
+        }
+    }
+
+    It 'falls back to 7380 loopback binding shape' {
+        InModuleScope Metra {
+            $b = Get-MetraOpsLoopbackBinding -Port 7380
+            $b.BrowserUrl | Should -Be 'http://127.0.0.1:7380/'
+            $b.Friendly | Should -BeFalse
+        }
+    }
+
+    It 'reports whether TCP port 80 is free without throwing' {
+        { Test-MetraTcpPortFree -Port 80 } | Should -Not -Throw
+        Test-MetraTcpPortFree -Port 80 | Should -BeOfType ([bool])
+    }
+
     It 'shapes health without score fields' {
         $payload = Get-MetraDeskPayload
         $payload.health | Should -Not -BeNullOrEmpty
