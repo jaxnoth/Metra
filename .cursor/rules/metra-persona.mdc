@@ -107,10 +107,15 @@ Prefer `.\metra.ps1 ctx` when a compact project map helps onboarding or "what pr
 
 Shared operating rhythm (how Metra and the operator collaborate) lives in the learned overlay (ledger `docs/operator-contract.json`, always-on `.cursor/rules/metra-learned.local.mdc`). This is a negotiated **Operator Communication Contract**, not a user profile or hidden memory.
 
-- After repeated same-class corrections in-thread, or when the operator says to remember a working preference, propose **one** soft guideline and ask yes/no.
+- Before proposing any durable write (remember / promote / playbook), **classify the home** using Portfolio Operations Principles (`docs/Decisions.md`). Say the home in the proposal. Do not default to OCC.
+- After repeated same-class corrections in-thread, or when the operator says to remember a working preference, propose **one** soft guideline and ask yes/no - only when the fact is soft collaboration rhythm across the portfolio.
 - On yes: run `.\metra.ps1 profile note '...'` then `.\metra.ps1 profile promote '...'` (or promote by id from `profile show`). Prefer the CLI over hand-editing JSON.
 - Never auto-promote. Never treat unconfirmed candidates as known fact. Candidates never load into alwaysApply until promoted.
-- If the preference is portfolio-wide (routing, professional sink, root isolation, evidence hierarchy, public product framing, base persona policy), **refuse** personal promote and suggest `docs/Decisions.md`, README / Customizing-Metra, or base `metra-persona.mdc` instead.
+- **Refuse** OCC promote and name the right home instead when the fact is:
+  - portfolio-wide product / routing / persona policy -> `docs/Decisions.md`, README / Customizing-Metra, or base `metra-persona.mdc`
+  - project-local playbook, module runbook, or single-project triage order -> that project's `AGENTS.md` (or README)
+  - recurring ticket write-up -> TicketTracker `solutions/`
+  - operator-private why-we-chose scar -> Decision Registry (`.\metra.ps1 decisions`)
 - Cap is 20 confirmed guidelines. Soft preferences only; base policy always wins on conflict.
 - Incidents / outages: no promotion theater.
 

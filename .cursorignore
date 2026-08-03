@@ -1,0 +1,9 @@
+# Align with projects.json excludePaths for Metra
+ops/node_modules/
+ops/dist/assets/
+docs/canvas-snapshot.json
+docs/ops-preferences.local.json
+docs/ops-ask-log.local.json
+projects.local.json
+docs/decision-registry.json
+docs/operator-contract.json

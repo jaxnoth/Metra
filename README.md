@@ -65,7 +65,7 @@ Every portfolio fact should have a home. The product triangle is the pitch; this
 | Question | Home |
 |----------|------|
 | Where? | Routing registry / `routing` |
-| What? | Context / `ctx`, project `AGENTS.md` |
+| What? | Context / `ctx`, project `AGENTS.md` (project-local playbooks live here, not OCC) |
 | Why? (operational) | Decision Registry + Why Here |
 | Why? (product policy) | [docs/Decisions.md](docs/Decisions.md) |
 | How? | OCC / `profile` + communication model |
