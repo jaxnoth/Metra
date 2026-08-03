@@ -4,9 +4,11 @@
   "note": "Shared routing registry. Only entries meant for coworkers live here. Machine-private entries belong in projects.local.json; entries that travel with a project root belong in that root's registryFile (see metra.config.json).",
   "routing": {
     "ticketFirst": true,
-    "defaultEntry": "TicketTracker",
+    "defaultEntry": "Metra",
+    "homeDestination": "Metra",
     "rules": [
       "Classify the request before searching sibling repos.",
+      "Metra (this orchestration checkout) is the home destination until a stronger project route wins.",
       "For helpdesk/ticket work, start in TicketTracker CLI, then route to one technical project.",
       "Load only that project's AGENTS.md / README before broad search.",
       "Broaden to relatedProjects only when evidence requires it.",
@@ -17,6 +19,58 @@
     ]
   },
   "projects": [
+    {
+      "name": "Metra",
+      "purpose": "Portfolio orchestration home - routing, ctx, decisions, HTML Ops desk, installer, and portfolio ops CLI.",
+      "share": true,
+      "optional": false,
+      "triggers": [
+        "metra",
+        "ops desk",
+        "html ops",
+        "metra ops",
+        "routing",
+        "portfolio ops",
+        "orchestration"
+      ],
+      "entry": "AGENTS.md",
+      "capabilities": [
+        "routing",
+        "ctx",
+        "ops-desk",
+        "decisions",
+        "workspace"
+      ],
+      "serves": [
+        "Portfolio operators",
+        "Non-technical Metra users"
+      ],
+      "whenPresent": "Stay on Metra until a sibling project clearly wins. Prefer .\\metra.ps1 ops for the desk, routing/ctx for place-finding, and AGENTS.md for agent guidance.",
+      "whenMissing": "Metra checkout should always be present (this folder). If missing, the product is not installed.",
+      "preferredPaths": [
+        "README.md",
+        "AGENTS.md",
+        "ops",
+        "docs",
+        "scripts",
+        "metra.ps1"
+      ],
+      "excludePaths": [
+        "ops/node_modules",
+        "ops/dist/assets",
+        "docs/canvas-snapshot.json",
+        "docs/ops-preferences.local.json",
+        "docs/ops-ask-log.local.json",
+        "projects.local.json",
+        "docs/decision-registry.json",
+        "docs/operator-contract.json"
+      ],
+      "related": [
+        "TicketTracker",
+        "Trivia",
+        "Solarwinds"
+      ]
+    },
     {
       "name": "TicketTracker",
       "purpose": "Local ticket assistant for iSupport and future helpdesk systems - sync, search, notes, recommendations.",

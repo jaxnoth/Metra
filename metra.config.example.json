@@ -23,6 +23,14 @@
   "skipFilesAtRoot": true,
   "defaultTemplate": "basic",
   "templatesDir": "templates",
+  "ask": {
+    "enabled": true,
+    "engine": "cursor",
+    "cursor": {
+      "port": 7381,
+      "model": "composer-2.5"
+    }
+  },
   "workspace": {
     "months": 6,
     "alwaysInclude": [],

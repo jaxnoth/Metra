@@ -1,59 +1,152 @@
 # Generated from the original Metra.psm1 domain split. Edit this file directly.
 
-function Get-MetraProjectGitCounts {
+$script:MetraGitProbeSkip = @(
+    'node_modules', 'bin', 'obj', '.vs', '.vscode', '.idea',
+    'dist', 'build', 'packages', 'venv', '.venv', '__pycache__'
+)
+
+function Get-MetraGitFolderCounts {
     <#
     .SYNOPSIS
-        Returns dirty/ahead/behind counts for a project folder (best-effort, no network).
+        Reads dirty/ahead/behind for a single git working folder.
     #>
     [CmdletBinding()]
     param(
         [Parameter(Mandatory)][string]$Path
     )
 
-    $result = [PSCustomObject]@{
-        isGit   = $false
-        dirty   = 0
-        ahead   = 0
-        behind  = 0
-        branch  = ''
-        summary = 'n/a'
+    $counts = [PSCustomObject]@{
+        dirty  = 0
+        ahead  = 0
+        behind = 0
+        branch = ''
+        failed = $false
     }
 
-    if (-not (Test-Path -LiteralPath (Join-Path $Path '.git'))) {
+    Push-Location $Path
+    try {
+        $branch = (git rev-parse --abbrev-ref HEAD 2>$null)
+        if ($branch) { $counts.branch = [string]$branch.Trim() }
+
+        $porcelain = @(git status --porcelain 2>$null)
+        $counts.dirty = @($porcelain | Where-Object { $_ -and $_.Trim().Length -gt 0 }).Count
+
+        $ab = (git rev-list --left-right --count '@{u}...HEAD' 2>$null)
+        if ($ab -match '^\s*(\d+)\s+(\d+)\s*$') {
+            $counts.behind = [int]$Matches[1]
+            $counts.ahead = [int]$Matches[2]
+        }
+    }
+    catch {
+        $counts.failed = $true
+    }
+    finally {
+        Pop-Location
+    }
+
+    return $counts
+}
+
+function Get-MetraProjectGitCounts {
+    <#
+    .SYNOPSIS
+        Returns dirty/ahead/behind counts for a project folder (best-effort, no network).
+    .DESCRIPTION
+        Some projects keep the git remote in a subfolder rather than the project root
+        (for example Jitterbit tracks IWU.Jitterbit/). When the root is not a repo,
+        counts come from registry-declared gitPaths, or a shallow probe of immediate
+        child folders. Counts across multiple nested repos are summed.
+    .PARAMETER SubPath
+        Registry gitPaths - relative folders to treat as the project's repos.
+    .PARAMETER NoProbe
+        Skip the automatic child-folder probe when the root is not a repo.
+    #>
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory)][string]$Path,
+        [string[]]$SubPath = @(),
+        [switch]$NoProbe
+    )
+
+    $result = [PSCustomObject]@{
+        isGit     = $false
+        dirty     = 0
+        ahead     = 0
+        behind    = 0
+        branch    = ''
+        summary   = 'n/a'
+        repoPath  = ''
+        repoCount = 0
+    }
+
+    if (-not (Test-Path -LiteralPath $Path)) {
+        return $result
+    }
+
+    # Repo folders, relative to the project root ('' means the root itself)
+    $repoRelPaths = @()
+    if (Test-Path -LiteralPath (Join-Path $Path '.git')) {
+        $repoRelPaths = @('')
+    }
+    else {
+        foreach ($rel in @($SubPath)) {
+            if ([string]::IsNullOrWhiteSpace($rel)) { continue }
+            $candidate = Join-Path $Path $rel
+            if (Test-Path -LiteralPath (Join-Path $candidate '.git')) {
+                $repoRelPaths += $rel
+            }
+        }
+
+        if ($repoRelPaths.Count -eq 0 -and -not $NoProbe) {
+            $children = @(Get-ChildItem -LiteralPath $Path -Directory -ErrorAction SilentlyContinue)
+            foreach ($child in $children) {
+                if ($script:MetraGitProbeSkip -contains $child.Name) { continue }
+                if ($child.Name.StartsWith('.')) { continue }
+                if (Test-Path -LiteralPath (Join-Path $child.FullName '.git')) {
+                    $repoRelPaths += $child.Name
+                }
+            }
+        }
+    }
+
+    if ($repoRelPaths.Count -eq 0) {
         return $result
     }
 
     $result.isGit = $true
-    Push-Location $Path
-    try {
-        $branch = (git rev-parse --abbrev-ref HEAD 2>$null)
-        if ($branch) { $result.branch = [string]$branch.Trim() }
+    $result.repoCount = $repoRelPaths.Count
+    $failed = $false
 
-        $porcelain = @(git status --porcelain 2>$null)
-        $result.dirty = @($porcelain | Where-Object { $_ -and $_.Trim().Length -gt 0 }).Count
-
-        $ab = (git rev-list --left-right --count '@{u}...HEAD' 2>$null)
-        if ($ab -match '^\s*(\d+)\s+(\d+)\s*$') {
-            $result.behind = [int]$Matches[1]
-            $result.ahead = [int]$Matches[2]
-        }
-
-        $parts = @()
-        if ($result.dirty -gt 0) { $parts += ("dirty {0}" -f $result.dirty) }
-        if ($result.ahead -gt 0) { $parts += ("ahead {0}" -f $result.ahead) }
-        if ($result.behind -gt 0) { $parts += ("behind {0}" -f $result.behind) }
-        if ($parts.Count -eq 0) {
-            $result.summary = 'clean'
-        }
-        else {
-            $result.summary = ($parts -join ', ')
+    foreach ($rel in $repoRelPaths) {
+        $repoPath = if ($rel -eq '') { $Path } else { Join-Path $Path $rel }
+        $counts = Get-MetraGitFolderCounts -Path $repoPath
+        if ($counts.failed) { $failed = $true; continue }
+        $result.dirty += [int]$counts.dirty
+        $result.ahead += [int]$counts.ahead
+        $result.behind += [int]$counts.behind
+        if ($repoRelPaths.Count -eq 1) {
+            $result.branch = [string]$counts.branch
+            $result.repoPath = [string]$rel
         }
     }
-    catch {
+
+    if ($failed -and $result.dirty -eq 0 -and $result.ahead -eq 0 -and $result.behind -eq 0) {
         $result.summary = 'error'
+        return $result
     }
-    finally {
-        Pop-Location
+
+    $parts = @()
+    if ($result.dirty -gt 0) { $parts += ("dirty {0}" -f $result.dirty) }
+    if ($result.ahead -gt 0) { $parts += ("ahead {0}" -f $result.ahead) }
+    if ($result.behind -gt 0) { $parts += ("behind {0}" -f $result.behind) }
+    $result.summary = if ($parts.Count -eq 0) { 'clean' } else { ($parts -join ', ') }
+
+    # Name the subfolder so the desk does not imply the project root is the repo
+    if ($result.repoPath) {
+        $result.summary = "$($result.summary) ($($result.repoPath))"
+    }
+    elseif ($repoRelPaths.Count -gt 1) {
+        $result.summary = "$($result.summary) ($($repoRelPaths.Count) repos)"
     }
 
     return $result
@@ -762,16 +855,19 @@ function Export-MetraCanvasSnapshot {
         $projectPath = if ($report) { [string]$report.Path } else { Join-Path (Get-ProjectsRoot) $name }
         if ($Quick) {
             $git = [PSCustomObject]@{
-                isGit   = $false
-                dirty   = 0
-                ahead   = 0
-                behind  = 0
-                branch  = ''
-                summary = 'skipped'
+                isGit     = $false
+                dirty     = 0
+                ahead     = 0
+                behind    = 0
+                branch    = ''
+                summary   = 'skipped'
+                repoPath  = ''
+                repoCount = 0
             }
         }
         else {
-            $git = Get-MetraProjectGitCounts -Path $projectPath
+            $gitPaths = @(Get-MetraProp -Object $reg -Name 'gitPaths' -Default @())
+            $git = Get-MetraProjectGitCounts -Path $projectPath -SubPath $gitPaths
         }
         $optional = [bool](Get-MetraProp -Object $reg -Name 'optional' -Default $false)
 
@@ -837,6 +933,7 @@ function Export-MetraCanvasSnapshot {
             gitBehind       = [int]$git.behind
             gitBranch       = [string]$git.branch
             gitSummary      = [string]$git.summary
+            gitRepoPath     = [string]$git.repoPath
             gitChecked      = (-not $Quick)
         }
     }
@@ -914,6 +1011,7 @@ function Export-MetraCanvasSnapshot {
                     gitBehind       = [int]$git.behind
                     gitBranch       = [string]$git.branch
                     gitSummary      = [string]$git.summary
+                    gitRepoPath     = [string]$git.repoPath
                     gitChecked      = (-not $Quick)
                 }
             )
@@ -1047,5 +1145,557 @@ $embedEnd
         DriftCount   = $snapshot.driftCount
         TodoCount    = @($snapshot.todos).Count
     }
+}
+
+function Get-MetraDeskPreferencesPath {
+    <#
+    .SYNOPSIS
+        Path to local HTML Ops preferences (gitignored user state).
+    #>
+    [CmdletBinding()]
+    param([string]$MetraRoot = (Get-MetraRoot))
+
+    return Join-Path $MetraRoot 'docs\ops-preferences.local.json'
+}
+
+function Get-MetraDeskAskLogPath {
+    [CmdletBinding()]
+    param([string]$MetraRoot = (Get-MetraRoot))
+
+    return Join-Path $MetraRoot 'docs\ops-ask-log.local.json'
+}
+
+function Get-MetraDeskPreferences {
+    <#
+    .SYNOPSIS
+        Loads HTML Ops desk preferences (deskMode general|advanced).
+    #>
+    [CmdletBinding()]
+    param([string]$MetraRoot = (Get-MetraRoot))
+
+    $path = Get-MetraDeskPreferencesPath -MetraRoot $MetraRoot
+    $defaults = [ordered]@{
+        deskMode  = 'general'
+        updatedAt = $null
+    }
+    if (-not (Test-Path -LiteralPath $path)) {
+        return [PSCustomObject]$defaults
+    }
+    try {
+        $raw = Get-Content -LiteralPath $path -Raw -ErrorAction Stop | ConvertFrom-Json
+        $mode = [string](Get-MetraProp -Object $raw -Name 'deskMode' -Default 'general')
+        if ($mode -notin @('general', 'advanced')) { $mode = 'general' }
+        return [PSCustomObject]@{
+            deskMode  = $mode
+            updatedAt = (Get-MetraProp -Object $raw -Name 'updatedAt' -Default $null)
+        }
+    }
+    catch {
+        return [PSCustomObject]$defaults
+    }
+}
+
+function Set-MetraDeskPreferences {
+    <#
+    .SYNOPSIS
+        Writes HTML Ops desk preferences (local only).
+    #>
+    [CmdletBinding()]
+    param(
+        [ValidateSet('general', 'advanced')]
+        [string]$DeskMode,
+        [string]$MetraRoot = (Get-MetraRoot)
+    )
+
+    $current = Get-MetraDeskPreferences -MetraRoot $MetraRoot
+    if ($PSBoundParameters.ContainsKey('DeskMode')) {
+        $current.deskMode = $DeskMode
+    }
+    $current.updatedAt = (Get-Date).ToString('o')
+    $path = Get-MetraDeskPreferencesPath -MetraRoot $MetraRoot
+    $dir = Split-Path -Parent $path
+    if ($dir -and -not (Test-Path $dir)) {
+        New-Item -ItemType Directory -Path $dir -Force | Out-Null
+    }
+    $json = ($current | ConvertTo-Json -Depth 4)
+    [System.IO.File]::WriteAllText($path, $json + "`r`n")
+    return $current
+}
+
+function Get-MetraDeskAskLog {
+    [CmdletBinding()]
+    param(
+        [string]$MetraRoot = (Get-MetraRoot),
+        [int]$Limit = 20
+    )
+
+    $path = Get-MetraDeskAskLogPath -MetraRoot $MetraRoot
+    if (-not (Test-Path -LiteralPath $path)) {
+        return @()
+    }
+    try {
+        $raw = Get-Content -LiteralPath $path -Raw -ErrorAction Stop | ConvertFrom-Json
+        $items = @($raw)
+        if ($raw -is [PSCustomObject] -and $raw.PSObject.Properties.Name -contains 'items') {
+            $items = @($raw.items)
+        }
+        return @($items | Select-Object -First $Limit)
+    }
+    catch {
+        return @()
+    }
+}
+
+function Add-MetraDeskAskEntry {
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory)][string]$Prompt,
+        [object]$Handoff,
+        [string]$MetraRoot = (Get-MetraRoot)
+    )
+
+    $path = Get-MetraDeskAskLogPath -MetraRoot $MetraRoot
+    $existing = @(Get-MetraDeskAskLog -MetraRoot $MetraRoot -Limit 100)
+    $entry = [PSCustomObject]@{
+        id        = [guid]::NewGuid().ToString('N')
+        at        = (Get-Date).ToString('o')
+        prompt    = $Prompt.Trim()
+        handoff   = $Handoff
+        note      = 'Local assistant coming next. Capture and handoff only in this release.'
+    }
+    $items = @($entry) + @($existing) | Select-Object -First 40
+    $payload = [ordered]@{ items = @($items) }
+    $dir = Split-Path -Parent $path
+    if ($dir -and -not (Test-Path $dir)) {
+        New-Item -ItemType Directory -Path $dir -Force | Out-Null
+    }
+    [System.IO.File]::WriteAllText($path, (($payload | ConvertTo-Json -Depth 8) + "`r`n"))
+    return $entry
+}
+
+function Test-MetraDeskGreeting {
+    <#
+    .SYNOPSIS
+        True when the Ask prompt is a short greeting, not a routing ask.
+    #>
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory)][AllowEmptyString()][string]$Query
+    )
+
+    $q = $Query.Trim()
+    if ([string]::IsNullOrWhiteSpace($q) -or $q.Length -gt 64) {
+        return $false
+    }
+
+    return [bool]($q -match '^(hi|hello|hey|howdy|yo|good\s+(morning|afternoon|evening))(\s*,?\s*metra)?[!?.]*$')
+}
+
+function Remove-MetraAskUiChrome {
+    <#
+    .SYNOPSIS
+        Strip Cursor-chat persona banners and echoed routing cards from Ask answers.
+    #>
+    param([string]$Message)
+
+    if ([string]::IsNullOrWhiteSpace($Message)) { return $Message }
+
+    $droppingRouteCard = $false
+    $kept = foreach ($line in ($Message -split '\r?\n')) {
+        if ($line -match '^\s*\*{0,2}Metra\*{0,2}\s*[·•|]\s*Model\s*:') { continue }
+        if ($line -match '^\s*\*{0,2}Metra\*{0,2}\s*[·•]' -and $line -match '(?i)model' -and $line -match '(?i)(cursor|composer|language\s+model)') {
+            continue
+        }
+        if ($line -match '^\s*(Where|What|Why|Next|Also close|For whom)\s*:?\s*$') {
+            $droppingRouteCard = $true
+            continue
+        }
+        if ($droppingRouteCard) {
+            if ($line -match '^\s*$') { $droppingRouteCard = $false; continue }
+            if ($line -match '(?i)labeled preview') { continue }
+            if ($line -match '^\s*(-|\*)') { continue }
+            if ($line.Length -lt 120 -and $line -notmatch '^#{1,3}\s') { continue }
+            $droppingRouteCard = $false
+        }
+        if ($line -match '(?i)labeled preview\s*-') { continue }
+        $line
+    }
+    return (($kept -join "`n").Trim())
+}
+
+function Get-MetraDeskAskResult {
+    <#
+    .SYNOPSIS
+        Ask result: route-first, then Ask engine when available; honest degrade otherwise.
+    #>
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory)][string]$Prompt,
+        [string]$SessionId,
+        [string]$MetraRoot = (Get-MetraRoot)
+    )
+
+    $q = $Prompt.Trim()
+    $handoff = Get-MetraDeskHandoff -Query $q -MetraRoot $MetraRoot
+    # Ask path never uses greeting theater - route furniture only.
+    if ($handoff.kind -eq 'greeting') {
+        $handoff = [PSCustomObject]@{
+            query     = $q
+            kind      = 'route'
+            preview   = $true
+            where     = 'Metra'
+            what      = [string]$handoff.what
+            why       = @()
+            forWhom   = @()
+            next      = 'Stay on Metra until a stronger project route appears.'
+            ambiguous = $false
+            runnerUp  = $null
+            score     = 0
+            note      = $null
+        }
+    }
+
+    $capability = Get-MetraAskCapability -MetraRoot $MetraRoot
+    $cwd = Get-MetraAskRouteCwd -Where ([string]$handoff.where) -MetraRoot $MetraRoot
+
+    # Ops owns Ask: revive a dead sidecar on demand. Ops used to start the engine once at desk
+    # startup, so a sidecar that died later left Ask unavailable until the whole desk restarted.
+    if (-not $capability.available -and $capability.selected) {
+        $capability = Start-MetraAskEngine -MetraRoot $MetraRoot
+    }
+
+    if (-not $capability.available) {
+        return [PSCustomObject]@{
+            handoff     = $handoff
+            message     = [string]$capability.message
+            sessionId   = $null
+            capability  = $capability
+            engine      = $null
+            model       = $null
+            answered    = $false
+        }
+    }
+
+    $context = @{
+        where   = [string]$handoff.where
+        what    = [string]$handoff.what
+        why     = @($handoff.why)
+        forWhom = @($handoff.forWhom)
+        next    = [string]$handoff.next
+        score   = [int]$handoff.score
+    }
+
+    $engineResult = Invoke-MetraAskEngine -Prompt $q -Cwd $cwd -Context $context -SessionId $SessionId -MetraRoot $MetraRoot
+
+    # A sidecar that died mid-session fails the call. Retry once after reviving, but only when
+    # health says it is actually down - never re-run a prompt that merely took too long.
+    if (-not $engineResult.ok -and -not (Test-MetraAskEngineHealth -MetraRoot $MetraRoot -TimeoutSec 2)) {
+        $revived = Start-MetraAskEngine -MetraRoot $MetraRoot
+        if ($revived.available) {
+            $capability = $revived
+            # Sessions live in the old process; start clean so the retry is not orphaned.
+            $engineResult = Invoke-MetraAskEngine -Prompt $q -Cwd $cwd -Context $context -MetraRoot $MetraRoot
+        }
+    }
+
+    if (-not $engineResult.ok -or [string]::IsNullOrWhiteSpace($engineResult.message)) {
+        $failCap = [PSCustomObject]@{
+            enabled       = $capability.enabled
+            selected      = $capability.selected
+            available     = $false
+            engine        = $capability.engine
+            providerLabel = $capability.providerLabel
+            reason        = 'engine_error'
+            message       = @"
+Ask engine unavailable.
+
+The Ask engine returned an error. Metra can still classify work and show routing.
+"@.Trim()
+            port          = $capability.port
+            model         = $capability.model
+        }
+        if ($engineResult.error) {
+            $failCap | Add-Member -NotePropertyName detail -NotePropertyValue $engineResult.error -Force
+        }
+        return [PSCustomObject]@{
+            handoff     = $handoff
+            message     = [string]$failCap.message
+            sessionId   = $null
+            capability  = $failCap
+            engine      = $capability.engine
+            model       = $null
+            answered    = $false
+        }
+    }
+
+    return [PSCustomObject]@{
+        handoff     = $handoff
+        message     = (Remove-MetraAskUiChrome -Message ([string]$engineResult.message))
+        sessionId   = [string]$engineResult.sessionId
+        capability  = $capability
+        engine      = [string]$engineResult.engine
+        model       = [string]$engineResult.model
+        answered    = $true
+    }
+}
+
+function Get-MetraDeskHandoff {
+    <#
+    .SYNOPSIS
+        Builds a labeled routing preview handoff for the HTML Ops Ask / Classify shell.
+    #>
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory)][string]$Query,
+        [string]$MetraRoot = (Get-MetraRoot)
+    )
+
+    $q = $Query.Trim()
+    if ([string]::IsNullOrWhiteSpace($q)) {
+        return [PSCustomObject]@{
+            query      = ''
+            kind       = 'route'
+            preview    = $true
+            where      = $null
+            what       = 'Enter a short question or symptom.'
+            why        = @()
+            forWhom    = @()
+            next       = 'Type what you need help with, then Ask or Classify.'
+            ambiguous  = $false
+            runnerUp   = $null
+            score      = 0
+        }
+    }
+
+    if (Test-MetraDeskGreeting -Query $q) {
+        return [PSCustomObject]@{
+            query     = $q
+            kind      = 'greeting'
+            preview   = $false
+            where     = 'Metra'
+            what      = 'Stay on Metra - this is home until something else is routed.'
+            why       = @()
+            forWhom   = @()
+            next      = 'Describe the work and I will point at the right place.'
+            ambiguous = $false
+            runnerUp  = $null
+            score     = 0
+            note      = $null
+        }
+    }
+
+    $amb = Get-MetraRoutingAmbiguity -Query $q
+    $primary = $amb.Primary
+    $runner = if ($amb.IsAmbiguous) { $amb.RunnerUp } else { $null }
+    $ambiguous = [bool]$amb.IsAmbiguous
+
+    $why = @()
+    $serves = @()
+    $purpose = ''
+    if ($primary) {
+        $why = @(ConvertTo-MetraSnapshotWhyHere -Project $primary.Name -MetraRoot $MetraRoot -Limit 3)
+        try {
+            $reg = Get-MetraProjectRegistry
+            $row = @($reg.projects | Where-Object { [string]$_.name -eq [string]$primary.Name } | Select-Object -First 1)
+            if ($row) {
+                $purpose = [string](Get-MetraProp -Object $row -Name 'purpose' -Default '')
+                $serves = @(Get-MetraProp -Object $row -Name 'serves' -Default @())
+            }
+        }
+        catch { }
+    }
+
+    $whereName = if ($primary) { [string]$primary.Name } else { 'Metra' }
+    $isHome = $whereName -eq (Get-MetraHomeDestinationName)
+    $what = if ($purpose) { $purpose } elseif ($primary) { "Open $($primary.Name) and follow that project's AGENTS.md." } else { 'Stay on Metra until a stronger project route appears.' }
+    $next = if ($isHome) {
+        'Stay on Metra. Ask again with more detail, or use Classify if you need a destination preview.'
+    }
+    elseif ($primary) {
+        "Stay in $whereName. Continue Ask for answers, or open Cursor when you need to build."
+    }
+    else {
+        'Stay on Metra, or enable Advanced desk and browse Projects.'
+    }
+
+    return [PSCustomObject]@{
+        query     = $q
+        kind      = 'route'
+        preview   = $true
+        where     = $whereName
+        what      = $what
+        why       = @($why | ForEach-Object {
+                $d = [string](Get-MetraProp -Object $_ -Name 'decision' -Default '')
+                $w = [string](Get-MetraProp -Object $_ -Name 'why' -Default '')
+                if ($d -and $w) { "$d - $w" }
+                elseif ($d) { $d }
+                elseif ($w) { $w }
+                else { [string]$_ }
+            } | Where-Object { $_ })
+        forWhom   = @($serves)
+        next      = $next
+        ambiguous = [bool]$ambiguous
+        runnerUp  = if ($runner -and $ambiguous) { [string]$runner.Name } else { $null }
+        score     = if ($primary) { [int]$primary.Score } else { 0 }
+        note      = if ($isHome -and ([int]($primary.Score) -lt 2)) {
+            'Home destination - Metra stays primary until a stronger project route wins.'
+        }
+        else {
+            'Labeled preview - authoritative Why Here remains routing -Query / ctx -Query.'
+        }
+    }
+}
+
+function ConvertTo-MetraDeskPayload {
+    <#
+    .SYNOPSIS
+        Shapes canvas-snapshot.json into the HTML Ops desk payload (one brain, many faces).
+    #>
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory)]$Snapshot,
+        [string]$MetraRoot = (Get-MetraRoot)
+    )
+
+    $stale = $false
+    try {
+        $stale = [bool](Test-MetraCanvasSnapshotStale)
+    }
+    catch {
+        $stale = $true
+    }
+
+    $todos = @($Snapshot.todos)
+    $nextAttention = $null
+    if ($todos.Count -gt 0) {
+        $pick = $todos | Where-Object { $_.kind -eq 'drift' -or $_.kind -eq 'verify' } | Select-Object -First 1
+        if (-not $pick) { $pick = $todos | Select-Object -First 1 }
+        if ($pick) {
+            $nextAttention = [PSCustomObject]@{
+                id      = [string]$pick.id
+                project = [string]$pick.project
+                content = [string]$pick.content
+                kind    = [string]$pick.kind
+            }
+        }
+    }
+
+    $projects = @(
+        @($Snapshot.projects) | ForEach-Object {
+            [PSCustomObject]@{
+                name    = [string]$_.name
+                purpose = [string]$_.purpose
+                present = [bool]$_.present
+                root    = [string]$_.root
+                status  = [string]$_.status
+                optional = [bool]$_.optional
+                hasAgentsMd = [bool]$_.hasAgentsMd
+                pinned      = [bool]$_.pinned
+                capabilities = @($_.capabilities)
+                serves       = @($_.serves)
+                gitIsRepo    = [bool]$_.gitIsRepo
+                gitDirty     = [int]$_.gitDirty
+                gitAhead     = [int]$_.gitAhead
+                gitBehind    = [int]$_.gitBehind
+                gitBranch    = [string]$_.gitBranch
+                gitSummary   = [string]$_.gitSummary
+                gitRepoPath  = [string]$_.gitRepoPath
+            }
+        }
+    )
+
+    $missingAgents = @(
+        $projects |
+            Where-Object { $_.present -and -not $_.hasAgentsMd } |
+            Select-Object -ExpandProperty name |
+            Sort-Object |
+            Select-Object -First 12
+    )
+
+    $gitChecked = $true
+    if ($null -ne $Snapshot.gitChecked) {
+        $gitChecked = [bool]$Snapshot.gitChecked
+    }
+    elseif ([string]$Snapshot.mode -eq 'quick') {
+        $gitChecked = $false
+    }
+
+    $manifest = $null
+    try {
+        $psd1 = Join-Path $MetraRoot 'scripts\Metra.psd1'
+        if (Test-Path -LiteralPath $psd1) {
+            $data = Import-PowerShellDataFile -Path $psd1
+            $manifest = [string]$data.ModuleVersion
+        }
+    }
+    catch { }
+
+    $prefs = Get-MetraDeskPreferences -MetraRoot $MetraRoot
+    $recent = @(Get-MetraDeskAskLog -MetraRoot $MetraRoot -Limit 12)
+    $askCapability = Get-MetraAskCapability -MetraRoot $MetraRoot
+
+    return [PSCustomObject]@{
+        generatedAt   = [string]$Snapshot.generatedAt
+        mode          = [string]$Snapshot.mode
+        stale         = $stale
+        gitChecked    = $gitChecked
+        verifyChecked = [bool]$Snapshot.verifyChecked
+        nextAttention = $nextAttention
+        projects      = $projects
+        health        = [PSCustomObject]@{
+            missingAgents     = @($missingAgents)
+            missingAgentsCount = [int]$Snapshot.missingAgents
+            gitChecked        = $gitChecked
+            gitStatusLabel    = $(if ($gitChecked) { 'checked' } else { 'not checked (quick snapshot)' })
+            snapshotStale     = $stale
+            projectCount      = [int]$Snapshot.projectCount
+            driftCount        = [int]$Snapshot.driftCount
+        }
+        recent        = $recent
+        preferences   = $prefs
+        ask           = [PSCustomObject]@{
+            enabled       = [bool]$askCapability.enabled
+            selected      = [bool]$askCapability.selected
+            available     = [bool]$askCapability.available
+            engine        = [string]$askCapability.engine
+            providerLabel = [string]$askCapability.providerLabel
+            reason        = [string]$askCapability.reason
+        }
+        meta          = [PSCustomObject]@{
+            version   = $manifest
+            metraRoot = $MetraRoot
+            homeLabel = $MetraRoot
+        }
+    }
+}
+
+function Get-MetraDeskPayload {
+    <#
+    .SYNOPSIS
+        Returns the HTML Ops desk payload from the shared canvas snapshot brain.
+    .PARAMETER Refresh
+        Rebuild snapshot first (Quick by default unless -Full).
+    .PARAMETER Full
+        With -Refresh, run a full snapshot (git + verify).
+    #>
+    [CmdletBinding()]
+    param(
+        [switch]$Refresh,
+        [switch]$Full,
+        [int]$ScanDepth = 2,
+        [string]$MetraRoot = (Get-MetraRoot)
+    )
+
+    $snapPath = Join-Path $MetraRoot 'docs\canvas-snapshot.json'
+    if ($Refresh -or -not (Test-Path -LiteralPath $snapPath)) {
+        $null = Export-MetraCanvasSnapshot -Quick:(-not $Full) -ScanDepth $ScanDepth
+    }
+
+    if (-not (Test-Path -LiteralPath $snapPath)) {
+        throw "Desk snapshot missing at $snapPath"
+    }
+
+    $snapshot = Get-Content -LiteralPath $snapPath -Raw | ConvertFrom-Json
+    return ConvertTo-MetraDeskPayload -Snapshot $snapshot -MetraRoot $MetraRoot
 }
 

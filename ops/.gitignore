@@ -1,0 +1,9 @@
+# Local deps - end users ship ops/dist only
+node_modules
+.DS_Store
+*.local
+dist-ssr
+*.log
+
+# Keep built desk assets tracked so installer / ZIP users need no Node.
+# !dist/

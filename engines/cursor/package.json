@@ -1,0 +1,17 @@
+{
+  "name": "metra-ask-cursor",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Metra Ask engine sidecar - Cursor SDK local runtime (answer-only)",
+  "main": "server.mjs",
+  "scripts": {
+    "start": "node server.mjs"
+  },
+  "engines": {
+    "node": ">=18"
+  },
+  "dependencies": {
+    "@cursor/sdk": "^1.0.18"
+  }
+}

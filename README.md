@@ -14,7 +14,7 @@ Not a monorepo build system. Not another "meta" multi-repo clone framework.
 
 MIT licensed. Public repo: [jaxnoth/Metra](https://github.com/jaxnoth/Metra).
 
-**Who this page is for:** operators and developers. Prefer plain language? Start at the **[Metra for everyone](https://jaxnoth.github.io/Metra/)** site (installer-first; no Git required).
+**Who this page is for:** operators and developers. Prefer plain language? Start at the **[Metra for everyone](https://jaxnoth.github.io/Metra/)** site (installer-first; no Git required). After install, the front door is **Metra Ops** (Start Menu or `.\metra.ps1 host` tray host) - Cursor is an advanced IDE interface. Console `.\metra.ps1 ops` remains for operator debugging.
 
 **Get Metra**
 
@@ -124,7 +124,7 @@ CLI-only operators get full routing and context value without Cursor. Agents in 
 | Communication model | **Metra** persona - base + overlay + optional add-ons + learned contract (`profile`) |
 | Workspace file | `Metra.code-workspace` (legacy `Meta.code-workspace` still honored if configured) |
 
-Operator-facing brand kit (palette, motif, professional sink): [docs/Brand.md](docs/Brand.md). Coworker walkthrough (Ops board face-first + live): [docs/Demo.md](docs/Demo.md).
+Operator-facing brand kit (palette, motif, professional sink): [docs/Brand.md](docs/Brand.md). Coworker pitch (middle path + optional live proof): [docs/Demo.md](docs/Demo.md).
 
 ## Quick start (CLI first)
 
@@ -334,7 +334,9 @@ Personal-root `registryFile` is **not** auto-included - copy it with that root. 
 | `apply <file>` | Copy a shared file into matching projects |
 | `workspace` | Rebuild multi-root workspace from recent activity (optional IDE helper) |
 | `audit` | Context/token audit + optional `-DriftOnly` vs registries |
-| `snapshot` | Write `docs/canvas-snapshot.json` and refresh / install Metra Ops canvas (Route / Portfolio / Stewardship; `-Quick` skips deep audit/git/verify) |
+| `snapshot` | Write `docs/canvas-snapshot.json` and refresh / install Metra Ops canvas (advanced IDE; `-Quick` skips deep audit/git/verify) |
+| `ops` | Console HTML Ops desk on localhost (operator/debug; Route-first Ask; serves `ops/dist`) |
+| `host` | User-session tray host so Metra stays alive without a console (Host->Ops->Ask; Start Menu Metra Ops) |
 | `chats` | Search local Cursor agent transcripts (bounded) - prior session evidence |
 | `export-profile` | Pack local config / local registry / Metra overlay (+ Persona Add-ons / learned contract if present) |
 | `import-profile` | Restore a pack (`-Preview` or `-Force`) - ops bindings and persona overlay |
@@ -379,6 +381,9 @@ _metra/
   profiles/addons/           optional Persona Add-ons (tone dials; e.g. humor-desk)
   packaging/                 Windows installer build (Build-MetraInstaller.ps1, inno/)
   site/                      Plain-language landing (GitHub Pages - jaxnoth.github.io/Metra)
+  ops/                       HTML Ops home screen (Vite source + shipped dist/; .\metra.ps1 ops)
+  engines/cursor/            Ask engine sidecar (@cursor/sdk; operator-tier Node; loopback :7381)
+  Metra-Ops.cmd              Start Menu / desk bootstrap
   AGENTS.md                  communication model entry + Metra examples (any agent harness)
   LICENSE                    MIT
   SECURITY.md

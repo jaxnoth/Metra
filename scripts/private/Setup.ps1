@@ -183,6 +183,20 @@ function Invoke-MetraSetup {
     }
     $ctxResult = Export-MetraContextPack -Quiet:$Quiet
 
+    $startMenu = $null
+    try {
+        $startMenu = Install-MetraOpsStartMenuShortcuts -MetraRoot $metraRoot
+        if (-not $Quiet) {
+            Write-Host ''
+            Write-Host 'Start Menu: Metra Ops shortcut refreshed (brand icon).' -ForegroundColor Cyan
+        }
+    }
+    catch {
+        if (-not $Quiet) {
+            Write-Warning "Start Menu shortcut skipped: $($_.Exception.Message)"
+        }
+    }
+
     if (-not $Quiet) {
         Write-Host ''
         Write-Host 'Next:' -ForegroundColor Yellow
@@ -190,6 +204,7 @@ function Invoke-MetraSetup {
         Write-Host '  - Edit metra.config.json roots / alwaysInclude if paths differ, then: .\metra.ps1 setup'
         Write-Host '  - Optional personal/cloud root snippets: docs/Customizing-Metra.md'
         Write-Host '  - If using Cursor: set operator display name in .cursor/rules/metra-persona.local.mdc'
+        Write-Host '  - Front door: Start Menu Metra Ops (or .\metra.ps1 host)'
     }
 
     return [PSCustomObject]@{
@@ -202,6 +217,7 @@ function Invoke-MetraSetup {
         Routing         = $routingRows
         Workspace       = $workspaceResult
         ContextPack     = $ctxResult
+        StartMenu       = $startMenu
     }
 }
 

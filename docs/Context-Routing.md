@@ -12,7 +12,7 @@ Keep agent response time and token use low by routing to one project, then loadi
 | `projects.local.json` | Machine-private work entries (gitignored) |
 | Root `registryFile` | Optional per-root overlay (e.g. personal iCloud) |
 
-Registry project rows use the same optional arrays for consistency: `triggers`, `capabilities`, `serves`, and `related` (all `string[]`). `serves` is **For whom?** - audiences of the work (roles, teams, consumer systems), never people/requester memory. Omit or leave empty when unknown; `routing -Name` / `-Query` and `ctx` print a For whom? block only when non-empty. `related` is same-root neighbor topology (preserve registry order; dedupe; cap 6 in `ctx` / routing via `Get-MetraRelatedProjects`). **Related is topology, not permission to multi-repo search** - open a related project only when evidence requires it.
+Registry project rows use the same optional arrays for consistency: `triggers`, `capabilities`, `serves`, `gitPaths`, and `related` (all `string[]`). `gitPaths` names folders **below** the project root that hold the git repo, for projects where the root is not the repo (for example Jitterbit tracks `IWU.Jitterbit/`). When the root has no `.git` and `gitPaths` is absent, the snapshot shallow-probes immediate child folders; counts across nested repos are summed and the desk labels the subfolder. Set `gitPaths` explicitly when the probe would be ambiguous or wrong. `serves` is **For whom?** - audiences of the work (roles, teams, consumer systems), never people/requester memory. Omit or leave empty when unknown; `routing -Name` / `-Query` and `ctx` print a For whom? block only when non-empty. `related` is same-root neighbor topology (preserve registry order; dedupe; cap 6 in `ctx` / routing via `Get-MetraRelatedProjects`). **Related is topology, not permission to multi-repo search** - open a related project only when evidence requires it.
 | `profiles/sample/` | Anonymized operator pack for `import-profile` |
 | `AGENTS.md` | Short human/agent fallback for the Metra checkout |
 | `.cursor/rules/project-routing.mdc` | Always-on routing rule |
@@ -71,9 +71,21 @@ The audit is a **re-runnable probe**. Do not rewrite it for routine project chan
 
 Usually re-run; rarely rewrite. Treat drift as a manual review signal rather than auto-regenerating guidance.
 
-## Canvas Ops board (Metra Ops)
+## Metra home destination
 
-Open the Cursor Canvas **Metra Ops** (`metra-ops-board`) beside chat. One board, three tabs organized around operator questions:
+Metra itself is a registry destination (`projects.json` name `Metra`) and the **default home** (`routing.homeDestination`). Stay on Metra until another project wins with a confident score. Ticket/helpdesk work still starts in TicketTracker.
+
+## HTML Ops desk (primary)
+
+```powershell
+.\metra.ps1 ops
+```
+
+Browser home screen on loopback (`http://127.0.0.1:7380` by default). **General** mode is Route-first (Ask, next attention, Classify/Handoff). **Advanced desk** in Settings unlocks Projects / Recent / Health. Shared brain: `docs/canvas-snapshot.json` via `Get-MetraDeskPayload`. Cursor is optional.
+
+## Canvas Ops board (advanced IDE)
+
+Open the Cursor Canvas **Metra Ops** (`metra-ops-board`) beside chat when you want the IDE faceplate. One board, three tabs organized around operator questions:
 
 | Tab | Job |
 |-----|-----|

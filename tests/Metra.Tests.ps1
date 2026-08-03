@@ -1167,3 +1167,348 @@ Describe 'Update-MetraWorkspace' {
     }
 }
 
+Describe 'HTML Ops desk payload' {
+    It 'ships a built ops/dist index for end users without Node' {
+        $index = Join-Path (Get-MetraRoot) 'ops\dist\index.html'
+        Test-Path -LiteralPath $index | Should -BeTrue
+    }
+
+    It 'keeps the Ops accept loop free of console cancel handlers' {
+        # A scriptblock ConsoleCancelEventHandler runs on the console control thread and takes
+        # the whole host down on Ctrl+C instead of stopping the server.
+        $source = Get-Content -LiteralPath (Join-Path (Get-MetraRoot) 'scripts\private\OpsServer.ps1') -Raw
+        $source | Should -Not -Match 'add_CancelKeyPress'
+    }
+
+    It 'reports no desk on an unused port' {
+        Test-MetraOpsDeskResponding -Port 7407 -TimeoutSec 1 | Should -BeFalse
+        { Stop-MetraOpsServer -Port 7407 } | Should -Not -Throw
+    }
+
+    It 'passes Ops switches to the CLI by name from the bootstrap' {
+        # Array splatting binds positionally, so -Port and switches would land in $Rest.
+        $boot = Get-Content -LiteralPath (Join-Path (Get-MetraRoot) 'scripts\bootstrap\Start-MetraOps.ps1') -Raw
+        $boot | Should -Match "@opsArgs"
+        $boot | Should -Not -Match "@\('ops'"
+    }
+
+    It 'defaults deskMode to general and accepts advanced' {
+        $prefs = Set-MetraDeskPreferences -DeskMode general
+        $prefs.deskMode | Should -Be 'general'
+        $prefs = Set-MetraDeskPreferences -DeskMode advanced
+        $prefs.deskMode | Should -Be 'advanced'
+        $null = Set-MetraDeskPreferences -DeskMode general
+    }
+
+    It 'shapes health without score fields' {
+        $payload = Get-MetraDeskPayload
+        $payload.health | Should -Not -BeNullOrEmpty
+        @($payload.health.PSObject.Properties.Name) | Should -Contain 'missingAgents'
+        @($payload.health.PSObject.Properties.Name) | Should -Contain 'gitChecked'
+        @($payload.health.PSObject.Properties.Name) | Should -Contain 'snapshotStale'
+        @($payload.health.PSObject.Properties.Name) | Should -Not -Contain 'score'
+        @($payload.health.PSObject.Properties.Name) | Should -Not -Contain 'percent'
+        @($payload.health.PSObject.Properties.Name) | Should -Not -Contain 'grade'
+    }
+
+    It 'builds a classify handoff preview' {
+        $h = Get-MetraDeskHandoff -Query 'ticket disk alert'
+        $h.preview | Should -BeTrue
+        $h.kind | Should -Be 'route'
+        $h.PSObject.Properties.Name | Should -Contain 'where'
+        $h.PSObject.Properties.Name | Should -Contain 'next'
+    }
+
+    It 'degrades Ask honestly when the engine is unavailable' {
+        $cap = Get-MetraAskCapability
+        if ($cap.available) {
+            Set-ItResult -Skipped -Because 'Ask engine is already available on this machine'
+            return
+        }
+        $ask = Get-MetraDeskAskResult -Prompt 'Hello Metra'
+        $ask.answered | Should -BeFalse
+        $ask.handoff.kind | Should -Be 'route'
+        $ask.handoff.where | Should -Be 'Metra'
+        $ask.message | Should -Match 'Ask engine unavailable'
+        $ask.message | Should -Not -Match 'Hello - Metra here'
+        $ask.message | Should -Not -Match 'Routing preview'
+        $ask.message | Should -Not -Match 'Bing-Review'
+        $ask.capability.available | Should -BeFalse
+    }
+
+    It 'never uses greeting theater on the Ask path' {
+        $ask = Get-MetraDeskAskResult -Prompt 'Hello Metra'
+        $ask.handoff.kind | Should -Be 'route'
+        $ask.message | Should -Not -Match 'Hello - Metra here'
+        $ask.message | Should -Not -Match 'Local assistant is next'
+        $ask.message | Should -Not -Match 'Routing preview for'
+    }
+
+    It 'strips Metra Model disclosure chrome from Ask answers' {
+        InModuleScope Metra {
+            $raw = @"
+**Metra** · Model: Composer · language model · Cursor
+
+Hey - yes, from the Ops desk things look fine.
+"@
+            $clean = Remove-MetraAskUiChrome -Message $raw
+            $clean | Should -Not -Match 'Model:'
+            $clean | Should -Match 'Ops desk things look fine'
+        }
+    }
+
+    It 'exposes Ask capability on the desk payload' {
+        $payload = Get-MetraDeskPayload
+        $payload.ask | Should -Not -BeNullOrEmpty
+        @($payload.ask.PSObject.Properties.Name) | Should -Contain 'enabled'
+        @($payload.ask.PSObject.Properties.Name) | Should -Contain 'available'
+        @($payload.ask.PSObject.Properties.Name) | Should -Contain 'engine'
+    }
+
+    It 'reads ask settings with capability discovery helpers' {
+        $settings = Get-MetraAskSettings
+        $settings.PSObject.Properties.Name | Should -Contain 'enabled'
+        $settings.PSObject.Properties.Name | Should -Contain 'engine'
+        $cap = Get-MetraAskCapability
+        $cap.PSObject.Properties.Name | Should -Contain 'reason'
+        $cap.PSObject.Properties.Name | Should -Contain 'selected'
+    }
+
+    It 'keeps Metra as home until a stronger route wins' {
+        $hello = Get-MetraRoutingAmbiguity -Query 'Hello Metra'
+        $hello.Primary.Name | Should -Be 'Metra'
+
+        $weak = Get-MetraRoutingAmbiguity -Query 'zzqx-home-default-check'
+        $weak.Primary.Name | Should -Be 'Metra'
+
+        $ticket = Get-MetraRoutingAmbiguity -Query 'ticket disk alert'
+        $ticket.Primary.Name | Should -BeIn @('TicketTracker', 'Solarwinds')
+    }
+
+    It 'does not let stop-word substrings steal IWUDATA routes' {
+        $amb = Get-MetraRoutingAmbiguity -Query 'Try to find what needs to be fixed in the job or sql components in the IWUDATA failure today.'
+        $amb.Primary.Name | Should -BeIn @('IWUDATA-SQL', 'IWUDATA-Automation', 'Datamart')
+        $amb.Primary.Name | Should -Not -Be 'Trivia'
+
+        InModuleScope Metra {
+            $q = 'Try to find what needs to be fixed in the job or sql components in the IWUDATA failure today.'
+            $tokens = @(Get-MetraQueryTokens -Query $q)
+            $tokens | Should -Contain 'iwudata'
+            $tokens | Should -Not -Contain 'the'
+            $tokens | Should -Not -Contain 'to'
+            $tokens | Should -Not -Contain 'or'
+            $tokens | Should -Not -Contain 'in'
+
+            $scored = @(Get-MetraScoredRoutingProjects -Query $q -Limit 10)
+            $trivia = $scored | Where-Object { $_.Name -eq 'Trivia' } | Select-Object -First 1
+            if ($trivia) {
+                [int]$trivia.Score | Should -BeLessThan 3
+            }
+        }
+    }
+
+    It 'revives a dead Ask sidecar on the Ask path' {
+        $source = Get-Content -LiteralPath (Join-Path (Get-MetraRoot) 'scripts\private\Snapshot.ps1') -Raw
+        # Ops owns Ask - a sidecar that dies mid-session must not stay down until desk restart.
+        $source | Should -Match 'Start-MetraAskEngine -MetraRoot \$MetraRoot'
+        # Only retry when health says down, so a slow prompt is never re-run.
+        $source | Should -Match 'Test-MetraAskEngineHealth -MetraRoot \$MetraRoot -TimeoutSec 2'
+    }
+
+    It 'strips echoed Where/What handoff chrome from Ask answers' {
+        InModuleScope Metra {
+            $raw = @"
+Fix Get-EllucianWebService XML parse first.
+
+Where
+Trivia
+What
+Open Trivia and follow that project's AGENTS.md.
+Next
+Stay in Trivia.
+Labeled preview - authoritative Why Here remains routing -Query / ctx -Query.
+"@
+            $clean = Remove-MetraAskUiChrome -Message $raw
+            $clean | Should -Match 'Get-EllucianWebService'
+            $clean | Should -Not -Match '(?m)^Where$'
+            $clean | Should -Not -Match 'Trivia'
+            $clean | Should -Not -Match 'Labeled preview'
+        }
+    }
+}
+
+Describe 'Metra Ops host' {
+    It 'writes and reads ops-host-state.json' {
+        InModuleScope Metra {
+            # Sandbox LOCALAPPDATA so tests never disturb the operator's live tray state.
+            $realLocalAppData = $env:LOCALAPPDATA
+            $env:LOCALAPPDATA = Join-Path ([IO.Path]::GetTempPath()) ("metra-host-" + [guid]::NewGuid().ToString('n'))
+            try {
+                Write-MetraOpsHostState -Status 'running' -OpsPort 7380 -RestartCount 0 -StartedAt '2026-08-01T00:00:00Z'
+                $state = Get-MetraOpsHostState
+                $state | Should -Not -BeNullOrEmpty
+                $state.status | Should -Be 'running'
+                $state.opsPort | Should -Be 7380
+                Write-MetraOpsHostState -Status 'stopped' -OpsPort 7380 -RestartCount 1 -StartedAt '2026-08-01T00:00:00Z'
+                $stopped = Get-MetraOpsHostState
+                $stopped.status | Should -Be 'stopped'
+                $stopped.restartCount | Should -Be 1
+            }
+            finally {
+                Remove-Item -LiteralPath $env:LOCALAPPDATA -Recurse -Force -ErrorAction SilentlyContinue
+                $env:LOCALAPPDATA = $realLocalAppData
+            }
+        }
+    }
+
+    It 'does not start Ask from the host module source' {
+        # Ownership: Host -> Ops -> Ask. Tray must not call Ask start helpers.
+        $source = Get-Content -LiteralPath (Join-Path (Get-MetraRoot) 'scripts\private\OpsHost.ps1') -Raw
+        ($source -match '(?m)^\s*Start-MetraAskEngine\b') | Should -BeFalse
+    }
+
+    It 'ships tray and console Start Menu entry points' {
+        Test-Path -LiteralPath (Join-Path (Get-MetraRoot) 'Metra-Ops.cmd') | Should -BeTrue
+        Test-Path -LiteralPath (Join-Path (Get-MetraRoot) 'Metra-Ops-Console.cmd') | Should -BeTrue
+        Test-Path -LiteralPath (Join-Path (Get-MetraRoot) 'scripts\bootstrap\Start-MetraOpsHost.ps1') | Should -BeTrue
+        Test-Path -LiteralPath (Join-Path (Get-MetraRoot) 'docs\assets\metra.ico') | Should -BeTrue
+        $iss = Get-Content -LiteralPath (Join-Path (Get-MetraRoot) 'packaging\inno\Metra.iss') -Raw
+        $iss | Should -Match 'Metra-Ops\.cmd'
+        $iss | Should -Match 'Metra-Ops-Console\.cmd'
+        $iss | Should -Match 'docs\\assets\\metra\.ico'
+    }
+
+    It 'loads the Metra brand tray icon' {
+        Add-Type -AssemblyName System.Drawing
+        InModuleScope Metra {
+            $path = Get-MetraOpsHostIconPath
+            $path | Should -Not -BeNullOrEmpty
+            $icon = Get-MetraOpsHostNotifyIcon
+            try {
+                $icon | Should -Not -BeNullOrEmpty
+                $icon.Width | Should -BeGreaterThan 0
+            }
+            finally {
+                if ($icon) { $icon.Dispose() }
+            }
+        }
+    }
+
+    It 'installs Start Menu shortcuts with the Metra icon' {
+        $result = Install-MetraOpsStartMenuShortcuts
+        $opsLink = Join-Path $result.Folder 'Metra Ops.lnk'
+        Test-Path -LiteralPath $opsLink | Should -BeTrue
+        $result.IconPath | Should -Not -BeNullOrEmpty
+        $wsh = New-Object -ComObject WScript.Shell
+        $shortcut = $wsh.CreateShortcut($opsLink)
+        $shortcut.IconLocation | Should -Match 'metra\.ico'
+        $shortcut.TargetPath | Should -Match 'Metra-Ops\.cmd'
+    }
+
+    It 'Stop-MetraOpsHost is safe when nothing is running' {
+        { Stop-MetraOpsHost -Port 7409 } | Should -Not -Throw
+    }
+
+    It 'leaves a tray host supervising another port alone' {
+        InModuleScope Metra {
+            $realLocalAppData = $env:LOCALAPPDATA
+            $env:LOCALAPPDATA = Join-Path ([IO.Path]::GetTempPath()) ("metra-host-" + [guid]::NewGuid().ToString('n'))
+            try {
+                $pidFile = Get-MetraOpsHostPidFile
+                Write-MetraOpsHostState -Status 'running' -OpsPort 7380 -RestartCount 0 -StartedAt ([datetime]::UtcNow.ToString('o'))
+                Set-Content -LiteralPath $pidFile -Value $PID -Encoding ASCII
+                Stop-MetraOpsHost -Port 7409
+                Test-Path -LiteralPath $pidFile | Should -BeTrue
+                (Get-MetraOpsHostState).status | Should -Be 'running'
+            }
+            finally {
+                Remove-Item -LiteralPath $env:LOCALAPPDATA -Recurse -Force -ErrorAction SilentlyContinue
+                $env:LOCALAPPDATA = $realLocalAppData
+            }
+        }
+    }
+
+    It 'gives the tray a recovery path when the desk is down' {
+        $source = Get-Content -LiteralPath (Join-Path (Get-MetraRoot) 'scripts\private\OpsHost.ps1') -Raw
+        # Open must revive a dead desk instead of opening a browser at a closed port.
+        $source | Should -Match 'Start-MetraOpsDeskIfDown'
+        $source | Should -Match "restartItem\.Text = 'Restart desk'"
+        # Healthy poll refreshes the one-restart budget so a later crash can still recover.
+        $source | Should -Match '\$script:MetraOpsRestartUsed = \$false'
+    }
+
+    It 'treats a live desk process as alive without an HTTP probe' {
+        InModuleScope Metra {
+            $realLocalAppData = $env:LOCALAPPDATA
+            $env:LOCALAPPDATA = Join-Path ([IO.Path]::GetTempPath()) ("metra-host-" + [guid]::NewGuid().ToString('n'))
+            try {
+                # Port 7408 has no desk: current process id stands in for a busy Ops child.
+                Set-Content -LiteralPath (Get-MetraOpsPidFile -Port 7408) -Value $PID -Encoding ASCII
+                Get-MetraOpsChildProcessId -Port 7408 | Should -Be $PID
+                Test-MetraOpsDeskAlive -Port 7408 -TimeoutSec 1 | Should -BeTrue
+                $ensure = Start-MetraOpsDeskIfDown -Port 7408
+                $ensure.Ok | Should -BeTrue
+                $ensure.Started | Should -BeFalse
+            }
+            finally {
+                Remove-Item -LiteralPath $env:LOCALAPPDATA -Recurse -Force -ErrorAction SilentlyContinue
+                $env:LOCALAPPDATA = $realLocalAppData
+            }
+        }
+    }
+
+    It 'never kills a busy Ops child on a failed health probe' {
+        $source = Get-Content -LiteralPath (Join-Path (Get-MetraRoot) 'scripts\private\OpsHost.ps1') -Raw
+        # A long Ask blocks the accept loop; supervision must not stop the child for that.
+        $source | Should -Not -Match 'Stop-Process -Id \$script:MetraOpsChildPid'
+        $source | Should -Match 'Get-MetraOpsChildProcessId -Port \$script:MetraOpsHostPort'
+    }
+}
+
+
+Describe 'Snapshot git detection' {
+    It 'reports counts from a nested repo when the project root is not one' {
+        InModuleScope Metra {
+            $root = Join-Path ([IO.Path]::GetTempPath()) ("metra-git-" + [guid]::NewGuid().ToString('n'))
+            $nested = Join-Path $root 'IWU.Sample'
+            New-Item -ItemType Directory -Path $nested -Force | Out-Null
+            try {
+                Push-Location $nested
+                git init --quiet 2>$null
+                git config user.email 'test@example.com' 2>$null
+                git config user.name 'Metra Test' 2>$null
+                Set-Content -LiteralPath (Join-Path $nested 'file.txt') -Value 'change' -Encoding ASCII
+                Pop-Location
+
+                $git = Get-MetraProjectGitCounts -Path $root
+                $git.isGit | Should -BeTrue
+                $git.repoPath | Should -Be 'IWU.Sample'
+                $git.dirty | Should -BeGreaterThan 0
+                $git.summary | Should -Match 'IWU\.Sample'
+            }
+            finally {
+                Remove-Item -LiteralPath $root -Recurse -Force -ErrorAction SilentlyContinue
+            }
+        }
+    }
+
+    It 'ignores nested repos when the probe is disabled' {
+        InModuleScope Metra {
+            $root = Join-Path ([IO.Path]::GetTempPath()) ("metra-git-" + [guid]::NewGuid().ToString('n'))
+            $nested = Join-Path $root 'Module'
+            New-Item -ItemType Directory -Path $nested -Force | Out-Null
+            try {
+                Push-Location $nested
+                git init --quiet 2>$null
+                Pop-Location
+
+                $git = Get-MetraProjectGitCounts -Path $root -NoProbe
+                $git.isGit | Should -BeFalse
+                $git.summary | Should -Be 'n/a'
+            }
+            finally {
+                Remove-Item -LiteralPath $root -Recurse -Force -ErrorAction SilentlyContinue
+            }
+        }
+    }
+}

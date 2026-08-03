@@ -18,6 +18,43 @@ Entry shape:
 
 ---
 
+## 2026-08-01 - Ops host is a desktop app before a service
+
+- Decision: Metra behaves like a **desktop application** before it behaves like a **Windows Service**. The normal front door is a **user-session tray supervisor** (`.\metra.ps1 host` / Start Menu Metra Ops) that keeps the HTML Ops desk alive without a console window. Ownership chain is mandatory: **Host -> Ops -> Ask** - the tray starts and stops only the Ops child; Ops alone starts and stops the Ask engine. Second Start Menu click opens the browser when the desk is already up (no second instance, no bind conflict). Optional "Start with Windows" lives in the tray menu only - no installer checkbox or SCM registration in this bite. Console `.\metra.ps1 ops` remains the operator/debug escape hatch. A true Windows Service, Tailscale/non-loopback bind, and installer-bundled Node stay deferred until installer packaging, AI engines, and user-state ownership are fully settled. Host debug state lives in `%LOCALAPPDATA%\Metra\ops-host-state.json`.
+- Why: Closing the browser (or the PowerShell console) previously killed Metra and made it feel like a script. User-session hosting keeps user secrets, user state, and tray identity aligned; jumping to SCM early forces account and secret questions before Ask packaging is ready.
+- See: `scripts/private/OpsHost.ps1`, `scripts/bootstrap/Start-MetraOpsHost.ps1`, `Metra-Ops.cmd`, `.\metra.ps1 host`, [Future-Development.local.md](Future-Development.local.md)
+
+## 2026-08-01 - Ask engine (Metra gets a voice)
+
+- Decision: Architectural center of gravity for the regular-user arc moves from routing polish to **user experience**. HTML Ops established the desk ("where do I click?"); Ask establishes the **voice** ("what do I do?"). Target flow: Open Metra -> Ask Metra -> route correctly -> answer -> optional open Cursor to build. **Cursor is one engine under Engine**, not the product - users say "I asked Metra," not "I opened Cursor." Ask is AI-by-default when a selected engine is available, behind a replaceable contract (`GET /health`, `POST /v1/complete` on loopback). **Route-first is mandatory** (Ask never bypasses routing; differentiator is start-from-the-right-place then answer). **HTML Ops is answer-only**; Cursor IDE is for builds - no half-editing from the browser. Capability discovery distinguishes not-runnable / available / selected via `ask.enabled` + `ask.engine` in config. Degraded Ask is brutally honest (no greeting regex theater, no routing preview dressed as chat). v1 Cursor engine is a Node sidecar (`engines/cursor`, `@cursor/sdk` local) auto-started with `.\metra.ps1 ops` when selected and Node + API key exist - **operator-tier temporary**. Shipping Node + sidecar in the installer for non-technical users is explicit follow-on debt, not forgotten. Ollama/local model is a later engine behind the same contract. Classify stays routing-only. Inside-Cursor Plan-mode build handoff is deferred.
+- Why: Ask shell without a model made the chat UI imply a conversation partner it could not be. Replaceable engines, route-first, and answer-only boundaries age better than wrapping Metra around Cursor.
+- See: `engines/cursor/`, `scripts/private/AskEngine.ps1`, `scripts/private/Snapshot.ps1`, `scripts/private/OpsServer.ps1`, `metra.config.example.json`, `.\metra.ps1 ops`, [Future-Development.local.md](Future-Development.local.md)
+
+## 2026-08-01 - Ops desk stops on Ctrl+C, not on the host
+
+- Decision: The Ops accept loop must never register a scriptblock `ConsoleCancelEventHandler`. Interrupt handling relies on PowerShell's own Ctrl+C: poll `BeginGetContext` with timed waits so a pipeline stop lands between statements, then release the listener in `finally`. A desk records its process id under `%LOCALAPPDATA%\Metra\ops-<port>.pid`; `.\metra.ps1 ops -Stop [-Port n]` frees a port, falling back to the HTTP.sys request-queue owner when the pid file is gone. Launching `ops` against a port that already answers opens the running desk instead of throwing.
+- Why: `[System.ConsoleCancelEventHandler] { ... }` is invoked on the console control thread, where the scriptblock cannot run while the runspace sits in the accept loop; the resulting failure killed the whole terminal and left an orphaned process holding port 7380, which then blocked every restart with a bind conflict. Related: `Import-PowerShellDataFile` does not reliably resolve from module scope under Windows PowerShell, so `/api/meta` reads the module version instead; the bootstrap must splat a hashtable, since array splatting binds positionally and silently dropped `-Port` and every switch.
+- See: `scripts/private/OpsServer.ps1`, `scripts/bootstrap/Start-MetraOps.ps1`, `.\metra.ps1 ops -Stop`
+
+## 2026-08-01 - Metra is home destination
+
+- Decision: Treat **Metra** (this orchestration checkout) as a real **destination project** and the **default / home route** until another project wins confidently. Shared registry entry `Metra` with `routing.homeDestination` / `defaultEntry` = `Metra`. Sibling folder scans still skip `_meta` / `_metra` / `Metra` folder names, but `Get-MetraProjects` injects Name=`Metra` mapped to `Get-MetraRoot()`. Routing / desk Ask / Classify stay on Metra when no match or only weak incidental scores (`score < 2`). Ticket/helpdesk work still starts in TicketTracker when ticket triggers score. Metra-Bing-Review remains a local review checkout and must not steal bare "metra" asks.
+- Why: HTML Ops "Hello Metra" was routing to Metra-Bing-Review because Metra itself was not a destination. Users need a place to stand on the product until work clearly belongs elsewhere.
+- See: `projects.json`, `scripts/private/Projects.ps1`, `scripts/private/Routing.ps1`, `scripts/private/Snapshot.ps1`, `.\metra.ps1 ops`, `.\metra.ps1 routing -Query`
+
+## 2026-08-01 - HTML Ops primary desk (home screen)
+
+- Decision: For non-technical users, the primary Metra surface is the **installer + HTML Ops desk**. **Cursor (including the Ops canvas) is an advanced IDE interface**, not the default. HTML Ops defaults to **Route-first General** (Ask, one next-attention item, Classify/Handoff). Additional tabs (Projects, Recent, Health) are **opt-in via Settings (Advanced desk)**. Stack: **Vite + React face** under `ops/` with a **PowerShell localhost API** brain; ship prebuilt `ops/dist` so end users need **no Node** for the desk face. **One brain, many faces** - a shared desk/snapshot payload feeds the HTML desk and the Cursor canvas (do not invent separate Canvas/Desk/Installer payload builders). Health on the desk is **visibility only**: missing AGENTS, git not checked / unavailable, snapshot stale - no scores, grades, or percent. Ask is the voice path: when an Ask engine is selected and available it answers after routing; when not, Ask degrades honestly (see Ask engine decision). Durable portfolio state stays CLI/chat - the desk is a retrieval surface.
+- Why: Deven-class use showed the pain is needing a place to stand after install, not more Foundation routing/coverage polish. People tolerate weak features; they do not tolerate not knowing where to click. Operator-shaped multi-tab homes push non-technical users away. Layers for prioritization:
+
+```text
+Foundation   Done enough   (routing, ctx, decisions, coverage, topology)
+Product      Shipped       (installer, website, home folder, setup, upgrades)
+Experience   Primary focus (HTML desk, Ask, project activation, local AI)
+```
+
+- See: `ops/`, `scripts/private/OpsServer.ps1`, `.\metra.ps1 ops`, `scripts/private/Snapshot.ps1`, [Brand.md](Brand.md), `docs/Future-Development.local.md`
+
 ## 2026-08-01 - Plain-language landing (GitHub Pages)
 
 - Decision: Ship a **separate** plain-language landing under `site/` on GitHub Pages (`https://jaxnoth.github.io/Metra/`), not by rewriting the operator README. Content: problem/value, Windows installer CTA, Documents home folder, one short PowerShell glossary - no CLI/registry dump. README gets a short **Who this page is for** pointer plus Get Metra link. Treat the Pages URL as a portable stop; a fuller marketing host may replace it later without changing product architecture.
@@ -301,6 +338,13 @@ Entry shape:
 - Decision: Coworker demo leads with Metra Ops Route (Needs attention / Resolve this / Standing routes), then the routing CLI table, then Trivia chat + professional-sink draft. Rename `Demo-5min.md` to `Demo.md` (recommended ~8 min; keep a strict 5-minute cut). Do not demo Canva/MCP, Decision Registry, OCC, personal roots, or live ticket posts in the default talk.
 - Why: The Ops board is the product face for wayfinding; a chat-first script under-taught the desk and over-taught an AI primer.
 - See: `docs/Demo.md`, `docs/Brand.md`, `docs/Integrations.md`
+- Superseded: 2026-08-03 pitch-first rewrite (middle path story before live clicks).
+
+## 2026-08-03 - Coworker talk is pitch-first (middle path), not a feature demo
+
+- Decision: `docs/Demo.md` is a sales pitch for coworkers. Lead with the balancing act - neither carte blanche AI nor chatbot-only - then optional Ops Ask / routing proof. Live clicks are support, not the spine. Keep non-tech language; drop CLI-heavy face tours as the default path.
+- Why: Feature-timed demos were hard to deliver and under-sold what is unique: Metra steers AI to one project, keeps chat useful, and keeps durable writes professional and on request.
+- See: `docs/Demo.md`, `docs/Brand.md`
 
 ## 2026-07-31 - MCP tool bindings are documented pointers, never tracked credentials
 
@@ -313,3 +357,15 @@ Entry shape:
 - Decision: `metra.config.json` `workspace.exclude` drops named projects from the generated `Metra.code-workspace` while leaving them in the routing registry. Document the key in Customizing-Metra; ship an empty array in `metra.config.example.json`.
 - Why: Frozen review checkouts (for example Metra-Bing-Review) need to stay discoverable without loading a stale `AGENTS.md` as an always-applied Cursor rule in the live workspace.
 - See: `scripts/public/Workspace.ps1`, `docs/Customizing-Metra.md`, `metra.config.example.json`
+
+## 2026-08-01 - Ops host supervises by process liveness, not HTTP probe
+
+- Decision: The tray host treats the Ops desk as alive whenever its recorded child process is running. An HTTP probe only confirms a desk when no child process exists, and the host never stops a live child on a failed probe. One restart per failure episode still applies once the child has exited.
+- Why: The Ops accept loop is single-threaded, so a long Ask cannot answer `/api/meta`. Probe-only supervision read a busy desk as a dead one and killed the request in flight, which surfaced as "Failed to fetch" in the browser.
+- See: `scripts/private/OpsHost.ps1`, `tests/Metra.Tests.ps1`
+
+## 2026-08-01 - Routing scores whole words; Ask stays terse without handoff chrome
+
+- Decision: Query token scoring matches whole words in name/triggers/purpose (not substrings) and drops English stop words. Ask answers omit the Classify handoff card; the Ask engine prompt requires verdict-first brevity and forbids reprinting Where/What/Why/Next.
+- Why: Substring hits on "to"/"in"/"the"/"or" inside Trivia purpose text beat real IWUDATA triggers, so Ask opened the wrong cwd and the desk showed a Trivia routing card under a warehouse answer.
+- See: `scripts/private/Routing.ps1`, `engines/cursor/server.mjs`, `ops/src/App.tsx`

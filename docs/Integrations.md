@@ -115,5 +115,5 @@ Claude Code, Codex, Copilot, and similar tools are **not** generated in this pas
 - [Search-Echo.md](Search-Echo.md) - multi-root Grep echo and path scoping
 - [Decisions.md](Decisions.md) - append-only portfolio decisions
 - [Routing-Scenarios.md](Routing-Scenarios.md) - routing / persona smoke + `verify` fixtures
-- [Demo.md](Demo.md) - coworker walkthrough (Ops board face-first)
+- [Demo.md](Demo.md) - coworker pitch (middle path + optional live proof)
 - [AGENTS.md](../AGENTS.md) - short agent entry

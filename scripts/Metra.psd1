@@ -31,6 +31,9 @@
         'Get-MetraProp'
         'Get-MetraRoots'
         'Get-MetraProjects'
+        'Get-MetraOrchestrationProject'
+        'Get-MetraHomeDestinationName'
+        'Get-MetraRoutingAmbiguity'
         'Get-MetraStatus'
         'Update-MetraProjects'
         'Get-RecentMetraProjects'
@@ -51,7 +54,29 @@
         'Invoke-MetraDecisionRegistryCommand',
         'Show-MetraRoutingCli',
         'Show-MetraKnowledgeCoverageCli',
-        'Show-MetraUnblockCli'
+        'Show-MetraUnblockCli',
+        'Start-MetraOpsServer',
+        'Stop-MetraOpsServer',
+        'Test-MetraOpsDeskResponding',
+        'Start-MetraOpsHost',
+        'Stop-MetraOpsHost',
+        'Get-MetraOpsHostState',
+        'Test-MetraOpsHostRunning',
+        'Set-MetraOpsHostStartup',
+        'Install-MetraOpsStartMenuShortcuts',
+        'Start-MetraOpsDeskIfDown',
+        'Test-MetraOpsDeskAlive',
+        'Get-MetraDeskPayload',
+        'Get-MetraDeskHandoff',
+        'Get-MetraDeskAskResult',
+        'Test-MetraDeskGreeting',
+        'Get-MetraAskCapability',
+        'Get-MetraAskSettings',
+        'Invoke-MetraAskEngine',
+        'Start-MetraAskEngine',
+        'Stop-MetraAskEngine',
+        'Get-MetraDeskPreferences',
+        'Set-MetraDeskPreferences'
     )
     CmdletsToExport   = @()
     VariablesToExport = @()
