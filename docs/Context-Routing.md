@@ -137,7 +137,7 @@ During ticket triage, search them for clues (bounded summaries only):
 Canonical durable memory remains:
 - TicketTracker `note` (prefer `-Tags chat` and cite `[short title](chat-uuid)`)
 - `solutions/` write-ups for recurring patterns
-- `AI Recommendation:` on the ticket description when analysis supports it
+- `Metra AI Recommendation:` on the ticket description when analysis supports it
 - For Metra portfolio policy (persona, brand, hooks): [Decisions.md](Decisions.md)
 
 Do not dump full JSONL transcripts into agent context unless the user opens a specific chat.
