@@ -18,6 +18,81 @@ Entry shape:
 
 ---
 
+## 2026-08-05 - Route something (portfolio landing zone)
+
+- Decision: Route Something is Metra's landing zone. It accepts work in whatever form it arrives (text, clipboard paste, path refs, file upload to local quarantine) and recommends a durable home without creating one automatically. Classify / Handoff is retired from the Ops UI; `Get-MetraDeskHandoff` remains for Ask internals. Ask shows a quiet Where chip only when the route is weak or ambiguous, with optional "This belongs in…" corrections that create Decision Registry candidates and place memory. Recommendation cards teach with Recommended home, Why, What happens there, and Your move (Copy / Keep in view / affirm for learning). Keep in view maps to Attention Hold. Place learning stores confirmations/corrections in `docs/ops-place.local.json` and enriches Why on later routes. When `bindTailscale` is on, Ops orchestrates Tailscale Serve so the share URL is HTTPS (secure context for phone clipboard); Serve is not required to run Metra; Funnel stays out of scope. Quarantine uploads are Ask-class reach; durable homes stay Host-gated.
+- Why: Operators shove ticket text, screenshots, and notes at Metra from phone-over-Tailscale - Classify was builder language, text-only intake felt fake, and plain HTTP blocked clipboard APIs.
+- See: `scripts/private/Place.ps1`, `scripts/private/OpsServe.ps1`, `scripts/private/OpsBinding.ps1`, Ops Route panel, [ops/README.md](../ops/README.md), [SECURITY.md](../SECURITY.md)
+
+## 2026-08-05 - Attention card copy is plain by default
+
+- Decision: Next attention headlines, whyNext, resolveCopy, and doneWhen use plain language for every desk mode. Advanced desk reveals technical detail (original content, command, path, type/confidence meta). General mode stays action-first: what is wrong, why now, what to do.
+- Why: Default Ops copy assumed CLI/git fluency and buried the next step under enums and meta tags - the desk is for operators who may not be technical.
+- See: `Get-MetraAttentionPlainSummary`, `Get-MetraAttentionWhyNext`, Ops AttentionCard, [ops/README.md](../ops/README.md)
+
+## 2026-08-05 - Open in editor is a desk-process launch, not a browser trick
+
+- Decision: `POST /api/open` launches the operator's editor from the desk process. Preference `editorCommand` accepts `auto` (Cursor, then VS Code, then Windows default), `cursor`, `code`, `system`, or a full executable path; default is `auto`. Path must be an existing folder inside a configured root or the Metra home. Caller must be the operator machine (loopback or one of its own addresses) or present `X-Metra-Local-Session`. UI order stays bridge, then `/api/open`, then clipboard (with an `execCommand` fallback for plain-http origins).
+- Why: Clipboard-only degrade was the whole feature in a browser, and the async clipboard does not exist on non-secure share URLs, so Open in editor silently did nothing. Same-machine addresses count as local because MagicDNS is the normal desk URL here; a genuinely remote peer still cannot spawn processes.
+- See: `scripts/private/OpsOpen.ps1`, `scripts/private/OpsServer.ps1` (`/api/open`), [ops/README.md](../ops/README.md), [SECURITY.md](../SECURITY.md)
+
+## 2026-08-05 - Attention memory (continuity, not work management)
+
+- Decision: Attention memory exists to preserve continuity of observations and operator intentions. It is not a work management system and does not make claims about completion status. Observations (`active` / sticky `dismissed` / `autoClosed`) are separate from operator Holds (temporary parking). Quick scans never close attention; items auto-close only when a full scan covers that kind and confirms absence. Sticky dismiss stays until `evidenceSignature` changes. Confidence (`fresh` / `likelyStale` / `needsRevalidation`) affects ranking so stale ghosts do not own the top slot. `whyNext` is first-class. Hold quietly nudges durable homes (TicketTracker, Decision Registry, OCC, Future Development). Store: `docs/ops-attention.local.json` (gitignored).
+- Why: Quick refresh was wiping Next attention because the desk derived a single ephemeral item and skipped git/verify on quick snapshots - Metra forgot what it meant to say. Treating dismiss as "done" would claim knowledge Metra does not have.
+- See: `scripts/private/AttentionMemory.ps1`, `ConvertTo-MetraDeskPayload`, Ops Next attention panel, [ops/README.md](../ops/README.md)
+
+## 2026-08-05 - Tailscale MagicDNS share URL
+
+- Decision: When `bindTailscale` is on, Ops listens on loopback, Tailscale IPv4, and MagicDNS (from `tailscale status --json` Self.DNSName) when available. ShareUrl / BrowserUrl prefer MagicDNS; the IP remains a listener. Local `http://metra/` stays attached when hosts + URL ACL are already present.
+- Why: IP-only share URLs are hard to remember; a reserved MagicDNS URL ACL without a matching HttpListener prefix returns 503.
+- See: `scripts/private/OpsBinding.ps1` (`Get-MetraOpsTailscaleDnsName`, `Get-MetraOpsTailscaleBinding`), [SECURITY.md](../SECURITY.md)
+
+## 2026-08-04 - Secure Ops Slice 7/8: webview bridge + Tailscale reach
+
+- Decision: Ship the VS Code-family Metra Ops webview bridge under `integrations/vscode-metra-ops` with page contract `requestProposalApply` / `askInChat` / `openWorkspacePath` / `copyText` and host replies `surfaceReady` / `applyStatus`. Tab titles use `{Project}: subject`. Browser without bridge keeps HTTP + clipboard degrade. Opt-in `bindTailscale` prefs add dual loopback+Tailscale HttpListener prefixes for reach (view/ask). Host issues `%LOCALAPPDATA%\Metra\ops-local-session.token`; non-loopback propose/`request-apply` require `X-Metra-Local-Session`. Loopback-only `GET /api/local-session` may mint/read the token for the operator machine. Tray Apply once still gates every disk write. Tailscale Serve is the supported HTTPS front when bindTailscale is on (orchestrated at Ops start); Metra still runs without Serve on loopback. Funnel stays out of product scope.
+- Why: Slice 6 Resolve UI needed an IDE surface and a real non-loopback gate before operators test phone/coworker share; stubbed session accept without Host issue was incomplete. Later Route something made HTTPS part of phone clipboard reach.
+- See: `ops/src/bridge.ts`, `integrations/vscode-metra-ops/`, `scripts/private/OpsSession.ps1`, `scripts/private/OpsBinding.ps1`, `scripts/private/OpsServe.ps1`, [SECURITY.md](../SECURITY.md), [Integrations.md](Integrations.md)
+
+## 2026-08-04 - Routing precedence; no product-name trigger laundry list
+
+- Decision: New-stop routing precedence is: existing TicketTracker thread (lane continuity) > 6-8 digit ticket id > ticket/helpdesk vocabulary > TicketTracker solutions-index keywords > technical project score > Metra home (ask once). Do not accumulate product, app, or vendor names as TicketTracker `projects.json` triggers - registry triggers stay workflow vocabulary (`ticket`, `isupport`, `helpdesk`, `incident`, …). Recurring product keywords live in TicketTracker `solutions/README.md` and reinforce CLI routing when present. Remove Datamart from TicketTracker `related` (reference source, not an operational next hop). Always-on `project-routing.mdc` owns keep-established-primary immediately after primary selection. Portfolio policy; refuse OCC promote.
+- Why: Agents still loaded handoff-eager always-on routing while symptom-only and bare ticket-id queries fell to Metra score 0; stuffing every helpdesk product into registry triggers does not scale and fights technical-project scoring; Datamart on Related invited the wrong investigate hop.
+- See: `.cursor/rules/project-routing.mdc`, `scripts/private/Routing.ps1` (`Get-MetraRoutingAmbiguity`), TicketTracker `solutions/README.md`, `docs/Routing-Scenarios.md`, `projects.json` (TicketTracker related)
+
+## 2026-08-04 - In-thread sticky primary; ticket-ops vs investigate
+
+- Decision: Once a chat establishes a primary stop (especially TicketTracker via ticket id or helpdesk triggers), keep that primary for subsequent turns unless the operator names another project, asks for a technical deep dive, or the current ask clearly requires a different stop. Do not re-route from symptom words alone on every turn. For ticket threads, classify each follow-up: **ticket-ops** (status, email draft, `post` / `recommend` / `resolve`, Waiting on Customer, correspondence) stay in TicketTracker; **technical investigate** (explicit dig into a system, or evidence that ticket-ops cannot finish) may open one technical project, then return outcomes to TicketTracker for durable writes. Warehouse / Datamart-style surfaces are read/reference for agents - not update destinations for ticket "fix/change" work. This is portfolio routing policy (Decisions + base persona + TicketTracker AGENTS); refuse OCC promote for it.
+- Why: Ticket chats that opened correctly on TicketTracker were re-interpreted mid-thread as product/domain work (RoutingTerms like thrive matching nothing, brief forcing early technical handoff, Datamart treated as a write stop). Operators treat a ticket-opened chat as a ticket thread; per-utterance handoff-eager routing burned time and skipped `post`/`resolve`.
+- See: `.cursor/rules/metra-persona.mdc`, `AGENTS.md` (Route first), `docs/Context-Routing.md`, TicketTracker `AGENTS.md`, Datamart `AGENTS.md`
+
+## 2026-08-04 - Secure Ops Propose-Confirm-Apply (Host owns disk writes)
+
+- Decision: Metra Ops may become the desk; the tray Host remains the hands. The browser never writes the workspace. Metra Ops proposes and previews. The tray Host is the only process that applies. Web-originated change requests are untrusted proposal objects until the user-session Host validates, confirms, applies, and audits them. Slice 3 owns what is legal; Slice 4 owns preview; Slice 5 owns truth. Proposals are a security boundary: after `contentHash` is calculated the canonical body is immutable (edits require a new id/hash/nonce); `schemaVersion` is required and the Host rejects unknown versions instead of partial-apply; status is `draft` -> `pendingApply` -> terminal `applied` | `rejected` | `expired`. Ops HTTP exposes create/preview/`request-apply`/status only - never an endpoint named `/apply`. Native Host confirmation uses Apply once (not browser-only confirm). Replace requires matching `previousHash`; no replace-if-changed. Reach and authority stay split: non-loopback may view/ask; proposal create and request-apply require a local Host session marker unless a later product decision loosens that. Large-scale refactors stay editor-first. Editor handoff is the first-class escape for open-ended or out-of-policy work.
+- Why: HTML Ops is replacing canvas as the regular-user desk. Without a write boundary locked before the UI is beloved, request-apply drifts into remote Invoke-Expression with buttons. Dual-pass validation and Host-only apply keep teacher/coworker reach useful without granting anonymous disk authority.
+- See: [SECURITY.md](../SECURITY.md), Cursor plan `attention_resolve_actions_bcb3e7aa`, [Future-Development.local.md](Future-Development.local.md) (Secure Ops scar)
+
+## 2026-08-04 - Self-doc refresh is a required step after route changes
+
+- Decision: `.\metra.ps1 selfdoc` regenerates standing route examples from the merged registry into the self-documentation canvas embed, `docs/Overview.md` markers, `docs/selfdoc-routes.json`, and the tracked canvas template. `Export-MetraSnapshot` / `.\metra.ps1 snapshot` also invokes selfdoc. After registry trigger, purpose, or project-row changes that should appear in the explain surface, operators and agents must run `selfdoc` (or snapshot) - do not hand-edit the generated route table or `SELFDOC_ROUTES` embed.
+- Why: Leadership asked for visual self-docs; those docs go stale the first time a route changes unless refresh is an explicit, repeatable product operation.
+- See: `scripts/private/SelfDocumentation.ps1`, `docs/Context-Routing.md`, `.\metra.ps1 selfdoc`
+
+## 2026-08-04 - Self-documentation is a Cursor canvas; Overview.md is the prose twin
+
+- Decision: Rename `docs/Demo.md` to `docs/Overview.md`. The visual primary for Metra self-documentation is the Cursor canvas `metra-self-documentation.canvas.tsx` (tracked template: `integrations/cursor/metra-self-documentation.canvas.tsx.template`). Pictures-first: route diagram, thin stack, two channels. Overview.md remains the sendable email/print twin. Ops Ask and the Ops board canvas stay separate UI leaders; this canvas is the explain surface, not the ops desk.
+- Why: Leadership feedback (Thomas) - technical questions are answered faster with pictures than more prose. Demo naming no longer matched a leave-behind or a self-doc site.
+- See: Cursor projects canvases path, `docs/Overview.md`, `integrations/cursor/metra-self-documentation.canvas.tsx.template`
+- Supersedes: 2026-08-04 "Demo.md is an audience leave-behind" (role moves to Overview + canvas)
+
+## 2026-08-04 - Demo.md is an audience leave-behind, not talk notes
+
+- Decision: `docs/Demo.md` is a standalone brief for colleagues and leadership after a walkthrough (or without one). Lead with middle path, what Metra is, vision/institutional fit (including growth paths and light campus posture contrast), how it works, and Q&A. No speaker stage directions. Live demo beats stay optional in chat or a separate presenter cut if needed later.
+- Why: The CIO/audience need something sendable. Talk-note framing ("say this slowly," "if faces look blank") does not travel well as email or handout.
+- See: `docs/Demo.md`, README / Brand / Customizing / Integrations pointers
+- Supersedes in part: 2026-08-03 "coworker talk is pitch-first" (story spine remains; document role is leave-behind)
+- **Superseded by:** 2026-08-04 Self-documentation canvas + Overview.md
+
 ## 2026-08-03 - Ops desk prefers http://metra/ when port 80 is free
 
 - Decision: Prefer a port-free Ops URL **`http://metra/`** when TCP port 80 is free and hosts + HTTP.sys URL ACL can be set for the current user. Persist the choice in `docs/ops-preferences.local.json` (`opsPort`, `browserHost`, `preferFriendlyUrl`). When port 80 is busy or elevation fails, fall back to **`http://127.0.0.1:7380/`** (safe default for every install). Interactive `.\metra.ps1 setup` asks once when port 80 is free; non-interactive setup auto-prefers friendly when free. Explicit CLI `-Port` still wins. HttpListener registers both `http://127.0.0.1:80/` and `http://metra:80/` so probes and the hostname URL work. Ask sidecar stays on 7381.
@@ -404,3 +479,9 @@ Experience   Primary focus (HTML desk, Ask, project activation, local AI)
 - Decision: Query token scoring matches whole words in name/triggers/purpose (not substrings) and drops English stop words. Ask answers omit the Classify handoff card; the Ask engine prompt requires verdict-first brevity and forbids reprinting Where/What/Why/Next.
 - Why: Substring hits on "to"/"in"/"the"/"or" inside Trivia purpose text beat real IWUDATA triggers, so Ask opened the wrong cwd and the desk showed a Trivia routing card under a warehouse answer.
 - See: `scripts/private/Routing.ps1`, `engines/cursor/server.mjs`, `ops/src/App.tsx`
+
+## 2026-08-04 - Datamart is reference-only; IWUDATA-SQL owns warehouse SQL
+
+- Decision: `Datamart` is a legacy reference tree only - do not edit or deploy from it. Drive warehouse SQL changes in `IWUDATA-SQL`. If an object is missing there, retrieve the live definition from SQL Server and check it into IWUDATA-SQL before changing.
+- Why: Operators were editing and deploying from the old Datamart checkout while IWUDATA-SQL is the intended working copy, which split source of truth and risked shipping stale scripts.
+- See: `Datamart/AGENTS.md`, `IWUDATA-SQL/AGENTS.md`, `projects.local.json`

@@ -124,7 +124,7 @@ CLI-only operators get full routing and context value without Cursor. Agents in 
 | Communication model | **Metra** persona - base + overlay + optional add-ons + learned contract (`profile`) |
 | Workspace file | `Metra.code-workspace` (legacy `Meta.code-workspace` still honored if configured) |
 
-Operator-facing brand kit (palette, motif, professional sink): [docs/Brand.md](docs/Brand.md). Coworker pitch (middle path + optional live proof): [docs/Demo.md](docs/Demo.md).
+Operator-facing brand kit (palette, motif, professional sink): [docs/Brand.md](docs/Brand.md). Audience overview / leave-behind (prose twin of the self-doc canvas): [docs/Overview.md](docs/Overview.md). Visual primary: Cursor canvas `metra-self-documentation` (template under `integrations/cursor/`).
 
 ## Quick start (CLI first)
 

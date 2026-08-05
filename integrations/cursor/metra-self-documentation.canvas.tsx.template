@@ -1,0 +1,703 @@
+import {
+  Callout,
+  Card,
+  CardBody,
+  CardHeader,
+  Code,
+  CollapsibleSection,
+  Divider,
+  Grid,
+  H1,
+  H2,
+  H3,
+  Pill,
+  Row,
+  Spacer,
+  Stack,
+  Stat,
+  Table,
+  Text,
+  computeDAGLayout,
+  useCanvasState,
+  useHostTheme,
+} from "cursor/canvas";
+
+// <metra-selfdoc-routes>
+type SelfDocRoute = { id: string; name: string; sampleAsk: string; purpose: string; triggers: string[] };
+type SelfDocRoutesPayload = { generatedAt: string; chosenId: string; diagram: SelfDocRoute[]; routes: SelfDocRoute[] };
+const SELFDOC_ROUTES: SelfDocRoutesPayload = {"generatedAt":"2026-08-05T14:27:58.4147013-04:00","chosenId":"tickettracker","diagram":[{"id":"tickettracker","name":"TicketTracker","sampleAsk":"ticket","purpose":"Local ticket assistant for iSupport and future helpdesk systems - sync, search, notes, recommendations.","triggers":["ticket","isupport","helpdesk","incident","work item"]},{"id":"solarwinds","name":"Solarwinds","sampleAsk":"solarwinds","purpose":"Orion platform-as-code - alerts, monitors, templates, dashboards, dependencies.","triggers":["solarwinds","orion","alert","sam","monitor"]},{"id":"trivia","name":"Trivia","sampleAsk":"trivia","purpose":"Fun Committee / IT get-together printables - trivia drafts, theme sheets, and word-search generators under C:\\Projects\\Trivia.","triggers":["trivia","word search","fun committee","it get together","printable trivia"]}],"routes":[{"id":"tickettracker","name":"TicketTracker","sampleAsk":"ticket","purpose":"Local ticket assistant for iSupport and future helpdesk systems - sync, search, notes, recommendations.","triggers":["ticket","isupport","helpdesk","incident","work item"]},{"id":"solarwinds","name":"Solarwinds","sampleAsk":"solarwinds","purpose":"Orion platform-as-code - alerts, monitors, templates, dashboards, dependencies.","triggers":["solarwinds","orion","alert","sam","monitor"]},{"id":"trivia","name":"Trivia","sampleAsk":"trivia","purpose":"Fun Committee / IT get-together printables - trivia drafts, theme sheets, and word-search generators under C:\\Projects\\Trivia.","triggers":["trivia","word search","fun committee","it get together","printable trivia"]},{"id":"colleague","name":"Colleague","sampleAsk":"colleague","purpose":"PowerShell module for Ellucian Colleague admin - WAGC, WAFM, PRQM, EDQM, listeners, sessions.","triggers":["colleague","ellucian","wagc","wafm","prqm"]},{"id":"iwudataautomation","name":"IWUDATA-Automation","sampleAsk":"iwudata automation","purpose":"PowerShell automation that populates IWUDATA warehouse databases.","triggers":["iwudata automation","warehouse load","run.ps1","etl","start-automation"]},{"id":"reporting","name":"Reporting","sampleAsk":"reporting","purpose":"Reporting assets, SSRS/related report work, and ops scripts.","triggers":["reporting","ssrs","report","rdl"]},{"id":"jitterbit","name":"Jitterbit","sampleAsk":"jitterbit","purpose":"Harmony Studio exports, private agents, and IWU.Jitterbit operation-log monitoring module.","triggers":["jitterbit","harmony","integration studio","jb","iwu.jitterbit"]},{"id":"autohotkey","name":"AutoHotkey","sampleAsk":"autohotkey","purpose":"AutoHotkey scripts and helpers.","triggers":["autohotkey","ahk"]}]};
+// </metra-selfdoc-routes>
+
+type TabId = "overview" | "routes" | "technical";
+type Theme = ReturnType<typeof useHostTheme>;
+
+function DiagramFrame({
+  title,
+  caption,
+  width,
+  height,
+  children,
+}: {
+  title: string;
+  caption: string;
+  width: number;
+  height: number;
+  children?: unknown;
+}) {
+  const theme = useHostTheme();
+  return (
+    <Stack gap={8}>
+      <H3>{title}</H3>
+      <div
+        style={{
+          background: theme.bg.elevated,
+          border: `1px solid ${theme.stroke.secondary}`,
+          borderRadius: 8,
+          padding: 12,
+          overflow: "auto",
+        }}
+      >
+        <svg
+          width="100%"
+          viewBox={`0 0 ${width} ${height}`}
+          role="img"
+          aria-label={title}
+          style={{ display: "block", maxWidth: width }}
+        >
+          {children}
+        </svg>
+      </div>
+      <Text size="small" tone="secondary">
+        {caption}
+      </Text>
+    </Stack>
+  );
+}
+
+function RouteDiagram() {
+  const theme = useHostTheme();
+  const homes = SELFDOC_ROUTES.diagram.length
+    ? SELFDOC_ROUTES.diagram
+    : [
+        {
+          id: "tickettracker",
+          name: "TicketTracker",
+          sampleAsk: "ticket",
+          purpose: "",
+          triggers: [] as string[],
+        },
+      ];
+  const layout = computeDAGLayout({
+    nodes: [{ id: "ask" }, ...homes.map((h) => ({ id: h.id }))],
+    edges: homes.map((h) => ({ from: "ask", to: h.id })),
+    direction: "vertical",
+    nodeWidth: 140,
+    nodeHeight: 44,
+    rankGap: 56,
+    nodeGap: 28,
+    padding: 16,
+  });
+
+  const labels: Record<string, string> = { ask: "Ask" };
+  for (const h of homes) {
+    labels[h.id] = h.name;
+  }
+  const chosen =
+    SELFDOC_ROUTES.chosenId && labels[SELFDOC_ROUTES.chosenId]
+      ? SELFDOC_ROUTES.chosenId
+      : homes[0]?.id ?? "ask";
+
+  return (
+    <DiagramFrame
+      title="Ask lands in one project home"
+      caption={`Registry-driven diagram. Refresh with .\\metra.ps1 selfdoc (${SELFDOC_ROUTES.generatedAt || "not yet generated"}).`}
+      width={layout.width}
+      height={layout.height}
+    >
+      {layout.edges.map((e) => {
+        const active = e.to === chosen;
+        return (
+          <line
+            key={`${e.from}-${e.to}`}
+            x1={e.sourceX}
+            y1={e.sourceY}
+            x2={e.targetX}
+            y2={e.targetY}
+            stroke={active ? theme.accent.primary : theme.stroke.tertiary}
+            strokeWidth={active ? 3 : 2}
+            strokeDasharray={active ? undefined : "6 5"}
+            opacity={active ? 1 : 0.55}
+          />
+        );
+      })}
+      {layout.nodes.map((n) => {
+        const active = n.id === "ask" || n.id === chosen;
+        return (
+          <g key={n.id}>
+            <rect
+              x={n.x}
+              y={n.y}
+              width={140}
+              height={44}
+              rx={8}
+              fill={active ? theme.fill.secondary : theme.bg.chrome}
+              stroke={active ? theme.accent.primary : theme.stroke.secondary}
+              strokeWidth={active ? 2.5 : 1.5}
+            />
+            <text
+              x={n.x + 70}
+              y={n.y + 28}
+              textAnchor="middle"
+              fill={theme.text.primary}
+              fontSize={14}
+              fontWeight={active ? 700 : 500}
+              fontFamily="system-ui, sans-serif"
+            >
+              {labels[n.id] ?? n.id}
+            </text>
+          </g>
+        );
+      })}
+    </DiagramFrame>
+  );
+}
+
+function StackDiagram() {
+  const theme = useHostTheme();
+  const layout = computeDAGLayout({
+    nodes: [
+      { id: "cli" },
+      { id: "tray" },
+      { id: "ops" },
+      { id: "ask" },
+      { id: "cursor" },
+    ],
+    edges: [
+      { from: "cli", to: "tray" },
+      { from: "tray", to: "ops" },
+      { from: "ops", to: "ask" },
+      { from: "ops", to: "cursor" },
+    ],
+    direction: "vertical",
+    nodeWidth: 168,
+    nodeHeight: 48,
+    rankGap: 40,
+    nodeGap: 36,
+    padding: 16,
+  });
+
+  const labels: Record<string, { title: string; sub: string }> = {
+    cli: { title: "metra.ps1", sub: "CLI core - works alone" },
+    tray: { title: "Tray host", sub: "Optional - keeps desk alive" },
+    ops: { title: "Ops desk", sub: "HTML home screen" },
+    ask: { title: "Ask engine", sub: "Answer-only AI" },
+    cursor: { title: "Cursor / editor", sub: "Build when asked" },
+  };
+
+  return (
+    <DiagramFrame
+      title="Thin stack - clear owners"
+      caption="CLI is the product core. Ops Ask answers; the editor builds. Cursor is one swappable engine - not Metra."
+      width={Math.max(layout.width, 420)}
+      height={layout.height + 8}
+    >
+      {layout.edges.map((e) => (
+        <line
+          key={`${e.from}-${e.to}`}
+          x1={e.sourceX}
+          y1={e.sourceY}
+          x2={e.targetX}
+          y2={e.targetY}
+          stroke={theme.stroke.secondary}
+          strokeWidth={2}
+        />
+      ))}
+      {layout.nodes.map((n) => {
+        const meta = labels[n.id];
+        const isCore = n.id === "cli";
+        return (
+          <g key={n.id}>
+            <rect
+              x={n.x}
+              y={n.y}
+              width={168}
+              height={48}
+              rx={8}
+              fill={isCore ? theme.fill.secondary : theme.bg.chrome}
+              stroke={isCore ? theme.accent.primary : theme.stroke.secondary}
+              strokeWidth={isCore ? 2.5 : 1.5}
+            />
+            <text
+              x={n.x + 84}
+              y={n.y + 20}
+              textAnchor="middle"
+              fill={theme.text.primary}
+              fontSize={13}
+              fontWeight={700}
+              fontFamily="system-ui, sans-serif"
+            >
+              {meta.title}
+            </text>
+            <text
+              x={n.x + 84}
+              y={n.y + 36}
+              textAnchor="middle"
+              fill={theme.text.secondary}
+              fontSize={11}
+              fontFamily="system-ui, sans-serif"
+            >
+              {meta.sub}
+            </text>
+          </g>
+        );
+      })}
+    </DiagramFrame>
+  );
+}
+
+function ChannelsDiagram() {
+  const theme = useHostTheme();
+  const w = 520;
+  const h = 168;
+
+  return (
+    <DiagramFrame
+      title="Two channels, two voices"
+      caption="Operator chat can be a calm coworker. Tickets, commits, and mail stay ordinary professional prose."
+      width={w}
+      height={h}
+    >
+      <rect
+        x={24}
+        y={28}
+        width={200}
+        height={100}
+        rx={8}
+        fill={theme.fill.secondary}
+        stroke={theme.accent.primary}
+        strokeWidth={2}
+      />
+      <text x={124} y={64} textAnchor="middle" fill={theme.text.primary} fontSize={14} fontWeight={700} fontFamily="system-ui, sans-serif">
+        Operator chat
+      </text>
+      <text x={124} y={88} textAnchor="middle" fill={theme.text.secondary} fontSize={12} fontFamily="system-ui, sans-serif">
+        Guide and draft
+      </text>
+      <text x={124} y={108} textAnchor="middle" fill={theme.text.tertiary} fontSize={11} fontFamily="system-ui, sans-serif">
+        Metra voice OK
+      </text>
+
+      <rect
+        x={296}
+        y={28}
+        width={200}
+        height={100}
+        rx={8}
+        fill={theme.bg.chrome}
+        stroke={theme.stroke.primary}
+        strokeWidth={2}
+      />
+      <text x={396} y={64} textAnchor="middle" fill={theme.text.primary} fontSize={14} fontWeight={700} fontFamily="system-ui, sans-serif">
+        Professional sink
+      </text>
+      <text x={396} y={88} textAnchor="middle" fill={theme.text.secondary} fontSize={12} fontFamily="system-ui, sans-serif">
+        Tickets / commits / mail
+      </text>
+      <text x={396} y={108} textAnchor="middle" fill={theme.text.tertiary} fontSize={11} fontFamily="system-ui, sans-serif">
+        No Metra branding
+      </text>
+
+      <text x={260} y={84} textAnchor="middle" fill={theme.text.secondary} fontSize={18} fontFamily="system-ui, sans-serif">
+        →
+      </text>
+    </DiagramFrame>
+  );
+}
+
+function OverviewTab({ theme }: { theme: Theme }) {
+  return (
+    <Stack gap={20}>
+      <Callout tone="info" title="What this canvas is">
+        Visual self-documentation for Metra - explain surface, not the Ops desk. Open beside
+        chat. Prose twin for email: docs/Overview.md. Refresh routes with .\metra.ps1 selfdoc.
+      </Callout>
+
+      <Grid columns={3} gap={12}>
+        <Stat value={String(SELFDOC_ROUTES.routes.length)} label="Standing examples" />
+        <Stat value="3" label="Tabs" />
+        <Stat value="CLI+Ops+Ask" label="Surfaces" />
+      </Grid>
+
+      <Stack gap={8}>
+        <H2>Middle path</H2>
+        <Text tone="secondary">
+          AI at work usually lands in one of two bad places. Metra steers between them.
+        </Text>
+        <Grid columns={2} gap={12}>
+          <Card>
+            <CardHeader>Carte blanche</CardHeader>
+            <CardBody>
+              <Text size="small">
+                Rummages every folder; edits freely. Mixes projects; risky near systems of
+                record.
+              </Text>
+            </CardBody>
+          </Card>
+          <Card>
+            <CardHeader>Chatbot only</CardHeader>
+            <CardBody>
+              <Text size="small">
+                Smart chat with no map. Clever answers - people still do all the wayfinding.
+              </Text>
+            </CardBody>
+          </Card>
+        </Grid>
+        <Callout tone="neutral" title="Metra">
+          One project home + clear next step. Chat can help the operator. Durable writes stay
+          ordinary prose and happen when someone asks.
+        </Callout>
+      </Stack>
+
+      <ChannelsDiagram />
+
+      <Stack gap={12}>
+        <H2>What Metra does</H2>
+        <Grid columns={2} gap={12}>
+          <Card>
+            <CardHeader trailing={<Pill size="sm">1</Pill>}>Route first</CardHeader>
+            <CardBody>
+              <Text size="small">
+                Match the ask to one project home. That folder&apos;s habits apply. Wrong home
+                is a routing miss - not model exploration.
+              </Text>
+            </CardBody>
+          </Card>
+          <Card>
+            <CardHeader trailing={<Pill size="sm">2</Pill>}>More than chat</CardHeader>
+            <CardBody>
+              <Text size="small">
+                Core is PowerShell <Code>.\metra.ps1</Code>. Ops is a home screen on the same
+                map. Ask is optional sugar.
+              </Text>
+            </CardBody>
+          </Card>
+          <Card>
+            <CardHeader trailing={<Pill size="sm">3</Pill>}>You stay in charge</CardHeader>
+            <CardBody>
+              <Text size="small">
+                Durable changes happen when the operator asks - not because the tool decided
+                to.
+              </Text>
+            </CardBody>
+          </Card>
+          <Card>
+            <CardHeader trailing={<Pill size="sm">4</Pill>}>Two voices</CardHeader>
+            <CardBody>
+              <Text size="small">
+                Operator chat can sound like a coworker. Coworker-facing artifacts stay
+                professional with no Metra branding.
+              </Text>
+            </CardBody>
+          </Card>
+        </Grid>
+      </Stack>
+
+      <Stack gap={12}>
+        <H2>Vision and fit</H2>
+        <Text>
+          Adopt AI without keys-to-the-kingdom or empty chatbot spend. Routing and boundaries
+          are product. Personality never picks the project; the map does.
+        </Text>
+        <Table
+          headers={["Path", "Fit"]}
+          rows={[
+            ["UIT / DataOps operator desk", "Natural - more homes; still point at systems"],
+            ['AI adoption "pane"', "Steer + professional sink"],
+            ["True university SPOG", "Wrong home for Metra"],
+          ]}
+        />
+      </Stack>
+
+      <Stack gap={8}>
+        <H2>Common questions</H2>
+        <CollapsibleSection title="Do I have to use AI or Cursor?">
+          <Text size="small">
+            No. routing, ctx, audit, and list work with no AI and no Ops desk.
+          </Text>
+        </CollapsibleSection>
+        <CollapsibleSection title="Will this change my tickets by itself?">
+          <Text size="small">
+            No. Ticket updates go through TicketTracker when the operator asks.
+          </Text>
+        </CollapsibleSection>
+        <CollapsibleSection title="Will it edit all my projects?">
+          <Text size="small">
+            Not by default. File changes happen in the editor when you ask.
+          </Text>
+        </CollapsibleSection>
+        <CollapsibleSection title="Will it replace TicketTracker or Orion?">
+          <Text size="small">
+            No. Metra points at them. Tickets stay in iSupport; monitoring stays Solarwinds.
+          </Text>
+        </CollapsibleSection>
+      </Stack>
+
+      <Text size="small" tone="tertiary">
+        Public site: https://jaxnoth.github.io/Metra/ · Prose twin: docs/Overview.md
+      </Text>
+      <div style={{ color: theme.text.tertiary, fontSize: 12 }}>
+        Deliberately not: own systems of record; auto-post tickets; index every sibling on
+        every ask; Teams bot with the keys.
+      </div>
+    </Stack>
+  );
+}
+
+function RoutesTab() {
+  return (
+    <Stack gap={20}>
+      <Callout tone="info" title="Routes and stubs">
+        Standing examples come from the merged registry (projects.json + local/personal
+        overlays). Change triggers or purpose in the registry, then run .\metra.ps1 selfdoc -
+        do not hand-edit the embed or Overview table.
+      </Callout>
+
+      <RouteDiagram />
+
+      <Stack gap={8}>
+        <H2>Standing route examples</H2>
+        <Text size="small" tone="secondary">
+          Sample ask is the first trigger. Full trigger list is in the next column.
+        </Text>
+        <Table
+          headers={["Project", "Sample ask", "Triggers", "Purpose"]}
+          rows={SELFDOC_ROUTES.routes.map((r) => [
+            r.name,
+            r.sampleAsk,
+            (r.triggers || []).slice(0, 4).join(", ") || "-",
+            r.purpose || "-",
+          ])}
+        />
+        <Text size="small" tone="tertiary">
+          Generated {SELFDOC_ROUTES.generatedAt || "(run selfdoc)"} · {SELFDOC_ROUTES.routes.length}{" "}
+          rows · diagram highlights {SELFDOC_ROUTES.chosenId || "first home"}
+        </Text>
+      </Stack>
+
+      <Stack gap={12}>
+        <H2>How routing works</H2>
+        <Grid columns={2} gap={12}>
+          <Card>
+            <CardHeader>Shared stubs</CardHeader>
+            <CardBody>
+              <Text size="small">
+                projects.json ships examples coworkers can see (TicketTracker, Solarwinds,
+                Trivia, ...). Optional entries may be missing - follow whenMissing advice.
+              </Text>
+            </CardBody>
+          </Card>
+          <Card>
+            <CardHeader>Local / personal</CardHeader>
+            <CardBody>
+              <Text size="small">
+                projects.local.json and per-root registryFile stay machine-private. Related
+                lists are topology only - not permission to multi-repo search.
+              </Text>
+            </CardBody>
+          </Card>
+          <Card>
+            <CardHeader>Ticket first</CardHeader>
+            <CardBody>
+              <Text size="small">
+                Helpdesk / iSupport work starts in TicketTracker, then routes to one technical
+                project.
+              </Text>
+            </CardBody>
+          </Card>
+          <Card>
+            <CardHeader>Stubs vs live</CardHeader>
+            <CardBody>
+              <Text size="small">
+                Missing optional projects get honest advice. Do not pretend iSupport or Orion
+                is live when the folder or connector is absent.
+              </Text>
+            </CardBody>
+          </Card>
+        </Grid>
+      </Stack>
+
+      <Card>
+        <CardHeader>Refresh command</CardHeader>
+        <CardBody>
+          <Stack gap={6}>
+            <Code>.\metra.ps1 selfdoc</Code>
+            <Text size="small" tone="secondary">
+              Also runs at the end of .\metra.ps1 snapshot. Updates this canvas embed,
+              docs/Overview.md, docs/selfdoc-routes.json, and the tracked template.
+            </Text>
+          </Stack>
+        </CardBody>
+      </Card>
+    </Stack>
+  );
+}
+
+function TechnicalTab() {
+  return (
+    <Stack gap={20}>
+      <Callout tone="info" title="Surfaces and ownership">
+        This canvas explains. Metra Ops board canvas operates. HTML Ops + Ask serve regular
+        users. CLI works with no AI. One brain (registry + snapshot); many faces.
+      </Callout>
+
+      <StackDiagram />
+
+      <Stack gap={8}>
+        <H2>Where work happens</H2>
+        <Table
+          headers={["Surface", "Job", "Mutates portfolio?"]}
+          rows={[
+            ["metra.ps1 CLI", "Route, audit, ctx, selfdoc, snapshot", "Only when you run a write command"],
+            ["HTML Ops desk", "Home screen; Ask; classify/handoff", "No - answer-only from the browser"],
+            ["Ask engine", "Answer after routing", "No"],
+            ["Ops board canvas", "IDE faceplate for attention + portfolio", "No - retrieval; writes stay CLI/chat"],
+            ["This self-doc canvas", "Explain Metra visually", "No"],
+            ["Cursor / editor", "Build files when asked", "Yes - review before you run"],
+            ["docs/Overview.md", "Sendable prose twin", "Hand-edit prose only; routes via selfdoc"],
+          ]}
+        />
+      </Stack>
+
+      <Stack gap={8}>
+        <H2>CLI without AI</H2>
+        <Card>
+          <CardBody>
+            <Stack gap={4}>
+              <Code>.\metra.ps1 routing -Query &quot;ticket disk&quot;</Code>
+              <Code>.\metra.ps1 ctx -Query &quot;ticket disk&quot;</Code>
+              <Code>.\metra.ps1 audit -Name TicketTracker,Solarwinds,Trivia</Code>
+              <Code>.\metra.ps1 selfdoc</Code>
+              <Code>.\metra.ps1 snapshot -Quick</Code>
+              <Code>.\metra.ps1 list</Code>
+              <Code>.\metra.ps1 ops</Code>
+            </Stack>
+          </CardBody>
+        </Card>
+      </Stack>
+
+      <Stack gap={12}>
+        <H2>Boundaries</H2>
+        <Grid columns={2} gap={12}>
+          <Card>
+            <CardHeader>Professional sink</CardHeader>
+            <CardBody>
+              <Text size="small">
+                Tickets, commits, and redistribution mail stay ordinary work prose - no Metra
+                branding, usually only when you ask to post.
+              </Text>
+            </CardBody>
+          </Card>
+          <Card>
+            <CardHeader>Answer on desk; build in editor</CardHeader>
+            <CardBody>
+              <Text size="small">
+                Ops Ask does not edit the portfolio from the browser. That split is the
+                boundary against carte blanche.
+              </Text>
+            </CardBody>
+          </Card>
+        </Grid>
+        <Table
+          headers={["Deliberately not", "Why"]}
+          rows={[
+            ["Own systems of record", "Point at iSupport / Orion / warehouse"],
+            ["Auto-post tickets from Ops", "Operator asks; TicketTracker posts"],
+            ["Index every sibling every ask", "Route first to one home"],
+            ["Teams bot / always-on keys", "Text helper and desk only"],
+            ["Replace deterministic routing with vectors", "Vectors may rank after hard triggers only"],
+          ]}
+        />
+      </Stack>
+
+      <Stack gap={8}>
+        <H2>Maintenance cadence</H2>
+        <Table
+          headers={["When", "Command"]}
+          rows={[
+            ["Registry route / trigger / purpose change", ".\\metra.ps1 selfdoc"],
+            ["Ops board / desk refresh", ".\\metra.ps1 snapshot"],
+            ["Layout / AGENTS drift", ".\\metra.ps1 audit"],
+            ["Routing fixture smoke", ".\\metra.ps1 verify"],
+          ]}
+        />
+      </Stack>
+
+      <Text size="small" tone="tertiary">
+        Template: integrations/cursor/metra-self-documentation.canvas.tsx.template · Sidecar:
+        docs/selfdoc-routes.json · Policy: docs/Context-Routing.md
+      </Text>
+    </Stack>
+  );
+}
+
+export default function MetraSelfDocumentation() {
+  const theme = useHostTheme();
+  const [tab, setTab] = useCanvasState<TabId>("selfdocTab", "overview");
+
+  return (
+    <Stack gap={16} style={{ padding: 16, maxWidth: 920 }}>
+      <div
+        style={{
+          position: "sticky",
+          top: 0,
+          zIndex: 2,
+          margin: "-16px -16px 0",
+          padding: "16px 16px 10px",
+          background: theme.bg.editor,
+          borderBottom: `1px solid ${theme.stroke.tertiary}`,
+        }}
+      >
+        <Stack gap={10}>
+          <div
+            style={{
+              background: theme.fill.tertiary,
+              borderLeft: `3px solid ${theme.accent.primary}`,
+              padding: "14px 16px",
+            }}
+          >
+            <Stack gap={6}>
+              <Row gap={10} align="center">
+                <H1>Metra</H1>
+                <Pill tone="info" size="sm">
+                  Self-documentation
+                </Pill>
+              </Row>
+              <Text weight="semibold">Land in the right place. Then get to work.</Text>
+              <Text tone="secondary" size="small">
+                Visual explain surface - Overview, Routes/Stubs, Technical. Not the Ops desk.
+              </Text>
+            </Stack>
+          </div>
+
+          <Row gap={8} wrap>
+            <Pill active={tab === "overview"} onClick={() => setTab("overview")}>
+              Overview
+            </Pill>
+            <Pill active={tab === "routes"} onClick={() => setTab("routes")}>
+              Routes / Stubs
+            </Pill>
+            <Pill active={tab === "technical"} onClick={() => setTab("technical")}>
+              Technical
+            </Pill>
+          </Row>
+        </Stack>
+      </div>
+
+      {tab === "overview" ? <OverviewTab theme={theme} /> : null}
+      {tab === "routes" ? <RoutesTab /> : null}
+      {tab === "technical" ? <TechnicalTab /> : null}
+
+      <Spacer height={12} />
+    </Stack>
+  );
+}

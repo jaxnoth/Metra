@@ -1,0 +1,34 @@
+{
+  "name": "metra-ops",
+  "displayName": "Metra Ops",
+  "description": "Metra Ops desk webview bridge - Resolve actions with IDE affordances. Host still owns apply.",
+  "version": "0.1.0",
+  "publisher": "metra",
+  "engines": {
+    "vscode": "^1.85.0"
+  },
+  "categories": ["Other"],
+  "activationEvents": [
+    "onCommand:metraOps.openDesk"
+  ],
+  "main": "./extension.js",
+  "contributes": {
+    "commands": [
+      {
+        "command": "metraOps.openDesk",
+        "title": "Metra Ops: Open Desk",
+        "category": "Metra"
+      }
+    ],
+    "configuration": {
+      "title": "Metra Ops",
+      "properties": {
+        "metraOps.deskUrl": {
+          "type": "string",
+          "default": "http://127.0.0.1:7380/",
+          "description": "Ops desk URL embedded by the Metra Ops webview (loopback or Tailscale share URL)."
+        }
+      }
+    }
+  }
+}

@@ -36,6 +36,7 @@ function Get-MetraProjects {
         than one root, the earlier root wins and the later one is marked Shadowed (surfaced
         only with -IncludeShadowed) so a duplicate never silently replaces the primary copy.
         Always includes Metra (orchestration checkout) as Name=Metra when the filter matches.
+        The default unfiltered scan is cached briefly (see Clear-MetraRoutingCache).
     #>
     [CmdletBinding()]
     param(
@@ -45,6 +46,21 @@ function Get-MetraProjects {
         [switch]$IncludeNonGit,
         [switch]$IncludeShadowed
     )
+
+    $canCache = (
+        $Filter -eq '*' -and
+        (-not $Root -or @($Root).Count -eq 0) -and
+        -not $GitOnly -and
+        -not $IncludeNonGit -and
+        -not $IncludeShadowed
+    )
+    if (
+        $canCache -and
+        $null -ne $script:MetraCache.ProjectsDefault -and
+        (Test-MetraCacheEntryFresh -CachedUtc $script:MetraCache.ProjectsUtc)
+    ) {
+        return @($script:MetraCache.ProjectsDefault)
+    }
 
     $cfg = Get-MetraConfig
     $roots = @(Get-MetraRoots -Name $Root)
@@ -87,7 +103,12 @@ function Get-MetraProjects {
         }
     }
 
-    return @($list | Sort-Object Name, Root)
+    $list = @($list | Sort-Object Name, Root)
+    if ($canCache) {
+        $script:MetraCache.ProjectsDefault = $list
+        $script:MetraCache.ProjectsUtc = [datetime]::UtcNow
+    }
+    return $list
 }
 
 function Resolve-MetraProjectSet {

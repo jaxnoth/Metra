@@ -8,6 +8,179 @@ function Get-MetraOpsFallbackPort {
     return [int]$script:MetraOpsFallbackPort
 }
 
+function Get-MetraOpsTailscaleIPv4 {
+    <#
+    .SYNOPSIS
+        Best-effort Tailscale IPv4 for the local machine (CLI or interface alias).
+    #>
+    [CmdletBinding()]
+    param()
+
+    $cmd = Get-Command tailscale -ErrorAction SilentlyContinue
+    if ($cmd) {
+        try {
+            $raw = & tailscale ip -4 2>$null | Select-Object -First 1
+            $ip = ([string]$raw).Trim()
+            if ($ip -match '^\d{1,3}(\.\d{1,3}){3}$') {
+                return $ip
+            }
+        }
+        catch { }
+    }
+
+    try {
+        $hit = @(Get-NetIPAddress -AddressFamily IPv4 -ErrorAction SilentlyContinue |
+            Where-Object {
+                $_.InterfaceAlias -match 'Tailscale' -and
+                $_.IPAddress -notlike '169.254*' -and
+                $_.IPAddress -ne '127.0.0.1'
+            } |
+            Select-Object -First 1)
+        if ($hit.Count -gt 0 -and $hit[0].IPAddress) {
+            return [string]$hit[0].IPAddress
+        }
+    }
+    catch { }
+
+    return $null
+}
+
+function Get-MetraOpsTailscaleDnsName {
+    <#
+    .SYNOPSIS
+        Best-effort MagicDNS name for this machine (trailing dot stripped).
+    #>
+    [CmdletBinding()]
+    param()
+
+    $cmd = Get-Command tailscale -ErrorAction SilentlyContinue
+    if (-not $cmd) { return $null }
+
+    try {
+        $raw = & tailscale status --json 2>$null | Out-String
+        if ([string]::IsNullOrWhiteSpace($raw)) { return $null }
+        $status = $raw | ConvertFrom-Json
+        $dns = [string](Get-MetraProp -Object $status.Self -Name 'DNSName' -Default '')
+        $dns = $dns.Trim().TrimEnd('.')
+        if ($dns -match '^[a-zA-Z0-9]([a-zA-Z0-9.-]*[a-zA-Z0-9])?$' -and $dns -match '\.') {
+            return $dns.ToLowerInvariant()
+        }
+    }
+    catch { }
+
+    return $null
+}
+
+function Get-MetraOpsTailscaleBinding {
+    <#
+    .SYNOPSIS
+        Bind loopback (+ Tailscale reach) for view/ask. Prefer HTTPS ShareUrl when Serve fronts Ops.
+    .DESCRIPTION
+        Not anonymous apply authority. When ServeHttpsUrl is set, HttpListener stays on loopback
+        (Serve terminates HTTPS). Otherwise listen on loopback + Tailscale IPv4 + MagicDNS http.
+    #>
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory)][string]$Address,
+        [int]$Port = $(Get-MetraOpsFallbackPort),
+        [string]$DnsName = '',
+        [string]$ServeHttpsUrl = '',
+        [string]$ServeError = ''
+    )
+
+    if ($Port -lt 1 -or $Port -gt 65535) {
+        throw "Invalid Tailscale Ops port: $Port"
+    }
+    $addr = $Address.Trim()
+    $dns = ([string]$DnsName).Trim().TrimEnd('.')
+    if ([string]::IsNullOrWhiteSpace($dns)) {
+        try { $dns = [string](Get-MetraOpsTailscaleDnsName) } catch { $dns = '' }
+    }
+    if (-not [string]::IsNullOrWhiteSpace($dns)) {
+        $dns = $dns.ToLowerInvariant()
+    }
+
+    $serveUrl = ([string]$ServeHttpsUrl).Trim()
+    $useServe = $serveUrl -match '^https://'
+    $shareHost = if (-not [string]::IsNullOrWhiteSpace($dns)) { $dns } else { $addr }
+
+    $prefixes = [System.Collections.Generic.List[string]]::new()
+    $null = $prefixes.Add("http://127.0.0.1:$Port/")
+
+    if ($useServe) {
+        $browserUrl = if ($serveUrl.EndsWith('/')) { $serveUrl } else { "$serveUrl/" }
+        return [PSCustomObject]@{
+            Port             = $Port
+            BrowserHost      = $shareHost
+            BrowserUrl       = $browserUrl
+            ShareUrl         = $browserUrl
+            TailscaleIp      = $addr
+            DnsName          = $(if ([string]::IsNullOrWhiteSpace($dns)) { $null } else { $dns })
+            ListenerPrefixes = @($prefixes)
+            Friendly         = (-not [string]::IsNullOrWhiteSpace($dns))
+            Tailscale        = $true
+            Serve            = $true
+            ServeError       = $null
+            Reason           = 'tailscale-serve-https'
+        }
+    }
+
+    $browserUrl = if ($Port -eq 80) { "http://${shareHost}/" } else { "http://${shareHost}:$Port/" }
+    $null = $prefixes.Add("http://${addr}:$Port/")
+    if (-not [string]::IsNullOrWhiteSpace($dns) -and $dns -ne $addr) {
+        $dnsPrefix = "http://${dns}:$Port/"
+        if (-not $prefixes.Contains($dnsPrefix)) {
+            $null = $prefixes.Add($dnsPrefix)
+        }
+    }
+
+    return [PSCustomObject]@{
+        Port             = $Port
+        BrowserHost      = $shareHost
+        BrowserUrl       = $browserUrl
+        ShareUrl         = $browserUrl
+        TailscaleIp      = $addr
+        DnsName          = $(if ([string]::IsNullOrWhiteSpace($dns)) { $null } else { $dns })
+        ListenerPrefixes = @($prefixes)
+        Friendly         = (-not [string]::IsNullOrWhiteSpace($dns))
+        Tailscale        = $true
+        Serve            = $false
+        ServeError       = $(if ([string]::IsNullOrWhiteSpace($ServeError)) { $null } else { $ServeError })
+        Reason           = 'tailscale-bind'
+    }
+}
+
+function Enable-MetraOpsTailscaleBinding {
+    <#
+    .SYNOPSIS
+        Ensures URL ACL for Tailscale prefixes (may need elevation) and returns binding.
+    #>
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory)][string]$Address,
+        [int]$Port = $(Get-MetraOpsFallbackPort),
+        [string]$DnsName = ''
+    )
+
+    $binding = Get-MetraOpsTailscaleBinding -Address $Address -Port $Port -DnsName $DnsName
+    foreach ($prefix in @($binding.ListenerPrefixes)) {
+        if (Test-MetraHttpUrlAcl -Prefix $prefix) { continue }
+        $acl = Add-MetraHttpUrlAcl -Prefix $prefix
+        if (-not $acl.Ok) {
+            return [PSCustomObject]@{
+                Ok      = $false
+                Binding = $binding
+                Error   = "Could not reserve $prefix ($($acl.Error)). Run elevated once for URL ACL."
+            }
+        }
+    }
+    return [PSCustomObject]@{
+        Ok      = $true
+        Binding = $binding
+        Error   = $null
+    }
+}
+
 function Get-MetraOpsHostsFilePath {
     return Join-Path $env:SystemRoot 'System32\drivers\etc\hosts'
 }
@@ -322,6 +495,7 @@ function Resolve-MetraOpsDeskBinding {
     .DESCRIPTION
         Does not mutate the system. Use Initialize-MetraOpsDeskBinding to choose and persist.
         Explicit CLI -Port overrides by callers before using this result.
+        When bindTailscale is set, returns dual loopback+Tailscale prefixes when an IP is available.
     #>
     [CmdletBinding()]
     param([string]$MetraRoot = (Get-MetraRoot))
@@ -335,6 +509,28 @@ function Resolve-MetraOpsDeskBinding {
     $prefer = $true
     if ($null -ne $prefs.preferFriendlyUrl) {
         $prefer = [bool]$prefs.preferFriendlyUrl
+    }
+    $bindTailscale = $false
+    if ($null -ne $prefs.bindTailscale) {
+        $bindTailscale = [bool]$prefs.bindTailscale
+    }
+
+    $port = if ($opsPort -gt 0) { $opsPort } else { Get-MetraOpsFallbackPort }
+
+    if ($bindTailscale) {
+        $tsIp = Get-MetraOpsTailscaleIPv4
+        if (-not [string]::IsNullOrWhiteSpace($tsIp)) {
+            $serveHttps = ''
+            $serveErr = ''
+            $st = Get-MetraOpsTailscaleServeStatus -Port $port
+            if ($st.Ok) {
+                $serveHttps = [string]$st.ShareUrl
+            }
+            else {
+                $serveErr = [string]$st.Reason
+            }
+            return Get-MetraOpsTailscaleBinding -Address $tsIp -Port $port -ServeHttpsUrl $serveHttps -ServeError $serveErr
+        }
     }
 
     if ($opsPort -gt 0) {
@@ -353,16 +549,82 @@ function Resolve-MetraOpsDeskBinding {
     return Get-MetraOpsLoopbackBinding -Port (Get-MetraOpsFallbackPort)
 }
 
+function Get-MetraOpsDeskBindingForPort {
+    <#
+    .SYNOPSIS
+        Binding for an explicit port that still honors reach prefs (Tailscale, friendly host).
+    .DESCRIPTION
+        Callers that already know the port (supervised child, -Port on the CLI) must not fall back to
+        loopback-only prefixes, or a reserved non-loopback prefix answers 503 with no listener behind it.
+    #>
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory)][int]$Port,
+        [string]$MetraRoot = (Get-MetraRoot)
+    )
+
+    if ($Port -lt 1 -or $Port -gt 65535) {
+        throw "Invalid port: $Port"
+    }
+
+    $prefs = Get-MetraDeskPreferences -MetraRoot $MetraRoot
+    $bindTailscale = $false
+    if ($null -ne $prefs.bindTailscale) {
+        $bindTailscale = [bool]$prefs.bindTailscale
+    }
+
+    $binding = $null
+    if ($bindTailscale) {
+        $tsIp = Get-MetraOpsTailscaleIPv4
+        if (-not [string]::IsNullOrWhiteSpace($tsIp)) {
+            $serveHttps = ''
+            $serveErr = ''
+            $st = Get-MetraOpsTailscaleServeStatus -Port $Port
+            if ($st.Ok) {
+                $serveHttps = [string]$st.ShareUrl
+            }
+            else {
+                $serveErr = [string]$st.Reason
+            }
+            $binding = Get-MetraOpsTailscaleBinding -Address $tsIp -Port $Port -ServeHttpsUrl $serveHttps -ServeError $serveErr
+        }
+    }
+
+    $friendlyUsable = (
+        $Port -eq $script:MetraOpsFriendlyPort -and
+        (Test-MetraHostsEntry -HostName $script:MetraOpsFriendlyHost) -and
+        (Test-MetraHttpUrlAcl -Prefix "http://$($script:MetraOpsFriendlyHost):$Port/")
+    )
+
+    if (-not $binding) {
+        if ($friendlyUsable) {
+            return Get-MetraOpsFriendlyBinding -Port $Port
+        }
+        return Get-MetraOpsLoopbackBinding -Port $Port
+    }
+
+    # Tailscale reach wins for the browser URL, but keep http://metra/ listening when it is already reserved.
+    if ($friendlyUsable) {
+        $friendlyPrefix = "http://$($script:MetraOpsFriendlyHost):$Port/"
+        if (@($binding.ListenerPrefixes) -notcontains $friendlyPrefix) {
+            $binding.ListenerPrefixes = @(@($binding.ListenerPrefixes) + $friendlyPrefix)
+        }
+    }
+    return $binding
+}
+
 function Initialize-MetraOpsDeskBinding {
     <#
     .SYNOPSIS
         Setup / operator choice for Ops desk URL: http://metra/ when port 80 is free, else 7380.
+        Optional -BindTailscale for non-loopback reach (view/ask). Propose/request-apply still need local session.
     #>
     [CmdletBinding()]
     param(
         [string]$MetraRoot = (Get-MetraRoot),
         [switch]$Interactive,
         [switch]$PreferFriendly,
+        [switch]$BindTailscale,
         [switch]$Preview,
         [switch]$Quiet
     )
@@ -397,26 +659,52 @@ function Initialize-MetraOpsDeskBinding {
     elseif ($PreferFriendly) {
         $wantFriendly = $true
     }
-    elseif ($alreadyChosen) {
+    elseif ($alreadyChosen -and -not $BindTailscale -and -not [bool]$prefs.bindTailscale) {
         $binding = Resolve-MetraOpsDeskBinding -MetraRoot $MetraRoot
         if (-not $Quiet -and -not $Preview) {
             Write-Host ("Ops desk URL already set: {0}" -f $binding.BrowserUrl) -ForegroundColor DarkGray
         }
         return [PSCustomObject]@{
-            Preview   = [bool]$Preview
-            Changed   = $false
-            Binding   = $binding
+            Preview    = [bool]$Preview
+            Changed    = $false
+            Binding    = $binding
             Port80Free = $port80Free
-            Error     = $null
+            Error      = $null
         }
+    }
+    elseif ($alreadyChosen) {
+        # URL already chosen - only Tailscale preference may change.
+        $wantFriendly = $false
     }
     else {
         # Non-interactive first setup: prefer friendly when 80 is free.
         $wantFriendly = $port80Free
     }
 
+    $wantTailscale = [bool]$BindTailscale
+    if ($null -ne $prefs.bindTailscale -and [bool]$prefs.bindTailscale) {
+        $wantTailscale = $true
+    }
+    $tsIp = Get-MetraOpsTailscaleIPv4
+    if ($Interactive -and -not $BindTailscale -and -not [bool]$prefs.bindTailscale -and -not [string]::IsNullOrWhiteSpace($tsIp)) {
+        if (-not $Quiet) {
+            Write-Host ''
+            Write-Host 'Tailscale Ops reach (optional):' -ForegroundColor Cyan
+            Write-Host "  Detected Tailscale IP $tsIp. Bind Ops for phone/coworker view/ask?" -ForegroundColor Yellow
+            Write-Host '  Peers may view and ask. Propose / request-apply still need your local session + tray Apply once.' -ForegroundColor DarkGray
+            Write-Host '  [y] Yes - non-loopback bind (SECURITY: reach is not apply authority)' -ForegroundColor DarkGray
+            Write-Host '  [N] No  - loopback / friendly only' -ForegroundColor DarkGray
+        }
+        $tsAnswer = 'N'
+        try { $tsAnswer = Read-Host 'Choice [y/N]' } catch { $tsAnswer = 'N' }
+        $wantTailscale = ($tsAnswer -match '^[yY]')
+    }
+
     if ($Preview) {
-        $would = if ($wantFriendly -and $port80Free) {
+        $would = if ($wantTailscale -and -not [string]::IsNullOrWhiteSpace($tsIp)) {
+            Get-MetraOpsTailscaleBinding -Address $tsIp -Port $(if ($wantFriendly -and $port80Free) { $script:MetraOpsFriendlyPort } else { $fallback })
+        }
+        elseif ($wantFriendly -and $port80Free) {
             Get-MetraOpsFriendlyBinding
         }
         else {
@@ -434,43 +722,98 @@ function Initialize-MetraOpsDeskBinding {
         }
     }
 
-    if ($wantFriendly -and $port80Free) {
+    $baseBinding = $null
+    if ($wantFriendly -and $port80Free -and -not $wantTailscale) {
         $enabled = Enable-MetraOpsFriendlyBinding -AllowElevation:$Interactive
         if ($enabled.Ok) {
             $null = Set-MetraDeskPreferences -MetraRoot $MetraRoot `
                 -OpsPort $enabled.Binding.Port `
                 -BrowserHost $enabled.Binding.BrowserHost `
-                -PreferFriendlyUrl $true
+                -PreferFriendlyUrl $true `
+                -BindTailscale $false
+            $baseBinding = $enabled.Binding
             if (-not $Quiet) {
                 Write-Host ("Ops desk URL: {0}" -f $enabled.Binding.BrowserUrl) -ForegroundColor Green
             }
-            return [PSCustomObject]@{
-                Preview    = $false
-                Changed    = $true
-                Binding    = $enabled.Binding
-                Port80Free = $port80Free
-                Error      = $null
-            }
         }
-        if (-not $Quiet) {
-            Write-Warning "Friendly URL unavailable - $($enabled.Error)"
-            Write-Host ("Falling back to http://127.0.0.1:{0}/" -f $fallback) -ForegroundColor Yellow
+        else {
+            if (-not $Quiet) {
+                Write-Warning "Friendly URL unavailable - $($enabled.Error)"
+                Write-Host ("Falling back to http://127.0.0.1:{0}/" -f $fallback) -ForegroundColor Yellow
+            }
         }
     }
 
-    $loop = Get-MetraOpsLoopbackBinding -Port $fallback
-    $null = Set-MetraDeskPreferences -MetraRoot $MetraRoot `
-        -OpsPort $loop.Port `
-        -BrowserHost '127.0.0.1' `
-        -PreferFriendlyUrl $false
-    if (-not $Quiet) {
-        Write-Host ("Ops desk URL: {0}" -f $loop.BrowserUrl) -ForegroundColor Green
+    if (-not $baseBinding) {
+        $loopPort = $fallback
+        if ($alreadyChosen -and $null -ne $prefs.opsPort -and [int]$prefs.opsPort -gt 0) {
+            $loopPort = [int]$prefs.opsPort
+        }
+        $loop = Get-MetraOpsLoopbackBinding -Port $loopPort
+        $null = Set-MetraDeskPreferences -MetraRoot $MetraRoot `
+            -OpsPort $loop.Port `
+            -BrowserHost '127.0.0.1' `
+            -PreferFriendlyUrl $false `
+            -BindTailscale:$wantTailscale
+        $baseBinding = $loop
+        if (-not $Quiet -and -not $wantTailscale) {
+            Write-Host ("Ops desk URL: {0}" -f $loop.BrowserUrl) -ForegroundColor Green
+        }
     }
+
+    if ($wantTailscale) {
+        if ([string]::IsNullOrWhiteSpace($tsIp)) {
+            if (-not $Quiet) {
+                Write-Warning 'bindTailscale requested but no Tailscale IPv4 found. Keeping loopback bind.'
+            }
+            $null = Set-MetraDeskPreferences -MetraRoot $MetraRoot -BindTailscale $true
+            return [PSCustomObject]@{
+                Preview    = $false
+                Changed    = $true
+                Binding    = $baseBinding
+                Port80Free = $port80Free
+                Error      = 'tailscale-ip-missing'
+            }
+        }
+
+        $ts = Enable-MetraOpsTailscaleBinding -Address $tsIp -Port ([int]$baseBinding.Port)
+        if (-not $ts.Ok) {
+            if (-not $Quiet) {
+                Write-Warning "Tailscale bind incomplete - $($ts.Error)"
+            }
+            $null = Set-MetraDeskPreferences -MetraRoot $MetraRoot -BindTailscale $true
+            return [PSCustomObject]@{
+                Preview    = $false
+                Changed    = $true
+                Binding    = $baseBinding
+                Port80Free = $port80Free
+                Error      = $ts.Error
+            }
+        }
+
+        $null = Set-MetraDeskPreferences -MetraRoot $MetraRoot `
+            -OpsPort $ts.Binding.Port `
+            -BrowserHost $ts.Binding.BrowserHost `
+            -PreferFriendlyUrl $false `
+            -BindTailscale $true
+        if (-not $Quiet) {
+            Write-Host ("Ops desk URL (Tailscale reach): {0}" -f $ts.Binding.BrowserUrl) -ForegroundColor Green
+            Write-Host 'Share for view/ask only. Propose and request-apply need your local session token; tray Apply once still gates disk writes.' -ForegroundColor DarkYellow
+        }
+        return [PSCustomObject]@{
+            Preview    = $false
+            Changed    = $true
+            Binding    = $ts.Binding
+            Port80Free = $port80Free
+            Error      = $null
+        }
+    }
+
     return [PSCustomObject]@{
         Preview    = $false
         Changed    = $true
-        Binding    = $loop
+        Binding    = $baseBinding
         Port80Free = $port80Free
-        Error      = $(if ($wantFriendly) { 'friendly-failed-fallback' } else { $null })
+        Error      = $(if ($wantFriendly -and -not $baseBinding.Friendly) { 'friendly-failed-fallback' } else { $null })
     }
 }

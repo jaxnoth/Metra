@@ -49,6 +49,8 @@ docs/context-pack.md
 docs/context-pack.json
 docs/ops-preferences.local.json
 docs/ops-ask-log.local.json
+docs/ops-attention.local.json
+docs/ops-place.local.json
 
 # Ops desk: track dist for end users; ignore node_modules via ops/.gitignore + root rule
 ops/node_modules/

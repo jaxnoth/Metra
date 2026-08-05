@@ -17,6 +17,7 @@ BeforeAll {
         'Update-MetraWorkspace',
         'Test-MetraProjectContext',
         'Export-MetraSnapshot',
+        'Update-MetraSelfDocumentation',
         'Get-MetraChat',
         'Export-MetraContext',
         'Export-MetraProfile',
@@ -1246,12 +1247,342 @@ Describe 'HTML Ops desk payload' {
         @($payload.health.PSObject.Properties.Name) | Should -Not -Contain 'grade'
     }
 
-    It 'builds a classify handoff preview' {
+    It 'explains an empty next-attention queue on quick snapshots' {
+        $payload = Get-MetraDeskPayload
+        @($payload.PSObject.Properties.Name) | Should -Contain 'attentionEmptyHint'
+        @($payload.PSObject.Properties.Name) | Should -Contain 'attentionCount'
+        @($payload.PSObject.Properties.Name) | Should -Contain 'attention'
+        $payload.attention | Should -Not -BeNullOrEmpty
+        @($payload.attention.PSObject.Properties.Name) | Should -Contain 'active'
+        @($payload.attention.PSObject.Properties.Name) | Should -Contain 'activeCount'
+        @($payload.attention.PSObject.Properties.Name) | Should -Contain 'visibleCount'
+        @($payload.attention.PSObject.Properties.Name) | Should -Contain 'held'
+        if (-not $payload.nextAttention -and -not $payload.gitChecked) {
+            $payload.attentionEmptyHint | Should -Match 'quick check|not reviewed|full refresh'
+        }
+        if ($payload.nextAttention) {
+            @($payload.nextAttention.PSObject.Properties.Name) | Should -Contain 'command'
+            @($payload.nextAttention.PSObject.Properties.Name) | Should -Contain 'askPrompt'
+            @($payload.nextAttention.PSObject.Properties.Name) | Should -Contain 'summary'
+            @($payload.nextAttention.PSObject.Properties.Name) | Should -Contain 'doneWhen'
+            @($payload.nextAttention.PSObject.Properties.Name) | Should -Contain 'editCapability'
+            @($payload.nextAttention.PSObject.Properties.Name) | Should -Contain 'resolveCopy'
+            @($payload.nextAttention.PSObject.Properties.Name) | Should -Contain 'whyNext'
+            @($payload.nextAttention.PSObject.Properties.Name) | Should -Contain 'confidence'
+            @($payload.nextAttention.PSObject.Properties.Name) | Should -Contain 'key'
+            $payload.nextAttention.content | Should -Not -BeNullOrEmpty
+            $payload.nextAttention.askPrompt | Should -Not -BeNullOrEmpty
+            $payload.nextAttention.whyNext | Should -Not -BeNullOrEmpty
+            $payload.nextAttention.editCapability | Should -BeIn @('safe', 'unsafe', 'git')
+            if ($payload.nextAttention.kind -eq 'git' -and -not $payload.nextAttention.proposalId) {
+                $payload.nextAttention.editCapability | Should -Be 'git'
+                $payload.nextAttention.resolveCopy | Should -Match 'will not publish from this page'
+                $payload.nextAttention.summary | Should -Match 'waiting to be published|unfinished local|updates available|unpublished'
+            }
+            elseif (-not $payload.nextAttention.proposalId) {
+                $payload.nextAttention.editCapability | Should -Be 'unsafe'
+                $payload.nextAttention.resolveCopy | Should -Match 'Open this in your editor'
+            }
+            else {
+                $payload.nextAttention.editCapability | Should -Be 'safe'
+                $payload.nextAttention.resolveCopy | Should -Match 'confirm in the Metra tray'
+            }
+        }
+    }
+
+    It 'writes plain-language attention headlines for git hygiene' {
+        InModuleScope Metra {
+            $plain = Get-MetraAttentionPlainSummary -Project 'Brightspace' -Kind 'git' -Content 'Brightspace - git ahead 1'
+            $plain | Should -Be 'Brightspace has 1 change waiting to be published.'
+
+            $mixed = Get-MetraAttentionPlainSummary -Project 'Trivia' -Kind 'git' -Content 'Trivia - git dirty 2, ahead 1'
+            $mixed | Should -Match 'unfinished local changes'
+            $mixed | Should -Match 'waiting to be published'
+
+            $why = Get-MetraAttentionWhyNext -Item ([PSCustomObject]@{
+                    kind              = 'git'
+                    confidence        = 'likelyStale'
+                    state             = 'active'
+                    notRecheckedSince = (Get-Date).ToString('o')
+                }) -ActiveCount 3 -RankIndex 0
+            $why | Should -Match 'not double-checked'
+            $why | Should -Not -Match 'likelyStale|revalidation'
+        }
+    }
+
+    It 'maps attention editCapability honestly' {
+        InModuleScope Metra {
+            (Get-MetraAttentionEditCapability -Kind 'todo' -ProposalId $null) | Should -Be 'unsafe'
+            (Get-MetraAttentionEditCapability -Kind 'git' -ProposalId '') | Should -Be 'git'
+            (Get-MetraAttentionEditCapability -Kind 'git' -ProposalId 'p_test') | Should -Be 'safe'
+            (Get-MetraAttentionEditCapability -Kind 'drift' -ProposalId 'p_test') | Should -Be 'safe'
+        }
+    }
+
+    It 'uses stable attention keys across processes' {
+        InModuleScope Metra {
+            $a = Get-MetraAttentionKey -Project 'Trivia' -Kind 'drift' -Content 'Missing AGENTS.md'
+            $b = Get-MetraAttentionKey -Project 'Trivia' -Kind 'drift' -Content 'Missing AGENTS.md'
+            $a | Should -Be $b
+            $a | Should -Match '^Trivia:drift:'
+            (Get-MetraAttentionKey -Project 'Trivia' -Kind 'git' -Content 'dirty') | Should -Be 'Trivia:git'
+            (Get-MetraAttentionKey -Project '' -Kind 'decision' -Content 'x' -ExistingId 'decision:abc') | Should -Be 'decision:abc'
+        }
+    }
+
+    It 'reconciles attention memory across quick and full scans' {
+        InModuleScope Metra {
+            $root = Join-Path ([IO.Path]::GetTempPath()) ("metra-attn-" + [guid]::NewGuid().ToString('n'))
+            New-Item -ItemType Directory -Path (Join-Path $root 'docs') -Force | Out-Null
+            try {
+                $gitItem = [PSCustomObject]@{
+                    id      = 'Trivia:git'
+                    project = 'Trivia'
+                    content = 'Trivia - git dirty 2 ahead 3'
+                    kind    = 'git'
+                    command = '.\metra.ps1 status -Name Trivia'
+                    source  = 'snapshot'
+                }
+                $driftItem = [PSCustomObject]@{
+                    id      = (Get-MetraAttentionKey -Project 'Trivia' -Kind 'drift' -Content 'Missing AGENTS.md')
+                    project = 'Trivia'
+                    content = 'Trivia - Missing AGENTS.md'
+                    kind    = 'drift'
+                    command = '.\metra.ps1 audit -Name Trivia'
+                    source  = 'snapshot'
+                }
+
+                $mem = Update-MetraAttentionMemory -Queue @($gitItem, $driftItem) -CoveredKinds @('drift', 'decision', 'contract', 'git') -ScanMode full -MetraRoot $root
+                @($mem.items).Count | Should -Be 2
+
+                $mem2 = Update-MetraAttentionMemory -Queue @($driftItem) -CoveredKinds @('drift', 'decision', 'contract') -ScanMode quick -MetraRoot $root
+                $git = @($mem2.items) | Where-Object { $_.key -eq 'Trivia:git' } | Select-Object -First 1
+                $git | Should -Not -BeNullOrEmpty
+                $git.state | Should -Be 'active'
+                $git.notRecheckedSince | Should -Not -BeNullOrEmpty
+                $git.confidence | Should -BeIn @('likelyStale', 'needsRevalidation')
+
+                $null = Invoke-MetraAttentionMutation -Key 'Trivia:git' -Action dismiss -MetraRoot $root
+                $mem3 = Update-MetraAttentionMemory -Queue @($gitItem, $driftItem) -CoveredKinds @('drift', 'decision', 'contract', 'git') -ScanMode full -MetraRoot $root
+                $gitDismissed = @($mem3.items) | Where-Object { $_.key -eq 'Trivia:git' } | Select-Object -First 1
+                $gitDismissed.state | Should -Be 'dismissed'
+
+                $gitChanged = [PSCustomObject]@{
+                    id      = 'Trivia:git'
+                    project = 'Trivia'
+                    content = 'Trivia - git dirty 2 ahead 7'
+                    kind    = 'git'
+                    command = '.\metra.ps1 status -Name Trivia'
+                    source  = 'snapshot'
+                }
+                $mem4 = Update-MetraAttentionMemory -Queue @($gitChanged, $driftItem) -CoveredKinds @('drift', 'decision', 'contract', 'git') -ScanMode full -MetraRoot $root
+                $gitAgain = @($mem4.items) | Where-Object { $_.key -eq 'Trivia:git' } | Select-Object -First 1
+                $gitAgain.state | Should -Be 'active'
+
+                $mem5 = Update-MetraAttentionMemory -Queue @($driftItem) -CoveredKinds @('drift', 'decision', 'contract', 'git') -ScanMode full -MetraRoot $root
+                $gitGone = @($mem5.items) | Where-Object { $_.key -eq 'Trivia:git' } | Select-Object -First 1
+                $gitGone.state | Should -Be 'autoClosed'
+                $gitGone.closedBy | Should -Be 'scan'
+
+                $fresh = [PSCustomObject]@{ key = 'a'; kind = 'drift'; confidence = 'fresh'; content = 'A'; state = 'active'; notRecheckedSince = $null }
+                $stale = [PSCustomObject]@{ key = 'b'; kind = 'drift'; confidence = 'needsRevalidation'; content = 'B'; state = 'active'; notRecheckedSince = (Get-Date).ToString('o') }
+                $ranked = Get-MetraAttentionActiveItems -Memory ([PSCustomObject]@{ items = @($stale, $fresh) })
+                $ranked[0].key | Should -Be 'a'
+
+                $null = Invoke-MetraAttentionMutation -Key $driftItem.id -Action reopen -MetraRoot $root
+                $null = Invoke-MetraAttentionMutation -Key $driftItem.id -Action snooze -Days 2 -MetraRoot $root
+                $memS = Get-MetraAttentionMemory -MetraRoot $root
+                $active = Get-MetraAttentionActiveItems -Memory $memS
+                @($active | Where-Object { $_.key -eq $driftItem.id }).Count | Should -Be 0
+
+                $null = Invoke-MetraAttentionMutation -Key $driftItem.id -Action reopen -MetraRoot $root
+                $null = Invoke-MetraAttentionMutation -Key $driftItem.id -Action hold -MetraRoot $root
+                $memH = Get-MetraAttentionMemory -MetraRoot $root
+                $held = @($memH.items) | Where-Object { $_.key -eq $driftItem.id } | Select-Object -First 1
+                $held.state | Should -Be 'held'
+                $held.source | Should -Be 'operator'
+            }
+            finally {
+                Remove-Item -LiteralPath $root -Recurse -Force -ErrorAction SilentlyContinue
+            }
+        }
+    }
+
+    It 'clamps attentionVisibleCount from 1 to 10' {
+        InModuleScope Metra {
+            $temp = Join-Path ([IO.Path]::GetTempPath()) ("metra-attn-prefs-" + [guid]::NewGuid().ToString('n'))
+            New-Item -ItemType Directory -Path (Join-Path $temp 'docs') -Force | Out-Null
+            try {
+                $p = Set-MetraDeskPreferences -MetraRoot $temp -AttentionVisibleCount 99 -DeskMode general
+                $p.attentionVisibleCount | Should -Be 10
+                $p2 = Set-MetraDeskPreferences -MetraRoot $temp -AttentionVisibleCount 0
+                $p2.attentionVisibleCount | Should -Be 1
+            }
+            finally {
+                Remove-Item -LiteralPath $temp -Recurse -Force -ErrorAction SilentlyContinue
+            }
+        }
+    }
+
+    It 'persists editorCommand and defaults to auto' {
+        InModuleScope Metra {
+            $temp = Join-Path ([IO.Path]::GetTempPath()) ("metra-editor-prefs-" + [guid]::NewGuid().ToString('n'))
+            New-Item -ItemType Directory -Path (Join-Path $temp 'docs') -Force | Out-Null
+            try {
+                (Get-MetraDeskPreferences -MetraRoot $temp).editorCommand | Should -Be 'auto'
+                $p = Set-MetraDeskPreferences -MetraRoot $temp -EditorCommand 'system'
+                $p.editorCommand | Should -Be 'system'
+                (Get-MetraDeskPreferences -MetraRoot $temp).editorCommand | Should -Be 'system'
+                $blank = Set-MetraDeskPreferences -MetraRoot $temp -EditorCommand '  '
+                $blank.editorCommand | Should -Be 'auto'
+            }
+            finally {
+                Remove-Item -LiteralPath $temp -Recurse -Force -ErrorAction SilentlyContinue
+            }
+        }
+    }
+
+    It 'resolves the system editor without an executable' {
+        InModuleScope Metra {
+            $editor = Resolve-MetraOpsEditor -Preference 'system'
+            $editor.Kind | Should -Be 'system'
+            $editor.Exe | Should -BeNullOrEmpty
+            $editor.Label | Should -Be 'Windows default'
+        }
+    }
+
+    It 'only opens folders inside a configured root' {
+        InModuleScope Metra {
+            $root = Get-MetraRoot
+            $ok = Resolve-MetraOpsOpenPath -Path $root
+            $ok.Ok | Should -BeTrue
+
+            $outside = Resolve-MetraOpsOpenPath -Path ([Environment]::GetFolderPath('Windows'))
+            $outside.Ok | Should -BeFalse
+            $outside.Reason | Should -Match 'outside every configured Metra root'
+
+            $missing = Resolve-MetraOpsOpenPath -Path (Join-Path $root 'no-such-folder-here')
+            $missing.Ok | Should -BeFalse
+
+            $empty = Resolve-MetraOpsOpenPath -Path ''
+            $empty.Ok | Should -BeFalse
+        }
+    }
+
+    It 'gates Apply via Metra to safe editCapability in Ops UI source' {
+        $app = Get-Content -LiteralPath (Join-Path (Get-MetraRoot) 'ops\src\App.tsx') -Raw
+        $app | Should -Match "capability === 'safe'"
+        $app | Should -Match 'Apply via Metra'
+        $app | Should -Match "capability === 'unsafe'"
+        $app | Should -Match "capability === 'git'"
+        # Apply via Metra must not render outside the safe branch.
+        $safeChunk = [regex]::Match($app, "capability === 'safe' && \([\s\S]*?\)\s*\}\s*\{capability === 'unsafe'").Value
+        $safeChunk | Should -Not -BeNullOrEmpty
+        $safeChunk | Should -Match 'Apply via Metra'
+        $unsafeChunk = [regex]::Match($app, "capability === 'unsafe' && \([\s\S]*?\)\s*\}\s*\{capability === 'git'").Value
+        $unsafeChunk | Should -Not -BeNullOrEmpty
+        $unsafeChunk | Should -Not -Match 'Apply via Metra'
+        $gitChunk = [regex]::Match($app, "capability === 'git' && \([\s\S]*?\)\s*\}\s*").Value
+        $gitChunk | Should -Not -BeNullOrEmpty
+        $gitChunk | Should -Not -Match 'Apply via Metra'
+    }
+
+    It 'builds a routing handoff preview for Ask' {
         $h = Get-MetraDeskHandoff -Query 'ticket disk alert'
         $h.preview | Should -BeTrue
         $h.kind | Should -Be 'route'
         $h.PSObject.Properties.Name | Should -Contain 'where'
         $h.PSObject.Properties.Name | Should -Contain 'next'
+    }
+
+    It 'recommends TicketTracker for ticket intake and teaches what happens there' {
+        $p = Get-MetraDeskPlaceRecommendation -Text 'Helpdesk ticket about disk alert on prd-sql01'
+        $p.ok | Should -BeTrue
+        $p.homeId | Should -Be 'tickettracker'
+        $p.whatHappensThere | Should -Match 'TicketTracker'
+        $p.recommendOnly | Should -BeTrue
+        $p.note | Should -Match 'Recommendation only'
+    }
+
+    It 'enriches place Why from prior confirmations' {
+        $root = Join-Path $TestDrive 'place-learn'
+        New-Item -ItemType Directory -Path (Join-Path $root 'docs') -Force | Out-Null
+        $null = Add-MetraPlaceMemoryItem -Summary 'deployment notes for Brightspace package' -HomeId 'agents-md' -Source confirm -MetraRoot $root
+        $p = Get-MetraDeskPlaceRecommendation -Text 'deployment notes for Brightspace package again' -MetraRoot $root
+        $p.ok | Should -BeTrue
+        $p.homeId | Should -Be 'agents-md'
+        ($p.why -join ' ') | Should -Match 'Past similar|usually place'
+    }
+
+    It 'stages place uploads only under quarantine' {
+        InModuleScope Metra {
+            $bytes = [System.Text.Encoding]::UTF8.GetBytes('hello place')
+            $meta = Save-MetraPlaceUpload -FileName 'note.txt' -Bytes $bytes -ContentType 'text/plain'
+            $meta.id | Should -Not -BeNullOrEmpty
+            $meta.path | Should -Match 'ops-place-quarantine'
+            Test-Path -LiteralPath $meta.path | Should -BeTrue
+        }
+    }
+
+    It 'links confirmed attachments to place memory without leaving quarantine' {
+        InModuleScope Metra {
+            $root = Join-Path $TestDrive 'place-attach'
+            New-Item -ItemType Directory -Path (Join-Path $root 'docs') -Force | Out-Null
+            $bytes = [System.Text.Encoding]::UTF8.GetBytes('canvas screenshot stand-in')
+            $meta = Save-MetraPlaceUpload -FileName 'IMG_TEST.png' -Bytes $bytes -ContentType 'image/png'
+
+            $result = Invoke-MetraPlaceConfirm -Text 'Screenshot from CIO demo' -HomeId 'future-development' -AttachmentIds @($meta.id) -MetraRoot $root
+            $result.ok | Should -BeTrue
+            @($result.attachments).Count | Should -Be 1
+            $result.attachments[0].fileName | Should -Be 'IMG_TEST.png'
+            $result.note | Should -Match 'quarantine'
+
+            $stored = @((Get-MetraPlaceMemory -MetraRoot $root).items)[0]
+            @($stored.attachments).Count | Should -Be 1
+            $stored.attachments[0].id | Should -Be $meta.id
+            $stored.attachments[0].path | Should -Match 'ops-place-quarantine'
+        }
+    }
+
+    It 'ignores unknown attachment ids on confirm' {
+        InModuleScope Metra {
+            $root = Join-Path $TestDrive 'place-attach-unknown'
+            New-Item -ItemType Directory -Path (Join-Path $root 'docs') -Force | Out-Null
+            $result = Invoke-MetraPlaceConfirm -Text 'note with a bad id' -HomeId 'future-development' -AttachmentIds @('..\..\etc\passwd', 'nope') -MetraRoot $root
+            $result.ok | Should -BeTrue
+            @($result.attachments).Count | Should -Be 0
+        }
+    }
+
+    It 'Ops UI retires Classify and ships Route something intake' {
+        $app = Get-Content -LiteralPath (Join-Path (Get-MetraRoot) 'ops\src\App.tsx') -Raw
+        $app | Should -Not -Match 'Classify / Handoff'
+        $app | Should -Not -Match 'postClassify'
+        $app | Should -Match 'Route something'
+        $app | Should -Match 'What happens there'
+        $app | Should -Match 'Keep in view'
+        $app | Should -Match 'onPastePlace'
+        $app | Should -Match 'type="file"'
+        $app | Should -Match 'showWhere'
+    }
+
+    It 'OpsServer exposes place APIs and Serve orchestration' {
+        $source = Get-Content -LiteralPath (Join-Path (Get-MetraRoot) 'scripts\private\OpsServer.ps1') -Raw
+        $source | Should -Match '/api/place'
+        $source | Should -Match '/api/place/upload'
+        $source | Should -Match '/api/place/confirm'
+        $source | Should -Match 'Enable-MetraOpsTailscaleServe'
+        $source | Should -Match 'showWhere'
+    }
+
+    It 'Tailscale binding prefers HTTPS share when Serve URL is provided' {
+        InModuleScope Metra {
+            Mock Get-MetraOpsTailscaleDnsName { 'dev-jmp01.taila8f8a7.ts.net' }
+            $b = Get-MetraOpsTailscaleBinding -Address '100.64.1.2' -Port 7380 -ServeHttpsUrl 'https://dev-jmp01.taila8f8a7.ts.net/'
+            $b.Serve | Should -BeTrue
+            $b.ShareUrl | Should -Be 'https://dev-jmp01.taila8f8a7.ts.net/'
+            @($b.ListenerPrefixes) | Should -Be @('http://127.0.0.1:7380/')
+        }
     }
 
     It 'degrades Ask honestly when the engine is unavailable' {
@@ -1313,11 +1644,80 @@ Hey - yes, from the Ops desk things look fine.
         $hello = Get-MetraRoutingAmbiguity -Query 'Hello Metra'
         $hello.Primary.Name | Should -Be 'Metra'
 
-        $weak = Get-MetraRoutingAmbiguity -Query 'zzqx-home-default-check'
+        $weak = Get-MetraRoutingAmbiguity -Query 'zzqx-noroute-xyzzy-qwerty'
         $weak.Primary.Name | Should -Be 'Metra'
 
         $ticket = Get-MetraRoutingAmbiguity -Query 'ticket disk alert'
         $ticket.Primary.Name | Should -BeIn @('TicketTracker', 'Solarwinds')
+    }
+
+    It 'prefers TicketTracker for ticket-shaped ids and solutions keywords' {
+        $ttPresent = @(Get-MetraProjects | Where-Object { $_.Name -eq 'TicketTracker' }).Count -gt 0
+        if (-not $ttPresent) {
+            Set-ItResult -Skipped -Because 'TicketTracker not present on disk'
+            return
+        }
+
+        $bareId = Get-MetraRoutingAmbiguity -Query '1035299'
+        $bareId.Primary.Name | Should -Be 'TicketTracker'
+
+        $lookAt = Get-MetraRoutingAmbiguity -Query 'Look at 1035299'
+        $lookAt.Primary.Name | Should -Be 'TicketTracker'
+
+        $unknown = Get-MetraRoutingAmbiguity -Query 'zzqx-unknown-widget-access'
+        $unknown.Primary.Name | Should -Be 'Metra'
+
+        $keywords = @(InModuleScope Metra { Get-MetraTicketTrackerSolutionsKeywords })
+        if ($keywords.Count -eq 0) {
+            Set-ItResult -Skipped -Because 'TicketTracker solutions/README.md has no keywords'
+            return
+        }
+
+        $thrive = Get-MetraRoutingAmbiguity -Query 'Thrive 360 access denied'
+        $thrive.Primary.Name | Should -Be 'TicketTracker'
+
+        $pharos = Get-MetraRoutingAmbiguity -Query 'Pharos sync problem'
+        $pharos.Primary.Name | Should -Be 'TicketTracker'
+    }
+
+    It 'caches default projects scan and solutions keywords within a session' {
+        Clear-MetraRoutingCache
+
+        $sw = [System.Diagnostics.Stopwatch]::StartNew()
+        $first = @(Get-MetraProjects)
+        $sw.Stop()
+        $coldMs = $sw.Elapsed.TotalMilliseconds
+        $first.Count | Should -BeGreaterThan 0
+
+        $sw.Restart()
+        $second = @(Get-MetraProjects)
+        $sw.Stop()
+        $warmMs = $sw.Elapsed.TotalMilliseconds
+        $second.Count | Should -Be $first.Count
+        # Warm hit should be much cheaper than a full root directory scan.
+        $warmMs | Should -BeLessThan ([math]::Max(80, $coldMs * 0.35))
+
+        InModuleScope Metra {
+            Clear-MetraRoutingCache
+            $sw = [System.Diagnostics.Stopwatch]::StartNew()
+            $k1 = @(Get-MetraTicketTrackerSolutionsKeywords)
+            $sw.Stop()
+            $kwCold = $sw.Elapsed.TotalMilliseconds
+
+            $sw.Restart()
+            $k2 = @(Get-MetraTicketTrackerSolutionsKeywords)
+            $sw.Stop()
+            $kwWarm = $sw.Elapsed.TotalMilliseconds
+
+            $k2.Count | Should -Be $k1.Count
+            if ($k1.Count -gt 0) {
+                $kwWarm | Should -BeLessThan ([math]::Max(40, $kwCold * 0.5))
+            }
+        }
+
+        Clear-MetraRoutingCache
+        $afterClear = @(Get-MetraProjects)
+        $afterClear.Count | Should -Be $first.Count
     }
 
     It 'does not let stop-word substrings steal IWUDATA routes' {
@@ -1598,5 +1998,685 @@ Describe 'Snapshot git detection' {
                 Remove-Item -LiteralPath $root -Recurse -Force -ErrorAction SilentlyContinue
             }
         }
+    }
+}
+
+Describe 'Secure Ops proposal core' {
+    BeforeEach {
+        $script:proposalStore = Join-Path ([System.IO.Path]::GetTempPath()) ('metra-proposals-' + [guid]::NewGuid().ToString('N'))
+        New-Item -ItemType Directory -Path $script:proposalStore -Force | Out-Null
+    }
+
+    AfterEach {
+        if ($script:proposalStore -and (Test-Path -LiteralPath $script:proposalStore)) {
+            Remove-Item -LiteralPath $script:proposalStore -Recurse -Force -ErrorAction SilentlyContinue
+        }
+    }
+
+    It 'creates draft with schemaVersion, contentHash, and nonceHash' {
+        $store = $script:proposalStore
+        InModuleScope Metra -Parameters @{ Store = $store } {
+            param($Store)
+            $created = New-MetraProposal `
+                -Project Metra `
+                -RootPath 'C:\Projects\_meta' `
+                -Summary 'Update Resolve UI copy' `
+                -Files @(
+                    @{
+                        pathRelative = 'docs/Decisions.md'
+                        action       = 'replace'
+                        contentUtf8  = "# hello`n"
+                        previousHash = 'sha256:abc'
+                    }
+                ) `
+                -StoreRoot $Store
+
+            $created.Status | Should -Be 'draft'
+            $created.Body.schemaVersion | Should -Be 1
+            $created.Body.contentHash | Should -Match '^sha256:[0-9a-f]{64}$'
+            $created.Body.nonceHash | Should -Match '^sha256:[0-9a-f]{64}$'
+            $created.Nonce | Should -Not -BeNullOrEmpty
+            (Test-MetraProposalContentHashMatch -Id $created.Id -StoreRoot $Store) | Should -BeTrue
+            (Test-MetraProposalNonce -Id $created.Id -Nonce $created.Nonce -StoreRoot $Store) | Should -BeTrue
+            Test-Path -LiteralPath $created.BodyPath | Should -BeTrue
+            Test-Path -LiteralPath $created.MetaPath | Should -BeTrue
+        }
+    }
+
+    It 'rejects unknown schemaVersion and replace without previousHash' {
+        $store = $script:proposalStore
+        InModuleScope Metra -Parameters @{ Store = $store } {
+            param($Store)
+            {
+                New-MetraProposal -Project Metra -RootPath 'C:\x' -Summary 'x' -SchemaVersion 99 `
+                    -Files @(@{ pathRelative = 'a.md'; action = 'create'; contentUtf8 = 'a' }) `
+                    -StoreRoot $Store
+            } | Should -Throw '*Unknown schemaVersion*'
+
+            {
+                New-MetraProposal -Project Metra -RootPath 'C:\x' -Summary 'x' `
+                    -Files @(@{ pathRelative = 'a.md'; action = 'replace'; contentUtf8 = 'a' }) `
+                    -StoreRoot $Store
+            } | Should -Throw '*previousHash*'
+        }
+    }
+
+    It 'keeps body bytes immutable across status changes' {
+        $store = $script:proposalStore
+        InModuleScope Metra -Parameters @{ Store = $store } {
+            param($Store)
+            $created = New-MetraProposal -Project Metra -RootPath 'C:\Projects\_meta' -Summary 'immutable' `
+                -Files @(@{ pathRelative = 'docs/a.md'; action = 'create'; contentUtf8 = 'one' }) `
+                -StoreRoot $Store
+            $before = Get-MetraProposalBodyRaw -Id $created.Id -StoreRoot $Store
+
+            Request-MetraProposalApply -Id $created.Id -StoreRoot $Store | Out-Null
+            $mid = Get-MetraProposal -Id $created.Id -StoreRoot $Store
+            $mid.Status | Should -Be 'pendingApply'
+            (Get-MetraProposalBodyRaw -Id $created.Id -StoreRoot $Store) | Should -BeExactly $before
+
+            Set-MetraProposalStatus -Id $created.Id -Status applied -ResultMessage Applied -StoreRoot $Store | Out-Null
+            (Get-MetraProposalBodyRaw -Id $created.Id -StoreRoot $Store) | Should -BeExactly $before
+            (Get-MetraProposal -Id $created.Id -StoreRoot $Store).Status | Should -Be 'applied'
+        }
+    }
+
+    It 'blocks illegal status transitions' {
+        $store = $script:proposalStore
+        InModuleScope Metra -Parameters @{ Store = $store } {
+            param($Store)
+            $created = New-MetraProposal -Project Metra -RootPath 'C:\x' -Summary 'x' `
+                -Files @(@{ pathRelative = 'a.md'; action = 'create'; contentUtf8 = 'a' }) `
+                -StoreRoot $Store
+
+            {
+                Set-MetraProposalStatus -Id $created.Id -Status applied -StoreRoot $Store
+            } | Should -Throw '*Illegal proposal status transition*'
+
+            Deny-MetraProposal -Id $created.Id -StoreRoot $Store | Out-Null
+            {
+                Request-MetraProposalApply -Id $created.Id -StoreRoot $Store
+            } | Should -Throw '*Illegal proposal status transition*'
+        }
+    }
+
+    It 'expires overdue draft and pendingApply proposals' {
+        $store = $script:proposalStore
+        InModuleScope Metra -Parameters @{ Store = $store } {
+            param($Store)
+            $past = [datetime]::UtcNow.AddMinutes(-30)
+            $created = New-MetraProposal -Project Metra -RootPath 'C:\x' -Summary 'old' `
+                -Files @(@{ pathRelative = 'a.md'; action = 'create'; contentUtf8 = 'a' }) `
+                -CreatedAtUtc $past `
+                -TtlMinutes 5 `
+                -StoreRoot $Store
+
+            $expired = Sync-MetraProposalExpiration -Id $created.Id -StoreRoot $Store
+            $expired.Count | Should -Be 1
+            $expired[0].Status | Should -Be 'expired'
+
+            $fresh = New-MetraProposal -Project Metra -RootPath 'C:\x' -Summary 'fresh' `
+                -Files @(@{ pathRelative = 'b.md'; action = 'create'; contentUtf8 = 'b' }) `
+                -CreatedAtUtc $past `
+                -TtlMinutes 5 `
+                -StoreRoot $Store
+            $viaRequest = Request-MetraProposalApply -Id $fresh.Id -StoreRoot $Store
+            $viaRequest.Status | Should -Be 'expired'
+        }
+    }
+}
+
+Describe 'Secure Ops proposal jail' {
+    BeforeEach {
+        $script:jailRoot = Join-Path ([System.IO.Path]::GetTempPath()) ('metra-jail-' + [guid]::NewGuid().ToString('N'))
+        New-Item -ItemType Directory -Path $script:jailRoot -Force | Out-Null
+        New-Item -ItemType Directory -Path (Join-Path $script:jailRoot 'docs') -Force | Out-Null
+        Set-Content -LiteralPath (Join-Path $script:jailRoot 'docs\notes.md') -Value "hello`n" -Encoding utf8NoBOM
+    }
+
+    AfterEach {
+        if ($script:jailRoot -and (Test-Path -LiteralPath $script:jailRoot)) {
+            Remove-Item -LiteralPath $script:jailRoot -Recurse -Force -ErrorAction SilentlyContinue
+        }
+    }
+
+    It 'allows a boring markdown replace in preview and apply when previousHash matches' {
+        $root = $script:jailRoot
+        InModuleScope Metra -Parameters @{ Root = $root } {
+            param($Root)
+            $existing = Get-Content -LiteralPath (Join-Path $Root 'docs\notes.md') -Raw
+            $hash = ConvertTo-MetraProposalSha256 -Text $existing
+            $files = @(
+                @{
+                    pathRelative = 'docs/notes.md'
+                    action       = 'replace'
+                    contentUtf8  = "hello world`n"
+                    previousHash = $hash
+                }
+            )
+
+            $preview = Test-MetraProposalJail -Mode Preview -Project Metra -RootPath $Root -Files $files -ProjectCatalog @('Metra')
+            $preview.Ok | Should -BeTrue
+
+            $apply = Test-MetraProposalJail -Mode Apply -Project Metra -RootPath $Root -Files $files -ProjectCatalog @('Metra')
+            $apply.Ok | Should -BeTrue
+            $apply.Mode | Should -Be 'Apply'
+        }
+    }
+
+    It 'table-driven preview denials' {
+        $root = $script:jailRoot
+        InModuleScope Metra -Parameters @{ Root = $root } {
+            param($Root)
+            $cases = @(
+                @{
+                    Name   = 'path escape'
+                    Files  = @(@{ pathRelative = '../outside.md'; action = 'create'; contentUtf8 = 'x' })
+                    Code   = 'pathRejected'
+                }
+                @{
+                    Name   = 'ps1 denied'
+                    Files  = @(@{ pathRelative = 'hack.ps1'; action = 'create'; contentUtf8 = 'x' })
+                    Code   = 'policyDenied'
+                }
+                @{
+                    Name   = 'git segment'
+                    Files  = @(@{ pathRelative = '.git/config.md'; action = 'create'; contentUtf8 = 'x' })
+                    Code   = 'policyDenied'
+                }
+                @{
+                    Name   = 'credential name'
+                    Files  = @(@{ pathRelative = 'docs/my-credential.json'; action = 'create'; contentUtf8 = '{}' })
+                    Code   = 'policyDenied'
+                }
+                @{
+                    Name   = 'replace missing previousHash'
+                    Files  = @(@{ pathRelative = 'docs/notes.md'; action = 'replace'; contentUtf8 = 'x' })
+                    Code   = 'policyDenied'
+                }
+                @{
+                    Name   = 'vscode settings'
+                    Files  = @(@{ pathRelative = '.vscode/settings.json'; action = 'create'; contentUtf8 = '{}' })
+                    Code   = 'policyDenied'
+                }
+            )
+
+            foreach ($case in $cases) {
+                $result = Test-MetraProposalJail -Mode Preview -Project Metra -RootPath $Root -Files $case.Files -ProjectCatalog @('Metra')
+                $result.Ok | Should -BeFalse -Because $case.Name
+                $result.ReasonCode | Should -Be $case.Code -Because $case.Name
+            }
+        }
+    }
+
+    It 'rejects unknown project and unknown schemaVersion in preview' {
+        $root = $script:jailRoot
+        InModuleScope Metra -Parameters @{ Root = $root } {
+            param($Root)
+            $files = @(@{ pathRelative = 'docs/a.md'; action = 'create'; contentUtf8 = 'a' })
+            $missing = Test-MetraProposalJail -Mode Preview -Project NoSuchProject -RootPath $Root -Files $files -ProjectCatalog @('Metra')
+            $missing.Ok | Should -BeFalse
+            $missing.ReasonCode | Should -Be 'policyDenied'
+
+            $schema = Test-MetraProposalJail -Mode Preview -Project Metra -RootPath $Root -Files $files -SchemaVersion 99 -ProjectCatalog @('Metra')
+            $schema.Ok | Should -BeFalse
+            $schema.ReasonCode | Should -Be 'schemaRejected'
+        }
+    }
+
+    It 'apply rejects hash mismatch and create-when-exists' {
+        $root = $script:jailRoot
+        InModuleScope Metra -Parameters @{ Root = $root } {
+            param($Root)
+            $mismatch = Test-MetraProposalJail -Mode Apply -Project Metra -RootPath $Root -ProjectCatalog @('Metra') -Files @(
+                @{
+                    pathRelative = 'docs/notes.md'
+                    action       = 'replace'
+                    contentUtf8  = "changed`n"
+                    previousHash = 'sha256:deadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeef'
+                }
+            )
+            $mismatch.Ok | Should -BeFalse
+            $mismatch.ReasonCode | Should -Be 'hashMismatch'
+
+            $exists = Test-MetraProposalJail -Mode Apply -Project Metra -RootPath $Root -ProjectCatalog @('Metra') -Files @(
+                @{
+                    pathRelative = 'docs/notes.md'
+                    action       = 'create'
+                    contentUtf8  = "nope`n"
+                }
+            )
+            $exists.Ok | Should -BeFalse
+            $exists.ReasonCode | Should -Be 'fileChanged'
+        }
+    }
+
+    It 'apply allows create for a new markdown file under root' {
+        $root = $script:jailRoot
+        InModuleScope Metra -Parameters @{ Root = $root } {
+            param($Root)
+            $okCreate = Test-MetraProposalJail -Mode Apply -Project Metra -RootPath $Root -ProjectCatalog @('Metra') -Files @(
+                @{
+                    pathRelative = 'docs/new-note.md'
+                    action       = 'create'
+                    contentUtf8  = "fresh`n"
+                }
+            )
+            $okCreate.Ok | Should -BeTrue
+        }
+    }
+
+    It 'enforces file count limit' {
+        $root = $script:jailRoot
+        InModuleScope Metra -Parameters @{ Root = $root } {
+            param($Root)
+            $files = 1..6 | ForEach-Object {
+                @{
+                    pathRelative = "docs/f$_.md"
+                    action       = 'create'
+                    contentUtf8  = 'x'
+                }
+            }
+            $result = Test-MetraProposalJail -Mode Preview -Project Metra -RootPath $Root -Files $files -ProjectCatalog @('Metra')
+            $result.Ok | Should -BeFalse
+            $result.ReasonCode | Should -Be 'policyDenied'
+            $result.Message | Should -Match 'File count'
+        }
+    }
+}
+
+Describe 'Secure Ops proposal host apply' {
+    BeforeEach {
+        $script:applyStore = Join-Path ([System.IO.Path]::GetTempPath()) ('metra-apply-store-' + [guid]::NewGuid().ToString('N'))
+        $script:applyRoot = Join-Path ([System.IO.Path]::GetTempPath()) ('metra-apply-root-' + [guid]::NewGuid().ToString('N'))
+        $script:applyData = Join-Path ([System.IO.Path]::GetTempPath()) ('metra-apply-data-' + [guid]::NewGuid().ToString('N'))
+        New-Item -ItemType Directory -Path $script:applyStore -Force | Out-Null
+        New-Item -ItemType Directory -Path (Join-Path $script:applyRoot 'docs') -Force | Out-Null
+        New-Item -ItemType Directory -Path $script:applyData -Force | Out-Null
+        Set-Content -LiteralPath (Join-Path $script:applyRoot 'docs\notes.md') -Value "hello`n" -Encoding utf8NoBOM
+    }
+
+    AfterEach {
+        foreach ($path in @($script:applyStore, $script:applyRoot, $script:applyData)) {
+            if ($path -and (Test-Path -LiteralPath $path)) {
+                Remove-Item -LiteralPath $path -Recurse -Force -ErrorAction SilentlyContinue
+            }
+        }
+    }
+
+    It 'applies pending proposal after confirm and writes audit' {
+        $store = $script:applyStore
+        $root = $script:applyRoot
+        $data = $script:applyData
+        InModuleScope Metra -Parameters @{ Store = $store; Root = $root; Data = $data } {
+            param($Store, $Root, $Data)
+            $existing = Get-Content -LiteralPath (Join-Path $Root 'docs\notes.md') -Raw
+            $hash = ConvertTo-MetraProposalSha256 -Text $existing
+            $created = New-MetraProposal -Project Metra -RootPath $Root -Summary 'host apply' -StoreRoot $Store -Files @(
+                @{
+                    pathRelative = 'docs/notes.md'
+                    action       = 'replace'
+                    contentUtf8  = "hello applied`n"
+                    previousHash = $hash
+                }
+            )
+            Request-MetraProposalApply -Id $created.Id -StoreRoot $Store | Out-Null
+
+            $result = Invoke-MetraProposalHostApply -Id $created.Id -StoreRoot $Store -DataDir $Data -ConfirmAction { 'apply' }
+            $result.Ok | Should -BeTrue
+            $result.ReasonCode | Should -Be 'applied'
+            (Get-Content -LiteralPath (Join-Path $Root 'docs\notes.md') -Raw) | Should -BeExactly "hello applied`n"
+            (Get-MetraProposal -Id $created.Id -StoreRoot $Store).Status | Should -Be 'applied'
+
+            $audit = Get-Content -LiteralPath (Join-Path $Data 'apply-audit.log') -Raw
+            $audit | Should -Match 'proposal.applied'
+            $audit.Contains($created.Id) | Should -BeTrue
+        }
+    }
+
+    It 'audits user deny without writing files' {
+        $store = $script:applyStore
+        $root = $script:applyRoot
+        $data = $script:applyData
+        InModuleScope Metra -Parameters @{ Store = $store; Root = $root; Data = $data } {
+            param($Store, $Root, $Data)
+            $existing = Get-Content -LiteralPath (Join-Path $Root 'docs\notes.md') -Raw
+            $hash = ConvertTo-MetraProposalSha256 -Text $existing
+            $created = New-MetraProposal -Project Metra -RootPath $Root -Summary 'deny me' -StoreRoot $Store -Files @(
+                @{
+                    pathRelative = 'docs/notes.md'
+                    action       = 'replace'
+                    contentUtf8  = "nope`n"
+                    previousHash = $hash
+                }
+            )
+            Request-MetraProposalApply -Id $created.Id -StoreRoot $Store | Out-Null
+
+            $result = Invoke-MetraProposalHostApply -Id $created.Id -StoreRoot $Store -DataDir $Data -ConfirmAction { 'deny' }
+            $result.Ok | Should -BeFalse
+            $result.ReasonCode | Should -Be 'rejected'
+            (Get-Content -LiteralPath (Join-Path $Root 'docs\notes.md') -Raw) | Should -BeExactly $existing
+            (Get-Content -LiteralPath (Join-Path $Data 'apply-audit.log') -Raw) | Should -Match 'proposal.rejected'
+        }
+    }
+
+    It 'audits hash mismatch from jail revalidate' {
+        $store = $script:applyStore
+        $root = $script:applyRoot
+        $data = $script:applyData
+        InModuleScope Metra -Parameters @{ Store = $store; Root = $root; Data = $data } {
+            param($Store, $Root, $Data)
+            $existing = Get-Content -LiteralPath (Join-Path $Root 'docs\notes.md') -Raw
+            $hash = ConvertTo-MetraProposalSha256 -Text $existing
+            $created = New-MetraProposal -Project Metra -RootPath $Root -Summary 'stale' -StoreRoot $Store -Files @(
+                @{
+                    pathRelative = 'docs/notes.md'
+                    action       = 'replace'
+                    contentUtf8  = "new`n"
+                    previousHash = $hash
+                }
+            )
+            Request-MetraProposalApply -Id $created.Id -StoreRoot $Store | Out-Null
+            Set-Content -LiteralPath (Join-Path $Root 'docs\notes.md') -Value "changed underneath`n" -Encoding utf8NoBOM
+
+            $result = Invoke-MetraProposalHostApply -Id $created.Id -StoreRoot $Store -DataDir $Data -SkipConfirm
+            $result.Ok | Should -BeFalse
+            $result.ReasonCode | Should -Be 'hashMismatch'
+            (Get-Content -LiteralPath (Join-Path $Data 'apply-audit.log') -Raw) | Should -Match 'proposal.hashMismatch'
+        }
+    }
+
+    It 'Sync-MetraProposalHostPending processes one pending proposal' {
+        $store = $script:applyStore
+        $root = $script:applyRoot
+        $data = $script:applyData
+        InModuleScope Metra -Parameters @{ Store = $store; Root = $root; Data = $data } {
+            param($Store, $Root, $Data)
+            $created = New-MetraProposal -Project Metra -RootPath $Root -Summary 'create file' -StoreRoot $Store -Files @(
+                @{
+                    pathRelative = 'docs/new.md'
+                    action       = 'create'
+                    contentUtf8  = "brand new`n"
+                }
+            )
+            Request-MetraProposalApply -Id $created.Id -StoreRoot $Store | Out-Null
+
+            $results = @(Sync-MetraProposalHostPending -StoreRoot $Store -DataDir $Data -ConfirmAction { 'apply' })
+            $results.Count | Should -Be 1
+            $results[0].Ok | Should -BeTrue
+            Test-Path -LiteralPath (Join-Path $Root 'docs\new.md') | Should -BeTrue
+        }
+    }
+
+    It 'OpsHost timer source polls proposal apply' {
+        $source = Get-Content -LiteralPath (Join-Path (Get-MetraRoot) 'scripts\private\OpsHost.ps1') -Raw
+        $source | Should -Match 'Sync-MetraProposalHostPending'
+    }
+}
+
+Describe 'Secure Ops proposal API' {
+    BeforeEach {
+        $script:apiStore = Join-Path ([System.IO.Path]::GetTempPath()) ('metra-prop-api-' + [guid]::NewGuid().ToString('N'))
+        $script:apiRoot = Join-Path ([System.IO.Path]::GetTempPath()) ('metra-prop-root-' + [guid]::NewGuid().ToString('N'))
+        New-Item -ItemType Directory -Path $script:apiStore -Force | Out-Null
+        New-Item -ItemType Directory -Path (Join-Path $script:apiRoot 'docs') -Force | Out-Null
+        Set-Content -LiteralPath (Join-Path $script:apiRoot 'docs\notes.md') -Value "hello`n" -Encoding utf8NoBOM
+    }
+
+    AfterEach {
+        foreach ($path in @($script:apiStore, $script:apiRoot)) {
+            if ($path -and (Test-Path -LiteralPath $path)) {
+                Remove-Item -LiteralPath $path -Recurse -Force -ErrorAction SilentlyContinue
+            }
+        }
+    }
+
+    It 'creates, gets, diffs, and request-applies without writing project files' {
+        $store = $script:apiStore
+        $root = $script:apiRoot
+        InModuleScope Metra -Parameters @{ Store = $store; Root = $root } {
+            param($Store, $Root)
+            $existing = Get-Content -LiteralPath (Join-Path $Root 'docs\notes.md') -Raw
+            $hash = ConvertTo-MetraProposalSha256 -Text $existing
+            $body = @{
+                project       = 'Metra'
+                rootPath      = $Root
+                summary       = 'Update notes'
+                schemaVersion = 1
+                files         = @(
+                    @{
+                        pathRelative = 'docs/notes.md'
+                        action       = 'replace'
+                        contentUtf8  = "hello world`n"
+                        previousHash = $hash
+                    }
+                )
+            } | ConvertTo-Json -Depth 8
+
+            $created = Invoke-MetraOpsProposalCommand -Method POST -Path '/api/proposals' -Body $body -IsLoopback:$true -StoreRoot $Store
+            $created.StatusCode | Should -Be 201
+            $created.Object.status | Should -Be 'draft'
+            $id = [string]$created.Object.id
+            $id | Should -Match '^p_'
+
+            $before = Get-Content -LiteralPath (Join-Path $Root 'docs\notes.md') -Raw
+
+            $got = Invoke-MetraOpsProposalCommand -Method GET -Path "/api/proposals/$id" -IsLoopback:$true -StoreRoot $Store
+            $got.StatusCode | Should -Be 200
+            $got.Object.summary | Should -Be 'Update notes'
+
+            $diff = Invoke-MetraOpsProposalCommand -Method GET -Path "/api/proposals/$id/diff" -IsLoopback:$true -StoreRoot $Store
+            $diff.StatusCode | Should -Be 200
+            $diff.Text | Should -Match 'docs/notes.md'
+
+            $pending = Invoke-MetraOpsProposalCommand -Method POST -Path "/api/proposals/$id/request-apply" -IsLoopback:$true -StoreRoot $Store
+            $pending.StatusCode | Should -Be 200
+            $pending.Object.status | Should -Be 'pendingApply'
+
+            $status = Invoke-MetraOpsProposalCommand -Method GET -Path "/api/proposals/$id/status" -IsLoopback:$true -StoreRoot $Store
+            $status.Object.status | Should -Be 'pendingApply'
+
+            (Get-Content -LiteralPath (Join-Path $Root 'docs\notes.md') -Raw) | Should -BeExactly $before
+        }
+    }
+
+    It 'rejects /apply and non-loopback mutate without session' {
+        $store = $script:apiStore
+        InModuleScope Metra -Parameters @{ Store = $store } {
+            param($Store)
+            $apply = Invoke-MetraOpsProposalCommand -Method POST -Path '/api/proposals/p_x/apply' -IsLoopback:$true -StoreRoot $Store
+            $apply.StatusCode | Should -Be 404
+            $apply.Object.error | Should -Match 'request-apply'
+
+            $remote = Invoke-MetraOpsProposalCommand -Method POST -Path '/api/proposals' -Body '{"project":"Metra"}' -IsLoopback:$false -StoreRoot $Store
+            $remote.StatusCode | Should -Be 403
+            $remote.Object.reasonCode | Should -Be 'localSessionRequired'
+        }
+    }
+
+    It 'returns 400 when jail denies create' {
+        $store = $script:apiStore
+        $root = $script:apiRoot
+        InModuleScope Metra -Parameters @{ Store = $store; Root = $root } {
+            param($Store, $Root)
+            $body = @{
+                project  = 'Metra'
+                rootPath = $Root
+                summary  = 'bad'
+                files    = @(@{ pathRelative = 'hack.ps1'; action = 'create'; contentUtf8 = 'x' })
+            } | ConvertTo-Json -Depth 6
+
+            $denied = Invoke-MetraOpsProposalCommand -Method POST -Path '/api/proposals' -Body $body -IsLoopback:$true -StoreRoot $Store
+            $denied.StatusCode | Should -Be 400
+            $denied.Object.reasonCode | Should -Be 'policyDenied'
+        }
+    }
+
+    It 'OpsServer wires proposal routes and never names an apply endpoint handler' {
+        $source = Get-Content -LiteralPath (Join-Path (Get-MetraRoot) 'scripts\private\OpsServer.ps1') -Raw
+        $source | Should -Match 'Invoke-MetraOpsProposalCommand'
+        $source | Should -Match '/api/proposals'
+        ($source -match '/api/proposals/.*/apply') | Should -BeFalse
+
+        $apiSource = Get-Content -LiteralPath (Join-Path (Get-MetraRoot) 'scripts\private\ProposalApi.ps1') -Raw
+        $apiSource | Should -Match 'request-apply'
+        $apiSource | Should -Match "action -eq 'apply'"
+    }
+}
+
+Describe 'Secure Ops webview bridge and Tailscale session' {
+    It 'page and extension forbid bare apply bridge messages' {
+        $bridge = Get-Content -LiteralPath (Join-Path (Get-MetraRoot) 'ops\src\bridge.ts') -Raw
+        $bridge | Should -Match 'requestProposalApply'
+        $bridge | Should -Match 'askInChat'
+        $bridge | Should -Match 'openWorkspacePath'
+        $bridge | Should -Match 'surfaceReady'
+        $bridge | Should -Match 'applyStatus'
+        $bridge | Should -Match "FORBIDDEN_BRIDGE_APPLY_TYPE = 'requestApply'"
+        $bridge | Should -Match 'formatAskTabTitle'
+
+        $ext = Get-Content -LiteralPath (Join-Path (Get-MetraRoot) 'integrations\vscode-metra-ops\extension.js') -Raw
+        $ext | Should -Match 'requestProposalApply'
+        $ext | Should -Match "FORBIDDEN_TYPES"
+        $ext | Should -Match 'requestApply'
+        $ext | Should -Not -Match "type === 'apply'"
+        ($ext -match "postMessage\(\{\s*type:\s*'apply'") | Should -BeFalse
+    }
+
+    It 'issues local session token and accepts non-loopback mutate with it' {
+        $dataDir = Join-Path ([System.IO.Path]::GetTempPath()) ('metra-session-' + [guid]::NewGuid().ToString('N'))
+        $store = Join-Path ([System.IO.Path]::GetTempPath()) ('metra-proposals-' + [guid]::NewGuid().ToString('N'))
+        $root = Join-Path ([System.IO.Path]::GetTempPath()) ('metra-root-' + [guid]::NewGuid().ToString('N'))
+        New-Item -ItemType Directory -Path $dataDir, $store, (Join-Path $root 'docs') -Force | Out-Null
+        Set-Content -LiteralPath (Join-Path $root 'docs\notes.md') -Value "old`n" -Encoding utf8
+        try {
+            InModuleScope Metra -Parameters @{ DataDir = $dataDir; Store = $store; Root = $root } {
+                param($DataDir, $Store, $Root)
+
+                $denied = Invoke-MetraOpsProposalCommand -Method POST -Path '/api/proposals' -Body '{"project":"Metra"}' -IsLoopback:$false -StoreRoot $Store
+                $denied.StatusCode | Should -Be 403
+                $denied.Object.reasonCode | Should -Be 'localSessionRequired'
+
+                $issued = Initialize-MetraOpsLocalSessionToken -DataDir $DataDir -Rotate
+                $issued.Token | Should -Match '^[0-9a-f]{64}$'
+                (Test-MetraOpsLocalSessionToken -SessionToken $issued.Token -ExpectedToken $issued.Token) | Should -BeTrue
+                (Test-MetraOpsLocalSessionToken -SessionToken 'nope' -ExpectedToken $issued.Token) | Should -BeFalse
+
+                # Point the default token path via env LOCALAPPDATA override is hard; call Allowed with Expected through API path:
+                # Temporarily write to real LOCALAPPDATA Metra folder is avoided - use Test-MetraOpsProposalCallerAllowed directly.
+                (Test-MetraOpsProposalCallerAllowed -IsLoopback:$false -SessionToken $issued.Token) | Should -BeFalse
+
+                $tokenPath = Join-Path $env:LOCALAPPDATA 'Metra\ops-local-session.token'
+                $dir = Split-Path -Parent $tokenPath
+                if (-not (Test-Path -LiteralPath $dir)) {
+                    $null = New-Item -ItemType Directory -Path $dir -Force
+                }
+                $backup = $null
+                if (Test-Path -LiteralPath $tokenPath) {
+                    $backup = Get-Content -LiteralPath $tokenPath -Raw -Encoding UTF8
+                }
+                try {
+                    Set-Content -LiteralPath $tokenPath -Value $issued.Token -Encoding utf8 -NoNewline
+                    (Test-MetraOpsProposalCallerAllowed -IsLoopback:$false -SessionToken $issued.Token) | Should -BeTrue
+
+                    $hash = ConvertTo-MetraProposalSha256 -Text "old`n"
+                    $body = @{
+                        project  = 'Metra'
+                        rootPath = $Root
+                        summary  = 'session ok'
+                        files    = @(@{
+                                pathRelative = 'docs/notes.md'
+                                action       = 'replace'
+                                contentUtf8  = "new`n"
+                                previousHash = $hash
+                            })
+                    } | ConvertTo-Json -Depth 6
+
+                    $created = Invoke-MetraOpsProposalCommand -Method POST -Path '/api/proposals' -Body $body -IsLoopback:$false -SessionToken $issued.Token -StoreRoot $Store
+                    $created.StatusCode | Should -Be 201
+                    $id = [string]$created.Object.id
+                    $pending = Invoke-MetraOpsProposalCommand -Method POST -Path "/api/proposals/$id/request-apply" -IsLoopback:$false -SessionToken $issued.Token -StoreRoot $Store
+                    $pending.StatusCode | Should -Be 200
+                    $pending.Object.status | Should -Be 'pendingApply'
+                }
+                finally {
+                    if ($null -ne $backup) {
+                        Set-Content -LiteralPath $tokenPath -Value $backup -Encoding utf8 -NoNewline
+                    }
+                    elseif (Test-Path -LiteralPath $tokenPath) {
+                        Remove-Item -LiteralPath $tokenPath -Force -ErrorAction SilentlyContinue
+                    }
+                }
+            }
+        }
+        finally {
+            Remove-Item -LiteralPath $dataDir, $store, $root -Recurse -Force -ErrorAction SilentlyContinue
+        }
+    }
+
+    It 'builds Tailscale dual-prefix binding objects' {
+        InModuleScope Metra {
+            Mock Get-MetraOpsTailscaleDnsName { $null }
+            Mock Get-MetraOpsTailscaleServeStatus { [pscustomobject]@{ Ok = $false; ShareUrl = $null; Reason = 'off' } }
+            $b = Get-MetraOpsTailscaleBinding -Address '100.64.1.2' -Port 7380
+            $b.Tailscale | Should -BeTrue
+            $b.BrowserUrl | Should -Be 'http://100.64.1.2:7380/'
+            @($b.ListenerPrefixes) | Should -Contain 'http://127.0.0.1:7380/'
+            @($b.ListenerPrefixes) | Should -Contain 'http://100.64.1.2:7380/'
+        }
+    }
+
+    It 'prefers MagicDNS for share URL and listens on both names' {
+        InModuleScope Metra {
+            Mock Get-MetraOpsTailscaleServeStatus { [pscustomobject]@{ Ok = $false; ShareUrl = $null; Reason = 'off' } }
+            $b = Get-MetraOpsTailscaleBinding -Address '100.64.1.2' -Port 80 -DnsName 'dev-jmp01.taila8f8a7.ts.net.'
+            $b.BrowserUrl | Should -Be 'http://dev-jmp01.taila8f8a7.ts.net/'
+            $b.ShareUrl | Should -Be 'http://dev-jmp01.taila8f8a7.ts.net/'
+            $b.DnsName | Should -Be 'dev-jmp01.taila8f8a7.ts.net'
+            $b.TailscaleIp | Should -Be '100.64.1.2'
+            @($b.ListenerPrefixes) | Should -Contain 'http://127.0.0.1:80/'
+            @($b.ListenerPrefixes) | Should -Contain 'http://100.64.1.2:80/'
+            @($b.ListenerPrefixes) | Should -Contain 'http://dev-jmp01.taila8f8a7.ts.net:80/'
+        }
+    }
+
+    It 'keeps Tailscale prefixes when the desk starts with an explicit port' {
+        InModuleScope Metra {
+            Mock Get-MetraDeskPreferences { [pscustomobject]@{ opsPort = 80; browserHost = '100.64.1.2'; bindTailscale = $true } }
+            Mock Get-MetraOpsTailscaleIPv4 { '100.64.1.2' }
+            Mock Get-MetraOpsTailscaleDnsName { 'dev-jmp01.taila8f8a7.ts.net' }
+            Mock Get-MetraOpsTailscaleServeStatus { [pscustomobject]@{ Ok = $false; ShareUrl = $null; Reason = 'off' } }
+            Mock Test-MetraHostsEntry { $false }
+
+            $b = Get-MetraOpsDeskBindingForPort -Port 80
+            $b.Tailscale | Should -BeTrue
+            @($b.ListenerPrefixes) | Should -Contain 'http://100.64.1.2:80/'
+            @($b.ListenerPrefixes) | Should -Contain 'http://127.0.0.1:80/'
+            @($b.ListenerPrefixes) | Should -Contain 'http://dev-jmp01.taila8f8a7.ts.net:80/'
+            $b.BrowserUrl | Should -Be 'http://dev-jmp01.taila8f8a7.ts.net/'
+        }
+    }
+
+    It 'falls back to loopback for an explicit port when Tailscale is off' {
+        InModuleScope Metra {
+            Mock Get-MetraDeskPreferences { [pscustomobject]@{ opsPort = 7380; browserHost = ''; bindTailscale = $false } }
+            Mock Test-MetraHostsEntry { $false }
+
+            $b = Get-MetraOpsDeskBindingForPort -Port 7380
+            @($b.ListenerPrefixes) | Should -Be @('http://127.0.0.1:7380/')
+        }
+    }
+
+    It 'starts the desk from the pref-aware binding helper' {
+        $source = Get-Content -LiteralPath (Join-Path (Get-MetraRoot) 'scripts\private\OpsServer.ps1') -Raw
+        $source | Should -Match 'Get-MetraOpsDeskBindingForPort'
+    }
+
+    It 'OpsServer exposes loopback-only local-session and CORS session header' {
+        $source = Get-Content -LiteralPath (Join-Path (Get-MetraRoot) 'scripts\private\OpsServer.ps1') -Raw
+        $source | Should -Match '/api/local-session'
+        $source | Should -Match 'localSessionLoopbackOnly'
+        $source | Should -Match 'X-Metra-Local-Session'
+        $source | Should -Match 'Initialize-MetraOpsLocalSessionToken'
     }
 }

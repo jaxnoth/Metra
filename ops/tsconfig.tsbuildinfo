@@ -1,1 +1,1 @@
-{"root":["./src/app.tsx","./src/metrapresence.tsx","./src/api.ts","./src/main.tsx","./src/types.ts","./src/vite-env.d.ts"],"version":"5.8.3"}
+{"root":["./src/app.tsx","./src/metrapresence.tsx","./src/api.ts","./src/bridge.ts","./src/main.tsx","./src/types.ts","./src/vite-env.d.ts"],"version":"5.8.3"}

@@ -35,7 +35,7 @@ param(
     [Parameter(Position = 0)]
     [ValidateSet(
         'list', 'status', 'pull', 'fetch', 'run', 'new', 'apply', 'workspace',
-        'audit', 'snapshot', 'ops', 'host', 'chats', 'roots', 'routing',
+        'audit', 'snapshot', 'selfdoc', 'ops', 'host', 'chats', 'roots', 'routing',
         'export-profile', 'import-profile', 'ctx', 'setup', 'verify', 'unblock', 'profile', 'decisions', 'coverage', 'help'
     )]
     [string]$Command = 'help',
@@ -97,6 +97,7 @@ Usage:
   .\metra.ps1 workspace [-Months 6] [-ScanDepth 2] [-Preview]
   .\metra.ps1 audit [-Filter '*'] [-Name ProjA,ProjB] [-Root ...] [-DriftOnly] [-ScanDepth 4]
   .\metra.ps1 snapshot [-ScanDepth 2] [-Quick]
+  .\metra.ps1 selfdoc
   .\metra.ps1 ops [-Quick] [-Full] [-Port 7380] [-NoBrowser] [-NoRefresh] [-Stop]
       Console Ops desk (operator/debug). -Stop frees the port when a desk outlived its console.
   .\metra.ps1 host [-Port 7380] [-NoBrowser] [-NoRefresh] [-Quick] [-Stop]
@@ -279,6 +280,10 @@ switch ($Command) {
         }
         if ($ScanDepth -ge 0) { $params.ScanDepth = $ScanDepth }
         Export-MetraSnapshot @params | Format-List
+    }
+
+    'selfdoc' {
+        Update-MetraSelfDocumentation | Format-List
     }
 
     'ops' {

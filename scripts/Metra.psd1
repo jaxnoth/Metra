@@ -21,6 +21,7 @@
         'Update-MetraWorkspace'
         'Test-MetraProjectContext'
         'Export-MetraSnapshot'
+        'Update-MetraSelfDocumentation'
         'Get-MetraChat'
         'Export-MetraContext'
         'Export-MetraProfile'
@@ -34,6 +35,7 @@
         'Get-MetraOrchestrationProject'
         'Get-MetraHomeDestinationName'
         'Get-MetraRoutingAmbiguity'
+        'Clear-MetraRoutingCache'
         'Get-MetraStatus'
         'Update-MetraProjects'
         'Get-RecentMetraProjects'
@@ -72,8 +74,16 @@
         'Test-MetraTcpPortFree',
         'Get-MetraDeskPayload',
         'Get-MetraDeskHandoff',
+        'Get-MetraDeskPlaceRecommendation',
         'Get-MetraDeskAskResult',
         'Test-MetraDeskGreeting',
+        'Test-MetraAskShowWhere',
+        'Add-MetraPlaceMemoryItem',
+        'Save-MetraPlaceUpload',
+        'Get-MetraPlaceUploadMeta',
+        'Enable-MetraOpsTailscaleServe',
+        'Get-MetraOpsTailscaleServeStatus',
+        'Get-MetraOpsTailscaleBinding',
         'Get-MetraAskCapability',
         'Get-MetraAskSettings',
         'Invoke-MetraAskEngine',

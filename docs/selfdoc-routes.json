@@ -1,0 +1,147 @@
+{
+    "generatedAt":  "2026-08-05T14:27:58.4147013-04:00",
+    "chosenId":  "tickettracker",
+    "diagram":  [
+                    {
+                        "id":  "tickettracker",
+                        "name":  "TicketTracker",
+                        "sampleAsk":  "ticket",
+                        "purpose":  "Local ticket assistant for iSupport and future helpdesk systems - sync, search, notes, recommendations.",
+                        "triggers":  [
+                                         "ticket",
+                                         "isupport",
+                                         "helpdesk",
+                                         "incident",
+                                         "work item"
+                                     ]
+                    },
+                    {
+                        "id":  "solarwinds",
+                        "name":  "Solarwinds",
+                        "sampleAsk":  "solarwinds",
+                        "purpose":  "Orion platform-as-code - alerts, monitors, templates, dashboards, dependencies.",
+                        "triggers":  [
+                                         "solarwinds",
+                                         "orion",
+                                         "alert",
+                                         "sam",
+                                         "monitor"
+                                     ]
+                    },
+                    {
+                        "id":  "trivia",
+                        "name":  "Trivia",
+                        "sampleAsk":  "trivia",
+                        "purpose":  "Fun Committee / IT get-together printables - trivia drafts, theme sheets, and word-search generators under C:\\Projects\\Trivia.",
+                        "triggers":  [
+                                         "trivia",
+                                         "word search",
+                                         "fun committee",
+                                         "it get together",
+                                         "printable trivia"
+                                     ]
+                    }
+                ],
+    "routes":  [
+                   {
+                       "id":  "tickettracker",
+                       "name":  "TicketTracker",
+                       "sampleAsk":  "ticket",
+                       "purpose":  "Local ticket assistant for iSupport and future helpdesk systems - sync, search, notes, recommendations.",
+                       "triggers":  [
+                                        "ticket",
+                                        "isupport",
+                                        "helpdesk",
+                                        "incident",
+                                        "work item"
+                                    ]
+                   },
+                   {
+                       "id":  "solarwinds",
+                       "name":  "Solarwinds",
+                       "sampleAsk":  "solarwinds",
+                       "purpose":  "Orion platform-as-code - alerts, monitors, templates, dashboards, dependencies.",
+                       "triggers":  [
+                                        "solarwinds",
+                                        "orion",
+                                        "alert",
+                                        "sam",
+                                        "monitor"
+                                    ]
+                   },
+                   {
+                       "id":  "trivia",
+                       "name":  "Trivia",
+                       "sampleAsk":  "trivia",
+                       "purpose":  "Fun Committee / IT get-together printables - trivia drafts, theme sheets, and word-search generators under C:\\Projects\\Trivia.",
+                       "triggers":  [
+                                        "trivia",
+                                        "word search",
+                                        "fun committee",
+                                        "it get together",
+                                        "printable trivia"
+                                    ]
+                   },
+                   {
+                       "id":  "colleague",
+                       "name":  "Colleague",
+                       "sampleAsk":  "colleague",
+                       "purpose":  "PowerShell module for Ellucian Colleague admin - WAGC, WAFM, PRQM, EDQM, listeners, sessions.",
+                       "triggers":  [
+                                        "colleague",
+                                        "ellucian",
+                                        "wagc",
+                                        "wafm",
+                                        "prqm"
+                                    ]
+                   },
+                   {
+                       "id":  "iwudataautomation",
+                       "name":  "IWUDATA-Automation",
+                       "sampleAsk":  "iwudata automation",
+                       "purpose":  "PowerShell automation that populates IWUDATA warehouse databases.",
+                       "triggers":  [
+                                        "iwudata automation",
+                                        "warehouse load",
+                                        "run.ps1",
+                                        "etl",
+                                        "start-automation"
+                                    ]
+                   },
+                   {
+                       "id":  "reporting",
+                       "name":  "Reporting",
+                       "sampleAsk":  "reporting",
+                       "purpose":  "Reporting assets, SSRS/related report work, and ops scripts.",
+                       "triggers":  [
+                                        "reporting",
+                                        "ssrs",
+                                        "report",
+                                        "rdl"
+                                    ]
+                   },
+                   {
+                       "id":  "jitterbit",
+                       "name":  "Jitterbit",
+                       "sampleAsk":  "jitterbit",
+                       "purpose":  "Harmony Studio exports, private agents, and IWU.Jitterbit operation-log monitoring module.",
+                       "triggers":  [
+                                        "jitterbit",
+                                        "harmony",
+                                        "integration studio",
+                                        "jb",
+                                        "iwu.jitterbit"
+                                    ]
+                   },
+                   {
+                       "id":  "autohotkey",
+                       "name":  "AutoHotkey",
+                       "sampleAsk":  "autohotkey",
+                       "purpose":  "AutoHotkey scripts and helpers.",
+                       "triggers":  [
+                                        "autohotkey",
+                                        "ahk"
+                                    ]
+                   }
+               ]
+}

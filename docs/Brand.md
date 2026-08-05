@@ -81,6 +81,8 @@ GitHub README stays operator/coder-facing. Plain-language landing for non-coders
 
 Canonical file: [`assets/metra-mark.svg`](assets/metra-mark.svg). Tray / Start Menu bitmap: [`assets/metra.ico`](assets/metra.ico) (square crop of the route mark for NotifyIcon and installer shortcuts).
 
+HTML Ops home-screen / PWA icons live under `ops/public/`: `apple-touch-icon.png` (180), `icon-192.png`, `icon-512.png`, plus square `favicon.svg` and `site.webmanifest`. iOS ignores SVG for Add to Home Screen - without the PNG it falls back to a letter tile from the page title. Fixed Mist + Signal Teal (no dark-mode swap) so the saved icon stays readable.
+
 Composition (locked):
 
 1. Horizontal teal route line
@@ -188,7 +190,7 @@ Pass = both columns feel like one product at different times of day. Fail = dark
 
 ## Related
 
-- [Demo.md](Demo.md) - coworker pitch (middle path + optional live proof)
+- [Overview.md](Overview.md) - audience overview / leave-behind (prose twin of self-doc canvas)
 - [Customizing-Metra.md](Customizing-Metra.md) - persona, Origin, and overlays
 - [Decisions.md](Decisions.md) - append-only portfolio decisions (incl. brand bounds)
 - [Integrations.md](Integrations.md) - core vs Cursor

@@ -878,10 +878,11 @@ function Export-MetraCanvasSnapshot {
 
         if ($findings.Count -gt 0) {
             foreach ($f in $findings) {
+                $findingText = [string]$f
                 $todos += [PSCustomObject]@{
-                    id      = ($name + ':' + ($f.GetHashCode()))
+                    id      = (Get-MetraAttentionKey -Project $name -Kind 'drift' -Content $findingText)
                     project = $name
-                    content = "$name - $f"
+                    content = "$name - $findingText"
                     status  = 'pending'
                     kind    = 'drift'
                 }
@@ -950,10 +951,12 @@ function Export-MetraCanvasSnapshot {
                 $findings = @('Missing from registry (projects.json or projects.local.json)')
             }
             foreach ($f in $findings) {
+                $findingText = [string]$f
+                $projName = [string]$r.Name
                 $todos += [PSCustomObject]@{
-                    id      = ($r.Name + ':' + ($f.GetHashCode()))
-                    project = [string]$r.Name
-                    content = "$($r.Name) - $f"
+                    id      = (Get-MetraAttentionKey -Project $projName -Kind 'drift' -Content $findingText)
+                    project = $projName
+                    content = "$projName - $findingText"
                     status  = 'pending'
                     kind    = 'drift'
                 }
@@ -1138,12 +1141,21 @@ $embedEnd
         }
     }
 
+    $selfDoc = $null
+    try {
+        $selfDoc = Update-MetraSelfDocumentation
+    }
+    catch {
+        Write-Warning ("Self-documentation refresh failed: {0}" -f $_.Exception.Message)
+    }
+
     return [PSCustomObject]@{
         OutPath      = $OutPath
         CanvasPath   = $CanvasPath
         ProjectCount = $snapshot.projectCount
         DriftCount   = $snapshot.driftCount
         TodoCount    = @($snapshot.todos).Count
+        SelfDoc      = $selfDoc
     }
 }
 
@@ -1175,11 +1187,14 @@ function Get-MetraDeskPreferences {
 
     $path = Get-MetraDeskPreferencesPath -MetraRoot $MetraRoot
     $defaults = [ordered]@{
-        deskMode           = 'general'
-        opsPort            = $null
-        browserHost        = $null
-        preferFriendlyUrl  = $null
-        updatedAt          = $null
+        deskMode               = 'general'
+        opsPort                = $null
+        browserHost            = $null
+        preferFriendlyUrl      = $null
+        bindTailscale          = $false
+        attentionVisibleCount  = 1
+        editorCommand          = 'auto'
+        updatedAt              = $null
     }
     if (-not (Test-Path -LiteralPath $path)) {
         return [PSCustomObject]$defaults
@@ -1200,12 +1215,28 @@ function Get-MetraDeskPreferences {
         if ($null -ne $prefer) {
             $prefer = [bool]$prefer
         }
+        $bindTs = Get-MetraProp -Object $raw -Name 'bindTailscale' -Default $false
+        if ($null -ne $bindTs) {
+            $bindTs = [bool]$bindTs
+        }
+        else {
+            $bindTs = $false
+        }
+        $vis = Get-MetraProp -Object $raw -Name 'attentionVisibleCount' -Default 1
+        try { $vis = [int]$vis } catch { $vis = 1 }
+        if ($vis -lt 1) { $vis = 1 }
+        if ($vis -gt 10) { $vis = 10 }
+        $editorCommand = [string](Get-MetraProp -Object $raw -Name 'editorCommand' -Default 'auto')
+        if ([string]::IsNullOrWhiteSpace($editorCommand)) { $editorCommand = 'auto' }
         return [PSCustomObject]@{
-            deskMode          = $mode
-            opsPort           = $opsPort
-            browserHost       = (Get-MetraProp -Object $raw -Name 'browserHost' -Default $null)
-            preferFriendlyUrl = $prefer
-            updatedAt         = (Get-MetraProp -Object $raw -Name 'updatedAt' -Default $null)
+            deskMode               = $mode
+            opsPort                = $opsPort
+            browserHost            = (Get-MetraProp -Object $raw -Name 'browserHost' -Default $null)
+            preferFriendlyUrl      = $prefer
+            bindTailscale          = $bindTs
+            attentionVisibleCount  = $vis
+            editorCommand          = $editorCommand
+            updatedAt              = (Get-MetraProp -Object $raw -Name 'updatedAt' -Default $null)
         }
     }
     catch {
@@ -1225,6 +1256,9 @@ function Set-MetraDeskPreferences {
         [int]$OpsPort,
         [string]$BrowserHost,
         [bool]$PreferFriendlyUrl,
+        [bool]$BindTailscale,
+        [int]$AttentionVisibleCount,
+        [string]$EditorCommand,
         [string]$MetraRoot = (Get-MetraRoot)
     )
 
@@ -1240,6 +1274,20 @@ function Set-MetraDeskPreferences {
     }
     if ($PSBoundParameters.ContainsKey('PreferFriendlyUrl')) {
         $current.preferFriendlyUrl = $PreferFriendlyUrl
+    }
+    if ($PSBoundParameters.ContainsKey('BindTailscale')) {
+        $current.bindTailscale = $BindTailscale
+    }
+    if ($PSBoundParameters.ContainsKey('AttentionVisibleCount')) {
+        $vis = $AttentionVisibleCount
+        if ($vis -lt 1) { $vis = 1 }
+        if ($vis -gt 10) { $vis = 10 }
+        $current.attentionVisibleCount = $vis
+    }
+    if ($PSBoundParameters.ContainsKey('EditorCommand')) {
+        $ed = $EditorCommand
+        if ([string]::IsNullOrWhiteSpace($ed)) { $ed = 'auto' }
+        $current.editorCommand = $ed.Trim()
     }
     $current.updatedAt = (Get-Date).ToString('o')
     $path = Get-MetraDeskPreferencesPath -MetraRoot $MetraRoot
@@ -1439,7 +1487,7 @@ function Get-MetraDeskAskResult {
             message       = @"
 Ask engine unavailable.
 
-The Ask engine returned an error. Metra can still classify work and show routing.
+The Ask engine returned an error. Metra can still route work and recommend durable homes.
 "@.Trim()
             port          = $capability.port
             model         = $capability.model
@@ -1471,8 +1519,8 @@ The Ask engine returned an error. Metra can still classify work and show routing
 
 function Get-MetraDeskHandoff {
     <#
-    .SYNOPSIS
-        Builds a labeled routing preview handoff for the HTML Ops Ask / Classify shell.
+        .SYNOPSIS
+        Builds a labeled routing preview handoff for the HTML Ops Ask path.
     #>
     [CmdletBinding()]
     param(
@@ -1490,7 +1538,7 @@ function Get-MetraDeskHandoff {
             what       = 'Enter a short question or symptom.'
             why        = @()
             forWhom    = @()
-            next       = 'Type what you need help with, then Ask or Classify.'
+            next       = 'Type what you need help with, then Ask - or use Route something if you need a durable home.'
             ambiguous  = $false
             runnerUp   = $null
             score      = 0
@@ -1539,7 +1587,7 @@ function Get-MetraDeskHandoff {
     $isHome = $whereName -eq (Get-MetraHomeDestinationName)
     $what = if ($purpose) { $purpose } elseif ($primary) { "Open $($primary.Name) and follow that project's AGENTS.md." } else { 'Stay on Metra until a stronger project route appears.' }
     $next = if ($isHome) {
-        'Stay on Metra. Ask again with more detail, or use Classify if you need a destination preview.'
+        'Stay on Metra. Ask again with more detail, or use Route something if you need a durable home.'
     }
     elseif ($primary) {
         "Stay in $whereName. Continue Ask for answers, or open Cursor when you need to build."
@@ -1596,18 +1644,127 @@ function ConvertTo-MetraDeskPayload {
     }
 
     $todos = @($Snapshot.todos)
-    $nextAttention = $null
-    if ($todos.Count -gt 0) {
-        $pick = $todos | Where-Object { $_.kind -eq 'drift' -or $_.kind -eq 'verify' } | Select-Object -First 1
-        if (-not $pick) { $pick = $todos | Select-Object -First 1 }
-        if ($pick) {
-            $nextAttention = [PSCustomObject]@{
-                id      = [string]$pick.id
-                project = [string]$pick.project
-                content = [string]$pick.content
-                kind    = [string]$pick.kind
+    $gitChecked = $true
+    if ($null -ne $Snapshot.gitChecked) {
+        $gitChecked = [bool]$Snapshot.gitChecked
+    }
+    elseif ([string]$Snapshot.mode -eq 'quick') {
+        $gitChecked = $false
+    }
+    $verifyChecked = [bool]$Snapshot.verifyChecked
+    $scanMode = if ($gitChecked) { 'full' } else { 'quick' }
+    if ([string]$Snapshot.mode -eq 'full') { $scanMode = 'full' }
+    elseif ([string]$Snapshot.mode -eq 'quick') { $scanMode = 'quick' }
+
+    # Derive queue from snapshot (do not drop git on quick - memory reconcile owns coveredKinds).
+    $attentionQueue = @(
+        foreach ($todo in $todos) {
+            $kind = [string](Get-MetraProp -Object $todo -Name 'kind' -Default '')
+            $project = [string](Get-MetraProp -Object $todo -Name 'project' -Default '')
+            $content = [string](Get-MetraProp -Object $todo -Name 'content' -Default '')
+            $existingId = [string](Get-MetraProp -Object $todo -Name 'id' -Default '')
+            if (-not $existingId) {
+                $existingId = Get-MetraAttentionKey -Project $project -Kind $kind -Content $content
+            }
+            $command = if ($kind -eq 'git' -and $project) {
+                ".\metra.ps1 status -Name $project"
+            }
+            elseif ($project) {
+                ".\metra.ps1 audit -Name $project"
+            }
+            else {
+                '.\metra.ps1 audit -DriftOnly'
+            }
+            $source = 'snapshot'
+            if ($kind -eq 'decision') { $source = 'decision' }
+            elseif ($kind -eq 'contract') { $source = 'contract' }
+            [PSCustomObject]@{
+                id       = $existingId
+                project  = $project
+                content  = $content
+                kind     = $kind
+                command  = $command
+                source   = $source
             }
         }
+    )
+    foreach ($decision in @((Get-MetraProp -Object (Get-MetraProp -Object $Snapshot -Name 'decisions' -Default $null) -Name 'candidates' -Default @()))) {
+        $title = [string](Get-MetraProp -Object $decision -Name 'title' -Default '')
+        if (-not $title) { continue }
+        $id = [string](Get-MetraProp -Object $decision -Name 'id' -Default '')
+        $attentionQueue += [PSCustomObject]@{
+            id       = if ($id) { "decision:$id" } else { "decision:$title" }
+            project  = [string](Get-MetraProp -Object $decision -Name 'project' -Default '')
+            content  = $title
+            kind     = 'decision'
+            command  = '.\metra.ps1 decisions show'
+            source   = 'decision'
+        }
+    }
+    foreach ($guideline in @((Get-MetraProp -Object (Get-MetraProp -Object $Snapshot -Name 'contract' -Default $null) -Name 'candidates' -Default @()))) {
+        $text = [string](Get-MetraProp -Object $guideline -Name 'text' -Default '')
+        if (-not $text) { continue }
+        $id = [string](Get-MetraProp -Object $guideline -Name 'id' -Default '')
+        $attentionQueue += [PSCustomObject]@{
+            id       = if ($id) { "contract:$id" } else { "contract:$text" }
+            project  = ''
+            content  = $text
+            kind     = 'contract'
+            command  = '.\metra.ps1 profile show'
+            source   = 'contract'
+        }
+    }
+
+    $coveredKinds = @('drift', 'decision', 'contract')
+    if ($gitChecked) { $coveredKinds += 'git' }
+    if ($verifyChecked) { $coveredKinds += 'verify' }
+
+    $memory = Update-MetraAttentionMemory `
+        -Queue $attentionQueue `
+        -CoveredKinds $coveredKinds `
+        -ScanMode $scanMode `
+        -MetraRoot $MetraRoot
+
+    $prefs = Get-MetraDeskPreferences -MetraRoot $MetraRoot
+    $visibleCount = 1
+    try { $visibleCount = [int]$prefs.attentionVisibleCount } catch { $visibleCount = 1 }
+    if ($visibleCount -lt 1) { $visibleCount = 1 }
+    if ($visibleCount -gt 10) { $visibleCount = 10 }
+
+    $ranked = @(Get-MetraAttentionActiveItems -Memory $memory)
+    $held = @(
+        @($memory.items) | Where-Object { [string]$_.state -eq 'held' } |
+            Sort-Object @{ Expression = { [string]$_.content } }
+    )
+    $notRecheckedCount = @($ranked | Where-Object { $_.notRecheckedSince }).Count
+
+    $activeViews = @()
+    for ($i = 0; $i -lt $ranked.Count; $i++) {
+        $activeViews += ConvertTo-MetraDeskAttentionView -MemItem $ranked[$i] -RankIndex $i -ActiveCount $ranked.Count -Snapshot $Snapshot
+    }
+    $heldViews = @()
+    foreach ($h in $held) {
+        $heldViews += ConvertTo-MetraDeskAttentionView -MemItem $h -RankIndex 0 -ActiveCount 1 -Snapshot $Snapshot
+    }
+
+    $nextAttention = $null
+    if ($activeViews.Count -gt 0) {
+        $nextAttention = $activeViews[0]
+    }
+
+    $attentionCount = $activeViews.Count
+    $attentionBlock = [PSCustomObject]@{
+        active             = @($activeViews)
+        activeCount        = $activeViews.Count
+        notRecheckedCount  = $notRecheckedCount
+        coveredKinds       = @($coveredKinds)
+        visibleCount       = $visibleCount
+        held               = @($heldViews)
+        heldCount          = $heldViews.Count
+        holdRoutingHint    = if ($heldViews.Count -gt 0) {
+            'For lasting work, prefer a ticket or a saved decision. Keep in view is only temporary parking.'
+        }
+        else { $null }
     }
 
     $projects = @(
@@ -1642,14 +1799,6 @@ function ConvertTo-MetraDeskPayload {
             Select-Object -First 12
     )
 
-    $gitChecked = $true
-    if ($null -ne $Snapshot.gitChecked) {
-        $gitChecked = [bool]$Snapshot.gitChecked
-    }
-    elseif ([string]$Snapshot.mode -eq 'quick') {
-        $gitChecked = $false
-    }
-
     $manifest = $null
     try {
         $psd1 = Join-Path $MetraRoot 'scripts\Metra.psd1'
@@ -1660,30 +1809,53 @@ function ConvertTo-MetraDeskPayload {
     }
     catch { }
 
-    $prefs = Get-MetraDeskPreferences -MetraRoot $MetraRoot
     $recent = @(Get-MetraDeskAskLog -MetraRoot $MetraRoot -Limit 12)
     $askCapability = Get-MetraAskCapability -MetraRoot $MetraRoot
 
-    return [PSCustomObject]@{
-        generatedAt   = [string]$Snapshot.generatedAt
-        mode          = [string]$Snapshot.mode
-        stale         = $stale
-        gitChecked    = $gitChecked
-        verifyChecked = [bool]$Snapshot.verifyChecked
-        nextAttention = $nextAttention
-        projects      = $projects
-        health        = [PSCustomObject]@{
-            missingAgents     = @($missingAgents)
-            missingAgentsCount = [int]$Snapshot.missingAgents
-            gitChecked        = $gitChecked
-            gitStatusLabel    = $(if ($gitChecked) { 'checked' } else { 'not checked (quick snapshot)' })
-            snapshotStale     = $stale
-            projectCount      = [int]$Snapshot.projectCount
-            driftCount        = [int]$Snapshot.driftCount
+    $editorInfo = $null
+    try {
+        $resolvedEditor = Resolve-MetraOpsEditor -Preference ([string](Get-MetraProp -Object $prefs -Name 'editorCommand' -Default 'auto')) -MetraRoot $MetraRoot
+        $editorInfo = [PSCustomObject]@{
+            preference = [string]$resolvedEditor.Preference
+            kind       = [string]$resolvedEditor.Kind
+            label      = [string]$resolvedEditor.Label
         }
-        recent        = $recent
-        preferences   = $prefs
-        ask           = [PSCustomObject]@{
+    }
+    catch { }
+
+    $emptyHint = $null
+    if (-not $nextAttention) {
+        if ($scanMode -ne 'full' -or -not $gitChecked) {
+            $emptyHint = 'Nothing waiting from this quick check. Some areas were not reviewed. Run a full refresh to confirm.'
+        }
+        else {
+            $emptyHint = 'Nothing waiting. The last full check found no open items.'
+        }
+    }
+
+    return [PSCustomObject]@{
+        generatedAt        = [string]$Snapshot.generatedAt
+        mode               = [string]$Snapshot.mode
+        stale              = $stale
+        gitChecked         = $gitChecked
+        verifyChecked      = $verifyChecked
+        nextAttention      = $nextAttention
+        attentionCount     = $attentionCount
+        attentionEmptyHint = $emptyHint
+        attention          = $attentionBlock
+        projects           = $projects
+        health             = [PSCustomObject]@{
+            missingAgents      = @($missingAgents)
+            missingAgentsCount = [int]$Snapshot.missingAgents
+            gitChecked         = $gitChecked
+            gitStatusLabel     = $(if ($gitChecked) { 'checked' } else { 'not checked (quick snapshot)' })
+            snapshotStale      = $stale
+            projectCount       = [int]$Snapshot.projectCount
+            driftCount         = [int]$Snapshot.driftCount
+        }
+        recent             = $recent
+        preferences        = $prefs
+        ask                = [PSCustomObject]@{
             enabled       = [bool]$askCapability.enabled
             selected      = [bool]$askCapability.selected
             available     = [bool]$askCapability.available
@@ -1691,10 +1863,11 @@ function ConvertTo-MetraDeskPayload {
             providerLabel = [string]$askCapability.providerLabel
             reason        = [string]$askCapability.reason
         }
-        meta          = [PSCustomObject]@{
+        meta               = [PSCustomObject]@{
             version   = $manifest
             metraRoot = $MetraRoot
             homeLabel = $MetraRoot
+            editor    = $editorInfo
         }
     }
 }
