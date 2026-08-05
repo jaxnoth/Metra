@@ -15,7 +15,7 @@ $metraRoot = Split-Path -Parent $testsRoot
 Import-Module Pester -MinimumVersion 5.0 -ErrorAction Stop
 
 $config = New-PesterConfiguration
-$config.Run.Path = (Join-Path $testsRoot 'Metra.Tests.ps1')
+$config.Run.Path = $testsRoot
 $config.Run.Exit = $true
 $config.Output.Verbosity = 'Detailed'
 
@@ -26,4 +26,3 @@ try {
 finally {
     Pop-Location
 }
-

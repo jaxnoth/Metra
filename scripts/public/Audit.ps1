@@ -7,6 +7,8 @@ function Test-MetraProjectContext {
     .DESCRIPTION
         Performs a read-only check of matching projects for expected agent entry files,
         generated-path exclusions, large files, high-cardinality folders, and registry drift.
+        -MetadataOnly skips the recursive tree scan and reports route registry metadata
+        advisories only (never counted as drift).
     .PARAMETER Filter
         Wildcard applied to project folder names.
     .PARAMETER Name
@@ -15,6 +17,8 @@ function Test-MetraProjectContext {
         One or more configured root names.
     .PARAMETER DriftOnly
         Limits output to drift signals.
+    .PARAMETER MetadataOnly
+        Run route registry metadata advisories only. Skips recursive tree scan.
     .PARAMETER Quiet
         Suppresses host-formatted audit output.
     .PARAMETER LargeFileBytes
@@ -27,6 +31,8 @@ function Test-MetraProjectContext {
         Test-MetraProjectContext -Name Solarwinds,TicketTracker
     .EXAMPLE
         Test-MetraProjectContext -DriftOnly -Quiet
+    .EXAMPLE
+        Test-MetraProjectContext -MetadataOnly
     .OUTPUTS
         Audit report objects followed by a summary object.
     #>
@@ -36,6 +42,7 @@ function Test-MetraProjectContext {
         [string[]]$Name,
         [string[]]$Root,
         [switch]$DriftOnly,
+        [switch]$MetadataOnly,
         [switch]$Quiet,
         [int]$LargeFileBytes = 200KB,
         [int]$HighCardinalityCount = 200,
@@ -44,4 +51,3 @@ function Test-MetraProjectContext {
 
     Invoke-MetraProjectContextAudit @PSBoundParameters
 }
-

@@ -33,6 +33,23 @@ Configured roots (see `metra.config.json` `roots`) stay separate:
 
 `.\metra.ps1 routing` shows which registry entries resolved to a real folder. `.\metra.ps1 ctx` writes a bounded agent context pack (present projects + reminders). With `-Query`, `ctx` also composes a **Project story** for the primary stop from existing fields (`purpose`, `triggers`, `serves`, `related`, optional `whenPresent`) plus Why Here ledger hits - no separate story field. Optional shared stubs (TicketTracker, Solarwinds) return `whenMissing` advice when absent instead of counting as drift.
 
+## Registry triggers (when to activate)
+
+Treat `triggers` like Agent Skills "when to activate" text: short, distinctive phrases that should fire this stop - not a second copy of `purpose`.
+
+| Do | Avoid |
+|----|-------|
+| Multi-word or product/workflow phrases (`ops desk`, `stuck process`, `word search`) | Stop words and generic English (`help`, `today`, `project`, `the`) |
+| Workflow vocabulary on TicketTracker (`ticket`, `isupport`, `helpdesk`) | Product/vendor laundry lists on TicketTracker (see Decisions 2026-08-04) |
+| Keep `purpose` as the one-line "what this project is" | Stuffing purpose prose into triggers |
+| Optional stubs: always set `whenMissing` advice | Empty `whenMissing` on `optional: true` rows |
+
+Shared stop list for query scoring lives in `Get-MetraRoutingStopWords` (`scripts/private/Routing.ps1`). Prefer triggers that would survive that filter if used as query tokens.
+
+After any registry trigger / purpose / route edit that should appear in the explain surface: update the owning registry file, then `.\metra.ps1 selfdoc` (or `snapshot`). Do not invent a parallel process. Report-only route metadata checks live on `.\metra.ps1 audit` and `.\metra.ps1 audit -MetadataOnly` (empty purpose/triggers, optional missing `whenMissing`, exact stop-word / single-character triggers). Advisories only - never auto-edit the registry and never counted as drift.
+
+Human-facing desks (HTML Ops Ask / Route, Overview/selfdoc, companion stubs) consume these same fields - map quality is not agent-only. Parking-lot dependency notes: gitignored `docs/Future-Development.local.md` (Agent-facing lane).
+
 ## Audit command
 
 ```powershell
@@ -40,13 +57,14 @@ Configured roots (see `metra.config.json` `roots`) stay separate:
 .\metra.ps1 audit -Name Solarwinds,Trivia
 .\metra.ps1 audit -Root personal
 .\metra.ps1 audit -DriftOnly
+.\metra.ps1 audit -MetadataOnly
 .\metra.ps1 routing
 .\metra.ps1 routing -MissingOnly
 .\metra.ps1 ctx
 .\metra.ps1 ctx -Query "ticket disk"
 .\metra.ps1 verify
 ```
-The audit is a **re-runnable probe**. Do not rewrite it for routine project changes. Re-run it; update curated files when it reports drift. Cloud/personal roots use light audit (no deep recursive scan). Use `verify` for Routing-Scenarios fixture smoke (PASS/WARN/FAIL).
+The audit is a **re-runnable probe**. Do not rewrite it for routine project changes. Re-run it; update curated files when it reports drift. `-MetadataOnly` skips the recursive tree scan and prints route registry advisories only. Cloud/personal roots use light audit (no deep recursive scan). Use `verify` for Routing-Scenarios fixture smoke (PASS/WARN/FAIL).
 
 ## When to re-audit
 
@@ -84,6 +102,7 @@ What it updates:
 | Missing `AGENTS.md` / `.cursorignore` where recommended | Add compact local files |
 | New large/generated path not excluded | Extend `.cursorignore` and registry `excludePaths` |
 | Stale trigger terms | Update the owning registry from current README/entry docs, then `.\metra.ps1 selfdoc` |
+| Route metadata advisories (`audit -MetadataOnly`) | Fix the named field on that registry row; never treat as drift; then `.\metra.ps1 selfdoc` if purpose/triggers changed |
 | Registry route / trigger / purpose change | `.\metra.ps1 selfdoc` (or `snapshot`) so the self-doc canvas + Overview stay honest |
 | Routine edits inside existing paths | No registry work |
 
