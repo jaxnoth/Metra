@@ -28,6 +28,109 @@ function Get-MetraGeneratedPathHints {
     )
 }
 
+function Get-MetraRouteMetadataIssues {
+    <#
+    .SYNOPSIS
+        Report-only route registry metadata advisories (never counted as drift).
+    .DESCRIPTION
+        Walks merged registry rows for empty purpose/triggers, optional stubs missing
+        whenMissing, single-character triggers, and exact stop-word trigger matches.
+    #>
+    [CmdletBinding()]
+    param()
+
+    $issues = New-Object System.Collections.Generic.List[object]
+    $registry = Get-MetraProjectRegistry
+    $stopWords = Get-MetraRoutingStopWords
+
+    foreach ($row in @($registry.projects)) {
+        $routeKey = [string](Get-MetraProp -Object $row -Name 'name' -Default '')
+        if ([string]::IsNullOrWhiteSpace($routeKey)) { continue }
+
+        $source = [string](Get-MetraProp -Object $row -Name 'source' -Default '')
+        $purpose = [string](Get-MetraProp -Object $row -Name 'purpose' -Default '')
+
+        if ([string]::IsNullOrWhiteSpace($purpose)) {
+            [void]$issues.Add([pscustomobject]@{
+                Kind     = 'RouteMetadata'
+                Severity = 'Advisory'
+                Route    = $routeKey
+                Source   = $source
+                Field    = 'purpose'
+                Issue    = 'EmptyPurpose'
+                Value    = $purpose
+                Message  = "Route '$routeKey' has an empty purpose."
+            })
+        }
+
+        $triggers = @(Get-MetraProp -Object $row -Name 'triggers' -Default @())
+        $nonEmptyTriggers = @(
+            $triggers | Where-Object { -not [string]::IsNullOrWhiteSpace([string]$_) }
+        )
+
+        if ($nonEmptyTriggers.Count -eq 0) {
+            [void]$issues.Add([pscustomobject]@{
+                Kind     = 'RouteMetadata'
+                Severity = 'Advisory'
+                Route    = $routeKey
+                Source   = $source
+                Field    = 'triggers'
+                Issue    = 'EmptyTriggers'
+                Value    = $triggers
+                Message  = "Route '$routeKey' has no usable triggers."
+            })
+        }
+        else {
+            foreach ($trigger in $nonEmptyTriggers) {
+                $normalizedTrigger = ([string]$trigger).Trim()
+
+                if ($normalizedTrigger.Length -eq 1) {
+                    [void]$issues.Add([pscustomobject]@{
+                        Kind     = 'RouteMetadata'
+                        Severity = 'Advisory'
+                        Route    = $routeKey
+                        Source   = $source
+                        Field    = 'triggers'
+                        Issue    = 'SingleCharacterTrigger'
+                        Value    = $normalizedTrigger
+                        Message  = "Route '$routeKey' has a one-character trigger '$normalizedTrigger'."
+                    })
+                }
+
+                if ($stopWords.Contains($normalizedTrigger)) {
+                    [void]$issues.Add([pscustomobject]@{
+                        Kind     = 'RouteMetadata'
+                        Severity = 'Advisory'
+                        Route    = $routeKey
+                        Source   = $source
+                        Field    = 'triggers'
+                        Issue    = 'StopWordTrigger'
+                        Value    = $normalizedTrigger
+                        Message  = "Route '$routeKey' has stop-word trigger '$normalizedTrigger'."
+                    })
+                }
+            }
+        }
+
+        $optional = [bool](Get-MetraProp -Object $row -Name 'optional' -Default $false)
+        $whenMissing = [string](Get-MetraProp -Object $row -Name 'whenMissing' -Default '')
+        if ($optional -and [string]::IsNullOrWhiteSpace($whenMissing)) {
+            [void]$issues.Add([pscustomobject]@{
+                Kind     = 'RouteMetadata'
+                Severity = 'Advisory'
+                Route    = $routeKey
+                Source   = $source
+                Field    = 'whenMissing'
+                Issue    = 'OptionalRouteMissingWhenMissing'
+                Value    = $whenMissing
+                Message  = "Route '$routeKey' is optional but has no whenMissing guidance."
+            })
+        }
+    }
+
+    return @($issues.ToArray())
+}
+
 function Invoke-MetraProjectContextAudit {
     <#
     .SYNOPSIS
@@ -39,22 +142,12 @@ function Invoke-MetraProjectContextAudit {
         [string[]]$Name,
         [string[]]$Root,
         [switch]$DriftOnly,
+        [switch]$MetadataOnly,
         [switch]$Quiet,
         [int]$LargeFileBytes = 200KB,
         [int]$HighCardinalityCount = 200,
         [int]$ScanDepth = 4
     )
-
-    $registry = Get-MetraProjectRegistry
-    $projects = @(Resolve-MetraProjectSet -Filter $Filter -Name $Name -Root $Root)
-    $generatedHints = Get-MetraGeneratedPathHints
-    $driftCount = 0
-    $reports = @()
-
-    $rootInfo = @{}
-    foreach ($r in @(Get-MetraRoots -IncludeMissing)) {
-        $rootInfo[$r.Name] = $r
-    }
 
     function Write-AuditHost {
         param(
@@ -68,6 +161,49 @@ function Invoke-MetraProjectContextAudit {
         else {
             Write-Host $Message
         }
+    }
+
+    function Write-RouteMetadataAdvisories {
+        param([object[]]$Findings)
+
+        $count = @($Findings).Count
+        if ($count -eq 0) {
+            Write-AuditHost 'Route metadata advisories: none' -ForegroundColor Green
+            return
+        }
+
+        Write-AuditHost ("Route metadata advisories: {0}" -f $count)
+        foreach ($f in @($Findings)) {
+            Write-AuditHost ("[Advisory] {0} {1} {2} - {3}" -f $f.Route, $f.Field, $f.Issue, $f.Message)
+        }
+    }
+
+    if ($MetadataOnly) {
+        $metadataFindings = @(Get-MetraRouteMetadataIssues)
+        Write-AuditHost ''
+        Write-RouteMetadataAdvisories -Findings $metadataFindings
+        $global:LASTEXITCODE = 0
+        Write-Output ([PSCustomObject]@{
+            ProjectCount     = 0
+            DriftCount       = 0
+            DriftOnly        = [bool]$DriftOnly
+            MetadataOnly     = $true
+            MetadataFindings = $metadataFindings
+            MetadataCount    = $metadataFindings.Count
+            Reports          = @()
+        })
+        return
+    }
+
+    $registry = Get-MetraProjectRegistry
+    $projects = @(Resolve-MetraProjectSet -Filter $Filter -Name $Name -Root $Root)
+    $generatedHints = Get-MetraGeneratedPathHints
+    $driftCount = 0
+    $reports = @()
+
+    $rootInfo = @{}
+    foreach ($r in @(Get-MetraRoots -IncludeMissing)) {
+        $rootInfo[$r.Name] = $r
     }
 
     # Registry entries with no matching disk project
@@ -312,11 +448,18 @@ function Invoke-MetraProjectContextAudit {
         }
     }
 
+    $metadataFindings = @(Get-MetraRouteMetadataIssues)
+    Write-AuditHost ''
+    Write-RouteMetadataAdvisories -Findings $metadataFindings
+
     $summary = [PSCustomObject]@{
-        ProjectCount = @($reports).Count
-        DriftCount   = $driftCount
-        DriftOnly    = [bool]$DriftOnly
-        Reports      = $reports
+        ProjectCount     = @($reports).Count
+        DriftCount       = $driftCount
+        DriftOnly        = [bool]$DriftOnly
+        MetadataOnly     = $false
+        MetadataFindings = $metadataFindings
+        MetadataCount    = $metadataFindings.Count
+        Reports          = $reports
     }
 
     if ($DriftOnly) {

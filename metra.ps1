@@ -15,6 +15,7 @@
     .\metra.ps1 audit
     .\metra.ps1 audit -Name Solarwinds,TicketTracker
     .\metra.ps1 audit -DriftOnly
+    .\metra.ps1 audit -MetadataOnly
     .\metra.ps1 snapshot
     .\metra.ps1 snapshot -Quick
     .\metra.ps1 chats -Name Solarwinds -Query "disk alert"
@@ -65,6 +66,7 @@ param(
     [switch]$ContinueOnError,
     [switch]$Preview,
     [switch]$DriftOnly,
+    [switch]$MetadataOnly,
     [Alias('IncludeMeta')]
     [switch]$IncludeMetra,
     [switch]$Cloud,
@@ -95,7 +97,8 @@ Usage:
   .\metra.ps1 new <ProjectName> [-Description '...'] [-Template basic] [-Root personal] [-NoGit] [-Force]
   .\metra.ps1 apply <SourceFile> [-RelativePath path\in\project] [-Filter '*'] [-Root ...] [-Force]
   .\metra.ps1 workspace [-Months 6] [-ScanDepth 2] [-Preview]
-  .\metra.ps1 audit [-Filter '*'] [-Name ProjA,ProjB] [-Root ...] [-DriftOnly] [-ScanDepth 4]
+  .\metra.ps1 audit [-Filter '*'] [-Name ProjA,ProjB] [-Root ...] [-DriftOnly] [-MetadataOnly] [-ScanDepth 4]
+      -MetadataOnly: route registry metadata advisories only (skips recursive tree scan; never fails as drift).
   .\metra.ps1 snapshot [-ScanDepth 2] [-Quick]
   .\metra.ps1 selfdoc
   .\metra.ps1 ops [-Quick] [-Full] [-Port 7380] [-NoBrowser] [-NoRefresh] [-Stop]
@@ -152,6 +155,7 @@ Examples:
   .\metra.ps1 workspace -Months 3 -Preview
   .\metra.ps1 audit -Name Solarwinds,TicketTracker
   .\metra.ps1 audit -DriftOnly
+  .\metra.ps1 audit -MetadataOnly
   .\metra.ps1 routing -MissingOnly
   .\metra.ps1 routing -SharedOnly
   .\metra.ps1 snapshot
@@ -263,15 +267,21 @@ switch ($Command) {
 
     'audit' {
         $params = @{
-            Filter    = $Filter
-            DriftOnly = [bool]$DriftOnly
+            Filter       = $Filter
+            DriftOnly    = [bool]$DriftOnly
+            MetadataOnly = [bool]$MetadataOnly
         }
         if ($Name) { $params.Name = $Name }
         if ($Root) { $params.Root = $Root }
         if ($ScanDepth -ge 0) { $params.ScanDepth = $ScanDepth }
         $result = Test-MetraProjectContext @params | Select-Object -Last 1
         Write-Host ""
-        Write-Host ("Audited {0} project(s); drift signals: {1}" -f $result.ProjectCount, $result.DriftCount)
+        if ($MetadataOnly) {
+            Write-Host ("Route metadata advisories: {0} (not drift)" -f $result.MetadataCount)
+        }
+        else {
+            Write-Host ("Audited {0} project(s); drift signals: {1}; route metadata advisories: {2}" -f $result.ProjectCount, $result.DriftCount, $result.MetadataCount)
+        }
     }
 
     'snapshot' {
