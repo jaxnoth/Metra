@@ -5,13 +5,18 @@ Use after changing registries, project `AGENTS.md`, or `.cursorignore`.
 | Scenario | Expected first stop | Pass criteria |
 |----------|---------------------|---------------|
 | Ticket / iSupport / helpdesk ask | TicketTracker | Load TT `AGENTS.md`; use `brief` not raw `data/tickets.json` |
-| Ambiguous ticket text | TicketTracker then one technical project | `brief` RoutingTerms match registry triggers; optional `chats <id>` for prior Cursor clues |
+| Bare ticket id (`1035299`) or `Look at 1035299` | TicketTracker | CLI `routing -Query` primary TicketTracker; then `brief` |
+| Sticky ticket thread: opener `1035299` then Marc responded / draft reply / Waiting on Customer | TicketTracker | Keep TicketTracker; ticket-ops only; do not re-route from symptom words |
+| Product symptom with solutions keyword (Thrive / Pharos) | TicketTracker | Match `solutions/README.md` keywords; not `projects.json` product triggers |
+| Brand-new product name, no id, no solutions row | Metra home / ask once | Do not invent a technical project from an unknown product name |
+| Investigate ask after ticket triage (e.g. Thrive feed processing) | One technical project after classification | Ticket-ops stay TT; investigate opens one tech stop; return findings to TT |
+| Update the ticket with findings | TicketTracker | Durable `post` / `recommend` / `resolve` - not warehouse write stops |
 | Orion alert / SAM / SWQL | Solarwinds | Load SW `AGENTS.md` + triage; use `Get-OrionCatalog` / active alerts; no full `catalog/index.*` |
 | Fun Committee / IT printable / word search | Trivia (work root) | Stay on work root; do not open personal bible games unless named |
 | Personal bible bingo / quiz / roku | Matching personal root project | Stay on personal root; do not open work Trivia or Misc unless asked |
 | Cross-root ask ("copy Misc sheets into Trivia") | Named destination first | Open the other root only for that handoff |
 | Coworker clone missing TicketTracker / Solarwinds | Advice-only stub | `.\metra.ps1 routing -MissingOnly` shows `whenMissing`; not drift |
-| Cross-project (e.g. Pharos + Colleague) | TicketTracker -> primary technical repo | Open related project only after primary evidence; same root |
+| Cross-project (e.g. Pharos + Colleague) | TicketTracker first; technical only for investigate | Open related project only after primary evidence; same root; Related is topology not next hop |
 
 ## Persona smoke (Metra)
 

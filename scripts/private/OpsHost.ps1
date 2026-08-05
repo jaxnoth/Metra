@@ -570,6 +570,14 @@ function Start-MetraOpsHost {
     $script:MetraOpsLastStatus = $null
     Write-MetraOpsHostLog "Ops host starting on port $Port (root $MetraRoot)."
 
+    try {
+        $session = Initialize-MetraOpsLocalSessionToken
+        Write-MetraOpsHostLog "Local session token ready (created=$($session.Created))."
+    }
+    catch {
+        Write-MetraOpsHostLog "Local session token init failed - $($_.Exception.Message)" 'warn'
+    }
+
     Set-Content -LiteralPath (Get-MetraOpsHostPidFile) -Value $PID -Encoding ASCII
 
     $deskUp = Test-MetraOpsDeskAlive -Port $Port -TimeoutSec 2
@@ -699,6 +707,22 @@ function Start-MetraOpsHost {
     $timer.Add_Tick({
             # Operator chose Stop desk - do not fight that decision.
             if ($script:MetraOpsDeskStopped) { return }
+
+            # Host owns apply: poll pending proposals even if the desk is mid-Ask.
+            try {
+                $applied = @(Sync-MetraProposalHostPending -MaxCount 1 -Surface browser)
+                foreach ($item in $applied) {
+                    if ($item.Ok) {
+                        $notify.ShowBalloonTip(4000, 'Metra Ops', "Applied proposal $($item.Proposal.Id).", [System.Windows.Forms.ToolTipIcon]::Info)
+                    }
+                    elseif ($item.ReasonCode -eq 'rejected') {
+                        $notify.ShowBalloonTip(3000, 'Metra Ops', 'Proposal denied.', [System.Windows.Forms.ToolTipIcon]::Info)
+                    }
+                }
+            }
+            catch {
+                Write-MetraOpsHostLog "Proposal apply poll failed - $($_.Exception.Message)" 'warn'
+            }
 
             # Liveness is process-based on purpose: a desk serving a long Ask blocks its accept
             # loop and cannot answer /api/meta. Probing alone would kill work in flight.

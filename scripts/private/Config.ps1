@@ -18,7 +18,21 @@ function Get-MetraConfig {
     else {
         throw "Missing config: $preferred (also checked meta.config.json)"
     }
-    return Get-Content -Raw -Path $configPath | ConvertFrom-Json
+
+    $lwt = (Get-Item -LiteralPath $configPath).LastWriteTimeUtc
+    if (
+        $null -ne $script:MetraCache.Config -and
+        $script:MetraCache.ConfigPath -eq $configPath -and
+        $script:MetraCache.ConfigLwt -eq $lwt
+    ) {
+        return $script:MetraCache.Config
+    }
+
+    $cfg = Get-Content -Raw -Path $configPath | ConvertFrom-Json
+    $script:MetraCache.ConfigPath = $configPath
+    $script:MetraCache.ConfigLwt = $lwt
+    $script:MetraCache.Config = $cfg
+    return $cfg
 }
 
 function Get-MetraProp {

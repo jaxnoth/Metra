@@ -37,6 +37,8 @@ flowchart LR
 | Teaching Mode in Ask/Plan | Same rule; intent-based triggers also apply elsewhere |
 | Multi-root workspace file | `.\metra.ps1 workspace` -> `Metra.code-workspace` (optional; orchestration folder labeled **Metra**) |
 | Metra Ops board | `.\metra.ps1 snapshot` installs/refreshes one `metra-ops-board.canvas.tsx` (Route / Portfolio / Stewardship). Route opens with a capped Needs attention queue and Resolve this classifier; the sticky tab bar keeps all three views reachable. Component code refreshes on template drift; data every run. Board is a retrieval surface - durable writes stay in CLI/chat. |
+| Metra Ops webview (VS Code / Cursor) | Optional IDE shell: install `integrations/vscode-metra-ops` (Extensions: Install from Location), then **Metra Ops: Open Desk**. Bridge messages are `requestProposalApply` / `askInChat` / `openWorkspacePath` / `copyText` (never bare apply). Disk apply stays on the tray Host. Plain browser desk still works without the extension. |
+| Metra self-documentation | Visual explain surface (not the ops desk). Refresh with `.\metra.ps1 selfdoc` after registry route/trigger changes (`snapshot` also runs it). Template `integrations/cursor/metra-self-documentation.canvas.tsx.template`; live canvas under Cursor projects `canvases/`. Prose twin: `docs/Overview.md`. Sidecar: `docs/selfdoc-routes.json`. |
 | Prior chat search | `.\metra.ps1 chats` (reads Cursor agent transcripts) |
 | Stale Ops refresh on chat start | `.cursor/hooks.json` `sessionStart` -> `.cursor/hooks/session-snapshot.ps1` |
 
@@ -115,5 +117,6 @@ Claude Code, Codex, Copilot, and similar tools are **not** generated in this pas
 - [Search-Echo.md](Search-Echo.md) - multi-root Grep echo and path scoping
 - [Decisions.md](Decisions.md) - append-only portfolio decisions
 - [Routing-Scenarios.md](Routing-Scenarios.md) - routing / persona smoke + `verify` fixtures
-- [Demo.md](Demo.md) - coworker pitch (middle path + optional live proof)
+- [Overview.md](Overview.md) - audience overview / leave-behind (prose twin of self-doc canvas)
+- Self-doc canvas template: `../integrations/cursor/metra-self-documentation.canvas.tsx.template` (install/live under Cursor projects `canvases/`)
 - [AGENTS.md](../AGENTS.md) - short agent entry

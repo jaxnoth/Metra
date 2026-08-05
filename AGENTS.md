@@ -68,10 +68,12 @@ Do not put Metra in user-global Cursor rules. Do not rename a live orchestration
 ## Route first
 
 1. Match trigger terms via `.\metra.ps1 routing` / `.\metra.ps1 ctx` / the merged registry.
-2. For tickets / helpdesk: start in **TicketTracker**, then route to one technical project.
-3. Load that project's `AGENTS.md` (or README if none). Do not scan other repos yet.
-4. Stay in that project's root. Cross-root only when the user names the other project.
-5. Broaden to same-root `related` only when evidence requires it. Ctx / routing **Related** and project story are topology only - not permission to multi-repo search.
+2. Once this chat has a primary stop, keep it for later turns unless the operator names another project, asks for a deep dive, or the ask clearly requires a different stop.
+3. Precedence for new stops: TicketTracker thread > ticket id > ticket/helpdesk vocab > solutions-index keywords > technical score > Metra home. Do not grow TicketTracker registry triggers with product names.
+4. For tickets / helpdesk: start in **TicketTracker**. **Ticket-ops** (status, drafts, `post`/`recommend`/`resolve`) stay there. **Technical investigate** opens one technical project only when needed, then return outcomes to TicketTracker. Do not route ticket updates to warehouse/Datamart write stops.
+5. Load that project's `AGENTS.md` (or README if none). Do not scan other repos yet.
+6. Stay in that project's root. Cross-root only when the user names the other project.
+7. Broaden to same-root `related` only when evidence requires it. Ctx / routing **Related** and project story are topology only - not permission to multi-repo search.
 
 ## Shared vs local registry
 
@@ -100,6 +102,7 @@ Optional entries may be absent: follow `whenMissing` advice instead of inventing
 .\metra.ps1 audit
 .\metra.ps1 audit -Name Solarwinds,TicketTracker,Trivia
 .\metra.ps1 audit -DriftOnly
+.\metra.ps1 selfdoc
 .\metra.ps1 workspace
 .\metra.ps1 chats -Name Solarwinds -Query "disk alert"
 .\metra.ps1 import-profile -Path .\profiles\sample -Preview
@@ -143,6 +146,6 @@ Focused module tests (PowerShell 7 + Pester 5+): `pwsh -NoProfile -File .\tests\
 
 ## Maintenance
 
-Re-run `.\metra.ps1 audit` after adding a project or changing layout. Update the appropriate registry (`projects.json` only for shared entries), project `AGENTS.md`, and `.cursorignore` only when audit reports drift. See [docs/Context-Routing.md](docs/Context-Routing.md). After routing or persona policy changes that should stick, append [docs/Decisions.md](docs/Decisions.md). Smoke fixtures: `.\metra.ps1 verify`.
+Re-run `.\metra.ps1 audit` after adding a project or changing layout. Update the appropriate registry (`projects.json` only for shared entries), project `AGENTS.md`, and `.cursorignore` only when audit reports drift. After registry **route / trigger / purpose** changes, run `.\metra.ps1 selfdoc` so the self-documentation canvas and `docs/Overview.md` regenerate standing examples (`snapshot` also runs selfdoc). See [docs/Context-Routing.md](docs/Context-Routing.md). After routing or persona policy changes that should stick, append [docs/Decisions.md](docs/Decisions.md). Smoke fixtures: `.\metra.ps1 verify`.
 
 Operator-facing brand (palette, Ops board, workspace naming) lives in [docs/Brand.md](docs/Brand.md). Tickets and commits stay in the professional sink - no Metra chrome.

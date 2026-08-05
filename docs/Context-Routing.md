@@ -56,6 +56,25 @@ The audit is a **re-runnable probe**. Do not rewrite it for routine project chan
 - Periodically across the portfolio (for example monthly)
 - Before investigating unexplained high token use
 
+## Self-documentation (repeatable)
+
+After **any** registry / trigger / route change that should show up in the explain surface, refresh self-docs:
+
+```powershell
+.\metra.ps1 selfdoc
+```
+
+What it updates:
+
+| Artifact | Role |
+|----------|------|
+| Cursor canvas `metra-self-documentation` | Visual primary - route diagram + standing examples from registry |
+| `docs/Overview.md` | Sendable prose twin (standing route table between HTML markers) |
+| `docs/selfdoc-routes.json` | Sidecar for site/forge later |
+| `integrations/cursor/metra-self-documentation.canvas.tsx.template` | Tracked template synced from the live canvas |
+
+`.\metra.ps1 snapshot` also runs `selfdoc` at the end so Ops refresh and self-doc stay coupled. Do not hand-edit the generated route table or the canvas `SELFDOC_ROUTES` embed - change the registry, then re-run `selfdoc`.
+
 ## What to update on drift
 
 | Finding | Action |
@@ -64,7 +83,8 @@ The audit is a **re-runnable probe**. Do not rewrite it for routine project chan
 | Personal project missing from personal registry | Update that root's `registryFile` |
 | Missing `AGENTS.md` / `.cursorignore` where recommended | Add compact local files |
 | New large/generated path not excluded | Extend `.cursorignore` and registry `excludePaths` |
-| Stale trigger terms | Update the owning registry from current README/entry docs |
+| Stale trigger terms | Update the owning registry from current README/entry docs, then `.\metra.ps1 selfdoc` |
+| Registry route / trigger / purpose change | `.\metra.ps1 selfdoc` (or `snapshot`) so the self-doc canvas + Overview stay honest |
 | Routine edits inside existing paths | No registry work |
 
 ## Cadence principle
@@ -122,7 +142,9 @@ Validate with [Routing-Scenarios.md](Routing-Scenarios.md).
 
 Cursor stores agent transcripts under `%USERPROFILE%\.cursor\projects\c-Projects-<Name>\agent-transcripts\`. Those files are **local Cursor artifacts**, not git, and are not auto-injected into new meta chats.
 
-During ticket triage, search them for clues (bounded summaries only):
+**Sticky ticket threads:** If the chat opened on a ticket (id / helpdesk triggers / solutions keywords), keep **TicketTracker** as primary for later turns. Precedence: thread > ticket id > ticket vocab > solutions keywords > technical score > Metra home. Ticket-ops stay in TicketTracker - example: Thrive access denied thread stays TicketTracker for resolve/email, not a Datamart rewrite. Do not grow TicketTracker registry triggers with product names. Open a technical project only for an explicit investigate ask (or when ticket-ops cannot finish); return durable writes to TicketTracker. See [Decisions.md](Decisions.md) (routing precedence; in-thread sticky primary).
+
+During ticket triage, search transcripts for clues (bounded summaries only):
 
 ```powershell
 # From TicketTracker (uses RoutingTerms + ticket id)

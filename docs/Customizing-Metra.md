@@ -175,7 +175,7 @@ Profile packs do **not** include a personal root's `registryFile` (for example `
 - [Decisions.md](Decisions.md) - append-only portfolio decisions
 - [Integrations.md](Integrations.md) - core vs Cursor; ctx handoff
 - [Routing-Scenarios.md](Routing-Scenarios.md) - persona smoke + `.\metra.ps1 verify`
-- [Demo.md](Demo.md) - coworker pitch (middle path + optional live proof)
+- [Overview.md](Overview.md) - audience overview / leave-behind (prose twin of self-doc canvas)
 - [Search-Echo.md](Search-Echo.md) - multi-root Grep echo
 - [SECURITY.md](../SECURITY.md) - what not to commit
 - [Context-Routing.md](Context-Routing.md) - registry and audit cadence

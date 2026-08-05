@@ -9,10 +9,12 @@ Before searching sibling repositories:
 
 1. Classify the request (ticket, Orion/alert, Colleague, SQL/warehouse, reporting, Fun Committee/trivia, personal game, certs, other).
 2. Consult the merged registry (`projects.json` + local/personal overlays) and pick **one** primary project from triggers.
-3. Ticket / iSupport / helpdesk work starts in **TicketTracker**, then routes to one technical project.
-4. Load that project's `AGENTS.md` (fallback: README). Prefer its `preferredPaths`; avoid its `excludePaths`.
-5. Do not glob or grep across all workspace folders first.
-6. After routing, scope file search to an **absolute `path`** under that one project (or the Metra checkout for orchestration work - recommended `C:\Projects\_metra`; older clones may use `_meta`). Multi-root workspaces echo the same hit once per mounted folder - workspace-wide Grep burns tokens.
-7. Prefer `.\metra.ps1 routing` / `.\metra.ps1 ctx` over portfolio-wide file search for "which project?" questions.
-8. Stay inside the chosen project's **root** (work vs personal). Do not open folders from another root unless the user names that project or explicitly asks to move material between roots.
-9. Open same-root `related` projects only when the primary project evidence requires it. Cross-root handoffs are opt-in in chat, never automatic.
+3. **Keep the established primary** for later turns unless the operator names another project, asks for a technical deep dive, or the ask clearly requires a different stop. Do not re-route from symptom words alone.
+4. Precedence for new stops: existing TicketTracker thread > 6-8 digit ticket id > ticket/helpdesk vocabulary > TicketTracker solutions-index keywords > technical project score > Metra home (ask once). Do **not** accumulate product/app/vendor names as TicketTracker registry triggers - solutions write-ups own recurring product keywords.
+5. Ticket / iSupport / helpdesk starts in **TicketTracker**. **Ticket-ops** (status, drafts, `post` / `recommend` / `resolve`, Waiting on Customer) stay there. Open one technical project only for **investigate**, then return durable writes to TicketTracker. Product-only symptoms without id/vocab: TicketTracker `search` / solutions, or ask once for a ticket id - do not invent a technical project from an unknown product name.
+6. Load that project's `AGENTS.md` (fallback: README). Prefer its `preferredPaths`; avoid its `excludePaths`.
+7. Do not glob or grep across all workspace folders first.
+8. After routing, scope file search to an **absolute `path`** under that one project (or the Metra checkout for orchestration work - recommended `C:\Projects\_metra`; older clones may use `_meta`). Multi-root workspaces echo the same hit once per mounted folder - workspace-wide Grep burns tokens.
+9. Prefer `.\metra.ps1 routing` / `.\metra.ps1 ctx` over portfolio-wide file search for "which project?" questions.
+10. Stay inside the chosen project's **root** (work vs personal). Do not open folders from another root unless the user names that project or explicitly asks to move material between roots.
+11. Open same-root `related` projects only when the primary project evidence requires it. Related is topology, not a next hop. Cross-root handoffs are opt-in in chat, never automatic.

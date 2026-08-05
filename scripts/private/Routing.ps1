@@ -23,11 +23,21 @@ function Get-MetraProjectRegistry {
         person specific (personal folders, private work entries) and is not committed. Local
         entries with the same name replace the shared entry, so a coworker clone never sees
         them. Use -SharedOnly to inspect exactly what ships to others.
+        Merged and shared-only results are cached briefly (see Clear-MetraRoutingCache).
     #>
     [CmdletBinding()]
     param(
         [switch]$SharedOnly
     )
+
+    $cacheKey = if ($SharedOnly) { 'shared' } else { 'merged' }
+    $cached = $script:MetraCache.RegistryByKey[$cacheKey]
+    if (
+        $null -ne $cached -and
+        (Test-MetraCacheEntryFresh -CachedUtc $cached.Utc)
+    ) {
+        return $cached.Value
+    }
 
     $metraRoot = Get-MetraRoot
     $sharedPath = Join-Path $metraRoot 'projects.json'
@@ -102,7 +112,7 @@ function Get-MetraProjectRegistry {
         }
     }
 
-    return [PSCustomObject]@{
+    $result = [PSCustomObject]@{
         version      = Get-MetraProp -Object $shared -Name 'version' -Default 1
         updated      = Get-MetraProp -Object $shared -Name 'updated' -Default ''
         routing      = $routing
@@ -112,6 +122,11 @@ function Get-MetraProjectRegistry {
         localLoaded  = $localLoaded
         rootRegistry = @($extraSources)
     }
+    $script:MetraCache.RegistryByKey[$cacheKey] = @{
+        Value = $result
+        Utc   = [datetime]::UtcNow
+    }
+    return $result
 }
 
 function Get-MetraRoutingTable {
@@ -263,6 +278,164 @@ function Get-MetraQueryTokens {
     )
 }
 
+function Test-MetraTicketShapedQuery {
+    <#
+    .SYNOPSIS
+        True when the query contains a 6-8 digit token (iSupport-style ticket id).
+    #>
+    [CmdletBinding()]
+    param([Parameter(Mandatory)][string]$Query)
+
+    return [bool]([regex]::IsMatch($Query, '(?<!\d)\d{6,8}(?!\d)'))
+}
+
+function Test-MetraTicketHelpdeskVocabulary {
+    <#
+    .SYNOPSIS
+        True when query tokens include durable ticket/helpdesk workflow vocabulary.
+    #>
+    [CmdletBinding()]
+    param([Parameter(Mandatory)][string]$Query)
+
+    $tokens = @(Get-MetraQueryTokens -Query $Query)
+    $ticketTokens = @('ticket', 'tickets', 'isupport', 'helpdesk', 'incident', 'incidents')
+    return @($tokens | Where-Object { $ticketTokens -contains $_ }).Count -gt 0
+}
+
+function Get-MetraTicketTrackerProject {
+    <#
+    .SYNOPSIS
+        Returns the on-disk TicketTracker project row when present.
+    #>
+    [CmdletBinding()]
+    param()
+
+    return @(Get-MetraProjects | Where-Object { $_.Name -eq 'TicketTracker' } | Select-Object -First 1)
+}
+
+function Get-MetraTicketTrackerSolutionsKeywords {
+    <#
+    .SYNOPSIS
+        Distinctive keywords from TicketTracker solutions/README.md (keywords column).
+    .DESCRIPTION
+        Product/app names enter routing via solutions write-ups, not projects.json triggers.
+        Parses pipe-table rows; takes the last cell as keywords; splits on commas.
+        Cached until the README LastWriteTime changes (or Clear-MetraRoutingCache).
+    #>
+    [CmdletBinding()]
+    param()
+
+    $tt = Get-MetraTicketTrackerProject
+    if (-not $tt -or [string]::IsNullOrWhiteSpace($tt.Path)) { return @() }
+
+    $readme = Join-Path $tt.Path 'solutions\README.md'
+    if (-not (Test-Path -LiteralPath $readme)) { return @() }
+
+    $lwt = (Get-Item -LiteralPath $readme).LastWriteTimeUtc
+    if (
+        $script:MetraCache.SolutionsPath -eq $readme -and
+        $script:MetraCache.SolutionsLwt -eq $lwt -and
+        $null -ne $script:MetraCache.SolutionsKeywords
+    ) {
+        return @($script:MetraCache.SolutionsKeywords)
+    }
+
+    $keywords = New-Object System.Collections.Generic.List[string]
+    foreach ($line in @(Get-Content -LiteralPath $readme -ErrorAction SilentlyContinue)) {
+        $trim = [string]$line
+        if ($trim -notmatch '^\|') { continue }
+        if ($trim -match '^\|\s*-+') { continue }
+        if ($trim -match '(?i)\|\s*File\s*\|') { continue }
+        $cells = @($trim.Trim('|').Split('|') | ForEach-Object { $_.Trim() })
+        if ($cells.Count -lt 2) { continue }
+        $keywordCell = [string]$cells[-1]
+        if ([string]::IsNullOrWhiteSpace($keywordCell)) { continue }
+        foreach ($piece in @($keywordCell -split ',')) {
+            $k = $piece.Trim()
+            if ($k.Length -lt 3) { continue }
+            # Skip pure ticket-id tokens - those are handled by ticket-shaped preference.
+            if ($k -match '^\d{6,8}$') { continue }
+            [void]$keywords.Add($k)
+        }
+    }
+
+    $unique = @($keywords | Select-Object -Unique)
+    $script:MetraCache.SolutionsPath = $readme
+    $script:MetraCache.SolutionsLwt = $lwt
+    $script:MetraCache.SolutionsKeywords = $unique
+    return $unique
+}
+
+function Test-MetraTicketTrackerSolutionsKeywordHit {
+    <#
+    .SYNOPSIS
+        True when the query contains a solutions-index keyword/phrase (length >= 3).
+    #>
+    [CmdletBinding()]
+    param([Parameter(Mandatory)][string]$Query)
+
+    $qLower = $Query.ToLowerInvariant()
+    foreach ($k in @(Get-MetraTicketTrackerSolutionsKeywords)) {
+        $kLower = ([string]$k).ToLowerInvariant()
+        if ([string]::IsNullOrWhiteSpace($kLower)) { continue }
+        if ($qLower.Contains($kLower)) { return $true }
+    }
+    return $false
+}
+
+function Test-MetraQueryNamesProject {
+    <#
+    .SYNOPSIS
+        True when the query clearly names a registry project (whole-word / phrase).
+    #>
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory)][string]$Query,
+        [Parameter(Mandatory)][string]$ProjectName
+    )
+
+    if ([string]::IsNullOrWhiteSpace($ProjectName)) { return $false }
+    $qLower = $Query.ToLowerInvariant()
+    $nameLower = $ProjectName.ToLowerInvariant()
+    if ($qLower.Contains($nameLower)) { return $true }
+    $tokens = @(Get-MetraQueryTokens -Query $Query)
+    return ($tokens -contains $nameLower)
+}
+
+function New-MetraTicketTrackerScoredProject {
+    <#
+    .SYNOPSIS
+        Builds a scored routing row for TicketTracker (ticket-id / solutions preference).
+    #>
+    [CmdletBinding()]
+    param(
+        [int]$Score = 2,
+        [string[]]$MatchedTokens = @()
+    )
+
+    $onDisk = Get-MetraTicketTrackerProject
+    if (-not $onDisk) { return $null }
+
+    $registry = Get-MetraProjectRegistry
+    $reg = @($registry.projects | Where-Object { [string]$_.name -eq 'TicketTracker' } | Select-Object -First 1)
+    $purpose = if ($reg) { [string](Get-MetraProp -Object $reg -Name 'purpose' -Default '') } else { '' }
+    $triggers = if ($reg) { @(Get-MetraProp -Object $reg -Name 'triggers' -Default @()) } else { @() }
+    $serves = if ($reg) { @(Get-MetraProp -Object $reg -Name 'serves' -Default @()) } else { @() }
+
+    return [PSCustomObject]@{
+        Name          = 'TicketTracker'
+        Root          = [string]$onDisk.Root
+        Path          = [string]$onDisk.Path
+        Purpose       = $purpose
+        Triggers      = @($triggers)
+        Serves        = @($serves)
+        Score         = $Score
+        MatchedTokens = [string[]]@($MatchedTokens)
+        HayLower      = (@('TicketTracker') + $triggers + @($purpose) | ForEach-Object { [string]$_ }) -join ' '
+        IsHomeDefault = $false
+    }
+}
+
 function Get-MetraScoredRoutingProjects {
     <#
     .SYNOPSIS
@@ -375,7 +548,8 @@ function Get-MetraRoutingAmbiguity {
     .DESCRIPTION
         Metra is the home destination until another project wins with a confident score
         (score >= 2). Weak incidental matches do not displace Metra.
-        Ticket/helpdesk work still prefers TicketTracker when ticketFirst scoring wins.
+        Precedence before technical score: ticket-shaped id > ticket/helpdesk vocabulary >
+        TicketTracker solutions-index keywords. Product names are not registry triggers.
     #>
     [CmdletBinding()]
     param(
@@ -385,17 +559,43 @@ function Get-MetraRoutingAmbiguity {
     $scored = @(Get-MetraScoredRoutingProjects -Query $Query -Limit 10)
     $homeName = Get-MetraHomeDestinationName
     $tokens = @(Get-MetraQueryTokens -Query $Query)
+    $ttPresent = $null -ne (Get-MetraTicketTrackerProject)
+    $namedOther = $false
+    if ($ttPresent) {
+        foreach ($row in @($scored | Where-Object { $_.Name -ne 'TicketTracker' })) {
+            if (Test-MetraQueryNamesProject -Query $Query -ProjectName $row.Name) {
+                $namedOther = $true
+                break
+            }
+        }
+    }
+
+    $ticketPrefer = $null
+    $ticketPreferForce = $false
+    if ($ttPresent) {
+        if (Test-MetraTicketShapedQuery -Query $Query) {
+            # Ticket id is a workflow artifact - always prefer TicketTracker when present.
+            $ticketPrefer = New-MetraTicketTrackerScoredProject -Score 3 -MatchedTokens @('ticket-id')
+            $ticketPreferForce = $true
+        }
+        elseif (-not $namedOther) {
+            if (Test-MetraTicketHelpdeskVocabulary -Query $Query) {
+                $ticketPrefer = $scored | Where-Object { $_.Name -eq 'TicketTracker' -and [int]$_.Score -ge 1 } | Select-Object -First 1
+                if (-not $ticketPrefer) {
+                    $ticketPrefer = New-MetraTicketTrackerScoredProject -Score 2 -MatchedTokens @('ticket-vocab')
+                }
+            }
+            elseif (Test-MetraTicketTrackerSolutionsKeywordHit -Query $Query) {
+                $ticketPrefer = New-MetraTicketTrackerScoredProject -Score 2 -MatchedTokens @('solutions-keyword')
+            }
+        }
+    }
+
     $confident = $scored | Where-Object { [int]$_.Score -ge 2 } | Select-Object -First 1
 
-    if (-not $confident) {
-        # Ticket-first only on explicit ticket vocabulary - not incidental substring hits.
-        $ticketTokens = @('ticket', 'tickets', 'isupport', 'helpdesk', 'incident', 'incidents')
-        $hasTicketToken = @($tokens | Where-Object { $ticketTokens -contains $_ }).Count -gt 0
-        if ($hasTicketToken) {
-            $ticket = $scored | Where-Object { $_.Name -eq 'TicketTracker' -and [int]$_.Score -ge 1 } | Select-Object -First 1
-            if ($ticket) {
-                $confident = $ticket
-            }
+    if ($ticketPrefer) {
+        if ($ticketPreferForce -or -not $confident -or $confident.Name -eq 'TicketTracker' -or -not $namedOther) {
+            $confident = $ticketPrefer
         }
     }
 
@@ -419,7 +619,7 @@ function Get-MetraRoutingAmbiguity {
         $ambiguous = Test-MetraRoutingAmbiguity -PrimaryScore ([int]$primary.Score) -RunnerUpScore ([int]$runnerUp.Score)
         if ($ambiguous) {
             $favoredList = New-Object System.Collections.Generic.List[string]
-            foreach ($t in @(Get-MetraQueryTokens -Query $Query)) {
+            foreach ($t in $tokens) {
                 $inPrimary = $primary.HayLower.Contains($t)
                 $inRunner = $runnerUp.HayLower.Contains($t)
                 if ($inPrimary -and -not $inRunner) {

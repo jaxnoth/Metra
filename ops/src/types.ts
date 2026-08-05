@@ -1,11 +1,56 @@
 export type DeskMode = 'general' | 'advanced'
 
-export type NextAttention = {
+export type EditCapability = 'safe' | 'unsafe' | 'git'
+
+export type AttentionState = 'active' | 'snoozed' | 'dismissed' | 'autoClosed' | 'held'
+
+export type AttentionConfidence = 'fresh' | 'likelyStale' | 'needsRevalidation'
+
+export type AttentionSource = 'snapshot' | 'decision' | 'contract' | 'operator'
+
+export type AttentionItem = {
   id: string
-  project: string
+  key: string
+  project?: string
   content: string
   kind: string
-} | null
+  command?: string
+  summary?: string
+  askPrompt?: string
+  doneWhen?: string
+  editCapability?: EditCapability
+  resolveCopy?: string
+  proposalId?: string | null
+  proposalStatus?: string | null
+  projectPath?: string | null
+  whyNext?: string
+  confidence?: AttentionConfidence | string
+  source?: AttentionSource | string
+  state?: AttentionState | string
+  evidenceSignature?: string
+  firstSeenAt?: string | null
+  lastSeenAt?: string | null
+  lastScanMode?: string
+  notRecheckedSince?: string | null
+  snoozedUntil?: string | null
+  closedAt?: string | null
+  closedBy?: string
+  note?: string
+}
+
+/** @deprecated Prefer AttentionItem; kept for nextAttention nullability. */
+export type NextAttention = AttentionItem | null
+
+export type AttentionQueue = {
+  active: AttentionItem[]
+  activeCount: number
+  notRecheckedCount: number
+  coveredKinds: string[]
+  visibleCount: number
+  held?: AttentionItem[]
+  heldCount?: number
+  holdRoutingHint?: string | null
+}
 
 export type ProjectRow = {
   name: string
@@ -63,7 +108,16 @@ export type AskEntry = {
 
 export type Preferences = {
   deskMode: DeskMode
+  attentionVisibleCount?: number
+  /** auto | cursor | code | system | full executable path */
+  editorCommand?: string
   updatedAt?: string | null
+}
+
+export type EditorInfo = {
+  preference?: string
+  kind?: string
+  label?: string
 }
 
 export type AskCapability = {
@@ -82,6 +136,11 @@ export type DeskPayload = {
   gitChecked: boolean
   verifyChecked: boolean
   nextAttention: NextAttention
+  /** Count of actionable attention items behind nextAttention (same brain as canvas). */
+  attentionCount?: number
+  /** Why the queue is empty - quick snapshot vs truly clear. */
+  attentionEmptyHint?: string | null
+  attention?: AttentionQueue
   projects: ProjectRow[]
   health: Health
   recent: AskEntry[]
@@ -91,6 +150,7 @@ export type DeskPayload = {
     version?: string
     metraRoot: string
     homeLabel: string
+    editor?: EditorInfo | null
   }
 }
 
@@ -102,4 +162,53 @@ export type AskResult = {
   engine?: string | null
   model?: string | null
   answered?: boolean
+  /** Quiet Where chip when route is weak or ambiguous. */
+  showWhere?: boolean
+}
+
+export type PlaceHomeId =
+  | 'tickettracker'
+  | 'decision-registry'
+  | 'decisions-md'
+  | 'occ'
+  | 'agents-md'
+  | 'keep-in-view'
+  | 'future-development'
+
+export type PlacePathRef = {
+  path: string
+  openPath: string
+  isFile?: boolean
+}
+
+export type PlaceRecommendation = {
+  ok: boolean
+  error?: string
+  homeId: PlaceHomeId | string | null
+  homeLabel: string | null
+  why: string[]
+  whatHappensThere: string | null
+  nextStep: string | null
+  draft: string | null
+  pathRefs: PlacePathRef[]
+  attachments?: string[]
+  learning?: { note?: string } | null
+  recommendOnly?: boolean
+  note?: string | null
+}
+
+export type PlaceUploadMeta = {
+  id: string
+  fileName: string
+  contentType?: string
+  size?: number
+  path?: string
+  at?: string
+}
+
+export type PlaceHome = {
+  id: string
+  label: string
+  whatHappensThere: string
+  draftHint: string
 }

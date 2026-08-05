@@ -141,6 +141,42 @@ function Invoke-MetraVerify {
         Add-VerifyResult -Name 'routing TicketTracker,Solarwinds,Trivia' -Status 'FAIL' -Detail $_.Exception.Message
     }
 
+    # Live CLI: ticket-shaped id and solutions-backed product routing
+    try {
+        $ttRow = @(Get-MetraRoutingTable -Name @('TicketTracker') | Select-Object -First 1)
+        if ($ttRow -and $ttRow.Present) {
+            $idAmb = Get-MetraRoutingAmbiguity -Query '1035299'
+            if ($idAmb.Primary.Name -eq 'TicketTracker') {
+                Add-VerifyResult -Name 'routing query 1035299' -Status 'PASS' -Detail 'Primary TicketTracker'
+            }
+            else {
+                Add-VerifyResult -Name 'routing query 1035299' -Status 'FAIL' -Detail ("Primary={0}" -f $idAmb.Primary.Name)
+            }
+
+            $thriveAmb = Get-MetraRoutingAmbiguity -Query 'Thrive 360 access denied'
+            if ($thriveAmb.Primary.Name -eq 'TicketTracker') {
+                Add-VerifyResult -Name 'routing query Thrive 360 access denied' -Status 'PASS' -Detail 'Primary TicketTracker (solutions keywords)'
+            }
+            else {
+                Add-VerifyResult -Name 'routing query Thrive 360 access denied' -Status 'FAIL' -Detail ("Primary={0}" -f $thriveAmb.Primary.Name)
+            }
+
+            $related = @(Get-MetraRelatedProjects -Name 'TicketTracker' | ForEach-Object { $_.Name })
+            if ($related -contains 'Datamart') {
+                Add-VerifyResult -Name 'TicketTracker related excludes Datamart' -Status 'FAIL' -Detail ($related -join ', ')
+            }
+            else {
+                Add-VerifyResult -Name 'TicketTracker related excludes Datamart' -Status 'PASS' -Detail ($related -join ', ')
+            }
+        }
+        else {
+            Add-VerifyResult -Name 'routing query ticket-shaped / Thrive' -Status 'WARN' -Detail 'TicketTracker not Present'
+        }
+    }
+    catch {
+        Add-VerifyResult -Name 'routing query ticket-shaped / Thrive' -Status 'FAIL' -Detail $_.Exception.Message
+    }
+
     # Live CLI: ctx (no docs write during smoke)
     try {
         $ctx = Export-MetraContextPack -Query 'ticket' -Format markdown -Path '-' -Quiet |

@@ -36,14 +36,122 @@ function Read-MetraOpsRequestBody {
     }
 }
 
+function Read-MetraOpsRequestBytes {
+    param([Parameter(Mandatory)]$Request)
+
+    if (-not $Request.HasEntityBody) { return [byte[]]@() }
+    $ms = New-Object System.IO.MemoryStream
+    try {
+        $Request.InputStream.CopyTo($ms)
+        return $ms.ToArray()
+    }
+    finally {
+        $ms.Dispose()
+    }
+}
+
+function ConvertFrom-MetraOpsMultipartUpload {
+    <#
+    .SYNOPSIS
+        Extracts the first file part from a multipart/form-data body (field name file preferred).
+    #>
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory)][byte[]]$Bytes,
+        [Parameter(Mandatory)][string]$ContentType
+    )
+
+    if ($null -eq $Bytes -or $Bytes.Length -eq 0) {
+        throw 'Empty multipart body'
+    }
+    $ct = $ContentType
+    $boundaryMatch = [regex]::Match($ct, 'boundary=(?:"([^"]+)"|([^;]+))', 'IgnoreCase')
+    if (-not $boundaryMatch.Success) {
+        throw 'multipart boundary missing'
+    }
+    $boundary = $boundaryMatch.Groups[1].Value
+    if (-not $boundary) { $boundary = $boundaryMatch.Groups[2].Value.Trim() }
+    $text = [System.Text.Encoding]::UTF8.GetString($Bytes)
+    $marker = '--' + $boundary
+    $parts = $text -split [regex]::Escape($marker)
+    foreach ($part in $parts) {
+        if ($part -match 'Content-Disposition:\s*form-data;.*filename="([^"]+)"') {
+            $fileName = $Matches[1]
+            $contentTypePart = 'application/octet-stream'
+            if ($part -match 'Content-Type:\s*([^\r\n]+)') {
+                $contentTypePart = $Matches[1].Trim()
+            }
+            $idx = $part.IndexOf("`r`n`r`n")
+            if ($idx -lt 0) { $idx = $part.IndexOf("`n`n") }
+            if ($idx -lt 0) { continue }
+            $headerLen = if ($part.Substring($idx, 4) -eq "`r`n`r`n") { 4 } else { 2 }
+            $bodyStartInPart = $idx + $headerLen
+            # Map back to raw bytes via UTF8 is unsafe for binary - locate filename header in raw bytes instead.
+            $fileNameBytes = [System.Text.Encoding]::UTF8.GetBytes('filename="' + $fileName + '"')
+            $startSearch = [System.Text.Encoding]::UTF8.GetBytes($part.Substring(0, [Math]::Min(800, $part.Length)))
+            # Fall through: for binary integrity, find CRLFCRLF after filename in original bytes
+            $ascii = [System.Text.Encoding]::ASCII
+            $needle = $ascii.GetBytes('filename="' + $fileName + '"')
+            $pos = Find-MetraByteSequence -Haystack $Bytes -Needle $needle
+            if ($pos -lt 0) { continue }
+            $headerEnd = Find-MetraByteSequence -Haystack $Bytes -Needle $ascii.GetBytes("`r`n`r`n") -Start $pos
+            $sepLen = 4
+            if ($headerEnd -lt 0) {
+                $headerEnd = Find-MetraByteSequence -Haystack $Bytes -Needle $ascii.GetBytes("`n`n") -Start $pos
+                $sepLen = 2
+            }
+            if ($headerEnd -lt 0) { continue }
+            $dataStart = $headerEnd + $sepLen
+            $nextBoundary = Find-MetraByteSequence -Haystack $Bytes -Needle ($ascii.GetBytes("`r`n--" + $boundary)) -Start $dataStart
+            if ($nextBoundary -lt 0) {
+                $nextBoundary = Find-MetraByteSequence -Haystack $Bytes -Needle ($ascii.GetBytes("`n--" + $boundary)) -Start $dataStart
+            }
+            if ($nextBoundary -lt 0) { $nextBoundary = $Bytes.Length }
+            $len = $nextBoundary - $dataStart
+            if ($len -lt 0) { continue }
+            $fileBytes = New-Object byte[] $len
+            [Array]::Copy($Bytes, $dataStart, $fileBytes, 0, $len)
+            # Trim trailing CRLF
+            while ($fileBytes.Length -gt 0 -and ($fileBytes[$fileBytes.Length - 1] -eq 10 -or $fileBytes[$fileBytes.Length - 1] -eq 13)) {
+                $fileBytes = $fileBytes[0..($fileBytes.Length - 2)]
+            }
+            return [PSCustomObject]@{
+                FileName    = $fileName
+                ContentType = $contentTypePart
+                Bytes       = $fileBytes
+            }
+        }
+    }
+    throw 'No file part found in multipart body'
+}
+
+function Find-MetraByteSequence {
+    param(
+        [byte[]]$Haystack,
+        [byte[]]$Needle,
+        [int]$Start = 0
+    )
+    if ($null -eq $Haystack -or $null -eq $Needle -or $Needle.Length -eq 0) { return -1 }
+    $limit = $Haystack.Length - $Needle.Length
+    for ($i = $Start; $i -le $limit; $i++) {
+        $ok = $true
+        for ($j = 0; $j -lt $Needle.Length; $j++) {
+            if ($Haystack[$i + $j] -ne $Needle[$j]) { $ok = $false; break }
+        }
+        if ($ok) { return $i }
+    }
+    return -1
+}
+
 function Write-MetraOpsJsonResponse {
     param(
         [Parameter(Mandatory)]$Response,
         [Parameter(Mandatory)]$Object,
-        [int]$StatusCode = 200
+        [int]$StatusCode = 200,
+        [int]$Depth = 10
     )
 
-    $json = ($Object | ConvertTo-Json -Depth 10 -Compress)
+    $json = ($Object | ConvertTo-Json -Depth $Depth -Compress)
     $bytes = [System.Text.Encoding]::UTF8.GetBytes($json)
     $Response.StatusCode = $StatusCode
     $Response.ContentType = 'application/json; charset=utf-8'
@@ -140,16 +248,117 @@ function Invoke-MetraOpsApi {
             return
         }
 
+        if ($method -eq 'GET' -and $path -eq '/api/local-session') {
+            # Loopback-only: browser / webview on the operator machine may fetch the Host session marker.
+            if (-not (Test-MetraOpsRequestIsLoopback -Request $Request)) {
+                Write-MetraOpsJsonResponse -Response $Response -StatusCode 403 -Object ([PSCustomObject]@{
+                        error      = 'Local session token is only available on loopback.'
+                        reasonCode = 'localSessionLoopbackOnly'
+                    })
+                return
+            }
+            $issued = Initialize-MetraOpsLocalSessionToken
+            Write-MetraOpsJsonResponse -Response $Response -Object ([PSCustomObject]@{
+                    token   = [string]$issued.Token
+                    created = [bool]$issued.Created
+                    header  = 'X-Metra-Local-Session'
+                })
+            return
+        }
+
         if ($method -eq 'PUT' -and $path -eq '/api/preferences') {
             $body = Read-MetraOpsRequestBody -Request $Request
             $parsed = $body | ConvertFrom-Json
-            $mode = [string](Get-MetraProp -Object $parsed -Name 'deskMode' -Default 'general')
-            if ($mode -notin @('general', 'advanced')) {
-                Write-MetraOpsJsonResponse -Response $Response -StatusCode 400 -Object ([PSCustomObject]@{ error = 'deskMode must be general or advanced' })
+            $setArgs = @{ MetraRoot = $MetraRoot }
+            if ($null -ne (Get-MetraProp -Object $parsed -Name 'deskMode' -Default $null)) {
+                $mode = [string](Get-MetraProp -Object $parsed -Name 'deskMode' -Default 'general')
+                if ($mode -notin @('general', 'advanced')) {
+                    Write-MetraOpsJsonResponse -Response $Response -StatusCode 400 -Object ([PSCustomObject]@{ error = 'deskMode must be general or advanced' })
+                    return
+                }
+                $setArgs['DeskMode'] = $mode
+            }
+            if ($null -ne (Get-MetraProp -Object $parsed -Name 'attentionVisibleCount' -Default $null)) {
+                try {
+                    $vis = [int](Get-MetraProp -Object $parsed -Name 'attentionVisibleCount' -Default 1)
+                }
+                catch {
+                    Write-MetraOpsJsonResponse -Response $Response -StatusCode 400 -Object ([PSCustomObject]@{ error = 'attentionVisibleCount must be an integer 1-10' })
+                    return
+                }
+                $setArgs['AttentionVisibleCount'] = $vis
+            }
+            if ($null -ne (Get-MetraProp -Object $parsed -Name 'editorCommand' -Default $null)) {
+                $setArgs['EditorCommand'] = [string](Get-MetraProp -Object $parsed -Name 'editorCommand' -Default 'auto')
+            }
+            if ($setArgs.Keys.Count -le 1) {
+                Write-MetraOpsJsonResponse -Response $Response -StatusCode 400 -Object ([PSCustomObject]@{ error = 'deskMode, attentionVisibleCount, or editorCommand required' })
                 return
             }
-            $prefs = Set-MetraDeskPreferences -DeskMode $mode -MetraRoot $MetraRoot
+            $prefs = Set-MetraDeskPreferences @setArgs
             Write-MetraOpsJsonResponse -Response $Response -Object $prefs
+            return
+        }
+
+        if ($method -eq 'POST' -and $path -eq '/api/open') {
+            # Desk process launches the editor; the browser cannot. Reach is split from authority:
+            # loopback, or a Host-issued local session marker for non-loopback surfaces.
+            $isLocalCaller = Test-MetraOpsRequestIsSameMachine -Request $Request
+            $sessionToken = ''
+            try { $sessionToken = [string]$Request.Headers['X-Metra-Local-Session'] } catch { }
+            if (-not $isLocalCaller -and -not (Test-MetraOpsLocalSessionToken -SessionToken $sessionToken)) {
+                Write-MetraOpsJsonResponse -Response $Response -StatusCode 403 -Object ([PSCustomObject]@{
+                        error      = 'Open in editor runs on the operator machine only. Use the desk on that machine, or open the folder there manually.'
+                        reasonCode = 'openLocalOnly'
+                    })
+                return
+            }
+            $body = Read-MetraOpsRequestBody -Request $Request
+            $openPath = ''
+            if ($body) {
+                try {
+                    $parsed = $body | ConvertFrom-Json
+                    $openPath = [string](Get-MetraProp -Object $parsed -Name 'path' -Default '')
+                }
+                catch { }
+            }
+            try {
+                $result = Invoke-MetraOpsOpenInEditor -Path $openPath -MetraRoot $MetraRoot
+                Write-MetraOpsJsonResponse -Response $Response -Object $result
+            }
+            catch {
+                Write-MetraOpsJsonResponse -Response $Response -StatusCode 400 -Object ([PSCustomObject]@{
+                        error = $_.Exception.Message
+                    })
+            }
+            return
+        }
+
+        $attnMatch = [regex]::Match($path, '^/api/attention/([^/]+)/(dismiss|snooze|reopen|hold|release)$', [System.Text.RegularExpressions.RegexOptions]::IgnoreCase)
+        if ($method -eq 'POST' -and $attnMatch.Success) {
+            $attnKey = [System.Uri]::UnescapeDataString($attnMatch.Groups[1].Value)
+            $action = $attnMatch.Groups[2].Value.ToLowerInvariant()
+            $days = 1
+            if ($action -eq 'snooze') {
+                $body = Read-MetraOpsRequestBody -Request $Request
+                if ($body) {
+                    try {
+                        $parsed = $body | ConvertFrom-Json
+                        $days = [int](Get-MetraProp -Object $parsed -Name 'days' -Default 1)
+                    }
+                    catch { $days = 1 }
+                }
+            }
+            try {
+                $null = Invoke-MetraAttentionMutation -Key $attnKey -Action $action -Days $days -MetraRoot $MetraRoot
+                $payload = Get-MetraDeskPayload -MetraRoot $MetraRoot
+                Write-MetraOpsJsonResponse -Response $Response -Object $payload
+            }
+            catch {
+                Write-MetraOpsJsonResponse -Response $Response -StatusCode 404 -Object ([PSCustomObject]@{
+                        error = $_.Exception.Message
+                    })
+            }
             return
         }
 
@@ -165,6 +374,7 @@ function Invoke-MetraOpsApi {
             }
             $ask = Get-MetraDeskAskResult -Prompt $prompt -SessionId $sessionId -MetraRoot $MetraRoot
             $entry = Add-MetraDeskAskEntry -Prompt $prompt -Handoff $ask.handoff -MetraRoot $MetraRoot
+            $showWhere = Test-MetraAskShowWhere -Handoff $ask.handoff
             Write-MetraOpsJsonResponse -Response $Response -Object ([PSCustomObject]@{
                     entry      = $entry
                     handoff    = $ask.handoff
@@ -174,7 +384,119 @@ function Invoke-MetraOpsApi {
                     engine     = $ask.engine
                     model      = $ask.model
                     answered   = [bool]$ask.answered
+                    showWhere  = [bool]$showWhere
                 })
+            return
+        }
+
+        if ($method -eq 'POST' -and $path -eq '/api/place') {
+            $body = Read-MetraOpsRequestBody -Request $Request
+            $parsed = $null
+            if ($body) { $parsed = $body | ConvertFrom-Json }
+            $text = [string](Get-MetraProp -Object $parsed -Name 'text' -Default '')
+            if ([string]::IsNullOrWhiteSpace($text)) {
+                $text = [string](Get-MetraProp -Object $parsed -Name 'query' -Default '')
+            }
+            $attachments = @()
+            try {
+                $rawAtt = Get-MetraProp -Object $parsed -Name 'attachments' -Default @()
+                $attachments = @($rawAtt | ForEach-Object { [string]$_ } | Where-Object { $_ })
+            }
+            catch { }
+            $place = Get-MetraDeskPlaceRecommendation -Text $text -AttachmentIds $attachments -MetraRoot $MetraRoot
+            if (-not $place.ok) {
+                Write-MetraOpsJsonResponse -Response $Response -StatusCode 400 -Object $place
+                return
+            }
+            Write-MetraOpsJsonResponse -Response $Response -Object $place -Depth 12
+            return
+        }
+
+        if ($method -eq 'POST' -and $path -eq '/api/place/upload') {
+            try {
+                $contentType = [string]$Request.ContentType
+                $meta = $null
+                if ($contentType -match 'multipart/form-data') {
+                    $bytes = Read-MetraOpsRequestBytes -Request $Request
+                    $part = ConvertFrom-MetraOpsMultipartUpload -Bytes $bytes -ContentType $contentType
+                    $meta = Save-MetraPlaceUpload -FileName $part.FileName -Bytes $part.Bytes -ContentType $part.ContentType
+                }
+                else {
+                    $body = Read-MetraOpsRequestBody -Request $Request
+                    $parsed = $body | ConvertFrom-Json
+                    $fileName = [string](Get-MetraProp -Object $parsed -Name 'fileName' -Default '')
+                    $b64 = [string](Get-MetraProp -Object $parsed -Name 'contentBase64' -Default '')
+                    $ct = [string](Get-MetraProp -Object $parsed -Name 'contentType' -Default 'application/octet-stream')
+                    if ([string]::IsNullOrWhiteSpace($fileName) -or [string]::IsNullOrWhiteSpace($b64)) {
+                        Write-MetraOpsJsonResponse -Response $Response -StatusCode 400 -Object ([PSCustomObject]@{ error = 'fileName and contentBase64 required' })
+                        return
+                    }
+                    $fileBytes = [Convert]::FromBase64String($b64)
+                    $meta = Save-MetraPlaceUpload -FileName $fileName -Bytes $fileBytes -ContentType $ct
+                }
+                Write-MetraOpsJsonResponse -Response $Response -Object $meta
+            }
+            catch {
+                Write-MetraOpsJsonResponse -Response $Response -StatusCode 400 -Object ([PSCustomObject]@{ error = $_.Exception.Message })
+            }
+            return
+        }
+
+        if ($method -eq 'POST' -and $path -eq '/api/place/confirm') {
+            $body = Read-MetraOpsRequestBody -Request $Request
+            $parsed = $null
+            if ($body) { $parsed = $body | ConvertFrom-Json }
+            $text = [string](Get-MetraProp -Object $parsed -Name 'text' -Default '')
+            $homeId = [string](Get-MetraProp -Object $parsed -Name 'homeId' -Default '')
+            $keep = [bool](Get-MetraProp -Object $parsed -Name 'keepInView' -Default $false)
+            $confirmAttachments = @()
+            try {
+                $rawConfirmAtt = Get-MetraProp -Object $parsed -Name 'attachments' -Default @()
+                $confirmAttachments = @($rawConfirmAtt | ForEach-Object { [string]$_ } | Where-Object { $_ })
+            }
+            catch { }
+            if ([string]::IsNullOrWhiteSpace($text) -or [string]::IsNullOrWhiteSpace($homeId)) {
+                Write-MetraOpsJsonResponse -Response $Response -StatusCode 400 -Object ([PSCustomObject]@{ error = 'text and homeId required' })
+                return
+            }
+            try {
+                $result = Invoke-MetraPlaceConfirm -Text $text -HomeId $homeId -KeepInView:$keep -AttachmentIds $confirmAttachments -MetraRoot $MetraRoot
+                # Only rebuild the desk when something was actually parked on Attention.
+                $payload = $null
+                if ($result.attentionKey) { $payload = Get-MetraDeskPayload -MetraRoot $MetraRoot }
+                Write-MetraOpsJsonResponse -Response $Response -Object ([PSCustomObject]@{
+                        result = $result
+                        desk   = $payload
+                    }) -Depth 20
+            }
+            catch {
+                Write-MetraOpsJsonResponse -Response $Response -StatusCode 400 -Object ([PSCustomObject]@{ error = $_.Exception.Message })
+            }
+            return
+        }
+
+        if ($method -eq 'POST' -and $path -eq '/api/place/correct') {
+            $body = Read-MetraOpsRequestBody -Request $Request
+            $parsed = $null
+            if ($body) { $parsed = $body | ConvertFrom-Json }
+            $text = [string](Get-MetraProp -Object $parsed -Name 'text' -Default '')
+            $homeId = [string](Get-MetraProp -Object $parsed -Name 'homeId' -Default '')
+            if ([string]::IsNullOrWhiteSpace($text) -or [string]::IsNullOrWhiteSpace($homeId)) {
+                Write-MetraOpsJsonResponse -Response $Response -StatusCode 400 -Object ([PSCustomObject]@{ error = 'text and homeId required' })
+                return
+            }
+            try {
+                $result = Invoke-MetraPlaceCorrect -Text $text -HomeId $homeId -MetraRoot $MetraRoot
+                Write-MetraOpsJsonResponse -Response $Response -Object $result
+            }
+            catch {
+                Write-MetraOpsJsonResponse -Response $Response -StatusCode 400 -Object ([PSCustomObject]@{ error = $_.Exception.Message })
+            }
+            return
+        }
+
+        if ($method -eq 'GET' -and $path -eq '/api/place/homes') {
+            Write-MetraOpsJsonResponse -Response $Response -Object (@(Get-MetraPlaceHomeCatalog))
             return
         }
 
@@ -188,6 +510,36 @@ function Invoke-MetraOpsApi {
             }
             $handoff = Get-MetraDeskHandoff -Query $query -MetraRoot $MetraRoot
             Write-MetraOpsJsonResponse -Response $Response -Object $handoff
+            return
+        }
+
+        if ($path -eq '/api/proposals' -or $path.StartsWith('/api/proposals/', [StringComparison]::OrdinalIgnoreCase)) {
+            $body = ''
+            if ($method -in @('POST', 'PUT', 'PATCH')) {
+                $body = Read-MetraOpsRequestBody -Request $Request
+            }
+            $sessionToken = ''
+            try {
+                $sessionToken = [string]$Request.Headers['X-Metra-Local-Session']
+            }
+            catch { }
+            $result = Invoke-MetraOpsProposalCommand `
+                -Method $method `
+                -Path $path `
+                -Body $body `
+                -IsLoopback:(Test-MetraOpsRequestIsLoopback -Request $Request) `
+                -SessionToken $sessionToken `
+                -MetraRoot $MetraRoot
+            if ($null -eq $result) {
+                Write-MetraOpsJsonResponse -Response $Response -StatusCode 404 -Object ([PSCustomObject]@{ error = 'not found' })
+                return
+            }
+            if ($result.Text) {
+                $contentType = if ($result.ContentType) { [string]$result.ContentType } else { 'text/plain; charset=utf-8' }
+                Write-MetraOpsTextResponse -Response $Response -StatusCode ([int]$result.StatusCode) -Text ([string]$result.Text) -ContentType $contentType
+                return
+            }
+            Write-MetraOpsJsonResponse -Response $Response -StatusCode ([int]$result.StatusCode) -Object $result.Object -Depth 30
             return
         }
 
@@ -361,18 +713,22 @@ function Start-MetraOpsServer {
         $Port = [int]$binding.Port
     }
     else {
-        $binding = Get-MetraOpsLoopbackBinding -Port $Port
-        if ($Port -eq 80) {
-            $friendly = Get-MetraOpsFriendlyBinding
-            # Prefer dual prefixes when binding explicitly to 80 so http://metra/ works if hosts is set.
-            if (Test-MetraHostsEntry -HostName 'metra') {
-                $binding = $friendly
-            }
-        }
+        $binding = Get-MetraOpsDeskBindingForPort -Port $Port -MetraRoot $MetraRoot
     }
 
     if ($Port -lt 1 -or $Port -gt 65535) {
         throw "Invalid port: $Port"
+    }
+
+    # When Tailscale reach is on, orchestrate Serve so the share URL is HTTPS (secure context).
+    $isTailscalePref = $false
+    try { $isTailscalePref = [bool](Get-MetraProp -Object $binding -Name 'Tailscale' -Default $false) } catch { }
+    if ($isTailscalePref) {
+        $serve = Enable-MetraOpsTailscaleServe -Port $Port
+        $binding = Get-MetraOpsDeskBindingForPort -Port $Port -MetraRoot $MetraRoot
+        if (-not $serve.Ok) {
+            Write-Warning ("Tailscale Serve HTTPS unavailable: {0}. Desk stays on loopback; do not treat plain http MagicDNS as the primary phone URL." -f $serve.Reason)
+        }
     }
 
     $url = [string]$binding.BrowserUrl
@@ -417,7 +773,31 @@ function Start-MetraOpsServer {
     Set-Content -LiteralPath $pidFile -Value $PID -Encoding ASCII
 
     Write-Host ("Metra Ops desk: {0}" -f $url) -ForegroundColor Green
-    Write-Host 'Loopback only. Press Ctrl+C to stop.' -ForegroundColor DarkGray
+    $isTailscale = $false
+    try { $isTailscale = [bool](Get-MetraProp -Object $binding -Name 'Tailscale' -Default $false) } catch { }
+    if ($isTailscale) {
+        $serveOn = $false
+        try { $serveOn = [bool](Get-MetraProp -Object $binding -Name 'Serve' -Default $false) } catch { }
+        if ($serveOn) {
+            Write-Host 'Tailscale Serve HTTPS share enabled (view/ask for peers). Propose and request-apply need X-Metra-Local-Session; tray Apply once still gates disk writes.' -ForegroundColor DarkYellow
+        }
+        else {
+            Write-Host 'Tailscale reach enabled without Serve HTTPS (view/ask for peers). Clipboard APIs need a secure context - fix Serve or use loopback.' -ForegroundColor DarkYellow
+            $serveErr = [string](Get-MetraProp -Object $binding -Name 'ServeError' -Default '')
+            if ($serveErr) { Write-Warning $serveErr }
+        }
+        Write-Host ("Share URL: {0}" -f $url) -ForegroundColor Cyan
+    }
+    else {
+        Write-Host 'Loopback bind. Press Ctrl+C to stop.' -ForegroundColor DarkGray
+    }
+
+    try {
+        $null = Initialize-MetraOpsLocalSessionToken
+    }
+    catch {
+        Write-Warning "Could not ensure local session token: $($_.Exception.Message)"
+    }
 
     # Operator-tier Ask engine (temporary until installer ships Node + sidecar).
     $askCap = Start-MetraAskEngine -MetraRoot $MetraRoot
@@ -475,7 +855,7 @@ function Start-MetraOpsServer {
             $res = $context.Response
             $res.Headers['Access-Control-Allow-Origin'] = '*'
             $res.Headers['Access-Control-Allow-Methods'] = 'GET, POST, PUT, OPTIONS'
-            $res.Headers['Access-Control-Allow-Headers'] = 'Content-Type'
+            $res.Headers['Access-Control-Allow-Headers'] = 'Content-Type, X-Metra-Local-Session'
 
             if ($req.HttpMethod -eq 'OPTIONS') {
                 $res.StatusCode = 204
