@@ -1177,6 +1177,64 @@ function Get-MetraDeskAskLogPath {
     return Join-Path $MetraRoot 'docs\ops-ask-log.local.json'
 }
 
+function Get-MetraAskJournalSchemaVersion {
+    return 1
+}
+
+function Get-MetraAskMessageMaxChars {
+    return 8192
+}
+
+function Truncate-MetraAskJournalMessage {
+    param([string]$Message, [int]$MaxChars = (Get-MetraAskMessageMaxChars))
+
+    if ([string]::IsNullOrEmpty($Message)) { return $Message }
+    if ($Message.Length -le $MaxChars) { return $Message }
+    return ($Message.Substring(0, $MaxChars) + [Environment]::NewLine + [Environment]::NewLine + '[truncated]')
+}
+
+function Resolve-MetraAskClientId {
+    param(
+        [string]$HeaderClient,
+        [string]$BodyClient,
+        [string]$UserAgent
+    )
+
+    $c = if (-not [string]::IsNullOrWhiteSpace($HeaderClient)) { $HeaderClient.Trim() }
+    elseif (-not [string]::IsNullOrWhiteSpace($BodyClient)) { $BodyClient.Trim() }
+    else { '' }
+    if ($c -match '^(ops-web|ops-ios|cli|unknown)$') { return $c.ToLowerInvariant() }
+    if (-not [string]::IsNullOrWhiteSpace($c)) { return $c }
+    return 'unknown'
+}
+
+function Resolve-MetraAskClientHint {
+    param(
+        [string]$Client,
+        [string]$UserAgent,
+        [string]$BodyHint
+    )
+
+    if ($BodyHint -match '^(phone|desktop|tablet|unknown)$') { return $BodyHint.ToLowerInvariant() }
+    if ($Client -eq 'ops-ios') { return 'phone' }
+    $ua = [string]$UserAgent
+    if ($ua -match '(?i)mobile|iphone|android') { return 'phone' }
+    if ($ua -match '(?i)ipad|tablet') { return 'tablet' }
+    if ($Client -eq 'ops-web' -or $Client -eq 'cli') { return 'desktop' }
+    return 'unknown'
+}
+
+function Resolve-MetraAskOrigin {
+    param(
+        [bool]$IsLoopback,
+        [bool]$HasLocalSession
+    )
+
+    if ($IsLoopback) { return 'loopback' }
+    if ($HasLocalSession) { return 'localSession' }
+    return 'remote'
+}
+
 function Get-MetraDeskPreferences {
     <#
     .SYNOPSIS
@@ -1325,30 +1383,110 @@ function Get-MetraDeskAskLog {
 }
 
 function Add-MetraDeskAskEntry {
+    <#
+    .SYNOPSIS
+        Appends one Session Journal turn (canonical Ask evidence). Cap 100 recent turns.
+    #>
     [CmdletBinding()]
     param(
         [Parameter(Mandatory)][string]$Prompt,
         [object]$Handoff,
+        [string]$Message,
+        [string]$SessionId,
+        [string]$Origin = 'unknown',
+        [string]$Client = 'unknown',
+        [string]$ClientHint = 'unknown',
+        [string]$Engine,
+        [string]$Model,
+        [bool]$Answered = $false,
+        [object]$Capability,
+        [string[]]$AttachmentIds = @(),
         [string]$MetraRoot = (Get-MetraRoot)
     )
 
     $path = Get-MetraDeskAskLogPath -MetraRoot $MetraRoot
     $existing = @(Get-MetraDeskAskLog -MetraRoot $MetraRoot -Limit 100)
-    $entry = [PSCustomObject]@{
-        id        = [guid]::NewGuid().ToString('N')
-        at        = (Get-Date).ToString('o')
-        prompt    = $Prompt.Trim()
-        handoff   = $Handoff
-        note      = 'Local assistant coming next. Capture and handoff only in this release.'
+    $sess = if (-not [string]::IsNullOrWhiteSpace($SessionId)) {
+        $SessionId.Trim()
     }
-    $items = @($entry) + @($existing) | Select-Object -First 40
-    $payload = [ordered]@{ items = @($items) }
+    else {
+        [guid]::NewGuid().ToString('N')
+    }
+
+    $maxIndex = 0
+    foreach ($row in $existing) {
+        $rowSess = [string](Get-MetraProp -Object $row -Name 'sessionId' -Default '')
+        if ($rowSess -ne $sess) { continue }
+        $ti = Get-MetraProp -Object $row -Name 'turnIndex' -Default $null
+        if ($null -ne $ti) {
+            $n = [int]$ti
+            if ($n -gt $maxIndex) { $maxIndex = $n }
+        }
+    }
+
+    $cleanMessage = Truncate-MetraAskJournalMessage -Message (Remove-MetraAskUiChrome -Message ([string]$Message))
+    $entry = [PSCustomObject]@{
+        id           = [guid]::NewGuid().ToString('N')
+        sessionId    = $sess
+        turnIndex    = $maxIndex + 1
+        at           = (Get-Date).ToString('o')
+        prompt       = $Prompt.Trim()
+        message      = $cleanMessage
+        handoff      = $Handoff
+        engine       = $(if ([string]::IsNullOrWhiteSpace($Engine)) { $null } else { $Engine })
+        model        = $(if ([string]::IsNullOrWhiteSpace($Model)) { $null } else { $Model })
+        answered     = [bool]$Answered
+        capability   = $Capability
+        origin       = $Origin
+        client       = $Client
+        clientHint   = $ClientHint
+        attachmentIds = @($AttachmentIds | ForEach-Object { [string]$_ } | Where-Object { $_ })
+    }
+    $items = @($entry) + @($existing) | Select-Object -First 100
+    $payload = [ordered]@{
+        schemaVersion = Get-MetraAskJournalSchemaVersion
+        items         = @($items)
+    }
     $dir = Split-Path -Parent $path
     if ($dir -and -not (Test-Path $dir)) {
         New-Item -ItemType Directory -Path $dir -Force | Out-Null
     }
-    [System.IO.File]::WriteAllText($path, (($payload | ConvertTo-Json -Depth 8) + "`r`n"))
+    [System.IO.File]::WriteAllText($path, (($payload | ConvertTo-Json -Depth 10) + "`r`n"))
     return $entry
+}
+
+function Get-MetraDeskAskSessionSummaries {
+    [CmdletBinding()]
+    param(
+        [string]$MetraRoot = (Get-MetraRoot),
+        [int]$Limit = 12
+    )
+
+    $turns = @(Get-MetraDeskAskLog -MetraRoot $MetraRoot -Limit 100)
+    $groups = $turns | Group-Object -Property {
+        $sid = [string](Get-MetraProp -Object $_ -Name 'sessionId' -Default '')
+        if ([string]::IsNullOrWhiteSpace($sid)) { [string]$_.id } else { $sid }
+    }
+    $summaries = foreach ($g in $groups) {
+        $ordered = @($g.Group | Sort-Object {
+                $ti = Get-MetraProp -Object $_ -Name 'turnIndex' -Default $null
+                if ($null -ne $ti) { [int]$ti } else { 0 }
+            }, { [string]$_.at })
+        $first = $ordered | Select-Object -First 1
+        $last = $ordered | Select-Object -Last 1
+        [PSCustomObject]@{
+            id         = [string]$g.Name
+            sessionId  = [string]$g.Name
+            turnCount  = $ordered.Count
+            at         = [string](Get-MetraProp -Object $last -Name 'at' -Default '')
+            prompt     = [string](Get-MetraProp -Object $first -Name 'prompt' -Default '')
+            where      = [string](Get-MetraProp -Object (Get-MetraProp -Object $first -Name 'handoff' -Default $null) -Name 'where' -Default '')
+            origin     = [string](Get-MetraProp -Object $first -Name 'origin' -Default '')
+            client     = [string](Get-MetraProp -Object $first -Name 'client' -Default '')
+            turns      = @($ordered | Select-Object id, turnIndex, at, prompt, origin, client)
+        }
+    }
+    return @($summaries | Sort-Object at -Descending | Select-Object -First $Limit)
 }
 
 function Test-MetraDeskGreeting {
@@ -1715,9 +1853,34 @@ function ConvertTo-MetraDeskPayload {
         }
     }
 
+    # Ticket watch: full scan only. Fail-soft - never break desk payload.
+    # Quick scan must not cover ticket (no surprise help-desk polling).
+    $ticketCovered = $false
+    if ($scanMode -eq 'full') {
+        try {
+            $tt = Get-MetraTicketTrackerProject
+            if ($tt) {
+                # Local cache only during desk snapshot (CLI watch owns sync).
+                $candidates = Get-MetraTicketWatchCandidates -ModulePath $tt.ModulePath -Top 10
+                foreach ($t in @($candidates.Tickets)) {
+                    $qi = ConvertTo-MetraTicketAttentionQueueItem -Ticket $t -TicketTrackerPath $tt.Path
+                    if ($qi) { $attentionQueue += $qi }
+                }
+                $ticketCovered = $true
+            }
+            else {
+                Write-Warning 'TicketTracker project or module not present; ticket watch skipped.'
+            }
+        }
+        catch {
+            Write-Warning ("Ticket watch scan skipped: {0}" -f $_.Exception.Message)
+        }
+    }
+
     $coveredKinds = @('drift', 'decision', 'contract')
     if ($gitChecked) { $coveredKinds += 'git' }
     if ($verifyChecked) { $coveredKinds += 'verify' }
+    if ($ticketCovered) { $coveredKinds += 'ticket' }
 
     $memory = Update-MetraAttentionMemory `
         -Queue $attentionQueue `
@@ -1809,7 +1972,8 @@ function ConvertTo-MetraDeskPayload {
     }
     catch { }
 
-    $recent = @(Get-MetraDeskAskLog -MetraRoot $MetraRoot -Limit 12)
+    $recent = @(Get-MetraDeskAskSessionSummaries -MetraRoot $MetraRoot -Limit 12)
+    $captures = @(Get-MetraCaptureLedger -MetraRoot $MetraRoot -Limit 20 -Status candidate)
     $askCapability = Get-MetraAskCapability -MetraRoot $MetraRoot
 
     $editorInfo = $null
@@ -1854,6 +2018,7 @@ function ConvertTo-MetraDeskPayload {
             driftCount         = [int]$Snapshot.driftCount
         }
         recent             = $recent
+        captures           = $captures
         preferences        = $prefs
         ask                = [PSCustomObject]@{
             enabled       = [bool]$askCapability.enabled

@@ -231,11 +231,12 @@ function Get-MetraAttentionKindPriority {
 
     switch ([string]$Kind) {
         'verify' { return 0 }
-        'drift' { return 1 }
-        'decision' { return 2 }
-        'contract' { return 3 }
-        'git' { return 4 }
-        default { return 5 }
+        'ticket' { return 1 }
+        'drift' { return 2 }
+        'git' { return 3 }
+        'decision' { return 4 }
+        'contract' { return 5 }
+        default { return 6 }
     }
 }
 
@@ -307,6 +308,17 @@ function Get-MetraAttentionPlainSummary {
         if ($project) { return "$project failed a health check." }
         return 'A health check needs attention.'
     }
+    if ($kind -eq 'ticket') {
+        if ($content -match '(?i)^Ticket\s+(\d+)') {
+            $id = $Matches[1]
+            if ($content -match '(?i)-\s*(High|Medium|Low|Critical)\s+priority') {
+                return "Ticket $id needs triage - $($Matches[1]) priority."
+            }
+            return "Ticket $id needs triage."
+        }
+        if ($content) { return $content }
+        return 'A ticket needs triage.'
+    }
     if ($kind -eq 'drift') {
         if ($project) { return "$project does not match the expected setup." }
         return 'A project setup does not match what Metra expects.'
@@ -353,6 +365,7 @@ function Get-MetraAttentionWhyNext {
     if ($RankIndex -eq 0 -and $ActiveCount -eq 1) {
         switch ($kind) {
             'verify' { return 'This is the only health check waiting right now.' }
+            'ticket' { return 'This is the only open ticket waiting right now.' }
             'drift' { return 'This is the only setup mismatch waiting right now.' }
             'decision' { return 'This is the only open decision waiting right now.' }
             'contract' { return 'This is the only preference waiting for review right now.' }
@@ -363,6 +376,7 @@ function Get-MetraAttentionWhyNext {
     if ($RankIndex -eq 0) {
         switch ($kind) {
             'verify' { return 'This is the top health check to look at next.' }
+            'ticket' { return 'Open ticket updated; brief or draft next.' }
             'drift' { return 'This is the top setup mismatch to look at next.' }
             'decision' { return 'This is the top open decision to look at next.' }
             'contract' { return 'This is the top preference to review next.' }
@@ -372,6 +386,7 @@ function Get-MetraAttentionWhyNext {
     }
     switch ($kind) {
         'verify' { return 'A health check is still waiting.' }
+        'ticket' { return 'Open ticket updated; brief or draft next.' }
         'drift' { return 'A setup mismatch is still waiting.' }
         'decision' { return 'An open decision is still waiting.' }
         'contract' { return 'A preference is still waiting for review.' }
@@ -415,7 +430,13 @@ function Update-MetraAttentionMemory {
         if (-not $key) {
             $key = Get-MetraAttentionKey -Project $project -Kind $kind -Content $content
         }
-        $sig = Get-MetraAttentionEvidenceSignature -Kind $kind -Content $content -Command $command
+        $sigOverride = [string](Get-MetraProp -Object $q -Name 'evidenceSignature' -Default '')
+        $sig = if (-not [string]::IsNullOrWhiteSpace($sigOverride)) {
+            $sigOverride.Trim()
+        }
+        else {
+            Get-MetraAttentionEvidenceSignature -Kind $kind -Content $content -Command $command
+        }
         $seenKeys[$key] = $true
 
         $item = $byKey[$key]

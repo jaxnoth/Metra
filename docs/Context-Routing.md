@@ -21,6 +21,7 @@ Registry project rows use the same optional arrays for consistency: `triggers`, 
 | Project `AGENTS.md` | Local entry playbook |
 | Project `.cursorignore` | Hide generated/cache/binary noise |
 | `docs/Decisions.md` | Append-only portfolio-wide Metra policy (prefer before transcript dig) |
+| `docs/Agentic-Maturity.md` | Workflow L1-L6 maturity / completeness scorecards (design metric; not Ops health) |
 
 ## Multi-root isolation
 

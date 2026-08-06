@@ -334,21 +334,24 @@ function Get-RecentMetraProjects {
         $rootDepths[$r.Name] = if ($null -ne $r.ScanDepth) { [int]$r.ScanDepth } else { $ScanDepth }
     }
 
-    $projects = Get-MetraProjects | Where-Object { -not $_.Orchestration } | ForEach-Object {
-        $depth = if ($rootDepths.ContainsKey($_.Root)) { $rootDepths[$_.Root] } else { $ScanDepth }
-        $last = Get-ProjectLastActivity -Path $_.Path -ScanDepth $depth
-        $forced = $always -contains $_.Name
-        [PSCustomObject]@{
-            Name         = $_.Name
-            Path         = $_.Path
-            Root         = $_.Root
-            IsGit        = $_.IsGit
-            LastActivity = $last
-            Recent       = ($last -ge $cutoff) -or $forced
-            Always       = $forced
-            Cutoff       = $cutoff
+    # Only the injected Metra home carries Orchestration, so read it StrictMode-safe.
+    $projects = Get-MetraProjects |
+        Where-Object { -not (Get-MetraProp -Object $_ -Name 'Orchestration' -Default $false) } |
+        ForEach-Object {
+            $depth = if ($rootDepths.ContainsKey($_.Root)) { $rootDepths[$_.Root] } else { $ScanDepth }
+            $last = Get-ProjectLastActivity -Path $_.Path -ScanDepth $depth
+            $forced = $always -contains $_.Name
+            [PSCustomObject]@{
+                Name         = $_.Name
+                Path         = $_.Path
+                Root         = $_.Root
+                IsGit        = $_.IsGit
+                LastActivity = $last
+                Recent       = ($last -ge $cutoff) -or $forced
+                Always       = $forced
+                Cutoff       = $cutoff
+            }
         }
-    }
 
     if ($IncludeAlways) {
         return @($projects | Sort-Object LastActivity -Descending)

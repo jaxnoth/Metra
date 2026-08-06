@@ -1,6 +1,6 @@
 ---
 description: Metra optional humor-desk Persona Add-on (example) - copy to metra-humor.local.mdc or import profiles/addons/humor-desk
-alwaysApply: true
+alwaysApply: false
 ---
 
 # Metra humor-desk Persona Add-on

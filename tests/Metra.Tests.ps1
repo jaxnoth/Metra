@@ -1146,6 +1146,98 @@ Describe 'Update-MetraWorkspace' {
         }
     }
 
+    It 'skips an output whose metraFolderPath is missing and keeps the valid one' {
+        InModuleScope Metra {
+            Mock Get-MetraConfig {
+                [PSCustomObject]@{
+                    workspace = [PSCustomObject]@{
+                        months     = 6
+                        scanDepth  = 2
+                        outputs    = @(
+                            [PSCustomObject]@{
+                                path              = 'Metra.code-workspace'
+                                metraFolderPath   = '.'
+                                projectPathPrefix = '../'
+                            },
+                            [PSCustomObject]@{
+                                path              = '../Stale.code-workspace'
+                                metraFolderPath   = '_no-such-metra-folder'
+                                projectPathPrefix = ''
+                            }
+                        )
+                        settings   = [PSCustomObject]@{}
+                        extensions = [PSCustomObject]@{}
+                    }
+                }
+            }
+            Mock Get-MetraRoots {
+                @([PSCustomObject]@{ Name = 'work'; Primary = $true })
+            }
+            Mock Get-RecentMetraProjects {
+                @(
+                    [PSCustomObject]@{
+                        Name         = 'Solarwinds'
+                        Path         = 'C:\Projects\Solarwinds'
+                        Root         = 'work'
+                        LastActivity = [datetime]'2026-07-01'
+                    }
+                )
+            }
+
+            $result = Update-MetraWorkspace -WhatIfPreview -WarningVariable warnings -WarningAction SilentlyContinue
+            @($result.Skipped) | Should -Be @('../Stale.code-workspace')
+            ($warnings -join ' ') | Should -Match 'metraFolderPath'
+            ($warnings -join ' ') | Should -Match 'workspace\.outputs has 2 entries'
+        }
+    }
+
+    It 'throws when every configured output has a missing metraFolderPath' {
+        InModuleScope Metra {
+            Mock Get-MetraConfig {
+                [PSCustomObject]@{
+                    workspace = [PSCustomObject]@{
+                        months     = 6
+                        scanDepth  = 2
+                        outputs    = @(
+                            [PSCustomObject]@{
+                                path              = '../Stale.code-workspace'
+                                metraFolderPath   = '_no-such-metra-folder'
+                                projectPathPrefix = ''
+                            }
+                        )
+                        settings   = [PSCustomObject]@{}
+                        extensions = [PSCustomObject]@{}
+                    }
+                }
+            }
+            Mock Get-MetraRoots {
+                @([PSCustomObject]@{ Name = 'work'; Primary = $true })
+            }
+            Mock Get-RecentMetraProjects {
+                @(
+                    [PSCustomObject]@{
+                        Name         = 'Solarwinds'
+                        Path         = 'C:\Projects\Solarwinds'
+                        Root         = 'work'
+                        LastActivity = [datetime]'2026-07-01'
+                    }
+                )
+            }
+
+            { Update-MetraWorkspace -WhatIfPreview -WarningAction SilentlyContinue } |
+                Should -Throw -ExpectedMessage '*No workspace output could be written*'
+        }
+    }
+
+    It 'keeps example rule overlays out of the always-applied set' {
+        $examples = @(Get-ChildItem -LiteralPath (Join-Path (Get-MetraRoot) '.cursor\rules') -Filter '*.example.mdc')
+        $examples.Count | Should -BeGreaterThan 0
+        foreach ($example in $examples) {
+            $raw = Get-Content -LiteralPath $example.FullName -Raw
+            $raw | Should -Match '(?m)^alwaysApply:\s*false\s*$'
+        }
+    }
+
     It 'ships a URL-only MCP binding example with no credentials' {
         $example = Join-Path (Get-MetraRoot) 'integrations\cursor\mcp.example.json'
         Test-Path -LiteralPath $example | Should -BeTrue
@@ -1768,6 +1860,79 @@ Labeled preview - authoritative Why Here remains routing -Query / ctx -Query.
             $clean | Should -Not -Match '(?m)^Where$'
             $clean | Should -Not -Match 'Trivia'
             $clean | Should -Not -Match 'Labeled preview'
+        }
+    }
+}
+
+Describe 'Ask Session Journal and Capture Inbox' {
+    It 'persists journal turns with turnIndex, origin, client, and stripped message' {
+        InModuleScope Metra {
+            $root = Join-Path ([IO.Path]::GetTempPath()) ("metra-askj-" + [guid]::NewGuid().ToString('n'))
+            New-Item -ItemType Directory -Path (Join-Path $root 'docs') -Force | Out-Null
+            try {
+                $sess = 'sess-ab-test'
+                $chrome = @"
+**Metra** · Model: test
+
+Where:
+- Metra
+
+Hello from Ask.
+"@
+                $t1 = Add-MetraDeskAskEntry -Prompt 'first' -Message $chrome -Handoff ([PSCustomObject]@{ where = 'Metra' }) `
+                    -SessionId $sess -Origin remote -Client ops-web -ClientHint phone -Answered $true -MetraRoot $root
+                $t2 = Add-MetraDeskAskEntry -Prompt 'second' -Message 'follow-up' -Handoff ([PSCustomObject]@{ where = 'Metra' }) `
+                    -SessionId $sess -Origin remote -Client ops-web -Answered $true -MetraRoot $root
+                $t1.turnIndex | Should -Be 1
+                $t2.turnIndex | Should -Be 2
+                $t1.origin | Should -Be 'remote'
+                $t1.client | Should -Be 'ops-web'
+                $t1.message | Should -Not -Match 'Metra.*Model'
+                $t1.message | Should -Match 'Hello from Ask'
+                $sessions = @(Get-MetraDeskAskSessionSummaries -MetraRoot $root -Limit 5)
+                ($sessions | Where-Object { $_.sessionId -eq $sess }).turnCount | Should -Be 2
+            }
+            finally {
+                Remove-Item -LiteralPath $root -Recurse -Force -ErrorAction SilentlyContinue
+            }
+        }
+    }
+
+    It 'creates thin capture from askTurn without duplicating full answer' {
+        InModuleScope Metra {
+            $root = Join-Path ([IO.Path]::GetTempPath()) ("metra-cap-" + [guid]::NewGuid().ToString('n'))
+            New-Item -ItemType Directory -Path (Join-Path $root 'docs') -Force | Out-Null
+            try {
+                $turn = Add-MetraDeskAskEntry -Prompt 'Need metadata audits for Metra' `
+                    -Message ('Long answer ' + ('x' * 200)) `
+                    -Handoff ([PSCustomObject]@{ where = 'Metra' }) `
+                    -SessionId 's1' -Origin loopback -Client ops-web -Answered $true -MetraRoot $root
+                $cap = Add-MetraCaptureFromAskTurn -TurnId $turn.id -MetraRoot $root
+                $cap.derivedFrom.type | Should -Be 'askTurn'
+                $cap.derivedFrom.turnId | Should -Be $turn.id
+                $cap.summary.Length | Should -BeLessOrEqual 120
+                ($cap.PSObject.Properties.Name -contains 'message') | Should -BeFalse
+                { Update-MetraCaptureItem -Id $cap.id -DerivedFrom ([PSCustomObject]@{ type = 'manual' }) -MetraRoot $root } |
+                    Should -Throw -ExpectedMessage '*immutable*'
+                $promoted = Invoke-MetraCapturePromote -Id $cap.id -Home FutureDevelopment -MetraRoot $root
+                $promoted.status | Should -Be 'promoted'
+                $promoted.derivedFrom.turnId | Should -Be $turn.id
+                Test-Path -LiteralPath (Join-Path $root 'docs\Future-Development.local.md') | Should -BeTrue
+            }
+            finally {
+                Remove-Item -LiteralPath $root -Recurse -Force -ErrorAction SilentlyContinue
+            }
+        }
+    }
+
+    It 'resolves client and origin helpers without User-Agent forever-infer for unknown client' {
+        InModuleScope Metra {
+            Resolve-MetraAskClientId -HeaderClient 'ops-ios' | Should -Be 'ops-ios'
+            Resolve-MetraAskClientId -BodyClient 'cli' | Should -Be 'cli'
+            Resolve-MetraAskClientId -UserAgent 'Mozilla/5.0' | Should -Be 'unknown'
+            Resolve-MetraAskOrigin -IsLoopback $true -HasLocalSession $false | Should -Be 'loopback'
+            Resolve-MetraAskOrigin -IsLoopback $false -HasLocalSession $true | Should -Be 'localSession'
+            Resolve-MetraAskOrigin -IsLoopback $false -HasLocalSession $false | Should -Be 'remote'
         }
     }
 }

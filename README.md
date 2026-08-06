@@ -71,6 +71,7 @@ Every portfolio fact should have a home. The product triangle is the pitch; this
 | How? | OCC / `profile` + communication model |
 | For whom? | Project registry `serves` / `routing` / `ctx` |
 | Health? | Ops board / `audit` / `verify` (board also retrieves Why / For whom / How for review - not a second home) |
+| How mature? | [docs/Agentic-Maturity.md](docs/Agentic-Maturity.md) - workflow Current/Target scorecards (design metric, not Ops vanity score) |
 
 Prefer retrieval over dumping: route, then load only relevant context and decisions. Principles: [docs/Decisions.md](docs/Decisions.md) (Portfolio Operations Principles). `serves` is audience of the work (roles/teams), never people memory.
 
@@ -392,7 +393,7 @@ _metra/
   scripts/Metra.psm1          Thin module loader and compatibility boundary
   scripts/public/             Supported commands with full Get-Help documentation
   scripts/private/            Domain implementation helpers
-  docs/                      Brand, Decisions, routing, Integrations, Demo, ...
+  docs/                      Brand, Decisions, Agentic-Maturity, routing, Integrations, Overview, ...
   integrations/cursor/       Metra Ops canvas template
   templates/basic/           default new-project template
   shared/                    files to push into other projects via apply

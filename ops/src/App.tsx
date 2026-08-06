@@ -6,6 +6,9 @@ import {
   holdAttention,
   openProjectPath,
   postAsk,
+  postCaptureDismiss,
+  postCaptureFromAsk,
+  postCapturePromote,
   postPlace,
   postPlaceConfirm,
   postPlaceCorrect,
@@ -21,6 +24,8 @@ import { formatAskTabTitle, getMetraBridge } from './bridge'
 import { MetraPresence } from './MetraPresence'
 import type {
   AttentionItem,
+  AskSessionSummary,
+  CaptureItem,
   DeskPayload,
   DeskMode,
   Handoff,
@@ -40,6 +45,9 @@ type ChatTurn = {
   answered?: boolean
   /** Quiet Where chip when Ask route is weak or ambiguous. */
   showWhere?: boolean
+  /** Journal turn id for Save for portfolio. */
+  turnId?: string | null
+  sessionId?: string | null
 }
 
 const CHAT_LIMIT = 24
@@ -630,11 +638,29 @@ function PlaceResultCard({
     try {
       setLocalBusy(true)
       setAck(null)
-      const res = await postPlaceConfirm(intakeText, place.homeId, true, attachmentIds)
+      const res = await postPlaceConfirm(intakeText, place.homeId, true, attachmentIds, false)
       if (res.desk) onDeskUpdate(res.desk)
       const note = res.result?.note || 'Kept in view.'
       setAck(`Keeping this in view on Next attention.${attachmentSuffix(res.result?.attachments)}`)
       onStatus(note)
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : String(e)
+      setAck(msg)
+      onStatus(msg)
+    } finally {
+      setLocalBusy(false)
+    }
+  }
+
+  async function onSaveForPortfolio() {
+    if (!place.homeId) return
+    try {
+      setLocalBusy(true)
+      setAck(null)
+      const res = await postPlaceConfirm(intakeText, place.homeId, false, attachmentIds, true)
+      if (res.desk) onDeskUpdate(res.desk)
+      setAck('Saved for later in Metra Capture Inbox (candidate only - not promoted).')
+      onStatus(res.result?.note || 'Saved for portfolio.')
     } catch (e) {
       const msg = e instanceof Error ? e.message : String(e)
       setAck(msg)
@@ -654,6 +680,7 @@ function PlaceResultCard({
         place.homeId,
         place.homeId === 'keep-in-view',
         attachmentIds,
+        false,
       )
       if (res.desk) onDeskUpdate(res.desk)
       const note = res.result?.note || 'Recorded for learning.'
@@ -723,6 +750,9 @@ function PlaceResultCard({
         </button>
         <button type="button" className="btn btn-secondary" disabled={disabled} onClick={() => void onKeepInView()}>
           {localBusy ? 'Saving...' : 'Keep in view'}
+        </button>
+        <button type="button" className="btn btn-secondary" disabled={disabled} onClick={() => void onSaveForPortfolio()}>
+          {localBusy ? 'Saving...' : 'Save for portfolio'}
         </button>
         <button type="button" className="btn btn-primary" disabled={disabled} onClick={() => void onAffirm()}>
           {localBusy ? 'Saving...' : "That's right"}
@@ -893,6 +923,8 @@ export default function App() {
           answered: Boolean(result.answered),
           handoff: result.handoff,
           showWhere: Boolean(result.showWhere),
+          turnId: result.entry?.id || null,
+          sessionId: result.sessionId || result.entry?.sessionId || askSessionId,
         },
       ])
       await load()
@@ -900,6 +932,46 @@ export default function App() {
       setError(err instanceof Error ? err.message : String(err))
     } finally {
       setAskPending(false)
+      setBusy(false)
+    }
+  }
+
+  async function onSaveAskTurn(turn: ChatTurn) {
+    if (!turn.turnId) return
+    setBusy(true)
+    setResolveStatus(null)
+    try {
+      await postCaptureFromAsk(turn.turnId, turn.sessionId || askSessionId)
+      setResolveStatus('Saved for later in Metra Capture Inbox.')
+      await load()
+    } catch (e) {
+      setResolveStatus(e instanceof Error ? e.message : String(e))
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  async function onDismissCapture(id: string) {
+    setBusy(true)
+    try {
+      await postCaptureDismiss(id)
+      await load()
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e))
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  async function onPromoteCapture(id: string, home?: string) {
+    setBusy(true)
+    try {
+      await postCapturePromote(id, home)
+      setResolveStatus('Promoted capture into the affirmed home.')
+      await load()
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e))
+    } finally {
       setBusy(false)
     }
   }
@@ -1060,6 +1132,18 @@ export default function App() {
                         }
                         onCorrected={(msg) => setResolveStatus(msg)}
                       />
+                    )}
+                    {turn.role === 'metra' && turn.turnId && (
+                      <div className="actions wrap">
+                        <button
+                          type="button"
+                          className="btn btn-secondary"
+                          disabled={busy}
+                          onClick={() => void onSaveAskTurn(turn)}
+                        >
+                          Save for portfolio
+                        </button>
+                      </div>
                     )}
                   </div>
                 ))}
@@ -1311,14 +1395,66 @@ export default function App() {
 
       {advanced && tab === 'recent' && !showSettings && (
         <section className="panel">
-          <h2>Recent</h2>
-          <p className="muted">Snapshot: {desk?.generatedAt ?? 'n/a'}</p>
+          <h2>Recent conversations</h2>
+          <p className="muted">
+            Continuity window of recent Ask sessions - not permanent Metra memory. Snapshot:{' '}
+            {desk?.generatedAt ?? 'n/a'}
+          </p>
           <ul className="list">
-            {(desk?.recent ?? []).length === 0 && <li className="muted">No Ask captures yet.</li>}
-            {(desk?.recent ?? []).map((r) => (
-              <li key={r.id}>
-                <div>{r.prompt}</div>
-                <div className="muted">{r.at}</div>
+            {(desk?.recent ?? []).length === 0 && (
+              <li className="muted">No recent conversations yet.</li>
+            )}
+            {(desk?.recent ?? []).map((r) => {
+              const session = r as AskSessionSummary
+              const key = session.sessionId || session.id || session.at
+              return (
+                <li key={key}>
+                  <div>{session.prompt}</div>
+                  <div className="muted">
+                    {session.turnCount ? `${session.turnCount} turn(s) · ` : ''}
+                    {session.where ? `${session.where} · ` : ''}
+                    {session.origin ? `${session.origin} · ` : ''}
+                    {session.at}
+                  </div>
+                </li>
+              )
+            })}
+          </ul>
+          <h2>Captures</h2>
+          <p className="muted">
+            Portfolio intake candidates. Save for portfolio parks here; promote writes a durable home
+            on affirm. Keep in view stays on Attention.
+          </p>
+          <ul className="list">
+            {(desk?.captures ?? []).length === 0 && (
+              <li className="muted">No capture candidates.</li>
+            )}
+            {(desk?.captures ?? []).map((c: CaptureItem) => (
+              <li key={c.id}>
+                <strong>{c.summary}</strong>
+                <div className="muted">
+                  {c.suggestedHome || 'FutureDevelopment'}
+                  {c.derivedFrom?.type ? ` · from ${c.derivedFrom.type}` : ''}
+                  {c.at ? ` · ${c.at}` : ''}
+                </div>
+                <div className="actions wrap">
+                  <button
+                    type="button"
+                    className="btn btn-primary"
+                    disabled={busy}
+                    onClick={() => void onPromoteCapture(c.id, c.suggestedHome)}
+                  >
+                    Promote
+                  </button>
+                  <button
+                    type="button"
+                    className="btn btn-secondary"
+                    disabled={busy}
+                    onClick={() => void onDismissCapture(c.id)}
+                  >
+                    Dismiss
+                  </button>
+                </div>
               </li>
             ))}
           </ul>

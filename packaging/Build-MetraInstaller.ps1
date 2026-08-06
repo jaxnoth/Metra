@@ -80,6 +80,7 @@ $excludeRelativeExact = [System.Collections.Generic.HashSet[string]]::new([Strin
     'docs/canvas-snapshot.json',
     'docs/ops-preferences.local.json',
     'docs/ops-ask-log.local.json',
+    'docs/ops-capture.local.json',
     '.cursor/mcp.json'
 ) | ForEach-Object { [void]$excludeRelativeExact.Add(($_ -replace '/', '\')) }
 

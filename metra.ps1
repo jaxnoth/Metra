@@ -37,7 +37,7 @@ param(
     [ValidateSet(
         'list', 'status', 'pull', 'fetch', 'run', 'new', 'apply', 'workspace',
         'audit', 'snapshot', 'selfdoc', 'ops', 'host', 'chats', 'roots', 'routing',
-        'export-profile', 'import-profile', 'ctx', 'setup', 'verify', 'unblock', 'profile', 'decisions', 'coverage', 'help'
+        'export-profile', 'import-profile', 'ctx', 'setup', 'verify', 'unblock', 'profile', 'decisions', 'coverage', 'ask', 'capture', 'watch', 'help'
     )]
     [string]$Command = 'help',
 
@@ -77,6 +77,8 @@ param(
     [switch]$NoRefresh,
     [switch]$Full,
     [switch]$Stop,
+    [switch]$Draft,
+    [switch]$SkipSync,
     [int]$Port = 0
 )
 
@@ -123,6 +125,10 @@ Usage:
       Operator Communication Contract (candidates -> promote -> soft guidelines).
   .\metra.ps1 decisions show|note|promote|forget|search|get|supersede|gc|review|harvest|seed
       Decision Registry / Operational Why Memory (candidates -> promote; review = hygiene visibility).
+  .\metra.ps1 ask log|sessions
+      Session Journal (recent Ask conversations - continuity window, not permanent memory).
+  .\metra.ps1 capture list|get|note|dismiss|promote|from-ask
+      Capture Inbox (thin portfolio intake; promote on affirm - never auto).
   .\metra.ps1 coverage
       Knowledge coverage visibility (AGENTS / serves / decisions / uncovered) - counts and gap lists, not a score.
   .\metra.ps1 verify
@@ -173,6 +179,9 @@ Examples:
   .\metra.ps1 ctx -Query 'ticket disk'
   .\metra.ps1 ctx -Format json -Path `$env:TEMP\metra-ctx.json
   .\metra.ps1 setup
+  .\metra.ps1 watch tickets [-Draft] [-SkipSync]
+      Ticket-first watch intake: sync/list open+watched -> Attention observations.
+      Default: Attention only (no iSupport writes). -Draft writes local TicketTracker notes.
   .\metra.ps1 setup -Profile .\profiles\sample -Force
   .\metra.ps1 setup -Preview
   .\metra.ps1 unblock
@@ -514,6 +523,41 @@ switch ($Command) {
                 $result | Format-List
             }
         }
+    }
+
+    'ask' {
+        if (-not $Rest -or $Rest.Count -eq 0) {
+            throw "ask requires a subcommand. Example: .\metra.ps1 ask sessions"
+        }
+        $sub = $Rest[0]
+        $subArgs = @()
+        if ($Rest.Count -gt 1) {
+            $subArgs = @($Rest[1..($Rest.Count - 1)])
+        }
+        $result = Invoke-MetraAskLogCommand -Subcommand $sub -ArgsRest $subArgs
+        $result | Format-Table -AutoSize
+    }
+
+    'capture' {
+        if (-not $Rest -or $Rest.Count -eq 0) {
+            throw "capture requires a subcommand. Example: .\metra.ps1 capture list"
+        }
+        $sub = $Rest[0]
+        $subArgs = @()
+        if ($Rest.Count -gt 1) {
+            $subArgs = @($Rest[1..($Rest.Count - 1)])
+        }
+        $result = Invoke-MetraCaptureCommand -Subcommand $sub -ArgsRest $subArgs
+        $result | Format-List
+    }
+
+    'watch' {
+        $target = 'tickets'
+        if ($Rest -and $Rest.Count -gt 0) { $target = [string]$Rest[0] }
+        if ($target -ne 'tickets') {
+            throw "watch supports 'tickets' only in v1. Example: .\metra.ps1 watch tickets"
+        }
+        Invoke-MetraTicketWatchScan -Draft:$Draft -SkipSync:$SkipSync | Out-Null
     }
 }
 

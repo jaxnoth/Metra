@@ -47,13 +47,31 @@ Three peer panels (do not blend):
 | Mode | Surface |
 |------|---------|
 | General (default) | Ask, Next attention, Route something |
-| Advanced | + Projects, Recent, Health |
+| Advanced | + Projects, Recent conversations + Captures, Health |
 
 Shared portfolio brain: `docs/canvas-snapshot.json` via `Get-MetraDeskPayload` (same snapshot as the Cursor canvas).
 
+## Ask + Capture HTTP contract (client-agnostic)
+
+HTML Ops is the first client. Future native iOS (and phone browser over Tailscale) should use the same JSON APIs - no HTML-in-API, no browser-only protocol deps.
+
+| Method | Path | Class | Notes |
+|--------|------|-------|-------|
+| POST | `/api/ask` | Ask | Body: `prompt`, optional `sessionId`, `client`, `clientHint`. Header `X-Metra-Client`: `ops-web` \| `ops-ios` \| `cli`. Journals a turn (`turnIndex` within session). Returns `entry`, `message`, `handoff`, `sessionId`. |
+| GET | `/api/ask/journal` | Ask | Recent session summaries + turns (continuity window). |
+| GET | `/api/capture` | Ask | List Capture Inbox (`?status=candidate\|all`). |
+| POST | `/api/capture` | Ask | Create candidate. Ask: `{ turnId, sessionId? }`. Place: `{ source: place, text, homeId, placeId?, attachmentIds? }`. Manual: `{ summary }`. Sets `derivedFrom` once. |
+| PATCH/POST | `/api/capture/{id}` | Ask | Update framing only - rejects `derivedFrom` mutation. |
+| POST | `/api/capture/{id}/dismiss` | Ask | Status dismissed. |
+| POST | `/api/capture/{id}/promote` | Ask (local homes) | Affirm into Future Development / Decision Registry candidate / OCC candidate. Never auto. |
+
+CLI mirrors: `.\metra.ps1 ask sessions|log`, `.\metra.ps1 capture list|note|promote|from-ask`.
+
 ## Route something (landing zone)
 
-Accepts text, clipboard **Paste**, path references, and file **Attach** / drag-drop into a local quarantine (`%LOCALAPPDATA%\Metra\ops-place-quarantine\`). Metra recommends a durable home with Why and **What happens there** - nothing is created until you choose (Copy draft, Keep in view, or affirm for learning).
+Accepts text, clipboard **Paste**, path references, and file **Attach** / drag-drop into a local quarantine (`%LOCALAPPDATA%\Metra\ops-place-quarantine\`). Metra recommends a durable home with Why and **What happens there** - nothing is created until you choose (Copy draft, Keep in view, Save for portfolio, or affirm for learning).
+
+**Keep in view** parks on Attention. **Save for portfolio** creates a Capture Inbox candidate (pointers + framing) - distinct from Attention. Promote later on affirm.
 
 Place learning lives in `docs/ops-place.local.json` (gitignored). Corrections via **This belongs in…** (Ask Where chip or Route) become Decision Registry candidates - never auto-promoted.
 

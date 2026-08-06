@@ -61,6 +61,7 @@
         "docs/canvas-snapshot.json",
         "docs/ops-preferences.local.json",
         "docs/ops-ask-log.local.json",
+        "docs/ops-capture.local.json",
         "projects.local.json",
         "docs/decision-registry.json",
         "docs/operator-contract.json"

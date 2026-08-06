@@ -372,20 +372,168 @@ function Invoke-MetraOpsApi {
                 Write-MetraOpsJsonResponse -Response $Response -StatusCode 400 -Object ([PSCustomObject]@{ error = 'prompt required' })
                 return
             }
+            $headerClient = ''
+            try { $headerClient = [string]$Request.Headers['X-Metra-Client'] } catch { }
+            $bodyClient = [string](Get-MetraProp -Object $parsed -Name 'client' -Default '')
+            $clientHintBody = [string](Get-MetraProp -Object $parsed -Name 'clientHint' -Default '')
+            $userAgent = ''
+            try { $userAgent = [string]$Request.UserAgent } catch { }
+            $client = Resolve-MetraAskClientId -HeaderClient $headerClient -BodyClient $bodyClient -UserAgent $userAgent
+            $clientHint = Resolve-MetraAskClientHint -Client $client -UserAgent $userAgent -BodyHint $clientHintBody
+            $isLoopback = Test-MetraOpsRequestIsSameMachine -Request $Request
+            $sessionToken = ''
+            try { $sessionToken = [string]$Request.Headers['X-Metra-Local-Session'] } catch { }
+            $hasLocalSession = Test-MetraOpsLocalSessionToken -SessionToken $sessionToken
+            $origin = Resolve-MetraAskOrigin -IsLoopback $isLoopback -HasLocalSession $hasLocalSession
+
             $ask = Get-MetraDeskAskResult -Prompt $prompt -SessionId $sessionId -MetraRoot $MetraRoot
-            $entry = Add-MetraDeskAskEntry -Prompt $prompt -Handoff $ask.handoff -MetraRoot $MetraRoot
+            $journalSession = [string]$ask.sessionId
+            if ([string]::IsNullOrWhiteSpace($journalSession)) { $journalSession = $sessionId }
+            $entry = Add-MetraDeskAskEntry `
+                -Prompt $prompt `
+                -Handoff $ask.handoff `
+                -Message ([string]$ask.message) `
+                -SessionId $journalSession `
+                -Origin $origin `
+                -Client $client `
+                -ClientHint $clientHint `
+                -Engine ([string]$ask.engine) `
+                -Model ([string]$ask.model) `
+                -Answered ([bool]$ask.answered) `
+                -Capability $ask.capability `
+                -MetraRoot $MetraRoot
             $showWhere = Test-MetraAskShowWhere -Handoff $ask.handoff
             Write-MetraOpsJsonResponse -Response $Response -Object ([PSCustomObject]@{
                     entry      = $entry
                     handoff    = $ask.handoff
                     message    = [string]$ask.message
-                    sessionId  = $ask.sessionId
+                    sessionId  = [string]$entry.sessionId
                     capability = $ask.capability
                     engine     = $ask.engine
                     model      = $ask.model
                     answered   = [bool]$ask.answered
                     showWhere  = [bool]$showWhere
-                })
+                }) -Depth 12
+            return
+        }
+
+        if ($method -eq 'GET' -and $path -eq '/api/ask/journal') {
+            $limit = 40
+            try {
+                $q = [string]$Request.Url.Query
+                if ($q -match '[?&]limit=(\d+)') { $limit = [Math]::Min(100, [int]$Matches[1]) }
+            }
+            catch { }
+            Write-MetraOpsJsonResponse -Response $Response -Object ([PSCustomObject]@{
+                    sessions = @(Get-MetraDeskAskSessionSummaries -MetraRoot $MetraRoot -Limit 12)
+                    turns    = @(Get-MetraDeskAskLog -MetraRoot $MetraRoot -Limit $limit)
+                }) -Depth 12
+            return
+        }
+
+        if ($method -eq 'GET' -and $path -eq '/api/capture') {
+            $status = 'candidate'
+            try {
+                $q = [string]$Request.Url.Query
+                if ($q -match '[?&]status=(candidate|promoted|dismissed|all)') { $status = $Matches[1] }
+            }
+            catch { }
+            Write-MetraOpsJsonResponse -Response $Response -Object (@(Get-MetraCaptureLedger -MetraRoot $MetraRoot -Limit 40 -Status $status)) -Depth 10
+            return
+        }
+
+        if ($method -eq 'POST' -and $path -eq '/api/capture') {
+            $body = Read-MetraOpsRequestBody -Request $Request
+            $parsed = $null
+            if ($body) { $parsed = $body | ConvertFrom-Json }
+            try {
+                $turnId = [string](Get-MetraProp -Object $parsed -Name 'turnId' -Default '')
+                $sessionId = [string](Get-MetraProp -Object $parsed -Name 'sessionId' -Default '')
+                $summary = [string](Get-MetraProp -Object $parsed -Name 'summary' -Default '')
+                $capBody = [string](Get-MetraProp -Object $parsed -Name 'body' -Default '')
+                $source = [string](Get-MetraProp -Object $parsed -Name 'source' -Default '')
+                $placeId = [string](Get-MetraProp -Object $parsed -Name 'placeId' -Default '')
+                $homeId = [string](Get-MetraProp -Object $parsed -Name 'homeId' -Default '')
+                $text = [string](Get-MetraProp -Object $parsed -Name 'text' -Default '')
+                $attachmentIds = @()
+                try {
+                    $rawAtt = Get-MetraProp -Object $parsed -Name 'attachmentIds' -Default @()
+                    $attachmentIds = @($rawAtt | ForEach-Object { [string]$_ } | Where-Object { $_ })
+                }
+                catch { }
+
+                $item = $null
+                if (-not [string]::IsNullOrWhiteSpace($turnId) -or $source -eq 'ask') {
+                    if ([string]::IsNullOrWhiteSpace($turnId)) {
+                        Write-MetraOpsJsonResponse -Response $Response -StatusCode 400 -Object ([PSCustomObject]@{ error = 'turnId required for ask capture' })
+                        return
+                    }
+                    $item = Add-MetraCaptureFromAskTurn -TurnId $turnId -SessionId $sessionId -Summary $summary -Body $capBody -MetraRoot $MetraRoot
+                }
+                elseif ($source -eq 'place' -or (-not [string]::IsNullOrWhiteSpace($homeId) -and -not [string]::IsNullOrWhiteSpace($text))) {
+                    $item = Add-MetraCaptureFromPlace -Text $(if ($text) { $text } else { $summary }) -HomeId $homeId -PlaceId $placeId -AttachmentIds $attachmentIds -MetraRoot $MetraRoot
+                }
+                else {
+                    if ([string]::IsNullOrWhiteSpace($summary)) {
+                        Write-MetraOpsJsonResponse -Response $Response -StatusCode 400 -Object ([PSCustomObject]@{ error = 'summary required for manual capture' })
+                        return
+                    }
+                    $derived = New-MetraCaptureDerivedFrom -Type manual
+                    $item = Add-MetraCaptureItem -Summary $summary -Body $capBody -Source manual -DerivedFrom $derived -MetraRoot $MetraRoot
+                }
+                Write-MetraOpsJsonResponse -Response $Response -Object $item -Depth 10
+            }
+            catch {
+                Write-MetraOpsJsonResponse -Response $Response -StatusCode 400 -Object ([PSCustomObject]@{ error = $_.Exception.Message })
+            }
+            return
+        }
+
+        $captureMut = [regex]::Match($path, '^/api/capture/([^/]+)(?:/(dismiss|promote))?$', [System.Text.RegularExpressions.RegexOptions]::IgnoreCase)
+        if ($captureMut.Success -and $method -in @('POST', 'PATCH', 'PUT')) {
+            $capId = [System.Uri]::UnescapeDataString($captureMut.Groups[1].Value)
+            $capAction = [string]$captureMut.Groups[2].Value
+            $body = Read-MetraOpsRequestBody -Request $Request
+            $parsed = $null
+            if ($body) {
+                try { $parsed = $body | ConvertFrom-Json } catch { $parsed = $null }
+            }
+            try {
+                if ($capAction -eq 'dismiss' -or ($method -eq 'POST' -and [string](Get-MetraProp -Object $parsed -Name 'status' -Default '') -eq 'dismissed')) {
+                    $item = Dismiss-MetraCaptureItem -Id $capId -MetraRoot $MetraRoot
+                    Write-MetraOpsJsonResponse -Response $Response -Object $item -Depth 10
+                    return
+                }
+                if ($capAction -eq 'promote') {
+                    $home = [string](Get-MetraProp -Object $parsed -Name 'home' -Default '')
+                    $item = Invoke-MetraCapturePromote -Id $capId -Home $home -MetraRoot $MetraRoot
+                    Write-MetraOpsJsonResponse -Response $Response -Object $item -Depth 10
+                    return
+                }
+                if ($null -ne $parsed -and $parsed.PSObject.Properties.Name -contains 'derivedFrom') {
+                    Write-MetraOpsJsonResponse -Response $Response -StatusCode 400 -Object ([PSCustomObject]@{
+                            error = 'derivedFrom is immutable after capture creation'
+                        })
+                    return
+                }
+                $updParams = @{ Id = $capId; MetraRoot = $MetraRoot }
+                $sum = [string](Get-MetraProp -Object $parsed -Name 'summary' -Default '')
+                if (-not [string]::IsNullOrWhiteSpace($sum)) { $updParams.Summary = $sum }
+                if ($null -ne $parsed -and $parsed.PSObject.Properties.Name -contains 'body') {
+                    $updParams.Body = [string](Get-MetraProp -Object $parsed -Name 'body' -Default '')
+                }
+                $sh = [string](Get-MetraProp -Object $parsed -Name 'suggestedHome' -Default '')
+                if (-not [string]::IsNullOrWhiteSpace($sh)) { $updParams.SuggestedHome = $sh }
+                $sp = [string](Get-MetraProp -Object $parsed -Name 'suggestedProject' -Default '')
+                if (-not [string]::IsNullOrWhiteSpace($sp)) { $updParams.SuggestedProject = $sp }
+                $st = [string](Get-MetraProp -Object $parsed -Name 'status' -Default '')
+                if ($st -match '^(candidate|promoted|dismissed)$') { $updParams.Status = $st }
+                $item = Update-MetraCaptureItem @updParams
+                Write-MetraOpsJsonResponse -Response $Response -Object $item -Depth 10
+            }
+            catch {
+                Write-MetraOpsJsonResponse -Response $Response -StatusCode 400 -Object ([PSCustomObject]@{ error = $_.Exception.Message })
+            }
             return
         }
 
@@ -449,6 +597,7 @@ function Invoke-MetraOpsApi {
             $text = [string](Get-MetraProp -Object $parsed -Name 'text' -Default '')
             $homeId = [string](Get-MetraProp -Object $parsed -Name 'homeId' -Default '')
             $keep = [bool](Get-MetraProp -Object $parsed -Name 'keepInView' -Default $false)
+            $saveForPortfolio = [bool](Get-MetraProp -Object $parsed -Name 'saveForPortfolio' -Default $false)
             $confirmAttachments = @()
             try {
                 $rawConfirmAtt = Get-MetraProp -Object $parsed -Name 'attachments' -Default @()
@@ -460,10 +609,10 @@ function Invoke-MetraOpsApi {
                 return
             }
             try {
-                $result = Invoke-MetraPlaceConfirm -Text $text -HomeId $homeId -KeepInView:$keep -AttachmentIds $confirmAttachments -MetraRoot $MetraRoot
-                # Only rebuild the desk when something was actually parked on Attention.
+                $result = Invoke-MetraPlaceConfirm -Text $text -HomeId $homeId -KeepInView:$keep -SaveForPortfolio:$saveForPortfolio -AttachmentIds $confirmAttachments -MetraRoot $MetraRoot
+                # Rebuild desk when Attention or Capture changed.
                 $payload = $null
-                if ($result.attentionKey) { $payload = Get-MetraDeskPayload -MetraRoot $MetraRoot }
+                if ($result.attentionKey -or $result.captureId) { $payload = Get-MetraDeskPayload -MetraRoot $MetraRoot }
                 Write-MetraOpsJsonResponse -Response $Response -Object ([PSCustomObject]@{
                         result = $result
                         desk   = $payload

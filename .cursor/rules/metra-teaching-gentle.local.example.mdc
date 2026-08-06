@@ -1,6 +1,6 @@
 ---
 description: Metra optional teaching-gentle Persona Add-on (example) - copy to metra-teaching-gentle.local.mdc or import profiles/addons/teaching-gentle
-alwaysApply: true
+alwaysApply: false
 ---
 
 # Metra teaching-gentle Persona Add-on

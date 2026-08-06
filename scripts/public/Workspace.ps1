@@ -7,7 +7,8 @@ function Update-MetraWorkspace {
     .DESCRIPTION
         Finds recently active projects across configured roots, adds always-included projects,
         drops names listed in workspace.exclude, and writes each workspace output configured
-        in metra.config.json.
+        in metra.config.json. Outputs whose metraFolderPath does not resolve on disk are
+        skipped with a warning; if every output is skipped the command throws.
     .PARAMETER Months
         Number of months of project activity to include. Uses workspace.months when omitted.
     .PARAMETER ScanDepth
@@ -20,7 +21,7 @@ function Update-MetraWorkspace {
     .EXAMPLE
         Update-MetraWorkspace -Months 3 -WhatIfPreview
     .OUTPUTS
-        PSCustomObject containing the lookback, included projects, and written files.
+        PSCustomObject containing the lookback, included projects, written files, and skipped outputs.
     #>
     [CmdletBinding(SupportsShouldProcess)]
     param(
@@ -58,6 +59,9 @@ function Update-MetraWorkspace {
     if ($outputs.Count -eq 0) {
         throw 'workspace.outputs is empty in metra.config.json.'
     }
+    if ($outputs.Count -gt 1) {
+        Write-Warning ("workspace.outputs has {0} entries. Extra copies split Cursor chat history and can bind a stale Metra folder after a checkout rename. Keep one output unless a second workspace file is deliberate." -f $outputs.Count)
+    }
 
     $primaryRootName = (@(Get-MetraRoots -IncludeMissing) | Where-Object { $_.Primary } | Select-Object -First 1).Name
 
@@ -67,6 +71,7 @@ function Update-MetraWorkspace {
     }
 
     $written = @()
+    $skipped = @()
     foreach ($out in $outputs) {
         $outPath = Join-Path $metraRoot $out.path
         $prefix = [string]$out.projectPathPrefix
@@ -79,6 +84,18 @@ function Update-MetraWorkspace {
         if ($null -eq $folderPathValue -or [string]::IsNullOrWhiteSpace([string]$folderPathValue)) {
             $folderPathValue = Get-MetraProp -Object $out -Name 'metaFolderPath' -Default '.'
         }
+
+        # Cursor cannot bind a Metra folder that does not exist, and an unbound workspace
+        # cannot start agent chat. Skip the output instead of writing a broken file.
+        $outDir = Split-Path -Parent $outPath
+        if ([string]::IsNullOrWhiteSpace($outDir)) { $outDir = $metraRoot }
+        $metraFolderFull = [System.IO.Path]::GetFullPath([System.IO.Path]::Combine($outDir, [string]$folderPathValue))
+        if (-not (Test-Path -LiteralPath $metraFolderFull -PathType Container)) {
+            Write-Warning ("Skipping workspace output '{0}': metraFolderPath '{1}' does not resolve to a folder ({2})." -f $out.path, [string]$folderPathValue, $metraFolderFull)
+            $skipped += [string]$out.path
+            continue
+        }
+
         $folders = @(
             [ordered]@{
                 name = $folderLabel
@@ -123,11 +140,16 @@ function Update-MetraWorkspace {
         }
     }
 
+    if ($skipped.Count -eq $outputs.Count) {
+        throw ("No workspace output could be written. Every metraFolderPath is missing: {0}. Fix workspace.outputs in metra.config.json." -f ($skipped -join ', '))
+    }
+
     return [PSCustomObject]@{
         Months       = $Months
         ProjectCount = $recent.Count
-        Projects     = @($recent.Name)
+        Projects     = @(foreach ($project in $recent) { $project.Name })
         Files        = $written
+        Skipped      = $skipped
     }
 }
 

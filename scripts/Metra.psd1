@@ -90,7 +90,16 @@
         'Start-MetraAskEngine',
         'Stop-MetraAskEngine',
         'Get-MetraDeskPreferences',
-        'Set-MetraDeskPreferences'
+        'Set-MetraDeskPreferences',
+        'Invoke-MetraCaptureCommand',
+        'Invoke-MetraAskLogCommand',
+        'Get-MetraCaptureLedger',
+        'Add-MetraCaptureFromAskTurn',
+        'Invoke-MetraCapturePromote',
+        'Get-MetraDeskAskLog',
+        'Get-MetraDeskAskSessionSummaries',
+        'Add-MetraDeskAskEntry',
+        'Invoke-MetraTicketWatchScan'
     )
     CmdletsToExport   = @()
     VariablesToExport = @()

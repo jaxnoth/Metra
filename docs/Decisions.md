@@ -18,6 +18,37 @@ Entry shape:
 
 ---
 
+## 2026-08-06 - Ticket-first watch desk write ladder
+
+- Decision: Metra watch intake may observe TicketTracker changes and create Attention observations while the operator is away. The write ladder is: (1) Attention observation, (2) local draft/note only (opt-in), (3) iSupport recommendation only after operator affirmation, (4) post/resolve/status only after explicit operator review, (5) Live/prod implementation remains outside watch automation. Ticket watch items are observations, not task status. Attention remains continuity memory, not a work-management system. Dismissal stays sticky until the evidence signature changes (ticket Updated timestamp or Status). Ownership: TicketTracker = facts about tickets; Metra = what to notice next. Watch intake code and Attention live in Metra. TicketTracker stays sensor + ticket-ops CLI. Phase 2 affirm UX (Metra) must call TicketTracker `recommend` - no parallel iSupport writer in Metra. Maturity: separate scorecard **Metra ticket watch intake** (Target L3 intake; loop form turn-based CLI / time-based Snapshot; not L4/L5 theater) from **TicketTracker ticket-ops** (L3 turn-based).
+- Why: Operator asked Metra to watch tickets for issues without creating an unattended help desk. Separating intake from ticket mutation keeps durable writes gated and maturity scores honest.
+- See: [Agentic-Maturity.md](Agentic-Maturity.md) (Metra ticket watch intake), `Future-Development.local.md` (F3.x), `.\metra.ps1 watch tickets`, Attention memory Decision 2026-08-05
+
+## 2026-08-06 - Agentic maturity loop forms by exit
+
+- Decision: Add **forms of loops (by exit)** under L5/L6 in [Agentic-Maturity.md](Agentic-Maturity.md): turn-based (closes on operator), goal-based (closes on judge/check), time-based (closes on clock), proactive (re-arms on events). Not new maturity levels - exit vocabulary for control loops. Rule: pick the loop by its exit, not its trigger; do not grant L5 for timer exits or human skim. Goal-based is the default shape for claiming L5. Proactive stays high-ceiling (safety/policy) and is refused for unsupervised systems-of-record writes without an allowlist. Optional scorecard field `Loop form`. Source: operator TikTok glean (Claude Code agentic loops / forms of loops); interim screenshots under operator `AI Work` drop folder.
+- Why: Starting loops is over-taught; stopping them is the governance scar. Exit taxonomy prevents `/loop` vs `/goal` confusion from inflating maturity scores.
+- See: [Agentic-Maturity.md](Agentic-Maturity.md) (Forms of loops), prior Agentic maturity entries in this file, `Future-Development.local.md` (Ask image intake interim path)
+
+## 2026-08-06 - Agentic maturity Bing review scars
+
+- Decision: Keep [Agentic-Maturity.md](Agentic-Maturity.md) as workflow governance (not AI prestige). Fold Bing review additions without new levels: (1) **Evidence quality** annotation on scorecards (`weak` / `adequate` / `authoritative`) - tool available is not tool trusted; no L3a/L3b. (2) **Ceiling reason** (`policy` / `safety` / `compliance` / `cost` / `technical` / `none`) so ceilings are not ambiguous later. (3) **On hard stop** recovery triplet for L5/L6 (what failed, where evidence, next operator action) so fail-closed is operational. Reaffirm: capability vs control split; institutional routing as L2; fail-closed required for L5; durable writes separated from maturity / Propose-Confirm-Apply; higher is not always better.
+- Why: Review confirmed gaming resistance and governance fit; the three additions prevent forgotten ceiling intent, weak single-signal "grounding," and shrug-and-return validation theater.
+- See: [Agentic-Maturity.md](Agentic-Maturity.md), prior Agentic maturity model entry in this file
+
+## 2026-08-06 - Agentic maturity model (workflow completeness)
+
+- Decision: Adopt [docs/Agentic-Maturity.md](Agentic-Maturity.md) as the shared **agentic maturity** reference for portfolio workflows. Levels L1-L6 (Basic, Router, Tool calling, Multi-agent, Autonomous check, Loop engineering). L1-L4 are capability layers; L5-L6 are control loops. Completeness means Current meets a **declared Target** with that level's required gates - not "everything is L6." Institutional routing (Metra `routing` / sticky primary) counts as L2. Durable writes stay operator- or Host-gated unless a workflow documents unsupervised authority. Agents use scorecards (Current / Target / Gaps / Completeness) when modeling current or future development; prefer gap lists over portfolio-wide percentages. Do not add a maturity score strip to Ops health (visibility, not vanity metrics). Homes cheat sheet gains **How mature?** -> `docs/Agentic-Maturity.md` (design metric, not a fourth marketing triangle leg).
+- Why: Workflows needed a shared vocabulary and completeness metric for agentic design without inventing a second health dashboard or equating long chats with loop engineering.
+- See: [Agentic-Maturity.md](Agentic-Maturity.md), [Context-Routing.md](Context-Routing.md), Portfolio Operations Principles in this file, `AGENTS.md`
+
+## 2026-08-05 - Ask Session Journal + Capture Inbox
+
+- Decision: Ask produces two artifacts only - **Session Journal** (canonical conversation evidence in `docs/ops-ask-log.local.json`) and **Capture Inbox** (thin portfolio intake in `docs/ops-capture.local.json` that references journal/place evidence via immutable `derivedFrom`). Do not invent a Universal Memory Engine or merge OCC + Decision Registry + Decisions + Future Development. Journal stores chrome-stripped operator-facing answers with `sessionId`, `turnIndex`, `origin`, and `client` (`X-Metra-Client`). Capture stores framing + lineage pointers - never a second full transcript. Capture is never auto-loaded into routing, ranking, classification, or Ask prompts. Observation is cheap (Ask-class journal/capture writes from desk/phone/iOS); governance is deliberate (promote on affirm into an existing Portfolio Operations home via CLI/Host - Future Development append is local; OCC/Decision Registry stay candidate-only; tracked policy/AGENTS stay Host/CLI). Keep in view (Attention Hold) is distinct from Save for portfolio (Capture). Cap/rotate is a recent continuity window - not permanent omniscience. Prefer `.\metra.ps1 ask` / `.\metra.ps1 capture` over inventing cross-chat recall. Phone must not write `Decisions.md` / OCC render / AGENTS directly.
+- Why: Thin ask log could reconstruct neither the conversation nor the idea. Operators need remember + save without collapsing intake into always-on memory or collapsing observation into governance.
+- See: `scripts/private/Capture.ps1`, `Add-MetraDeskAskEntry`, `/api/ask` + `/api/capture*`, [ops/README.md](../ops/README.md), [Customizing-Metra.md](Customizing-Metra.md), `AGENTS.md`, [SECURITY.md](../SECURITY.md)
+- Future: native Metra iOS Ask+Capture client against the same HTTP contracts (parked in Future-Development.local.md)
+
 ## 2026-08-05 - Route something (portfolio landing zone)
 
 - Decision: Route Something is Metra's landing zone. It accepts work in whatever form it arrives (text, clipboard paste, path refs, file upload to local quarantine) and recommends a durable home without creating one automatically. Classify / Handoff is retired from the Ops UI; `Get-MetraDeskHandoff` remains for Ask internals. Ask shows a quiet Where chip only when the route is weak or ambiguous, with optional "This belongs in…" corrections that create Decision Registry candidates and place memory. Recommendation cards teach with Recommended home, Why, What happens there, and Your move (Copy / Keep in view / affirm for learning). Keep in view maps to Attention Hold. Place learning stores confirmations/corrections in `docs/ops-place.local.json` and enriches Why on later routes. When `bindTailscale` is on, Ops orchestrates Tailscale Serve so the share URL is HTTPS (secure context for phone clipboard); Serve is not required to run Metra; Funnel stays out of scope. Quarantine uploads are Ask-class reach; durable homes stay Host-gated.
@@ -243,13 +274,17 @@ Experience   Primary focus (HTML desk, Ask, project activation, local AI)
   | Why? (operational scars) | Decision Registry + Why Here |
   | Why? (product policy) | `docs/Decisions.md` |
   | How? (collaboration rhythm) | OCC / `profile` + communication model / professional sink |
+  | What happened? (Ask evidence) | Session Journal (`docs/ops-ask-log.local.json`; recent window) |
+  | What should change? (intake) | Capture Inbox (`docs/ops-capture.local.json`) then promote into a home above |
   | Health? | Ops board / `audit` / `verify` / status |
   | For whom? | Project registry `serves` / `routing` / `ctx` (not people profiling) |
+  | How mature? (workflow design) | [Agentic-Maturity.md](Agentic-Maturity.md) - Current/Target scorecards; not an Ops vanity score |
 
-  Operating principles: (1) every portfolio fact has a home; (2) route before execute; (3) context is retrieved, not dumped; (4) decisions are preserved with rationale (ledger why + confidence + evidence; never invent operational why); (5) communication follows the same operating model as the tooling. Health is first-class for ops but is not a fourth marketing triangle leg. Metra overlaps portfolio management, knowledge management, and configuration-management ideas; it is an operating model for developers and agents, not a single Wikipedia discipline. Boundaries: product policy -> Decisions.md; operational scars -> Decision Registry; collaboration rhythm -> OCC; project-local guidance -> that project's `AGENTS.md`.
+  Operating principles: (1) every portfolio fact has a home; (2) route before execute; (3) context is retrieved, not dumped; (4) decisions are preserved with rationale (ledger why + confidence + evidence; never invent operational why); (5) communication follows the same operating model as the tooling. Health is first-class for ops but is not a fourth marketing triangle leg. Metra overlaps portfolio management, knowledge management, and configuration-management ideas; it is an operating model for developers and agents, not a single Wikipedia discipline. Boundaries: product policy -> Decisions.md; operational scars -> Decision Registry; collaboration rhythm -> OCC; project-local guidance -> that project's `AGENTS.md`; Ask evidence -> Journal; portfolio intake candidates -> Capture (never always-on routing fuel); workflow maturity targets -> Agentic-Maturity.md + per-workflow scorecards.
 - Why: Portfolio chaos is usually information with no obvious home. Naming the model keeps future features (relationships, Ops board wisdom) from inventing parallel homes or dumping wiki-scale knowledge into prompts.
-- See: `README.md` (Portfolio operations homes), Why Here / For whom / Decision Registry / OCC / product-triangle entries in this file
+- See: `README.md` (Portfolio operations homes), Why Here / For whom / Decision Registry / OCC / product-triangle entries in this file, [Agentic-Maturity.md](Agentic-Maturity.md) (2026-08-06)
 - Future: see Why Here entry (relatedProjects, Ops board wisdom, and related items) - do not duplicate that list here
+- Note: **How mature?** row added 2026-08-06; see Agentic maturity model entry
 
 ## 2026-07-31 - Why Here? routing explanations
 
@@ -485,3 +520,9 @@ Experience   Primary focus (HTML desk, Ask, project activation, local AI)
 - Decision: `Datamart` is a legacy reference tree only - do not edit or deploy from it. Drive warehouse SQL changes in `IWUDATA-SQL`. If an object is missing there, retrieve the live definition from SQL Server and check it into IWUDATA-SQL before changing.
 - Why: Operators were editing and deploying from the old Datamart checkout while IWUDATA-SQL is the intended working copy, which split source of truth and risked shipping stale scripts.
 - See: `Datamart/AGENTS.md`, `IWUDATA-SQL/AGENTS.md`, `projects.local.json`
+
+## 2026-08-05 - One workspace output; skip outputs whose Metra folder is missing
+
+- Decision: `Update-MetraWorkspace` warns when `workspace.outputs` has more than one entry, skips any output whose `metraFolderPath` does not resolve to a folder on disk, and throws only when every output is skipped. Example rules under `.cursor/rules/*.example.mdc` ship with `alwaysApply: false`.
+- Why: A dual-output local config kept writing a second `Metra.code-workspace` with `metraFolderPath: "_meta"` after the checkout renamed to `_metra`. Opening that copy left Cursor with no bound Metra folder, so agent chat would not start, and the extra file also split chat history across two workspaces. Example overlays with `alwaysApply: true` loaded sample personas into every session alongside the live overlay.
+- See: `scripts/public/Workspace.ps1`, `tests/Metra.Tests.ps1`, `.cursor/rules/metra-persona.local.example.mdc`

@@ -537,13 +537,15 @@ function Add-MetraAttentionKeepInView {
 function Invoke-MetraPlaceConfirm {
     <#
     .SYNOPSIS
-        Operator affirms a recommendation - records learning; optional Keep in view. Never auto-creates durable homes.
+        Operator affirms a recommendation - records learning; optional Keep in view and/or Save for portfolio (Capture).
+        Never auto-creates durable tracked homes. Keep in view != Save for portfolio.
     #>
     [CmdletBinding()]
     param(
         [Parameter(Mandatory)][string]$Text,
         [Parameter(Mandatory)][string]$HomeId,
         [switch]$KeepInView,
+        [switch]$SaveForPortfolio,
         [string[]]$AttachmentIds = @(),
         [string]$MetraRoot = (Get-MetraRoot)
     )
@@ -559,9 +561,23 @@ function Invoke-MetraPlaceConfirm {
         $attentionKey = Add-MetraAttentionKeepInView -Summary $keepSummary -MetraRoot $MetraRoot
     }
 
-    $note = 'Recorded for learning. Durable homes are not created automatically - Keep in view only parks on Attention.'
+    $captureId = $null
+    if ($SaveForPortfolio) {
+        $cap = Add-MetraCaptureFromPlace `
+            -Text $Text `
+            -HomeId $HomeId `
+            -PlaceId ([string]$entry.id) `
+            -AttachmentIds @($AttachmentIds) `
+            -MetraRoot $MetraRoot
+        $captureId = [string]$cap.id
+    }
+
+    $note = 'Recorded for learning. Durable homes are not created automatically - Keep in view parks on Attention; Save for portfolio creates a Capture candidate.'
     if ($attachments.Count -gt 0) {
         $note = ('{0} Linked file(s) stay in quarantine: {1}.' -f $note, (@($attachments | ForEach-Object { $_.fileName }) -join ', '))
+    }
+    if ($captureId) {
+        $note = ('{0} Capture id: {1}.' -f $note, $captureId)
     }
 
     return [PSCustomObject]@{
@@ -570,6 +586,7 @@ function Invoke-MetraPlaceConfirm {
         homeId        = [string]$entry.homeId
         attachments   = $attachments
         attentionKey  = $attentionKey
+        captureId     = $captureId
         recommendOnly = $true
         note          = $note
     }
