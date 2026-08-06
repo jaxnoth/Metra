@@ -1,6 +1,6 @@
 ---
 description: Metra Operator Communication Contract (example) - copy via profile promote/render; live file is gitignored
-alwaysApply: true
+alwaysApply: false
 ---
 
 # Learned operator overlay

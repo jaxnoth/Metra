@@ -27,6 +27,7 @@ flowchart LR
 | Shared + local registries | `projects.json`, `projects.local.json`, root `registryFile` |
 | Agent entry docs | this repo's `AGENTS.md` + each project's `AGENTS.md` |
 | Durable Metra decisions | [Decisions.md](Decisions.md) (append-only; prefer before transcript dig) |
+| Ask journal / Capture CLI | `.\metra.ps1 ask sessions`, `.\metra.ps1 capture list` |
 | Routing smoke | `.\metra.ps1 verify` |
 
 ## What Cursor adds
@@ -116,6 +117,7 @@ Claude Code, Codex, Copilot, and similar tools are **not** generated in this pas
 - [Context-Routing.md](Context-Routing.md) - registries, audit, Metra Ops board
 - [Search-Echo.md](Search-Echo.md) - multi-root Grep echo and path scoping
 - [Decisions.md](Decisions.md) - append-only portfolio decisions
+- [ops/README.md](../ops/README.md) - Ask + Capture HTTP contract for native clients
 - [Routing-Scenarios.md](Routing-Scenarios.md) - routing / persona smoke + `verify` fixtures
 - [Overview.md](Overview.md) - audience overview / leave-behind (prose twin of self-doc canvas)
 - Self-doc canvas template: `../integrations/cursor/metra-self-documentation.canvas.tsx.template` (install/live under Cursor projects `canvases/`)

@@ -27,7 +27,18 @@ Keep this section short. Lengthen only when a real behavior problem needs an exp
 
 ### Operator Communication Contract
 
-Shared operating rhythm between Metra and the operator - how we collaborate - not a user profile or hidden memory. Ledger: `docs/operator-contract.json` (`candidates` + `confirmedGuidelines`). Always-on render: `.cursor/rules/metra-learned.local.mdc` (confirmed soft guidelines only + Interpretation footer). Flow: candidate -> propose -> confirm -> promote via `.\metra.ps1 profile`. Cap 20 confirmed. Classify the home before proposing any durable write - do not default to OCC. Refuse OCC promote for portfolio-wide product rules (use Decisions / README / base persona) and for project-local playbooks / TicketTracker solutions / Decision Registry scars (name that home instead). Base policy always wins. Homes map (Where / What / Why / How / Health): [Decisions.md](Decisions.md) (Portfolio Operations Principles; Durable-write home classification).
+Shared operating rhythm between Metra and the operator - how we collaborate - not a user profile or hidden memory. Ledger: `docs/operator-contract.json` (`candidates` + `confirmedGuidelines`). Always-on render: `.cursor/rules/metra-learned.local.mdc` (confirmed soft guidelines only + Interpretation footer). Flow: candidate -> propose -> confirm -> promote via `.\metra.ps1 profile`. Cap 20 confirmed. Classify the home before proposing any durable write - do not default to OCC. Refuse OCC promote for portfolio-wide product rules (use Decisions / README / base persona) and for project-local playbooks / TicketTracker solutions / Decision Registry scars (name that home instead). Base policy always wins. Homes map (Where / What / Why / How / What happened / What should change / Health / How mature?): [Decisions.md](Decisions.md) (Portfolio Operations Principles; Durable-write home classification; Ask Session Journal + Capture Inbox). Workflow maturity scorecards: [Agentic-Maturity.md](Agentic-Maturity.md).
+
+### Ask Session Journal and Capture Inbox
+
+Two stores only - not a Universal Memory Engine.
+
+| Artifact | Question | Store | Authority |
+|----------|----------|-------|-----------|
+| Session Journal | What happened? | `docs/ops-ask-log.local.json` | Ask-class append on every Ask |
+| Capture Inbox | What should change? | `docs/ops-capture.local.json` | Operator Save for portfolio (never silent harvest) |
+
+Journal is canonical evidence (prompt + chrome-stripped answer + route + origin/client + `turnIndex`). Capture is thin framing + immutable `derivedFrom` pointers - resolve full text via journal APIs. Capture is never auto-loaded into routing or Ask prompts. **Keep in view** (Attention Hold) is temporary continuity; **Save for portfolio** creates a Capture candidate. Promote on affirm into Future Development / Decision Registry candidates / OCC candidates / etc. - observation cheap, governance deliberate. CLI: `.\metra.ps1 ask sessions|log`, `.\metra.ps1 capture list|note|promote|from-ask`. HTTP contract: [ops/README.md](../ops/README.md).
 
 ### Decision Registry (Operational Why Memory)
 
@@ -68,6 +79,8 @@ Use `workspace.exclude` for frozen review checkouts, upload packs, or other fold
 ```
 
 Keep `workspace.outputs` to a **single** entry. Cursor tracks chat history per workspace identity, so generating a second copy of `Metra.code-workspace` in another folder splits your chat context between the two files. The generated workspace is gitignored; `Metra.code-workspace.example` is the tracked starter.
+
+`.\metra.ps1 workspace` warns when more than one output is configured, and it skips any output whose `metraFolderPath` no longer resolves to a folder on disk (common after renaming the checkout, for example `_meta` to `_metra`). A workspace file with an unbound Metra folder cannot start agent chat, so a missing path is skipped rather than written. If every configured output is missing, the command throws instead of leaving a stale file in place.
 
 The committed example and sample pack use a **work root only** (`path: ".."`). Add a personal or cloud root when you need one - JSON cannot comment entries out.
 

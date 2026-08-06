@@ -102,7 +102,16 @@ $script:MetraCompatibilityFunctions = @(
     'Get-MetraRoutingAmbiguity',
     'Clear-MetraRoutingCache',
     'Get-MetraDeskPreferences',
-    'Set-MetraDeskPreferences'
+    'Set-MetraDeskPreferences',
+    'Invoke-MetraCaptureCommand',
+    'Invoke-MetraAskLogCommand',
+    'Get-MetraCaptureLedger',
+    'Add-MetraCaptureFromAskTurn',
+    'Invoke-MetraCapturePromote',
+    'Get-MetraDeskAskLog',
+    'Get-MetraDeskAskSessionSummaries',
+    'Add-MetraDeskAskEntry',
+    'Invoke-MetraTicketWatchScan'
 )
 
 # Silent one-release compatibility aliases for the former Meta naming.

@@ -142,8 +142,57 @@ export function releaseAttention(key: string): Promise<DeskPayload> {
 export function postAsk(prompt: string, sessionId?: string | null): Promise<AskResult> {
   return fetch('/api/ask', {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ prompt, sessionId: sessionId || undefined }),
+    headers: {
+      'Content-Type': 'application/json',
+      'X-Metra-Client': 'ops-web',
+    },
+    body: JSON.stringify({
+      prompt,
+      sessionId: sessionId || undefined,
+      client: 'ops-web',
+      clientHint: /Mobi|Android|iPhone/i.test(navigator.userAgent) ? 'phone' : 'desktop',
+    }),
+  }).then((r) => parseJson(r))
+}
+
+export function postCaptureFromAsk(
+  turnId: string,
+  sessionId?: string | null,
+  summary?: string,
+): Promise<import('./types').CaptureItem> {
+  return fetch('/api/capture', {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      'X-Metra-Client': 'ops-web',
+    },
+    body: JSON.stringify({
+      source: 'ask',
+      turnId,
+      sessionId: sessionId || undefined,
+      summary: summary || undefined,
+    }),
+  }).then((r) => parseJson(r))
+}
+
+export function postCaptureDismiss(id: string): Promise<import('./types').CaptureItem> {
+  return fetch(`/api/capture/${encodeURIComponent(id)}/dismiss`, {
+    method: 'POST',
+    headers: { 'X-Metra-Client': 'ops-web' },
+  }).then((r) => parseJson(r))
+}
+
+export function postCapturePromote(
+  id: string,
+  home?: string,
+): Promise<import('./types').CaptureItem> {
+  return fetch(`/api/capture/${encodeURIComponent(id)}/promote`, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      'X-Metra-Client': 'ops-web',
+    },
+    body: JSON.stringify({ home: home || undefined }),
   }).then((r) => parseJson(r))
 }
 
@@ -180,11 +229,13 @@ export function postPlaceConfirm(
   homeId: string,
   keepInView = false,
   attachments: string[] = [],
+  saveForPortfolio = false,
 ): Promise<{
   result: {
     ok: boolean
     note?: string
     attentionKey?: string | null
+    captureId?: string | null
     attachments?: { id: string; fileName: string }[]
   }
   desk?: DeskPayload | null
@@ -192,7 +243,7 @@ export function postPlaceConfirm(
   return fetch('/api/place/confirm', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ text, homeId, keepInView, attachments }),
+    body: JSON.stringify({ text, homeId, keepInView, saveForPortfolio, attachments }),
   }).then((r) => parseJson(r))
 }
 

@@ -46,7 +46,7 @@ AI at work usually lands in one of two bad places:
 | Jitterbit | jitterbit | Harmony Studio exports, private agents, and IWU.Jitterbit operation-log monitoring module. |
 | AutoHotkey | autohotkey | AutoHotkey scripts and helpers. |
 
-Generated 2026-08-05T14:27:58.4147013-04:00 by `.\metra.ps1 selfdoc` from the merged registry.
+Generated 2026-08-06T07:29:55.0732270-04:00 by `.\metra.ps1 selfdoc` from the merged registry.
 <!-- metra-selfdoc-routes-end -->
 
 Metra picks the matching place before work starts. It does not replace judgment, Cursor, iSupport, or Orion. After routing, it keeps help useful for the person doing the work, and keeps durable writing (tickets, commits, emails to others) ordinary and professional.

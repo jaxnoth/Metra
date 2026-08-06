@@ -102,8 +102,41 @@ export type AskEntry = {
   id: string
   at: string
   prompt: string
+  message?: string | null
+  sessionId?: string | null
+  turnIndex?: number | null
+  origin?: string | null
+  client?: string | null
+  clientHint?: string | null
   handoff?: Handoff
   note?: string
+}
+
+export type AskSessionSummary = {
+  id?: string
+  sessionId: string
+  turnCount: number
+  at: string
+  prompt: string
+  where?: string
+  origin?: string
+  client?: string
+  turns?: { id: string; turnIndex?: number; at?: string; prompt?: string }[]
+}
+
+export type CaptureItem = {
+  id: string
+  at: string
+  status: 'candidate' | 'promoted' | 'dismissed' | string
+  summary: string
+  body?: string | null
+  source?: string
+  derivedFrom?: { type?: string; sessionId?: string; turnId?: string; placeId?: string }
+  suggestedHome?: string
+  suggestedProject?: string
+  origin?: string | null
+  client?: string | null
+  promoted?: { at?: string; home?: string; ref?: string } | null
 }
 
 export type Preferences = {
@@ -143,7 +176,9 @@ export type DeskPayload = {
   attention?: AttentionQueue
   projects: ProjectRow[]
   health: Health
-  recent: AskEntry[]
+  /** Recent conversations (session summaries - continuity window). */
+  recent: AskSessionSummary[] | AskEntry[]
+  captures?: CaptureItem[]
   preferences: Preferences
   ask?: AskCapability
   meta: {
@@ -155,6 +190,7 @@ export type DeskPayload = {
 }
 
 export type AskResult = {
+  entry?: AskEntry
   handoff: Handoff
   message: string
   sessionId?: string | null

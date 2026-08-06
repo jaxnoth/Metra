@@ -1,6 +1,6 @@
 ---
 description: Metra operator overlay (example) - copy to metra-persona.local.mdc (gitignored)
-alwaysApply: true
+alwaysApply: false
 ---
 
 # Metra operator overlay (example)
