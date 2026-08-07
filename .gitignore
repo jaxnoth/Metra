@@ -56,6 +56,7 @@ docs/ops-place.local.json
 # Ops desk: track dist for end users; ignore node_modules via ops/.gitignore + root rule
 ops/node_modules/
 engines/cursor/node_modules/
+runtimes/node/
 
 # Operator-private notes (not for public/team clones)
 docs/*.local.md

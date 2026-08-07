@@ -565,6 +565,8 @@ function Start-MetraOpsHost {
     $script:MetraOpsFailureStreak = 0
     $script:MetraOpsLastError = $null
     $script:MetraOpsNextAttemptUtc = [datetime]::MinValue
+    $script:MetraOpsNextUpdateCheckUtc = [datetime]::UtcNow
+    $script:MetraOpsUpdateNotifiedKey = $null
     $script:MetraOpsLastHeartbeatUtc = [datetime]::MinValue
     $script:MetraOpsLastHeartbeatChildPid = 0
     $script:MetraOpsLastStatus = $null
@@ -707,6 +709,32 @@ function Start-MetraOpsHost {
     $timer.Add_Tick({
             # Operator chose Stop desk - do not fight that decision.
             if ($script:MetraOpsDeskStopped) { return }
+
+            # Quiet product update check (cached 24h inside Get-MetraProductUpdates). Balloon only when new.
+            if ([datetime]::UtcNow -ge $script:MetraOpsNextUpdateCheckUtc) {
+                $script:MetraOpsNextUpdateCheckUtc = [datetime]::UtcNow.AddHours(6)
+                try {
+                    $upd = Get-MetraProductUpdates -MetraRoot $script:MetraOpsHostRoot
+                    if ($upd.anyUpdate) {
+                        $bits = @()
+                        if ($upd.metra.updateAvailable) { $bits += "Metra $($upd.metra.available)" }
+                        if ($upd.ollama.updateAvailable) { $bits += "Ollama $($upd.ollama.available)" }
+                        $key = ($bits -join '|')
+                        if ($key -and $key -ne $script:MetraOpsUpdateNotifiedKey) {
+                            $script:MetraOpsUpdateNotifiedKey = $key
+                            $notify.ShowBalloonTip(
+                                6000,
+                                'Metra Ops',
+                                ("Update available: {0}. Open Settings to update." -f ($bits -join ', ')),
+                                [System.Windows.Forms.ToolTipIcon]::Info
+                            )
+                        }
+                    }
+                }
+                catch {
+                    Write-MetraOpsHostLog "Update check failed - $($_.Exception.Message)" 'warn'
+                }
+            }
 
             # Host owns apply: poll pending proposals even if the desk is mid-Ask.
             try {

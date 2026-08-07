@@ -480,7 +480,7 @@ function Invoke-MetraCaptureCommand {
 function Invoke-MetraAskLogCommand {
     <#
     .SYNOPSIS
-        CLI surface: ask log|sessions - read Session Journal summaries.
+        CLI surface: ask log|sessions|get|recall - Session Journal continuity and episodic search.
     #>
     [CmdletBinding()]
     param(
@@ -496,31 +496,40 @@ function Invoke-MetraAskLogCommand {
             return ,@(Get-MetraDeskAskLog -MetraRoot $MetraRoot -Limit $limit)
         }
         'sessions' {
-            $turns = @(Get-MetraDeskAskLog -MetraRoot $MetraRoot -Limit 100)
-            $groups = $turns | Group-Object -Property {
-                $sid = [string](Get-MetraProp -Object $_ -Name 'sessionId' -Default '')
-                if ([string]::IsNullOrWhiteSpace($sid)) { [string]$_.id } else { $sid }
+            return ,@(Get-MetraDeskAskSessionSummaries -MetraRoot $MetraRoot -Limit 40)
+        }
+        { $_ -in @('get', 'resume') } {
+            if ($ArgsRest.Count -lt 1 -or [string]::IsNullOrWhiteSpace([string]$ArgsRest[0])) {
+                throw "ask get requires a sessionId. Example: .\metra.ps1 ask get <sessionId>"
             }
-            $summaries = foreach ($g in $groups) {
-                $ordered = @($g.Group | Sort-Object {
-                        $ti = Get-MetraProp -Object $_ -Name 'turnIndex' -Default $null
-                        if ($null -ne $ti) { [int]$ti } else { 0 }
-                    }, { [string]$_.at })
-                $first = $ordered | Select-Object -First 1
-                [PSCustomObject]@{
-                    sessionId  = [string]$g.Name
-                    turnCount  = $ordered.Count
-                    at         = [string](Get-MetraProp -Object $first -Name 'at' -Default '')
-                    prompt     = [string](Get-MetraProp -Object $first -Name 'prompt' -Default '')
-                    where      = [string](Get-MetraProp -Object (Get-MetraProp -Object $first -Name 'handoff' -Default $null) -Name 'where' -Default '')
-                    origin     = [string](Get-MetraProp -Object $first -Name 'origin' -Default '')
-                    client     = [string](Get-MetraProp -Object $first -Name 'client' -Default '')
+            $sid = [string]$ArgsRest[0]
+            $turns = @(Get-MetraDeskAskSessionTurns -SessionId $sid -MetraRoot $MetraRoot)
+            $continuity = Get-MetraAskContinuityContext -SessionId $sid -MetraRoot $MetraRoot
+            return [PSCustomObject]@{
+                sessionId  = $sid
+                turnCount  = $turns.Count
+                continuity = $continuity
+                turns      = $turns
+            }
+        }
+        'recall' {
+            if ($ArgsRest.Count -lt 1 -or [string]::IsNullOrWhiteSpace([string]$ArgsRest[0])) {
+                throw "ask recall requires a query. Example: .\metra.ps1 ask recall `"gateway msal`""
+            }
+            $limit = 20
+            $queryParts = [System.Collections.Generic.List[string]]::new()
+            foreach ($a in $ArgsRest) {
+                if ($a -match '^\d+$' -and $queryParts.Count -gt 0) {
+                    $limit = [int]$a
+                    continue
                 }
+                [void]$queryParts.Add([string]$a)
             }
-            return @($summaries | Sort-Object at -Descending)
+            $query = ($queryParts -join ' ').Trim()
+            return ,@(Search-MetraDeskAskJournal -Query $query -Limit $limit -MetraRoot $MetraRoot)
         }
         default {
-            throw "Unknown ask subcommand: $Subcommand. Use log|sessions."
+            throw "Unknown ask subcommand: $Subcommand. Use log|sessions|get|recall."
         }
     }
 }

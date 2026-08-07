@@ -18,11 +18,123 @@ Entry shape:
 
 ---
 
+## 2026-08-07 - Settings projects folders: labeled multi-root list
+
+- Decision: Ops **Settings** edits portfolio roots as a **labeled list** (any count), not a fixed Work + Personal pair. Each root has display **label**, **path**, one **primary**, and optional **optional** (may be missing). Stable config `name` is kept when present; otherwise derived from the label. `PUT /api/settings` prefers `roots: [{ name?, label, path, primary, optional }]`; legacy `primaryPath` / `personalPath` still work. Extra registry/cloud fields are preserved when renaming by matching name or path.
+- Why: Operators often need more than two parent folders (lab, cloud, secondary machine paths) and need human labels that are not tied to the old Work/Personal slots.
+- See: `Save-MetraSettingsPortfolio -Roots`, `Get-MetraRoots` Label, `/api/settings`, Ops Settings Projects folders UI
+
+## 2026-08-07 - Product updates in Settings (Metra + Ollama, no auto-apply)
+
+- Decision: The always-on Ops Host quietly checks for **Metra** (GitHub Releases / MetraSetup.exe) and **Ollama** (winget package version) updates, caches results under `%LOCALAPPDATA%\Metra\updates-status.local.json` (24h), and may balloon once when something new appears. **Settings** shows an **Updates** row with status, **Check for updates**, and **Update Metra** / **Update Ollama** buttons. Nothing installs without that button. Metra update downloads `MetraSetup.exe` and runs `/VERYSILENT`; Ollama reuses the silent upgrade path (hidden-start marker). Developer `.git` checkouts report `dev_checkout` and refuse the Metra installer Update button (use git pull / rebuild). APIs: `GET /api/updates`, `POST /api/updates` with `{ target: metra|ollama }` (operator machine only).
+- Why: Consumers need a Settings surface for installer and Ask runtime currency; Host discovery without auto-apply matches the non-technical Settings principle and avoids surprise upgrades / desk restarts.
+- See: `scripts/private/Updates.ps1`, Ops Settings Updates row, `Get-MetraProductUpdates` / `Invoke-MetraProductUpdate`, silent Ollama install Decision above
+
+## 2026-08-07 - Ollama installs silently (no Launch UI)
+
+- Decision: `ask accept` (ladder 1a) installs Ollama **silently** and hidden. It writes the `%LOCALAPPDATA%\Ollama\upgraded` marker so the desktop app starts hidden (tray + local API only), then runs the signed `OllamaSetup.exe /VERYSILENT /NORESTART /SUPPRESSMSGBOXES`. Fallback order: signed setup download (Authenticode verified, signer must match Ollama) -> `winget --silent --override "/VERYSILENT /NORESTART /SUPPRESSMSGBOXES"` -> teach `https://ollama.com/download`. After install Metra starts `ollama serve` hidden if the API is not already up. Consumer success stays `engineHealthy` + ask test.
+- Why: The default winget/desktop install pops the Ollama Launch window after setup; consumers do not need the desktop UI since Ask only uses the local API. Mirrors Ollama's own install script (upgrade marker + `/VERYSILENT`).
+- See: `Install-MetraAskOllamaRuntime` / `Set-MetraAskOllamaHiddenStartMarker` in `scripts/private/AskRecommend.ps1`, `engines/ollama/README.md`, Consumer Ask ladder 1 Decision below
+
+## 2026-08-07 - Non-technical config surfaces in Ops Settings
+
+- Decision: Any configuration a non-technical user must set for Metra to work (portfolio project roots as a labeled multi-folder list, Cursor Ask API key when that engine is chosen, and similar consumer-facing knobs) **must** be editable in Ops **Settings**. Hand-editing `metra.config.json` or env vars remains valid for operators and IT; it is not the consumer path. Advanced/engine overrides stay under Settings Advanced. Server-side mutations stay operator-machine local (loopback or Host session token).
+- Why: Installer and Documents installs leave roots pointing at thin defaults; consumers cannot be expected to edit JSON. Ask multi-engine already put Accept recommended in Settings - roots and key were the remaining gap.
+- See: `Get-MetraSettingsPortfolio` / `Save-MetraSettingsPortfolio`, `/api/settings`, Ops Settings UI, Consumer Ask ladder 1 Decision above, labeled multi-root Decision 2026-08-07 above
+
+## 2026-08-07 - Consumer Ask multi-engine activation (ladder 1)
+
+- Decision: Ladder **1** (consumer-ready Ask) ships a **simplified engine menu**: recommended path **Ollama** (Modest/Balanced = model pin size, not separate runtimes), premium **Cursor** (Advanced; bundled private Node + prebundled sidecar when chosen - no "install Node yourself"), IT **enterprise** OpenAI-compat endpoint (hidden unless configured), Advanced escape hatch **llama.cpp** (never auto-recommended). **GPT4All** is watch/docs only - not first-class. Implementers: PowerShell-native `openai_compat` for ollama/enterprise/llamacpp; Cursor keeps `@cursor/sdk` sidecar. Recommend-first UX (Accept recommended); overrides under Advanced. Consumer success = `engineHealthy` + ask test (install runtime 1a, then pull model 1b) - not config-written alone. No silent mid-Ask engine swap; Classify stays PowerShell. Ship order: adapter + recommend + health first; Cursor packaging second; exact pin tags after smoke. ZIP/Documents folder-lose stays out of this bite. Evidence-gated polish (former ladder-1 Phase 0 Decision 2026-08-06) remains parked as human ladder **2** until consumer Ask is available.
+- Why: Bing plan review (R1 8.5/10 + R2 follow-ups) favored one recommended path, one premium, one IT, one power hatch over more engines. Local Ask must not require Node; Cursor Ask must be turnkey when selected.
+- See: Cursor plan `ask_multi-engine_activation_a7644e08`, `docs/Future-Development.local.md` (Consumer-ready Ask activation), Ask engine Decision 2026-08-01, `scripts/private/AskEngine.ps1`
+
+## 2026-08-06 - Ask evidence-gated polish (ladder 1 Phase 0)
+
+- Decision: Activate ladder **1** as **Ask engine polish: evidence-gated grounded answers** (not prompt polish, not model shopping). Bing plan review approved with edits 2026-08-06. Before Phase 2 code: freeze a Deven-class Ask eval set; ship a boring context contract (`route` / `evidence` / `continuity` / `capability`); compute `evidence.quality` in code via `Get-MetraAskEvidenceQuality` (`adequate|thin|none`, plus capability `degraded` path); enforce response invariants (`answered=true` only when `answerType=grounded`; thin/none never grounded; provisional may guide but not claim completion); dual scrub (pre-engine pack and pre-journal); Classify remains authoritative (Ask may enrich, must not silently override primary stop). Journal continuity is not factual evidence unless marked. Live system claims require bound route/tool evidence. Ollama, installer Node (1b), Ask image intake (1c), iOS voice (1d), Host apply from Ask, G3/G5 full fixtures, and cross-agent storytelling stay deferred. No material scars rejected this bite.
+- Why: Ask already routes and degrades; the thin context bag is the bottleneck. Harness quality and measurable gen-verify beat model swaps (aligns with Ollama/SLM scar and Karpathy gen-verify crosswalk).
+- See: Cursor plan `ask_engine_polish_b9dd3dc1`, `docs/Future-Development.local.md` (ladder 1, F2 Ask evidence-gated polish), Ollama/SLM scar above, Ask engine Decision 2026-08-01, Ask Ops secrets scrub, [Agentic-Maturity.md](Agentic-Maturity.md) (Metra Ops Ask)
+
+## 2026-08-06 - Ask Ops secrets scrub (defense in depth)
+
+- Decision: Ship code-path secrets scrubbing on the Ops Ask path. PowerShell is authoritative (`Invoke-MetraAskSecretsScrubText` / `Invoke-MetraAskSecretsScrubObject` in `AskSecrets.ps1`): scrub prompt and continuity context before `/v1/complete`, scrub engine responses before desk render, and scrub again at Session Journal write so raw matches are never stored. High-signal keys/tokens scrub-and-continue with `[REDACTED:<kind>]` placeholders, kind counts in the operator notice, and a heavy-redaction notice when `RedactedCharsRatio > 0.75`. PEM / private-key blocks refuse with reason `pem_private_key` and do not call the engine. Cursor sidecar mirrors the same patterns; IDE `askInChat` remains out of scope. Complements Host ProposalJail and answer-only ceilings - not prompt theater.
+- Why: Users paste credentials into Ask; journal and recall re-entry were the long-term leak surface. False-positive budget must spare ticket ids and short git SHAs used constantly in ops workflows.
+- See: [SECURITY.md](../SECURITY.md) (Ask secrets scrub), `scripts/private/AskSecrets.ps1`, `scripts/private/Snapshot.ps1`, `scripts/private/AskEngine.ps1`, `engines/cursor/server.mjs`, Future-Development ladder 1a
+
+## 2026-08-06 - Karpathy gen-verify loop (preferred crosswalk)
+
+- Decision: Prefer [Loop Engineering, Karpathy-Style: The Gen-Verify Loop](https://www.aibuilderclub.com/blog/loop-engineering-karpathy) as the operator-facing Karpathy / loop-engineering decode. Map leash → verifier, gen-verify speed → cheap checks, autonomy slider → Ceiling + open/closed loop forms. Execution path stays Best path **G1** (goal-judges) then G2/G3 - not a new product. Explicitly **not** planned: AutoResearch / bilevel meta-search clones (train.py experiment runners). Fold the crosswalk into [Agentic-Maturity.md](Agentic-Maturity.md); park the URL under Future-Development Best path.
+- Why: Operator compared articles; gen-verify matches Metra governance better than research-meta write-ups and reduces "do we have the Karpathy loop?" confusion.
+- See: [Agentic-Maturity.md](Agentic-Maturity.md) (Karpathy gen-verify), `docs/Future-Development.local.md` (Best path), prior Agentic maturity / Best path entries
+
+## 2026-08-06 - Ops composer copy (collaborate, not block)
+
+- Decision: Shared composer copy uses collaborative Metra voice without repeating one slogan. Heading: **Where should we start?** Quiet narration: **Clear for now. Toss me an idea whenever.** Busy: **One item ready for review - discuss it, or type what you're thinking.** (plural: discuss one). Placeholder: **Idea, question, or rough draft…** Do not use blocker phrasing such as "What's in the way?"
+- Why: Operator feedback - negative framing undercuts encourage-first presence; repeating "move forward" across heading/narration/placeholder reads as slogan, not desk partnership.
+- See: Ops presence-first correction below, [ops/README.md](../ops/README.md)
+
+## 2026-08-06 - Ops presence-first correction (shared composer)
+
+- Decision: Refine the three-layer Ops desk after operator phone review. **Presence comes before queue hierarchy.** On the primary desk, Metra's mark and one truthful first-person observation lead into a single shared composer. The composer keeps one draft and exposes explicit **Ask** and **Put somewhere** actions; the button selects the destination, so Ask and Place still use separate APIs, ledgers, and success conditions. Attachments remain Put-somewhere-only until Ask image intake ships. Attention follows as a compact expandable count on mobile and an expanded surface by default on wider screens. Ask remains visible first even when items are waiting; workload must not bury portable cognition. Counts support Metra's presence instead of replacing it.
+- Why: The first three-layer implementation was architecturally correct but overfit an operations dashboard. On a phone, Attention pushed the operator's primary use - bouncing ideas with Metra that may become work later - below the fold and made the persona feel like queue chrome. UI review showed that "Attention promotes without hiding Ask" was not satisfied on mobile.
+- See: Ops desk three-layer model below, [ops/README.md](../ops/README.md), [Brand.md](Brand.md) (desk presence mark), Future-Development presence / voice bites
+
+## 2026-08-06 - Ops desk three-layer model
+
+- Decision: Metra Ops is one desk experience built from three layers:
+  1. **Awareness** - shared desk chrome that states countable truth, scan recency, and quiet/busy narration.
+  2. **Work surface** - separate native systems for visible work and not-yet-visible work. Attention is work already visible. Ask is work not visible yet, or not ready to become work.
+  3. **Motion** - quiet handoffs that move context between surfaces without merging stores or lifecycles (Discuss, Capture, Put somewhere, Keep in view). Motion is not automation or "go do the thing."
+  Attention, Ask, and Place/Capture remain separate systems. Metra does not use a single Observation Desk inbox, shared ledger, or unified lifecycle for sensors, conversations, and routing recommendations. The UX should feel like one stop because the awareness strip and handoff actions are shared. Success conditions differ: Attention succeeds when the operator knows what deserves action; Ask when they understand the situation better; Route/Place when Metra recommends where something belongs without creating it automatically. Route belongs to Motion, not the Layer 2 work surface - recommendation-only intake. Design priority: optimize for transitions, not static pixel hierarchy.
+- Why: Bing/Metra design review after Ops soft-gap work; operator needs both flow orientation and phone cognition without merging ledgers.
+- See: [ops/README.md](../ops/README.md), [Brand.md](Brand.md) (desk presence + awareness strip), Ask Session Journal + Capture Decision 2026-08-05, Attention memory Decision 2026-08-05
+
+## 2026-08-06 - Ask continuity soft gaps (summarization + episodic recall)
+
+- Decision: Ship the memory-article soft gaps for Ops Ask without inventing a Universal Memory Engine. (1) **Session summarization** - when a Journal session exceeds keep-recent (default 4) or a char budget, build an extractive summary of older turns and keep recent turns verbatim; inject as labeled Ask-engine context (especially on new engine session / Resume / sidecar revive). (2) **Episodic recall** - deliberate only: `.\metra.ps1 ask get|recall`, `GET /api/ask/journal?sessionId=` / `?q=`, Ops Recent **Resume** and **Recall into Ask** (`recallSessionId` on `POST /api/ask`). Capture Inbox still never auto-loads into Ask or routing. Vectors stay deferred (Bucket E).
+- Why: Operator asked to implement soft gaps now with Ops as the focus; continuity after desk/engine restart and "what did we discuss" needs are already useful.
+- See: [Agentic-Maturity.md](Agentic-Maturity.md) (memory stores crosswalk), [ops/README.md](../ops/README.md), Memory stores alignment 2026-08-06, Ask Session Journal + Capture Decision 2026-08-05
+
+## 2026-08-06 - Memory stores alignment (no product change)
+
+- Decision: Confirm Building Agentic AI [Giving Your Agent Memory](https://buildingagenticai.com/blog/giving-your-agent-memory/) against existing Metra homes. The article's four/five stores map to buffer (in-thread), Journal/Attention (episodic), OCC (preferences), and deferred vectors (semantic) - **not** one memory feature. Keep Portfolio Operations Principles and Ask Session Journal + Capture Inbox unchanged: no Universal Memory Engine; Capture never auto-loads into Ask/routing; promote on affirm; vectors never replace `.\metra.ps1 routing`. Crosswalk only in [Agentic-Maturity.md](Agentic-Maturity.md) under AGENT **N**.
+- Why: Operator check after prior memory work; article validates the split rather than demanding a new store.
+- See: Ask Session Journal + Capture Decision 2026-08-05, Portfolio Operations Principles, [Agentic-Maturity.md](Agentic-Maturity.md) (memory stores crosswalk), Future-Development Bucket E (memory soup / vectors-as-map)
+
+## 2026-08-06 - Production readiness checklist crosswalk
+
+- Decision: Fold Building Agentic AI [The AI Agent Production Readiness Checklist](https://buildingagenticai.com/blog/ai-agent-production-readiness-checklist/) into [Agentic-Maturity.md](Agentic-Maturity.md) as a **crosswalk only** (not a second ladder, not an Ops score): twelve checks in five bands (Scope, Authority, Proof, Operations, Outcome); gate = named answerer + artifact; do not average greens; hard blocks (data access, cost ceilings, security review, deployment ownership) vs compensating controls with retire dates. Map checks to Metra homes (Host write gates, `verify`/G5 eval, G3 traces, G4 caps, AGENTS runbooks, named operator ownership). Use the board when raising autonomy or claiming production-ready; keep risk-proportional for answer-only Ask.
+- Why: Reinforces Metra "visibility not vanity," fail-closed / Host authority, and Best path G3-G5 without inventing a readiness percentage that outvotes one red.
+- See: [Agentic-Maturity.md](Agentic-Maturity.md) (Production readiness checklist), `Future-Development.local.md` (Best path G3-G5 footnotes), prior AGENT / Best path Decisions
+
+## 2026-08-06 - Ollama / SLM system-bottleneck scar
+
+- Decision: Attach Building Agentic AI [When the Small Language Model Isn't the Bottleneck](https://buildingagenticai.com/blog/small-language-model-bottleneck/) as the design scar for Future-Development ladder **1** (Ask engine polish / Ollama swap). After a local model clears an early faithfulness + safety screen, prefer fixing routing, context assembly, realistic eval language, and **code-path** refusals (Host apply, secrets scrub, honest degrade) over repeated model swaps. Non-negotiable guardrails do not rely on the SLM abstaining. Ollama stays one engine behind `GET /health` + `POST /v1/complete`; do not implement until the bite is activated and Bing reviews the plan.
+- Why: Operator asked to park the article on the future Ollama path; the piece matches Metra's route-first / harness-over-model stance and warns against blaming generation for system failures.
+- See: `docs/Future-Development.local.md` (ladder 1, F2 Ollama swap scar), Ask engine Decision 2026-08-01, [Agentic-Maturity.md](Agentic-Maturity.md) (Metra Ops Ask)
+
+## 2026-08-06 - Voice Ask scar (iOS listen mode)
+
+- Decision: Attach Building Agentic AI [Why Voice AI Agents Are Harder Than Chatbots](https://buildingagenticai.com/blog/voice-ai-agents-harder-than-chatbots/) as the design scar for Metra's parked **iOS voice + listen** path (hands-free Ask while driving). Treat voice as a real-time, lossy, single-pass medium - not "Ask chatbot + microphone." Required scars when activated: ~1s streamed STT/Ask/TTS budget, barge-in, noisy-ASR confirmation before irreversible actions, silence/turn-taking, warm handoff into desk Capture/Attention (not contact-center SIP/ACD). Voice remains Ask-class; Host still gates durable writes. Do not build native voice until the parked iOS bite is activated and Bing reviews the plan.
+- Why: Operator asked for full voice/listen on iOS for drive-time use; the article names the failure modes that kill demos that ignore the clock and interruptions.
+- See: `docs/Future-Development.local.md` (Metra iOS + ladder 1d), [Brand.md](Brand.md) (presence `listening`/`speaking`), Ask Session Journal + Capture Decision 2026-08-05
+
 ## 2026-08-06 - Ticket-first watch desk write ladder
 
 - Decision: Metra watch intake may observe TicketTracker changes and create Attention observations while the operator is away. The write ladder is: (1) Attention observation, (2) local draft/note only (opt-in), (3) iSupport recommendation only after operator affirmation, (4) post/resolve/status only after explicit operator review, (5) Live/prod implementation remains outside watch automation. Ticket watch items are observations, not task status. Attention remains continuity memory, not a work-management system. Dismissal stays sticky until the evidence signature changes (ticket Updated timestamp or Status). Ownership: TicketTracker = facts about tickets; Metra = what to notice next. Watch intake code and Attention live in Metra. TicketTracker stays sensor + ticket-ops CLI. Phase 2 affirm UX (Metra) must call TicketTracker `recommend` - no parallel iSupport writer in Metra. Maturity: separate scorecard **Metra ticket watch intake** (Target L3 intake; loop form turn-based CLI / time-based Snapshot; not L4/L5 theater) from **TicketTracker ticket-ops** (L3 turn-based).
 - Why: Operator asked Metra to watch tickets for issues without creating an unattended help desk. Separating intake from ticket mutation keeps durable writes gated and maturity scores honest.
 - See: [Agentic-Maturity.md](Agentic-Maturity.md) (Metra ticket watch intake), `Future-Development.local.md` (F3.x), `.\metra.ps1 watch tickets`, Attention memory Decision 2026-08-05
+
+## 2026-08-06 - AGENT crosswalk and reversibility in maturity model
+
+- Decision: Fold Building Agentic AI [What Counts as Agentic AI](https://buildingagenticai.com/blog/what-counts-as-agentic-ai/) into [Agentic-Maturity.md](Agentic-Maturity.md) as crosswalk only (not a second ladder): AGENT letters (A/G/E technical; N/T deployable), external autonomy 0-5 vs Metra L1-L6 map with explicit "do not equate numbers" warning, and **reversibility routing** (easy-to-undo runs free; irreversible pauses for operator/Host - agent proposes, person disposes). Optional scorecard fields: Reversibility, AGENT notes. Park soft follow-ons in Future-Development: **G4** step/cost caps (runaway loop fence), **G5** ops playbook eval sets (destination + route) - after G1 prove; do not jump Best path queue.
+- Why: Article aligns with Metra "higher is not always better" and write ceilings; crosswalk prevents ladder-number confusion and names the reversibility pattern already embodied in Propose-Confirm-Apply.
+- See: [Agentic-Maturity.md](Agentic-Maturity.md), `Future-Development.local.md` (Best path footnotes G4/G5), prior Best path / Agentic maturity entries
+
+## 2026-08-06 - Best path closes Agentic Engineering gaps
+
+- Decision: After comparing Metra to System Design One [Agentic Engineering](https://newsletter.systemdesign.one/p/agentic-engineering), park a sequenced **Best path** in Future-Development (Arc G): **G1** goal-judges for incomplete L5 playbooks (first); **G2** AGENTS.md as code (lean, human-curated, Makefile discipline); existing procedure skills spike after G2; **G3** agent session tracing last (retrieve Cursor/transcripts before new SaaS). Shared hard offs: skills marketplace, LangSmith-as-product, Ops maturity %, auto-promote from traces. Metra stays ahead on institutional routing and write ceilings; Best path closes goal-judge reliability, config hygiene, and provable L6 - not framework chasing.
+- Why: Operator asked to be at Metra's best; gap close must stay sequenced and demotable vs Arc A.
+- See: `docs/Future-Development.local.md` (Best path), [Agentic-Maturity.md](Agentic-Maturity.md), agent trends glean entry
 
 ## 2026-08-06 - Agentic maturity loop forms by exit
 
@@ -47,7 +159,7 @@ Entry shape:
 - Decision: Ask produces two artifacts only - **Session Journal** (canonical conversation evidence in `docs/ops-ask-log.local.json`) and **Capture Inbox** (thin portfolio intake in `docs/ops-capture.local.json` that references journal/place evidence via immutable `derivedFrom`). Do not invent a Universal Memory Engine or merge OCC + Decision Registry + Decisions + Future Development. Journal stores chrome-stripped operator-facing answers with `sessionId`, `turnIndex`, `origin`, and `client` (`X-Metra-Client`). Capture stores framing + lineage pointers - never a second full transcript. Capture is never auto-loaded into routing, ranking, classification, or Ask prompts. Observation is cheap (Ask-class journal/capture writes from desk/phone/iOS); governance is deliberate (promote on affirm into an existing Portfolio Operations home via CLI/Host - Future Development append is local; OCC/Decision Registry stay candidate-only; tracked policy/AGENTS stay Host/CLI). Keep in view (Attention Hold) is distinct from Save for portfolio (Capture). Cap/rotate is a recent continuity window - not permanent omniscience. Prefer `.\metra.ps1 ask` / `.\metra.ps1 capture` over inventing cross-chat recall. Phone must not write `Decisions.md` / OCC render / AGENTS directly.
 - Why: Thin ask log could reconstruct neither the conversation nor the idea. Operators need remember + save without collapsing intake into always-on memory or collapsing observation into governance.
 - See: `scripts/private/Capture.ps1`, `Add-MetraDeskAskEntry`, `/api/ask` + `/api/capture*`, [ops/README.md](../ops/README.md), [Customizing-Metra.md](Customizing-Metra.md), `AGENTS.md`, [SECURITY.md](../SECURITY.md)
-- Future: native Metra iOS Ask+Capture client against the same HTTP contracts (parked in Future-Development.local.md)
+- Future: native Metra iOS Ask+Capture client against the same HTTP contracts (parked in Future-Development.local.md); voice + listen design scar in Decisions 2026-08-06 Voice Ask scar
 
 ## 2026-08-05 - Route something (portfolio landing zone)
 

@@ -102,8 +102,12 @@ function Get-MetraRoots {
         $isPrimary = [bool](Get-MetraProp -Object $def -Name 'primary' -Default $false)
         if ($isPrimary) { $primarySeen = $true }
 
+        $label = [string](Get-MetraProp -Object $def -Name 'label' -Default '')
+        if ([string]::IsNullOrWhiteSpace($label)) { $label = $rootName }
+
         [PSCustomObject]@{
             Name      = $rootName
+            Label     = $label
             Path      = $fullPath
             RawPath   = $rawPath
             Primary   = $isPrimary
@@ -150,6 +154,313 @@ function Get-ProjectsRoot {
     $primary = @($roots | Where-Object { $_.Primary }) | Select-Object -First 1
     if (-not $primary) { $primary = $roots[0] }
     return $primary.Path
+}
+
+function Get-MetraConfigFilePath {
+    <#
+    .SYNOPSIS
+        Resolves metra.config.json (or legacy meta.config.json) under MetraRoot.
+    #>
+    [CmdletBinding()]
+    param([string]$MetraRoot = (Get-MetraRoot))
+
+    $preferred = Join-Path $MetraRoot 'metra.config.json'
+    $legacy = Join-Path $MetraRoot 'meta.config.json'
+    if (Test-Path -LiteralPath $preferred) { return $preferred }
+    if (Test-Path -LiteralPath $legacy) { return $legacy }
+    throw "Missing config: $preferred (also checked meta.config.json)"
+}
+
+function Clear-MetraConfigCache {
+    if ($script:MetraCache) {
+        $script:MetraCache.Config = $null
+        $script:MetraCache.ConfigPath = $null
+        $script:MetraCache.ConfigLwt = $null
+    }
+}
+
+function Get-MetraSettingsPortfolio {
+    <#
+    .SYNOPSIS
+        Consumer-facing portfolio settings for Ops Settings (roots + Ask key status).
+    .DESCRIPTION
+        Never returns the Cursor API key value - only whether one is present.
+        Roots are a labeled list (name = label); one primary; optional roots may be missing.
+    #>
+    [CmdletBinding()]
+    param([string]$MetraRoot = (Get-MetraRoot))
+
+    $roots = @(Get-MetraRoots -IncludeMissing)
+    $primary = @($roots | Where-Object { $_.Primary }) | Select-Object -First 1
+    if (-not $primary -and $roots.Count -gt 0) { $primary = $roots[0] }
+
+    $apiKeyPresent = $false
+    if (Get-Command Get-MetraCursorApiKey -ErrorAction SilentlyContinue) {
+        $apiKeyPresent = -not [string]::IsNullOrWhiteSpace((Get-MetraCursorApiKey))
+    }
+
+    $rootRows = @(
+        foreach ($r in $roots) {
+            $label = [string](Get-MetraProp -Object $r -Name 'Label' -Default '')
+            if ([string]::IsNullOrWhiteSpace($label)) { $label = [string]$r.Name }
+            [PSCustomObject]@{
+                name     = [string]$r.Name
+                label    = $label
+                path     = [string]$r.Path
+                rawPath  = [string]$r.RawPath
+                primary  = [bool]$r.Primary
+                optional = [bool]$r.Optional
+                cloud    = [bool]$r.Cloud
+                exists   = [bool]$r.Exists
+            }
+        }
+    )
+
+    return [PSCustomObject]@{
+        metraRoot    = $MetraRoot
+        primaryPath  = $(if ($primary) { [string]$primary.Path } else { '' })
+        # Compat: first optional / personal-named root path (older Settings UI).
+        personalPath = $(
+            $p = @($roots | Where-Object {
+                    $_.Optional -or ($_.Name -and $_.Name.ToLowerInvariant() -eq 'personal')
+                }) | Select-Object -First 1
+            if ($p) { [string]$p.Path } else { '' }
+        )
+        hint         = 'Each folder is a parent that contains project folders. Give each a label (Work, Personal, Lab). Mark one as primary; optional folders may be offline.'
+        roots        = $rootRows
+        ask          = [PSCustomObject]@{
+            apiKeyPresent = [bool]$apiKeyPresent
+        }
+    }
+}
+
+function ConvertTo-MetraRootNameSlug {
+    param([Parameter(Mandatory)][string]$Label)
+    $slug = ($Label.Trim().ToLowerInvariant() -replace '[^a-z0-9]+', '-').Trim('-')
+    if ([string]::IsNullOrWhiteSpace($slug)) { $slug = 'root' }
+    return $slug
+}
+
+function Save-MetraSettingsPortfolio {
+    <#
+    .SYNOPSIS
+        Updates consumer portfolio settings (labeled project roots and optional Cursor Ask key).
+    .DESCRIPTION
+        Preferred input is -Roots (name/label, path, primary, optional). Legacy -PrimaryPath /
+        -PersonalPath still work. Writes metra.config.json. Primary folder must exist; optional
+        folders may be missing. Extra root fields (registry, cloud, …) are preserved when the
+        root name matches an existing entry.
+    #>
+    [CmdletBinding()]
+    param(
+        [object[]]$Roots,
+        [string]$PrimaryPath,
+        [string]$PersonalPath,
+        [switch]$ClearPersonal,
+        [string]$CursorApiKey,
+        [switch]$ClearCursorApiKey,
+        [string]$MetraRoot = (Get-MetraRoot)
+    )
+
+    $touchedRoots = $false
+    $hasRootsPayload = $PSBoundParameters.ContainsKey('Roots') -and $null -ne $Roots
+    $hasLegacy = -not [string]::IsNullOrWhiteSpace($PrimaryPath) -or
+        $PSBoundParameters.ContainsKey('PersonalPath') -or $ClearPersonal
+
+    if ($hasRootsPayload -or $hasLegacy) {
+        $touchedRoots = $true
+        $configPath = Get-MetraConfigFilePath -MetraRoot $MetraRoot
+        $cfg = Get-Content -Raw -LiteralPath $configPath | ConvertFrom-Json
+        $existing = @(@(Get-MetraProp -Object $cfg -Name 'roots' -Default @()))
+        $existingByName = @{}
+        foreach ($d in $existing) {
+            $n = [string](Get-MetraProp -Object $d -Name 'name' -Default '')
+            if ($n) { $existingByName[$n.ToLowerInvariant()] = $d }
+        }
+
+        $incoming = @()
+        if ($hasRootsPayload) {
+            $incoming = @($Roots)
+        }
+        else {
+            # Legacy two-field Settings -> roots list.
+            $workPath = $PrimaryPath
+            if ([string]::IsNullOrWhiteSpace($workPath)) {
+                $prim = @($existing | Where-Object { [bool](Get-MetraProp -Object $_ -Name 'primary' -Default $false) }) |
+                    Select-Object -First 1
+                if (-not $prim -and $existing.Count -gt 0) { $prim = $existing[0] }
+                $workPath = if ($prim) { [string](Get-MetraProp -Object $prim -Name 'path' -Default '') } else { '' }
+            }
+            $incoming += [PSCustomObject]@{
+                name     = 'work'
+                label    = 'Work'
+                path     = $workPath
+                primary  = $true
+                optional = $false
+            }
+            $keepPersonal = -not $ClearPersonal -and (
+                ($PSBoundParameters.ContainsKey('PersonalPath') -and -not [string]::IsNullOrWhiteSpace($PersonalPath)) -or
+                (-not $PSBoundParameters.ContainsKey('PersonalPath') -and (
+                        @($existing | Where-Object {
+                                [bool](Get-MetraProp -Object $_ -Name 'optional' -Default $false) -or
+                                ([string](Get-MetraProp -Object $_ -Name 'name' -Default '')).ToLowerInvariant() -eq 'personal'
+                            }).Count -gt 0
+                    ))
+            )
+            if ($keepPersonal) {
+                $pPath = $PersonalPath
+                if ([string]::IsNullOrWhiteSpace($pPath)) {
+                    $oldP = @($existing | Where-Object {
+                            [bool](Get-MetraProp -Object $_ -Name 'optional' -Default $false) -or
+                            ([string](Get-MetraProp -Object $_ -Name 'name' -Default '')).ToLowerInvariant() -eq 'personal'
+                        }) | Select-Object -First 1
+                    $pPath = if ($oldP) { [string](Get-MetraProp -Object $oldP -Name 'path' -Default '') } else { '' }
+                }
+                if (-not [string]::IsNullOrWhiteSpace($pPath)) {
+                    $incoming += [PSCustomObject]@{
+                        name     = 'personal'
+                        label    = 'Personal'
+                        path     = $pPath
+                        primary  = $false
+                        optional = $true
+                    }
+                }
+            }
+        }
+
+        if ($incoming.Count -eq 0) {
+            throw 'At least one projects folder is required.'
+        }
+
+        $built = [System.Collections.Generic.List[object]]::new()
+        $usedNames = [System.Collections.Generic.HashSet[string]]::new([StringComparer]::OrdinalIgnoreCase)
+        $primaryCount = 0
+
+        foreach ($row in $incoming) {
+            $label = [string](Get-MetraProp -Object $row -Name 'label' -Default '')
+            if ([string]::IsNullOrWhiteSpace($label)) {
+                $label = [string](Get-MetraProp -Object $row -Name 'name' -Default '')
+            }
+            $label = $label.Trim()
+            if ([string]::IsNullOrWhiteSpace($label)) {
+                throw 'Each projects folder needs a label.'
+            }
+
+            $name = [string](Get-MetraProp -Object $row -Name 'name' -Default '').Trim()
+            if ([string]::IsNullOrWhiteSpace($name) -or $name -match '\s') {
+                $name = ConvertTo-MetraRootNameSlug -Label $label
+            }
+            $baseName = $name
+            $n = 2
+            while (-not $usedNames.Add($name)) {
+                $name = "$baseName-$n"
+                $n++
+            }
+
+            $rawPath = [string](Get-MetraProp -Object $row -Name 'path' -Default '').Trim()
+            if ([string]::IsNullOrWhiteSpace($rawPath)) {
+                throw "Projects folder '$label' needs a path."
+            }
+            $expanded = [System.IO.Path]::GetFullPath(
+                [System.Environment]::ExpandEnvironmentVariables($rawPath)
+            )
+            $isPrimary = [bool](Get-MetraProp -Object $row -Name 'primary' -Default $false)
+            $isOptional = [bool](Get-MetraProp -Object $row -Name 'optional' -Default $false)
+            if ($isPrimary) { $primaryCount++; $isOptional = $false }
+
+            if ($isPrimary -and -not (Test-Path -LiteralPath $expanded)) {
+                throw "Primary projects folder not found: $expanded"
+            }
+            if (-not $isOptional -and -not (Test-Path -LiteralPath $expanded)) {
+                throw "Projects folder '$label' not found: $expanded"
+            }
+
+            $prev = $null
+            if ($existingByName.ContainsKey($name)) { $prev = $existingByName[$name] }
+            elseif ($existingByName.ContainsKey($baseName)) { $prev = $existingByName[$baseName] }
+            if (-not $prev) {
+                foreach ($cand in $existing) {
+                    $candPath = [string](Get-MetraProp -Object $cand -Name 'path' -Default '')
+                    if ([string]::IsNullOrWhiteSpace($candPath)) { continue }
+                    try {
+                        $candFull = [System.IO.Path]::GetFullPath(
+                            [System.Environment]::ExpandEnvironmentVariables($candPath)
+                        )
+                        if ($candFull.Equals($expanded, [StringComparison]::OrdinalIgnoreCase)) {
+                            $prev = $cand
+                            break
+                        }
+                    }
+                    catch { }
+                }
+            }
+
+            $def = [ordered]@{
+                name     = $name
+                path     = $expanded
+                primary  = $isPrimary
+                optional = $isOptional
+                label    = $label
+            }
+
+            # Preserve operator/registry topology from the previous entry when present.
+            if ($prev) {
+                foreach ($keep in @('cloud', 'scanDepth', 'audit', 'registry', 'registryFile', 'exclude')) {
+                    $val = Get-MetraProp -Object $prev -Name $keep -Default $null
+                    if ($null -ne $val -and -not $def.Contains($keep)) {
+                        $def[$keep] = $val
+                    }
+                }
+            }
+            elseif ($isOptional) {
+                $def['cloud'] = [bool](Get-MetraProp -Object $row -Name 'cloud' -Default $true)
+                $def['registry'] = 'local'
+            }
+            else {
+                $def['registry'] = 'shared'
+            }
+
+            [void]$built.Add([PSCustomObject]$def)
+        }
+
+        if ($primaryCount -eq 0) {
+            $built[0].primary = $true
+            $built[0].optional = $false
+        }
+        elseif ($primaryCount -gt 1) {
+            $seen = $false
+            foreach ($d in $built) {
+                if ($d.primary -and -not $seen) { $seen = $true }
+                elseif ($d.primary) { $d.primary = $false }
+            }
+        }
+
+        $primaryPathOut = [string](@($built | Where-Object { $_.primary })[0].path)
+        $cfg.roots = @($built.ToArray())
+        if ($null -eq $cfg.PSObject.Properties['projectsRoot']) {
+            $cfg | Add-Member -NotePropertyName projectsRoot -NotePropertyValue $primaryPathOut -Force
+        }
+        else {
+            $cfg.projectsRoot = $primaryPathOut
+        }
+        $json = $cfg | ConvertTo-Json -Depth 12
+        Set-Content -LiteralPath $configPath -Value $json -Encoding UTF8
+        Clear-MetraConfigCache
+    }
+
+    if ($ClearCursorApiKey) {
+        $null = Set-MetraCursorApiKey -ApiKey 'x' -Clear
+    }
+    elseif (-not [string]::IsNullOrWhiteSpace($CursorApiKey)) {
+        $null = Set-MetraCursorApiKey -ApiKey $CursorApiKey
+    }
+
+    $portfolio = Get-MetraSettingsPortfolio -MetraRoot $MetraRoot
+    return [PSCustomObject]@{
+        ok         = $true
+        rootsSaved = [bool]$touchedRoots
+        portfolio  = $portfolio
+    }
 }
 
 function Test-MetraSelfFolderName {

@@ -107,9 +107,101 @@ export function putPreferences(
   }).then((r) => parseJson<Preferences>(r))
 }
 
-export function dismissAttention(key: string): Promise<DeskPayload> {
+export function fetchAskEngine(): Promise<import('./types').AskEnginePanel> {
+  return fetch('/api/ask/engine').then((r) => parseJson(r))
+}
+
+export async function postAskEngineSet(engine: string, sizeBand?: string): Promise<{ ok: boolean; capability?: import('./types').AskCapability }> {
+  const token = await ensureLocalSessionToken()
+  return fetch(
+    '/api/ask/engine',
+    withSessionHeaders(
+      {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ action: 'set', engine, sizeBand }),
+      },
+      token,
+    ),
+  ).then((r) => parseJson(r))
+}
+
+export async function postAskEngineAccept(): Promise<{ ok: boolean }> {
+  const token = await ensureLocalSessionToken()
+  return fetch(
+    '/api/ask/engine',
+    withSessionHeaders(
+      {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ action: 'accept' }),
+      },
+      token,
+    ),
+  ).then((r) => parseJson(r))
+}
+
+export function fetchSettings(): Promise<import('./types').SettingsPortfolio> {
+  return fetch('/api/settings').then((r) => parseJson(r))
+}
+
+export async function putSettings(body: {
+  roots?: import('./types').SettingsRootInput[]
+  primaryPath?: string
+  personalPath?: string
+  clearPersonal?: boolean
+  cursorApiKey?: string
+  clearCursorApiKey?: boolean
+}): Promise<import('./types').SettingsSaveResult> {
+  const token = await ensureLocalSessionToken()
+  return fetch(
+    '/api/settings',
+    withSessionHeaders(
+      {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(body),
+      },
+      token,
+    ),
+  ).then((r) => parseJson(r))
+}
+
+export function fetchUpdates(force = false): Promise<import('./types').ProductUpdates> {
+  const q = force ? '?force=1' : ''
+  return fetch(`/api/updates${q}`).then((r) => parseJson(r))
+}
+
+export async function postProductUpdate(
+  target: 'metra' | 'ollama',
+): Promise<import('./types').ProductUpdateResult> {
+  const token = await ensureLocalSessionToken()
+  return fetch(
+    '/api/updates',
+    withSessionHeaders(
+      {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ target }),
+      },
+      token,
+    ),
+  ).then((r) => parseJson(r))
+}
+
+export function dismissAttention(key: string, note?: string): Promise<DeskPayload> {
   return fetch(`/api/attention/${encodeURIComponent(key)}/dismiss`, {
     method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(note ? { note } : {}),
+  }).then((r) => parseJson<DeskPayload>(r))
+}
+
+export function noteAttention(key: string, note: string): Promise<DeskPayload> {
+  return fetch(`/api/attention/${encodeURIComponent(key)}/note`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ note }),
   }).then((r) => parseJson<DeskPayload>(r))
 }
 
@@ -139,7 +231,11 @@ export function releaseAttention(key: string): Promise<DeskPayload> {
   }).then((r) => parseJson<DeskPayload>(r))
 }
 
-export function postAsk(prompt: string, sessionId?: string | null): Promise<AskResult> {
+export function postAsk(
+  prompt: string,
+  sessionId?: string | null,
+  recallSessionId?: string | null,
+): Promise<AskResult> {
   return fetch('/api/ask', {
     method: 'POST',
     headers: {
@@ -149,10 +245,23 @@ export function postAsk(prompt: string, sessionId?: string | null): Promise<AskR
     body: JSON.stringify({
       prompt,
       sessionId: sessionId || undefined,
+      recallSessionId: recallSessionId || undefined,
       client: 'ops-web',
       clientHint: /Mobi|Android|iPhone/i.test(navigator.userAgent) ? 'phone' : 'desktop',
     }),
   }).then((r) => parseJson(r))
+}
+
+export type AskJournalSessionPayload = {
+  sessionId: string
+  turnCount: number
+  continuity?: import('./types').AskContinuity | null
+  turns: import('./types').AskEntry[]
+}
+
+export function fetchAskJournalSession(sessionId: string): Promise<AskJournalSessionPayload> {
+  const q = new URLSearchParams({ sessionId })
+  return fetch(`/api/ask/journal?${q}`).then((r) => parseJson(r))
 }
 
 export function postCaptureFromAsk(

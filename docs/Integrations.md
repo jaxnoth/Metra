@@ -28,6 +28,7 @@ flowchart LR
 | Agent entry docs | this repo's `AGENTS.md` + each project's `AGENTS.md` |
 | Durable Metra decisions | [Decisions.md](Decisions.md) (append-only; prefer before transcript dig) |
 | Ask journal / Capture CLI | `.\metra.ps1 ask sessions`, `.\metra.ps1 capture list` |
+| Ask engine (Ollama recommend) | `.\metra.ps1 ask recommend`, `ask accept`, `ask engine show|set`, `ask key set` |
 | Routing smoke | `.\metra.ps1 verify` |
 
 ## What Cursor adds

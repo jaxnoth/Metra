@@ -25,10 +25,19 @@
   "templatesDir": "templates",
   "ask": {
     "enabled": true,
-    "engine": "cursor",
+    "engine": "ollama",
+    "ollama": {
+      "baseUrl": "http://127.0.0.1:11434",
+      "model": "qwen2.5:7b",
+      "sizeBand": "medium"
+    },
     "cursor": {
       "port": 7381,
       "model": "composer-2.5"
+    },
+    "llamacpp": {
+      "baseUrl": "http://127.0.0.1:8080",
+      "model": "qwen2.5:14b"
     }
   },
   "workspace": {

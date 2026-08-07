@@ -211,6 +211,35 @@ function Invoke-MetraSetup {
         }
     }
 
+    $askAccept = $null
+    if (-not $Quiet -and -not $Preview) {
+        try {
+            $rec = Get-MetraAskEngineRecommendation -MetraRoot $metraRoot
+            Write-Host ''
+            Write-Host 'Ask engine (recommended for this PC):' -ForegroundColor Cyan
+            Write-Host ("  {0}" -f $rec.summary)
+            Write-Host '  Accept installs Ollama when needed, pulls the model, and verifies Ask.'
+            $answer = Read-Host '  Use recommended Ask settings now? [Y/n]'
+            if ([string]::IsNullOrWhiteSpace($answer) -or $answer -match '^(?i)y') {
+                Write-Host '  Accepting recommended Ask settings (may take several minutes)...' -ForegroundColor DarkGray
+                $askAccept = Invoke-MetraAskAcceptRecommended -MetraRoot $metraRoot
+                if ($askAccept.ok) {
+                    Write-Host '  Ask ready.' -ForegroundColor Green
+                }
+                else {
+                    Write-Warning ("Ask accept incomplete: {0}" -f ($(if ($askAccept.capability) { $askAccept.capability.reason } else { 'see steps' })))
+                    Write-Host '  Retry later: .\metra.ps1 ask accept'
+                }
+            }
+            else {
+                Write-Host '  Skipped. Later: .\metra.ps1 ask recommend  then  .\metra.ps1 ask accept'
+            }
+        }
+        catch {
+            Write-Warning "Ask recommend/accept skipped: $($_.Exception.Message)"
+        }
+    }
+
     if (-not $Quiet) {
         Write-Host ''
         Write-Host 'Next:' -ForegroundColor Yellow
@@ -218,6 +247,7 @@ function Invoke-MetraSetup {
         Write-Host '  - Edit metra.config.json roots / alwaysInclude if paths differ, then: .\metra.ps1 setup'
         Write-Host '  - Optional personal/cloud root snippets: docs/Customizing-Metra.md'
         Write-Host '  - If using Cursor: set operator display name in .cursor/rules/metra-persona.local.mdc'
+        Write-Host '  - Ask: .\metra.ps1 ask accept   (Ollama recommended) or Advanced Cursor via ask engine set cursor'
         Write-Host '  - Front door: Start Menu Metra Ops (or .\metra.ps1 host)'
         if ($deskBinding -and $deskBinding.Binding) {
             Write-Host ("  - Ops desk URL: {0}" -f $deskBinding.Binding.BrowserUrl)
@@ -236,6 +266,7 @@ function Invoke-MetraSetup {
         ContextPack     = $ctxResult
         StartMenu       = $startMenu
         DeskBinding     = $deskBinding
+        AskAccept       = $askAccept
     }
 }
 

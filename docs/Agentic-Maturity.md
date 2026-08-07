@@ -6,7 +6,7 @@ This is a **workflow governance** model. It asks how complete the system around 
 
 **Completeness** here means: the workflow reliably reaches its **declared target level** with the evidence and gates that level requires. Higher is not always better. Maxing every workflow to L6 is usually wrong.
 
-Related: [Decisions.md](Decisions.md) (portfolio policy), [Context-Routing.md](Context-Routing.md) (route-first harness), [Integrations.md](Integrations.md) (engines and MCP), gitignored `Future-Development.local.md` (parking lot).
+Related: [Decisions.md](Decisions.md) (portfolio policy), [Context-Routing.md](Context-Routing.md) (route-first harness), [Integrations.md](Integrations.md) (engines and MCP), gitignored `Future-Development.local.md` (parking lot / Best path). External decode aids: [What Counts as Agentic AI](https://buildingagenticai.com/blog/what-counts-as-agentic-ai/), [The AI Agent Production Readiness Checklist](https://buildingagenticai.com/blog/ai-agent-production-readiness-checklist/), [Agentic Engineering](https://newsletter.systemdesign.one/p/agentic-engineering), [Karpathy-style gen-verify loop](https://www.aibuilderclub.com/blog/loop-engineering-karpathy) - crosswalks only; Metra L-numbers win in scorecards.
 
 ---
 
@@ -112,6 +112,109 @@ How this maps to maturity:
 
 Starting a loop is easy. Teaching the stop is the product scar - same reason On hard stop and fail-closed exist.
 
+### Karpathy gen-verify loop (preferred crosswalk)
+
+Preferred external decode for **loop engineering** language: [Loop Engineering, Karpathy-Style: The Gen-Verify Loop](https://www.aibuilderclub.com/blog/loop-engineering-karpathy) (AI Builder Club). Crosswalk only - **do not** rename Metra L-numbers or invent an AutoResearch product.
+
+Core mechanic: **generate → verify → correct**. Throughput is set by how fast verification runs, not by longer prompts. Three Karpathy positions map cleanly:
+
+| Their idea | Metra home |
+|------------|------------|
+| Leash = verifier (human first, then automated) | Done-when / goal-judge; `verify`; Host Propose-Confirm-Apply; re-check after Clear |
+| Speed the verify half | Cheap CLI filters, tests, plain Attention - not prompt bloat |
+| Autonomy slider (suggest → supervised → unattended) | Ceiling + loop forms: turn-based (open) → goal-based L5 (closed); durable writes stay gated |
+
+Open loop = human closes every cycle. Closed loop = machine check closes it. **Earn the slide right** by strengthening the verifier first - same scar as Best path G1 before G3/G4 and "do not grant L5 for a timer."
+
+**Not this home:** AutoResearch / bilevel meta-search write-ups (train.py experiment runners, outer loops that rewrite search code). Those may inform research tooling elsewhere; they are not Metra's planned L6 path. Prefer this gen-verify article when operators ask "do we have the Karpathy loop?"
+
+### AGENT framework (crosswalk, not a second ladder)
+
+External vocabulary from [What Counts as Agentic AI](https://buildingagenticai.com/blog/what-counts-as-agentic-ai/) (Building Agentic AI). Use it to decode vendor claims. **Do not renumber Metra L1-L6 to match.**
+
+One-line test (theirs and ours): **who decides the steps?** Human every turn = chatbot/assistant. Developer in advance = workflow. Model at runtime toward a goal = agentic. Most production Metra surfaces *should* stay workflows or turn-based assistants; climb only when the path genuinely varies.
+
+| Letter | Meaning | Technically agent? | Metra home |
+|--------|---------|--------------------|------------|
+| **A** | Adaptive loop (reason, act, observe, adapt) | Required | Cursor coding peaks; playbook loops when G1 judges run |
+| **G** | Goal across steps (not one Q&A) | Required | Done-when / Target on scorecards; Best path G1 |
+| **E** | Environment tools (read and change) | Required | Project CLI, modules, optional MCP (honest when absent) |
+| **N** | Notes / state across steps | Deployable | Portfolio homes: Journal, Capture, Decision Registry, OCC, files - not memory soup. See memory stores crosswalk below |
+| **T** | Tripwires (stops, guardrails, human path) | Deployable | Ceiling, On hard stop, Host Propose-Confirm-Apply, root isolation, professional sink |
+
+**A+G+E** = technically an agent. **N+T** = agent you can deploy. Metra as product is strongest on **N+T** and institutional routing; agentic *behavior* is earned when a workflow's Current reaches goal-based L5/L6 inside that fence.
+
+Naming discipline: do not call Ops Ask or a fixed playbook "the agent" when it is a chatbot or workflow. Call Cursor sessions agentic only when the model decides multi-step paths toward a declared goal.
+
+### Memory stores crosswalk (not a product change)
+
+External vocabulary from [Giving Your Agent Memory](https://buildingagenticai.com/blog/giving-your-agent-memory/) (Building Agentic AI). Confirms Metra's existing split; **do not invent a Universal Memory Engine.**
+
+| Their store | Lifetime | Metra home |
+|-------------|----------|------------|
+| Conversation buffer | This turn / task | Cursor/Ask in-thread messages; not a Metra durable store |
+| Summarization | This task (compress) | Extractive Ask session summary from Session Journal when older turns exceed keep-recent (labeled in engine prompt; Ops shows when used) |
+| Episodic | Past sessions | Session Journal (`ops-ask-log`); Attention (continuity); Ops Resume / Recall; `.\metra.ps1 ask get\|recall`; place memory; `chats` / transcripts on demand |
+| Semantic (vector corpus) | Large searchable facts | **Deferred** - routing + `ctx` + files first; vectors only soft-assist after hard triggers (Bucket E / Future-Dev) |
+| Key-value preferences | Durable soft facts | OCC (`profile`); operator overlay - promote on affirm, cap 20 |
+
+Article rules Metra already follows: separate stores by job; no vector DB from day one; durable writes are explicit (Capture / promote / Host) - Capture never silent into Ask prompts; scope by operator machine / Ask-class vs Host (same isolation idea as their `user_id` rule). Observation cheap, governance deliberate. Soft gaps shipped for Ops: summarization + explicit episodic recall - still not a Universal Memory Engine.
+
+### Autonomy ladder (external) vs Metra L1-L6
+
+Their autonomy rungs (0-5) are **tradeoff dials**, not maturity prestige. Map roughly; never equate level numbers in chat without saying which ladder.
+
+| Their autonomy rung | Rough Metra map |
+|---------------------|-----------------|
+| 0 Prompt in / out | L1 Basic |
+| 1 Tools, human drives every step | L3 turn-based (assistant) |
+| 2 Workflow + bounded model choices | Playbooks / Ask classify - good default |
+| 3 Real agent (plans, loops to goal) | L5 goal-based / L6 harness loop |
+| 4 Multi-agent or long-running | L4 + proactive/time-based watch |
+| 5 High autonomy, rare and risky | Proactive + unsupervised writes - **refuse** without allowlist |
+
+Senior move on both ladders: default to the **lowest rung that works**. Higher is not always better.
+
+### Reversibility routing (tripwire pattern)
+
+Load-bearing safety pattern (same article): sort each proposed action by undoability.
+
+| Easy to reverse | Hard to reverse |
+|-----------------|-----------------|
+| Read ticket / `brief`, draft reply, catalog filter, `-WhatIf` | `post` / `resolve`, TranDb Clear, Live `Stop-ColleagueSession`, Host apply, customer email |
+
+**Rule:** reversible actions may run in the loop; irreversible actions **pause** for operator or Host. The agent proposes; a person (or Host confirm) disposes. Scorecard **Ceiling** often encodes this - prefer stating it explicitly when documenting a workflow (e.g. "Clear = irreversible; health check = free").
+
+### Production readiness checklist (crosswalk, not a second ladder)
+
+External gate from [The AI Agent Production Readiness Checklist](https://buildingagenticai.com/blog/ai-agent-production-readiness-checklist/) (Building Agentic AI). Use when raising autonomy, shipping a new agentic surface, or claiming a workflow is production-ready. **Do not replace Metra L1-L6 or invent an Ops readiness percentage.**
+
+Rules that transfer as-is:
+
+1. **Gate, not to-do** - named answerer + **artifact** (eval run, permission matrix, runbook page). A slide nod is not green.
+2. **Do not average** - eleven greens and one red is not 92% ready. Aligns with Metra "visibility, not vanity scores."
+3. **Risk-proportional evidence** - read-only Ask needs less proof than anything that can mutate systems of record.
+4. **Hard blocks vs compensating controls** - some reds can ship behind a dated, named control (thin eval + human approve every write). Four hard blocks cannot: **data access**, **cost ceilings**, **security review**, **deployment ownership**.
+
+Twelve checks mapped to Metra homes:
+
+| Band | Check | Metra artifact / home |
+|------|-------|------------------------|
+| Scope | Use case fit | Scorecard Target + Ceiling + blast radius; Future-Dev bite notes |
+| Scope | Data access | Root isolation; Ask-class vs Host; preferred/exclude paths; structural deny of Live write surfaces |
+| Authority | Tool permissions | Propose-Confirm-Apply; module `-WhatIf` / Confirm; no browser apply |
+| Authority | Human approval | Operator ask for `post`/`resolve`/Live kill/Clear; Host Apply |
+| Authority | Cost ceilings | Best path **G4** - cap in code, not policy prose |
+| Proof | Eval coverage | `metra.ps1 verify` / Routing-Scenarios; Best path **G5** playbook fixtures |
+| Proof | Security review | [SECURITY.md](../SECURITY.md); secrets scrub; Tailscale reach vs authority |
+| Operations | Observability | Best path **G3** - run trace (intent, tools, ctx, outcome), not status codes alone |
+| Operations | Fallbacks | On hard stop; honest degrade; fail closed; never blind-retry irreversible writes |
+| Operations | Runbook | Project `AGENTS.md`; kill switch first (stop Host/ops/engine) |
+| Outcome | Deployment ownership | Named operator accountable after go-live (not "the AI team") |
+| Outcome | Success metrics | Completeness vs Target; pair run counts with real outcomes |
+
+When a Metra workflow claims higher autonomy (Target L5/L6 or unattended watch), run this board before calling it production-ready. Compensating controls are loans with a retire date - not permanent waivers.
+
 ### Anti-patterns (do not inflate the score)
 
 - Calling it L6 because the chat was long or the agent "thought hard."
@@ -122,6 +225,11 @@ Starting a loop is easy. Teaching the stop is the product scar - same reason On 
 - Treating "tool returned 200" as authoritative when the playbook needs independent signals.
 - Calling it goal-based (L5) when the exit was only a timer (time-based) or "I looked at it" (turn-based human skim).
 - Calling proactive unattended loops "complete" without a write ceiling and allowlisted actions.
+- Calling a chatbot, static RAG, or fixed playbook "agentic" because it uses an LLM or one tool.
+- Equating Metra L-numbers with an external autonomy ladder without naming which ladder.
+- Letting irreversible actions run free because "the loop decided."
+- Averaging a production-readiness checklist into a ship percentage (one hard-block red holds the launch).
+- Treating a meeting nod as a green check (no artifact, no named answerer).
 
 ---
 
@@ -143,6 +251,8 @@ Copy per workflow (project playbook, Future-Development bite, or plan):
 | Evidence (current) | <commands, docs, tests, runbook steps> |
 | On hard stop | what failed; where evidence; next operator action (L5/L6 targets) |
 | Loop form (optional) | turn-based / goal-based / time-based / proactive - pick by exit |
+| Reversibility (optional) | which acts are free vs pause-for-human |
+| AGENT notes (optional) | which of A/G/E/N/T are strong or missing |
 | Gaps to target | 1. ... 2. ... |
 | Next bite | <one concrete change> |
 ```
@@ -198,7 +308,7 @@ Filled **2026-08-06**. Loop-form annotations added same day (TikTok glean). Revi
 | Loop form | turn-based |
 | Evidence (current) | Route-first Ask engine (`engines/cursor`, Decisions 2026-08-01); Classify/routing before answer; desk retrieves from existing homes; honesty when engine/bindings absent; no browser apply |
 | On hard stop | Engine/bindings absent: say so; do not invent live systems; next: open Cursor or CLI for builds |
-| Gaps to target | none for L3. Optional hardening (not a level gap): Ask secrets scrub (Future-Development parked) |
+| Gaps to target | none for L3 |
 | Next bite | Ask polish / Ollama when activated - stay at Target L3 unless answer-only ceiling moves |
 
 ### Workflow: Metra route-first coding session
@@ -296,10 +406,11 @@ Do not call this L4 (no specialist merge). Do not grant L5 because Snapshot or H
 | Ceiling reason | policy |
 | Completeness | incomplete |
 | Evidence quality | adequate (one technical CLI surface); authoritative when playbook multi-signal checks run |
-| Evidence (current) | Ticket-ops vs investigate classification; one technical project via registry; return outcomes to TicketTracker; Colleague/Jitterbit/Solarwinds playbooks as tool surfaces |
+| Evidence (current) | Ticket-ops vs investigate classification; one technical project via registry; return outcomes to TicketTracker; Colleague/Jitterbit playbooks with done-when; TicketTracker AGENTS done-when for investigate hop (2026-08-06 G1) |
 | On hard stop | Investigate criterion unmet; cite session/health/command output (or ticket `note`); next: return to TicketTracker with fail-closed handoff - do not `post` success |
-| Gaps to target | 1. Explicit investigate done-when (evidence checklist) before leaving the technical project. 2. Retry/re-query bound when session/health checks flake. 3. Fail-closed handoff text when Live evidence cannot be obtained. 4. Recovery triplet on every hard stop |
-| Next bite | Per playbook: add a short "done-when" block (e.g. Colleague: session list + process filter empty or stack reviewed) |
+| Loop form | turn-based today; target goal-based (technical playbook done-when) |
+| Gaps to target | 1. Prove done-when on next live investigate hop (practice, not docs). 2. Bound retry when session/health flakes. |
+| Next bite | Next ticket+investigate: enforce done-when before leaving technical project; then G2 AGENTS-as-code |
 
 ### Workflow: Jitterbit stuck-ops
 
@@ -312,10 +423,10 @@ Do not call this L4 (no specialist merge). Do not grant L5 because Snapshot or H
 | Completeness | incomplete |
 | Evidence quality | adequate today; authoritative when health + TranDb agree after action |
 | Loop form | turn-based today; target goal-based (judge = health + TranDb after Clear) |
-| Evidence (current) | Playbook in `IWU.Jitterbit/README.md` + project `AGENTS.md`: `Find-JitterbitStuckOperation` -> `Get-JitterbitAgentHealth` -> `Stop-JitterbitOperation` -> TranDb get/clear with `-WhatIf`; CredSSP via CredentialHelper |
+| Evidence (current) | Playbook + done-when/On hard stop in `IWU.Jitterbit/README.md` and `Jitterbit/AGENTS.md` (2026-08-06 G1): Find -> Health -> Stop -> TranDb get/clear; post-check health + Harmony + TranDb |
 | On hard stop | PE down or counts not improved; cite health/TranDb tables; next: operator fixes PE or confirms Clear - never soft-cancel live work blindly |
-| Gaps to target | 1. Machine-checkable success (health + TranDb counts after clear). 2. Ordered retry when Harmony list/health flakes, with bound. 3. Fail-closed when PE down - partially documented, not agent-enforced. 4. Document recovery triplet as done-when |
-| Next bite | After Clear: re-run `Get-JitterbitAgentHealth` + TranDb preview; document pass criteria in README as done-when |
+| Gaps to target | 1. Prove judges on next live stuck-ops run. 2. Bound retry when Harmony/health flakes. |
+| Next bite | Next stuck-ops: refuse "complete" until post-check passes; then G2 |
 
 ### Workflow: Jitterbit agent go-live
 
@@ -343,10 +454,10 @@ Do not call this L4 (no specialist merge). Do not grant L5 because Snapshot or H
 | Completeness | incomplete |
 | Evidence quality | adequate (`Get-ColleagueSession -FullName`); authoritative when session + process filter agree |
 | Loop form | turn-based today; target goal-based (judge = session gone or lock owner named) |
-| Evidence (current) | Colleague `AGENTS.md` triage: `brief` then `Get-ColleagueSession -FullName`, optional `Get-ColleagueUdtProcess`, classify old vs fresh vs none; module cmdlets over ad-hoc telnet |
+| Evidence (current) | Colleague `AGENTS.md` triage + done-when/On hard stop (2026-08-06 G1): `brief` then `Get-ColleagueSession -FullName`, optional process filter, classify old vs fresh vs none |
 | On hard stop | No killable session or unknown lock file; cite session/process output; next: ask operator which control record to clear - fail closed, do not invent a generic clear |
-| Gaps to target | 1. Done-when checklist (session gone or lock owner named). 2. Bound retry when `Show-ColleagueCallStack` / telnet flakes. 3. Fail-closed ask to operator when no clear-in-use helper exists for the mnemonic |
-| Next bite | Add done-when bullets to the stuck-process section in Colleague `AGENTS.md` |
+| Gaps to target | 1. Prove done-when on next Live stuck-session ticket. 2. Bound retry when telnet/call stack flakes. |
+| Next bite | Next PGLT-style ticket: enforce done-when before claiming complete; then G2 |
 
 ---
 
@@ -374,6 +485,9 @@ Planning / Future-Development bites should state Target level in the bite notes 
 - **Operator stays in charge** - L6 means the harness owns the loop until goal criteria; it does not mean unsupervised mutation of systems of record.
 - **System surrounds the model** - routing, context, root isolation, validation, and write authority are harness concerns; the LLM is one component inside the workflow.
 - **Pick loops by exit** - turn / goal / time / proactive; do not confuse a timer with a judge.
+- **Route irreversible actions to a human/Host** - reversibility; agent proposes, person disposes.
+- **Do not confuse ladders** - Metra L1-L6 (workflow completeness) vs external autonomy 0-5 (flexibility dial).
+- **Do not average a readiness checklist** - one hard-block red holds the launch; eleven greens do not outvote data access, cost ceilings, security review, or ownership.
 
 ---
 
@@ -386,3 +500,9 @@ Planning / Future-Development bites should state Target level in the bite notes 
 - Policy scars about adopting or changing the ladder go in [Decisions.md](Decisions.md).
 - 2026-08-06 Bing review scars folded here: evidence quality annotation, ceiling reason, hard-stop recovery triplet; no L3a/L3b sub-levels; no Ops percentage theater.
 - 2026-08-06 loop-forms-by-exit vocabulary folded under L5/L6 (turn / goal / time / proactive); not new levels.
+- 2026-08-06 Best path (Future-Development G1-G3): close Agentic Engineering gaps - goal-judges, AGENTS-as-code, optional tracing - without new maturity levels.
+- 2026-08-06 AGENT framework + autonomy-ladder crosswalk + reversibility routing from Building Agentic AI "What Counts as Agentic AI"; optional scorecard fields; cost-cap and eval-set parked in Future-Development (G4/G5 footnotes).
+- 2026-08-06 Production readiness checklist crosswalk from Building Agentic AI (twelve checks / five bands / hard blocks vs covers); reinforces no Ops percentage theater; maps to G3-G5 and Host write gates.
+- 2026-08-06 Memory stores crosswalk from Building Agentic AI "Giving Your Agent Memory" - confirms Journal/Capture/OCC/Decision Registry split; no Universal Memory Engine; vectors stay deferred.
+- 2026-08-06 Ask continuity soft gaps shipped: extractive session summarization + Ops Resume / Recall / `ask get|recall` (explicit episodic; Capture still never auto-loads).
+- 2026-08-06 Preferred Karpathy loop crosswalk: gen-verify (leash / loop speed / autonomy slider) from AI Builder Club - not AutoResearch / bilevel; maps to G1 + Ceiling + loop forms.

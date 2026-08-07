@@ -29,10 +29,13 @@ function Get-MetraTicketWatchConfig {
         [string]$MetraRoot = (Get-MetraRoot)
     )
 
+    # top = 0 means all active/watched tickets. A cap would silently drop tickets
+    # from a full scan, and anything missing from a full scan gets auto-closed.
     $defaults = [PSCustomObject]@{
         writeLocalDraft = $false
-        top             = 10
+        top             = 0
         syncOnScan      = $true
+        syncOnSnapshot  = $false
     }
     $cfgPath = Join-Path $MetraRoot 'docs\ticket-watch.local.json'
     if (-not (Test-Path -LiteralPath $cfgPath)) { return $defaults }
@@ -47,6 +50,9 @@ function Get-MetraTicketWatchConfig {
         }
         if ($null -ne (Get-MetraProp -Object $raw -Name 'syncOnScan' -Default $null)) {
             $defaults.syncOnScan = [bool]$raw.syncOnScan
+        }
+        if ($null -ne (Get-MetraProp -Object $raw -Name 'syncOnSnapshot' -Default $null)) {
+            $defaults.syncOnSnapshot = [bool]$raw.syncOnSnapshot
         }
     }
     catch { }
@@ -64,6 +70,70 @@ function New-MetraTicketAttentionEvidenceSignature {
     return ('ticket:{0}|updated:{1}|status:{2}' -f $TicketId.Trim(), ([string]$Updated).Trim(), ([string]$Status).Trim())
 }
 
+function Format-MetraTicketPriorityLabel {
+    [CmdletBinding()]
+    param([string]$Priority = '')
+
+    $p = ([string]$Priority).Trim()
+    if (-not $p) { return '' }
+    if ($p -match '^(?i)(critical|high|medium|low)$') {
+        return (Get-Culture).TextInfo.ToTitleCase($p.ToLowerInvariant()) + ' priority'
+    }
+    if ($p -match '^\d+$') { return "Priority $p" }
+    return $p
+}
+
+function Test-MetraTicketStatusIsActive {
+    [CmdletBinding()]
+    param([string]$Status = '')
+
+    $s = ([string]$Status).Trim()
+    if (-not $s) { return $true }
+    return ($s -notmatch '(?i)^(closed|resolved|cancelled|canceled)\b')
+}
+
+function Get-MetraTicketAttentionStatusRank {
+    <#
+    .SYNOPSIS
+        Lower number = higher Attention priority. Waiting on Customer sorts below Open work.
+    #>
+    [CmdletBinding()]
+    param([string]$Status = '')
+
+    $s = ([string]$Status).Trim()
+    if (-not $s) { return 1 }
+    # Ball in operator court - surface first.
+    if ($s -match '(?i)^open\b') { return 0 }
+    if ($s -match '(?i)^update from\b') { return 0 }
+    if ($s -match '(?i)^(in\s*progress|assigned|new|active)\b') { return 5 }
+    # Ball with customer / parked - keep in queue but below Open work.
+    if ($s -match '(?i)^waiting\b') { return 40 }
+    if ($s -match '(?i)^(pending|on\s*hold)\b') { return 30 }
+    return 20
+}
+
+function Get-MetraAttentionItemStatusRank {
+    [CmdletBinding()]
+    param($Item)
+
+    if ([string]$Item.kind -ne 'ticket') { return 0 }
+    $explicit = Get-MetraProp -Object $Item -Name 'statusRank' -Default $null
+    if ($null -ne $explicit -and "$explicit" -ne '') {
+        try { return [int]$explicit } catch { }
+    }
+    $status = [string](Get-MetraProp -Object $Item -Name 'ticketStatus' -Default '')
+    if (-not $status) {
+        $detail = [string](Get-MetraProp -Object $Item -Name 'detail' -Default '')
+        if ($detail -match '(?i)^(Waiting on Customer|Open|In Progress|Pending|On Hold)') {
+            $status = $Matches[1]
+        }
+        elseif ([string]$Item.evidenceSignature -match '(?i)\|status:([^|]+)') {
+            $status = $Matches[1].Trim()
+        }
+    }
+    return (Get-MetraTicketAttentionStatusRank -Status $status)
+}
+
 function ConvertTo-MetraTicketAttentionQueueItem {
     [CmdletBinding()]
     param(
@@ -78,25 +148,98 @@ function ConvertTo-MetraTicketAttentionQueueItem {
     $status = [string](Get-MetraProp -Object $Ticket -Name 'Status' -Default '')
     $updated = [string](Get-MetraProp -Object $Ticket -Name 'Updated' -Default '')
     $priority = [string](Get-MetraProp -Object $Ticket -Name 'Priority' -Default '')
-    $summary = "Ticket $id needs triage"
-    if ($priority) { $summary = "$summary - $priority priority" }
+    $subject = ([string](Get-MetraProp -Object $Ticket -Name 'Subject' -Default '')).Trim()
+    $customer = ([string](Get-MetraProp -Object $Ticket -Name 'Customer' -Default '')).Trim()
+    $assignee = ([string](Get-MetraProp -Object $Ticket -Name 'Assignee' -Default '')).Trim()
 
-    $briefCmd = if ($TicketTrackerPath) {
-        ".\TicketTracker.ps1 brief $id"
-    }
-    else {
-        ".\TicketTracker.ps1 brief $id"
+    $priorityLabel = Format-MetraTicketPriorityLabel -Priority $priority
+    $content = if ($subject) { "Ticket $id`: $subject" } else { "Ticket $id needs triage" }
+    if (-not $subject -and $priorityLabel) { $content = "$content - $priorityLabel" }
+
+    $detailParts = @()
+    if ($status) { $detailParts += $status }
+    if ($priorityLabel) { $detailParts += $priorityLabel }
+    if ($customer) { $detailParts += "for $customer" }
+    if ($assignee) { $detailParts += "assigned to $assignee" }
+    if ($updated) {
+        $updatedText = $updated
+        try {
+            $u = [datetime]::Parse($updated, $null, [System.Globalization.DateTimeStyles]::RoundtripKind)
+            $updatedText = $u.ToLocalTime().ToString('MMM d, h:mm tt')
+        }
+        catch {
+            try {
+                $u = [datetime]$updated
+                $updatedText = $u.ToString('MMM d, h:mm tt')
+            }
+            catch { }
+        }
+        $detailParts += "updated $updatedText"
     }
 
     return [PSCustomObject]@{
         id                = "ticket:$id"
         project           = 'TicketTracker'
         kind              = 'ticket'
-        content           = $summary
-        command           = $briefCmd
+        content           = $content
+        detail            = ($detailParts -join ' - ')
+        ticketStatus      = $status
+        statusRank        = (Get-MetraTicketAttentionStatusRank -Status $status)
+        command           = ".\TicketTracker.ps1 brief $id"
         source            = 'TicketTracker'
         evidenceSignature = (New-MetraTicketAttentionEvidenceSignature -TicketId $id -Updated $updated -Status $status)
     }
+}
+
+function Update-MetraTicketAttentionDisplayFields {
+    <#
+    .SYNOPSIS
+        Fills subject/status/priority/customer on a ticket Attention item from TicketTracker.
+        Used at desk-view time so Ops is not stuck on thin pre-subject memory rows.
+    #>
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory)]$MemItem
+    )
+
+    if ([string]$MemItem.kind -ne 'ticket') { return $MemItem }
+
+    $id = ''
+    $key = [string]$MemItem.key
+    $content = [string]$MemItem.content
+    if ($key -match '(?i)^ticket:(\d+)') { $id = $Matches[1] }
+    elseif ($content -match '(?i)\b(\d{6,8})\b') { $id = $Matches[1] }
+    if (-not $id) { return $MemItem }
+
+    $detail = [string](Get-MetraProp -Object $MemItem -Name 'detail' -Default '')
+    $hasSubject = $content -match '(?i)^Ticket\s+\d+\s*:'
+    if ($hasSubject -and $detail) { return $MemItem }
+
+    $tt = Get-MetraTicketTrackerProject
+    if (-not $tt) { return $MemItem }
+
+    try {
+        Import-Module $tt.ModulePath -Force
+        $getTickets = Get-Command Get-TrackedTickets -ErrorAction Stop
+        $ticket = @(& $getTickets -Id $id | Select-Object -First 1)
+        if ($ticket.Count -eq 0) { return $MemItem }
+        $qi = ConvertTo-MetraTicketAttentionQueueItem -Ticket $ticket[0] -TicketTrackerPath $tt.Path
+        if (-not $qi) { return $MemItem }
+        $MemItem.content = [string]$qi.content
+        if ($MemItem.PSObject.Properties['detail']) { $MemItem.detail = [string]$qi.detail }
+        else { $MemItem | Add-Member -NotePropertyName detail -NotePropertyValue ([string]$qi.detail) -Force }
+        $ticketStatus = [string](Get-MetraProp -Object $qi -Name 'ticketStatus' -Default '')
+        $statusRank = Get-MetraProp -Object $qi -Name 'statusRank' -Default $null
+        if ($MemItem.PSObject.Properties['ticketStatus']) { $MemItem.ticketStatus = $ticketStatus }
+        else { $MemItem | Add-Member -NotePropertyName ticketStatus -NotePropertyValue $ticketStatus -Force }
+        if ($MemItem.PSObject.Properties['statusRank']) { $MemItem.statusRank = $statusRank }
+        else { $MemItem | Add-Member -NotePropertyName statusRank -NotePropertyValue $statusRank -Force }
+        if ($qi.command) { $MemItem.command = [string]$qi.command }
+        if ($qi.evidenceSignature) { $MemItem.evidenceSignature = [string]$qi.evidenceSignature }
+    }
+    catch { }
+
+    return $MemItem
 }
 
 function Get-MetraTicketWatchCandidates {
@@ -125,8 +268,13 @@ function Get-MetraTicketWatchCandidates {
     }
 
     $byId = @{}
-    $openTickets = @(Get-TrackedTickets -Status 'Open*')
-    foreach ($t in $openTickets) {
+    # Include Waiting on Customer and other non-closed statuses - Open* alone misses active work.
+    $activeTickets = @(
+        Get-TrackedTickets | Where-Object {
+            Test-MetraTicketStatusIsActive -Status ([string](Get-MetraProp -Object $_ -Name 'Status' -Default ''))
+        }
+    )
+    foreach ($t in $activeTickets) {
         $id = [string](Get-MetraProp -Object $t -Name 'Id' -Default '')
         if ($id) { $byId[$id] = $t }
     }
@@ -146,6 +294,11 @@ function Get-MetraTicketWatchCandidates {
     $sorted = @(
         $byId.Values | Sort-Object -Property @{
             Expression = {
+                Get-MetraTicketAttentionStatusRank -Status ([string](Get-MetraProp -Object $_ -Name 'Status' -Default ''))
+            }
+            Descending = $false
+        }, @{
+            Expression = {
                 $u = Get-MetraProp -Object $_ -Name 'Updated' -Default $null
                 if ($u) {
                     try { return [datetime]$u } catch { return [datetime]::MinValue }
@@ -155,10 +308,12 @@ function Get-MetraTicketWatchCandidates {
             Descending = $true
         }, @{
             Expression = { [string](Get-MetraProp -Object $_ -Name 'Priority' -Default '') }
-            Descending = $true
+            Descending = $false
         }
     )
+    $truncated = $false
     if ($Top -gt 0 -and $sorted.Count -gt $Top) {
+        $truncated = $true
         $sorted = @($sorted | Select-Object -First $Top)
     }
 
@@ -167,6 +322,7 @@ function Get-MetraTicketWatchCandidates {
         Synced    = $synced
         SyncError = $syncError
         Scanned   = $sorted.Count
+        Truncated = $truncated
     }
 }
 
@@ -245,13 +401,19 @@ function Invoke-MetraTicketWatchScan {
     ) | Where-Object { $null -ne $_ }
 
     $result.queue = $queue
+    # A truncated list is not full coverage - auto-close would kill live tickets past the cap.
+    $truncated = [bool](Get-MetraProp -Object $candidates -Name 'Truncated' -Default $false)
+    $coveredKinds = if ($truncated) { @() } else { @('ticket') }
     $memory = Update-MetraAttentionMemory `
         -Queue $queue `
-        -CoveredKinds @('ticket') `
+        -CoveredKinds $coveredKinds `
         -ScanMode 'full' `
         -MetraRoot $MetraRoot
-    $result.coveredTicket = $true
+    $result.coveredTicket = -not $truncated
     $result.ok = $true
+    if ($truncated -and -not $Quiet) {
+        Write-Warning ("Ticket list capped at {0}; tickets past the cap stay in Attention untouched." -f $topN)
+    }
 
     foreach ($q in $queue) {
         $key = [string]$q.id
