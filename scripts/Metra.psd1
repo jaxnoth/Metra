@@ -30,19 +30,23 @@
         'Get-MetraRoot'
         'Get-MetraConfig'
         'Get-MetraProp'
-        'Get-MetraRoots'
-        'Get-MetraProjects'
-        'Get-MetraOrchestrationProject'
-        'Get-MetraHomeDestinationName'
-        'Get-MetraRoutingAmbiguity'
-        'Clear-MetraRoutingCache'
-        'Get-MetraStatus'
-        'Update-MetraProjects'
-        'Get-RecentMetraProjects'
-        'Get-MetraProjectRegistry'
-        'Get-MetraRoutingTable'
-        'Invoke-MetraProjectContextAudit'
-        'Get-MetraProjectGitCounts'
+        'Get-MetraRoots',
+        'Get-MetraSettingsPortfolio',
+        'Save-MetraSettingsPortfolio',
+        'Get-MetraProductUpdates',
+        'Invoke-MetraProductUpdate',
+        'Get-MetraProjects',
+        'Get-MetraOrchestrationProject',
+        'Get-MetraHomeDestinationName',
+        'Get-MetraRoutingAmbiguity',
+        'Clear-MetraRoutingCache',
+        'Get-MetraStatus',
+        'Update-MetraProjects',
+        'Get-RecentMetraProjects',
+        'Get-MetraProjectRegistry',
+        'Get-MetraRoutingTable',
+        'Invoke-MetraProjectContextAudit',
+        'Get-MetraProjectGitCounts',
         'Export-MetraCanvasSnapshot'
         'Test-MetraCanvasSnapshotStale'
         'Get-MetraQuickProjectHealthReports'
@@ -86,6 +90,13 @@
         'Get-MetraOpsTailscaleBinding',
         'Get-MetraAskCapability',
         'Get-MetraAskSettings',
+        'Get-MetraAskEngineRecommendation',
+        'Get-MetraAskEngineMenu',
+        'Invoke-MetraAskAcceptRecommended',
+        'Invoke-MetraAskEngineCommand',
+        'Set-MetraAskEngine',
+        'Set-MetraCursorApiKey',
+        'Test-MetraCursorInstall',
         'Invoke-MetraAskEngine',
         'Start-MetraAskEngine',
         'Stop-MetraAskEngine',
@@ -98,6 +109,9 @@
         'Invoke-MetraCapturePromote',
         'Get-MetraDeskAskLog',
         'Get-MetraDeskAskSessionSummaries',
+        'Get-MetraDeskAskSessionTurns',
+        'Search-MetraDeskAskJournal',
+        'Get-MetraAskContinuityContext',
         'Add-MetraDeskAskEntry',
         'Invoke-MetraTicketWatchScan'
     )

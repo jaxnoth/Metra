@@ -13,6 +13,7 @@ export type AttentionItem = {
   key: string
   project?: string
   content: string
+  detail?: string
   kind: string
   command?: string
   summary?: string
@@ -160,6 +161,92 @@ export type AskCapability = {
   engine: string
   providerLabel?: string
   reason?: string
+  model?: string
+  ideInstalled?: boolean
+  apiKeyPresent?: boolean
+  nodeReady?: boolean
+  sidecarReady?: boolean
+  engineHealthy?: boolean
+  runtimeReady?: boolean
+  modelPresent?: boolean
+  sizeBand?: string
+}
+
+export type AskEngineMenuItem = {
+  id: string
+  label: string
+  kind: string
+  disabled?: boolean
+  note?: string
+}
+
+export type AskEnginePanel = {
+  capability: AskCapability
+  recommendation?: { summary?: string; modelPin?: string; sizeBand?: string }
+  menu: AskEngineMenuItem[]
+}
+
+export type SettingsRoot = {
+  name: string
+  label?: string
+  path: string
+  rawPath?: string
+  primary: boolean
+  optional: boolean
+  cloud?: boolean
+  exists: boolean
+}
+
+export type SettingsRootInput = {
+  name?: string
+  label: string
+  path: string
+  primary: boolean
+  optional: boolean
+}
+
+export type SettingsPortfolio = {
+  metraRoot: string
+  primaryPath: string
+  personalPath: string
+  hint?: string
+  roots: SettingsRoot[]
+  ask: { apiKeyPresent: boolean }
+}
+
+export type SettingsSaveResult = {
+  ok: boolean
+  rootsSaved?: boolean
+  portfolio: SettingsPortfolio
+}
+
+export type ProductUpdateItem = {
+  id: string
+  label: string
+  installed?: string | null
+  available?: string | null
+  updateAvailable: boolean
+  canUpdate: boolean
+  status: string
+  message?: string | null
+  channel?: string
+  downloadUrl?: string | null
+  releaseUrl?: string | null
+}
+
+export type ProductUpdates = {
+  checkedAt: string
+  anyUpdate: boolean
+  metra: ProductUpdateItem
+  ollama: ProductUpdateItem
+}
+
+export type ProductUpdateResult = {
+  ok: boolean
+  target: string
+  status: string
+  message?: string | null
+  updates?: ProductUpdates
 }
 
 export type DeskPayload = {
@@ -189,6 +276,18 @@ export type DeskPayload = {
   }
 }
 
+export type AskContinuity = {
+  sessionId?: string | null
+  recallSessionId?: string | null
+  sessionSummary?: string | null
+  recentTurns?: { turnIndex?: number | null; prompt?: string; message?: string }[]
+  recallSummary?: string | null
+  usedSummarization?: boolean
+  summarizedTurnCount?: number
+  recentTurnCount?: number
+  totalTurnCount?: number
+}
+
 export type AskResult = {
   entry?: AskEntry
   handoff: Handoff
@@ -200,6 +299,12 @@ export type AskResult = {
   answered?: boolean
   /** Quiet Where chip when route is weak or ambiguous. */
   showWhere?: boolean
+  continuity?: AskContinuity | null
+  /** True when Ask scrubbed or refused secret-shaped content. */
+  secretsScrubbed?: boolean
+  secretsNotice?: string | null
+  secretsKinds?: { kind?: string; Kind?: string; count?: number; Count?: number }[]
+  secretsReason?: string | null
 }
 
 export type PlaceHomeId =

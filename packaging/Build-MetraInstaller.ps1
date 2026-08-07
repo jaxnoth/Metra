@@ -97,6 +97,12 @@ function Test-MetraStageExcluded {
 
     foreach ($segment in ($rel -split '[\\/]')) {
         if ($excludeDirNames.Contains($segment)) {
+            # Ship prebundled Cursor Ask deps + private Node runtime when present.
+            $allowCursorModules = $rel -match '(?i)^engines[\\/]cursor([\\/]|$)'
+            $allowPrivateNode = $rel -match '(?i)^runtimes[\\/]node([\\/]|$)'
+            if (($segment -eq 'node_modules' -and $allowCursorModules) -or $allowPrivateNode) {
+                continue
+            }
             return $true
         }
     }

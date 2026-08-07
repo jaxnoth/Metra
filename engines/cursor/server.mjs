@@ -39,11 +39,34 @@ function sendJson(res, status, obj) {
   res.end(body)
 }
 
-function buildPrompt(userPrompt, context) {
+function formatRecentTurns(recentTurns) {
+  if (!Array.isArray(recentTurns) || recentTurns.length === 0) return null
+  const lines = recentTurns.map((t) => {
+    const idx = t?.turnIndex != null ? `Turn ${t.turnIndex}` : 'Turn'
+    const prompt = (t?.prompt || '').trim()
+    const message = (t?.message || '').trim()
+    if (!prompt && !message) return null
+    return message ? `- ${idx}: Q: ${prompt} | A: ${message}` : `- ${idx}: Q: ${prompt}`
+  }).filter(Boolean)
+  return lines.length ? lines.join('\n') : null
+}
+
+function buildPrompt(userPrompt, context, options = {}) {
   const where = context?.where || 'Metra'
   const what = context?.what || ''
   const why = Array.isArray(context?.why) ? context.why.filter(Boolean).join('; ') : ''
   const forWhom = Array.isArray(context?.forWhom) ? context.forWhom.filter(Boolean).join('; ') : ''
+  const includeJournal =
+    Boolean(options.includeJournalContinuity) ||
+    Boolean(context?.forceContinuity) ||
+    Boolean(context?.recall)
+
+  const sessionSummary = includeJournal && context?.sessionSummary
+    ? String(context.sessionSummary).trim()
+    : ''
+  const recentBlock = includeJournal ? formatRecentTurns(context?.recentTurns) : null
+  const recallBlock = context?.recall ? String(context.recall).trim() : ''
+  const recallSid = context?.recallSessionId ? String(context.recallSessionId).trim() : ''
 
   return [
     'You are Metra answering from the HTML Ops desk.',
@@ -69,6 +92,27 @@ function buildPrompt(userPrompt, context) {
     what ? `- What: ${what}` : null,
     why ? `- Why: ${why}` : null,
     forWhom ? `- For whom: ${forWhom}` : null,
+    sessionSummary
+      ? [
+          '',
+          'Earlier turns in this Ask session (Session Journal extractive summary - labeled evidence, not Capture):',
+          sessionSummary,
+        ].join('\n')
+      : null,
+    recentBlock
+      ? [
+          '',
+          'Recent Ask turns from Session Journal (use for continued Ops conversation; do not invent beyond these):',
+          recentBlock,
+        ].join('\n')
+      : null,
+    recallBlock
+      ? [
+          '',
+          `Operator-recalled prior Ask session${recallSid ? ` (${recallSid})` : ''} (explicit episodic recall - use only as supporting evidence):`,
+          recallBlock,
+        ].join('\n')
+      : null,
     '',
     'User ask:',
     userPrompt,
@@ -112,6 +156,165 @@ function stripDeskChrome(text) {
   return kept.join('\n').replace(/^\s+/, '').replace(/\s+$/, '')
 }
 
+/** Mirror of Metra AskSecrets.ps1 - defense in depth; PowerShell remains authoritative. */
+const SECRET_PATTERNS = [
+  {
+    kind: 'pem',
+    refuse: true,
+    reason: 'pem_private_key',
+    regex: /-----BEGIN (?:RSA |EC |OPENSSH )?PRIVATE KEY-----[\s\S]*?-----END (?:RSA |EC |OPENSSH )?PRIVATE KEY-----/gi,
+  },
+  {
+    kind: 'github',
+    refuse: false,
+    reason: null,
+    regex: /\b(?:ghp_|gho_|ghu_|ghs_|ghr_|github_pat_)[A-Za-z0-9_]{20,}\b/gi,
+  },
+  {
+    kind: 'aws',
+    refuse: false,
+    reason: null,
+    regex: /\bAKIA[0-9A-Z]{16}\b/g,
+  },
+  {
+    kind: 'slack',
+    refuse: false,
+    reason: null,
+    regex: /\bxox[baprs]-[A-Za-z0-9-]{10,}\b/gi,
+  },
+  {
+    kind: 'api_key',
+    refuse: false,
+    reason: null,
+    regex: /\bsk-[A-Za-z0-9]{20,}\b/g,
+  },
+  {
+    kind: 'bearer',
+    refuse: false,
+    reason: null,
+    regex: /\bBearer\s+[A-Za-z0-9\-._~+/]+=*/gi,
+  },
+  {
+    kind: 'connection',
+    refuse: false,
+    reason: null,
+    regex: /(?:Password|Pwd)\s*=\s*([^;"'\s][^;"']*)/gi,
+  },
+]
+
+function scrubSecretsText(text) {
+  const original = text == null ? '' : String(text)
+  let work = original
+  const counts = new Map()
+  let refuse = false
+  let reason = null
+  let redactedChars = 0
+
+  for (const pat of SECRET_PATTERNS) {
+    const re = new RegExp(pat.regex.source, pat.regex.flags)
+    const matches = [...work.matchAll(re)]
+    if (matches.length === 0) continue
+    const placeholder = `[REDACTED:${pat.kind}]`
+    // Replace from the end so indices stay valid.
+    for (let i = matches.length - 1; i >= 0; i--) {
+      const m = matches[i]
+      const idx = m.index ?? 0
+      redactedChars += m[0].length
+      work = work.slice(0, idx) + placeholder + work.slice(idx + m[0].length)
+    }
+    counts.set(pat.kind, (counts.get(pat.kind) || 0) + matches.length)
+    if (pat.refuse) {
+      refuse = true
+      if (!reason) reason = pat.reason
+    }
+  }
+
+  const kinds = [...counts.entries()]
+    .sort(([a], [b]) => a.localeCompare(b))
+    .map(([kind, count]) => ({ kind, count }))
+  const ratio = original.length <= 0 ? 0 : Math.min(1, redactedChars / original.length)
+  const matched = kinds.length > 0
+  let notice = null
+  if (refuse) {
+    notice =
+      'Private-key material was blocked and not sent to the Ask engine. Rephrase without the key block.'
+  } else if (matched) {
+    notice = `Secrets scrubbed: ${kinds.map((k) => `${k.kind}(${k.count})`).join(', ')}.`
+    if (ratio > 0.75) notice += ' Large amount of sensitive content removed.'
+  } else if (ratio > 0.75) {
+    notice = 'Large amount of sensitive content removed.'
+  }
+
+  return { text: work, matched, refuse, reason, kinds, redactedCharsRatio: ratio, notice }
+}
+
+function scrubSecretsValue(node) {
+  if (node == null) return { value: node, matched: false, refuse: false, reason: null, kinds: [] }
+  if (typeof node === 'string') {
+    const r = scrubSecretsText(node)
+    return {
+      value: r.text,
+      matched: r.matched,
+      refuse: r.refuse,
+      reason: r.reason,
+      kinds: r.kinds,
+      notice: r.notice,
+    }
+  }
+  if (typeof node !== 'object') {
+    return { value: node, matched: false, refuse: false, reason: null, kinds: [] }
+  }
+  if (Array.isArray(node)) {
+    let matched = false
+    let refuse = false
+    let reason = null
+    const kindsMap = new Map()
+    const value = node.map((item) => {
+      const r = scrubSecretsValue(item)
+      if (r.matched) matched = true
+      if (r.refuse) {
+        refuse = true
+        if (!reason) reason = r.reason
+      }
+      for (const k of r.kinds || []) {
+        kindsMap.set(k.kind, (kindsMap.get(k.kind) || 0) + k.count)
+      }
+      return r.value
+    })
+    return {
+      value,
+      matched,
+      refuse,
+      reason,
+      kinds: [...kindsMap.entries()].map(([kind, count]) => ({ kind, count })),
+    }
+  }
+  let matched = false
+  let refuse = false
+  let reason = null
+  const kindsMap = new Map()
+  const value = {}
+  for (const [key, val] of Object.entries(node)) {
+    const r = scrubSecretsValue(val)
+    value[key] = r.value
+    if (r.matched) matched = true
+    if (r.refuse) {
+      refuse = true
+      if (!reason) reason = r.reason
+    }
+    for (const k of r.kinds || []) {
+      kindsMap.set(k.kind, (kindsMap.get(k.kind) || 0) + k.count)
+    }
+  }
+  return {
+    value,
+    matched,
+    refuse,
+    reason,
+    kinds: [...kindsMap.entries()].map(([kind, count]) => ({ kind, count })),
+  }
+}
+
 async function complete({ prompt, cwd, context, sessionId }) {
   const apiKey = process.env.CURSOR_API_KEY
   if (!apiKey) {
@@ -120,8 +323,24 @@ async function complete({ prompt, cwd, context, sessionId }) {
     throw err
   }
 
+  const promptScrub = scrubSecretsText(prompt)
+  const ctxScrub = scrubSecretsValue(context || {})
+  if (promptScrub.refuse || ctxScrub.refuse) {
+    return {
+      message:
+        promptScrub.notice ||
+        ctxScrub.notice ||
+        'Private-key material was blocked and not sent to the Ask engine. Rephrase without the key block.',
+      engine: ENGINE,
+      model: MODEL,
+      sessionId: sessionId || null,
+      status: 'refused',
+      secretsRefuse: true,
+      secretsReason: promptScrub.reason || ctxScrub.reason || 'pem_private_key',
+    }
+  }
+
   const workDir = cwd && typeof cwd === 'string' && cwd.length > 0 ? cwd : process.cwd()
-  const wrapped = buildPrompt(prompt, context || {})
 
   let agent
   let newSession = false
@@ -136,10 +355,17 @@ async function complete({ prompt, cwd, context, sessionId }) {
     newSession = true
   }
 
-  const id = sessionId && sessions.has(sessionId) ? sessionId : agent.agentId || `local-${Date.now()}`
+  const id =
+    sessionId && String(sessionId).trim()
+      ? String(sessionId).trim()
+      : agent.agentId || `local-${Date.now()}`
   if (newSession) {
     sessions.set(id, agent)
   }
+
+  const wrapped = buildPrompt(promptScrub.text, ctxScrub.value || {}, {
+    includeJournalContinuity: newSession,
+  })
 
   try {
     const run = await agent.send(wrapped)
@@ -171,8 +397,9 @@ async function complete({ prompt, cwd, context, sessionId }) {
       text = 'Metra answered, but the engine returned no text.'
     }
 
+    const outScrub = scrubSecretsText(stripDeskChrome(text))
     return {
-      message: stripDeskChrome(text),
+      message: outScrub.text,
       engine: ENGINE,
       model: MODEL,
       sessionId: id,

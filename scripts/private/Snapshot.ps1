@@ -1424,13 +1424,15 @@ function Add-MetraDeskAskEntry {
         }
     }
 
-    $cleanMessage = Truncate-MetraAskJournalMessage -Message (Remove-MetraAskUiChrome -Message ([string]$Message))
+    $scrubbedPrompt = Invoke-MetraAskSecretsScrubText -Text $Prompt.Trim()
+    $scrubbedMessage = Invoke-MetraAskSecretsScrubText -Text ([string]$Message)
+    $cleanMessage = Truncate-MetraAskJournalMessage -Message (Remove-MetraAskUiChrome -Message ([string]$scrubbedMessage.Text))
     $entry = [PSCustomObject]@{
         id           = [guid]::NewGuid().ToString('N')
         sessionId    = $sess
         turnIndex    = $maxIndex + 1
         at           = (Get-Date).ToString('o')
-        prompt       = $Prompt.Trim()
+        prompt       = [string]$scrubbedPrompt.Text
         message      = $cleanMessage
         handoff      = $Handoff
         engine       = $(if ([string]::IsNullOrWhiteSpace($Engine)) { $null } else { $Engine })
@@ -1487,6 +1489,218 @@ function Get-MetraDeskAskSessionSummaries {
         }
     }
     return @($summaries | Sort-Object at -Descending | Select-Object -First $Limit)
+}
+
+function Truncate-MetraAskContinuitySnippet {
+    <#
+    .SYNOPSIS
+        Collapse whitespace and truncate for Ask continuity / recall prompts.
+    #>
+    param(
+        [AllowNull()][string]$Text,
+        [int]$Max = 160
+    )
+
+    if ([string]::IsNullOrWhiteSpace($Text)) { return '' }
+    $t = ($Text.Trim() -replace '\s+', ' ')
+    if ($t.Length -le $Max) { return $t }
+    return ($t.Substring(0, [Math]::Max(1, $Max - 3)) + '...')
+}
+
+function Get-MetraDeskAskSessionTurns {
+    <#
+    .SYNOPSIS
+        Ordered Session Journal turns for one Ask sessionId (oldest first).
+    #>
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory)][string]$SessionId,
+        [string]$MetraRoot = (Get-MetraRoot),
+        [int]$Limit = 100
+    )
+
+    $sid = $SessionId.Trim()
+    if ([string]::IsNullOrWhiteSpace($sid)) { return @() }
+
+    $turns = @(Get-MetraDeskAskLog -MetraRoot $MetraRoot -Limit 100 | Where-Object {
+            [string](Get-MetraProp -Object $_ -Name 'sessionId' -Default '') -eq $sid
+        })
+    $ordered = @($turns | Sort-Object {
+            $ti = Get-MetraProp -Object $_ -Name 'turnIndex' -Default $null
+            if ($null -ne $ti) { [int]$ti } else { 0 }
+        }, { [string]$_.at })
+    if ($Limit -gt 0 -and $ordered.Count -gt $Limit) {
+        return @($ordered | Select-Object -Last $Limit)
+    }
+    return @($ordered)
+}
+
+function Search-MetraDeskAskJournal {
+    <#
+    .SYNOPSIS
+        Keyword search over Session Journal prompts and answers (episodic recall).
+    #>
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory)][string]$Query,
+        [string]$MetraRoot = (Get-MetraRoot),
+        [int]$Limit = 20
+    )
+
+    $q = $Query.Trim()
+    if ([string]::IsNullOrWhiteSpace($q)) { return @() }
+
+    $tokens = @(
+        $q.ToLowerInvariant() -split '\s+' |
+            Where-Object { $_.Length -ge 2 } |
+            Select-Object -Unique
+    )
+    if ($tokens.Count -eq 0) {
+        $tokens = @($q.ToLowerInvariant())
+    }
+
+    $hits = foreach ($row in @(Get-MetraDeskAskLog -MetraRoot $MetraRoot -Limit 100)) {
+        $hay = (
+            [string](Get-MetraProp -Object $row -Name 'prompt' -Default '') + ' ' +
+            [string](Get-MetraProp -Object $row -Name 'message' -Default '')
+        ).ToLowerInvariant()
+        $ok = $true
+        foreach ($tok in $tokens) {
+            if ($hay.IndexOf($tok) -lt 0) { $ok = $false; break }
+        }
+        if (-not $ok) { continue }
+        $rowSid = [string](Get-MetraProp -Object $row -Name 'sessionId' -Default '')
+        if ([string]::IsNullOrWhiteSpace($rowSid)) {
+            $rowSid = [string](Get-MetraProp -Object $row -Name 'id' -Default '')
+        }
+        [PSCustomObject]@{
+            id        = [string](Get-MetraProp -Object $row -Name 'id' -Default '')
+            sessionId = $rowSid
+            turnIndex = Get-MetraProp -Object $row -Name 'turnIndex' -Default $null
+            at        = [string](Get-MetraProp -Object $row -Name 'at' -Default '')
+            prompt    = [string](Get-MetraProp -Object $row -Name 'prompt' -Default '')
+            message   = Truncate-MetraAskContinuitySnippet -Text ([string](Get-MetraProp -Object $row -Name 'message' -Default '')) -Max 240
+            where     = [string](Get-MetraProp -Object (Get-MetraProp -Object $row -Name 'handoff' -Default $null) -Name 'where' -Default '')
+        }
+    }
+    return @($hits | Select-Object -First $Limit)
+}
+
+function New-MetraAskSessionSummaryText {
+    <#
+    .SYNOPSIS
+        Extractive bullet summary of older Ask turns (not an LLM rewrite).
+    #>
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory)][object[]]$Turns,
+        [int]$PromptMax = 120,
+        [int]$MessageMax = 200,
+        [int]$MaxBullets = 12
+    )
+
+    $lines = foreach ($t in @($Turns | Select-Object -First $MaxBullets)) {
+        $ti = Get-MetraProp -Object $t -Name 'turnIndex' -Default $null
+        $label = if ($null -ne $ti) { "Turn $ti" } else { 'Turn' }
+        $p = Truncate-MetraAskContinuitySnippet -Text ([string](Get-MetraProp -Object $t -Name 'prompt' -Default '')) -Max $PromptMax
+        $m = Truncate-MetraAskContinuitySnippet -Text ([string](Get-MetraProp -Object $t -Name 'message' -Default '')) -Max $MessageMax
+        if ([string]::IsNullOrWhiteSpace($p) -and [string]::IsNullOrWhiteSpace($m)) { continue }
+        $bit = if ($m) { "$p -> $m" } else { $p }
+        "- ${label}: $bit"
+    }
+    return (($lines -join "`n").Trim())
+}
+
+function Get-MetraAskContinuityContext {
+    <#
+    .SYNOPSIS
+        Build labeled Session Journal continuity for Ask (summary + recent; optional recall).
+    #>
+    [CmdletBinding()]
+    param(
+        [string]$SessionId,
+        [string]$RecallSessionId,
+        [string]$MetraRoot = (Get-MetraRoot),
+        [int]$KeepRecent = 4,
+        [int]$SummarizeAfterTurns = 4,
+        [int]$CharBudget = 4000
+    )
+
+    $sid = if (-not [string]::IsNullOrWhiteSpace($SessionId)) { $SessionId.Trim() } else { '' }
+    $recallSid = if (-not [string]::IsNullOrWhiteSpace($RecallSessionId)) { $RecallSessionId.Trim() } else { '' }
+
+    $sessionSummary = $null
+    $recentTurns = @()
+    $usedSummarization = $false
+    $summarizedTurnCount = 0
+    $totalTurnCount = 0
+
+    if ($sid) {
+        $ordered = @(Get-MetraDeskAskSessionTurns -SessionId $sid -MetraRoot $MetraRoot -Limit 100)
+        $totalTurnCount = $ordered.Count
+        if ($ordered.Count -gt 0) {
+            $keep = [Math]::Max(1, $KeepRecent)
+            $needSummary = $ordered.Count -gt $SummarizeAfterTurns
+            if (-not $needSummary) {
+                $allChars = 0
+                foreach ($t in $ordered) {
+                    $allChars += ([string](Get-MetraProp -Object $t -Name 'prompt' -Default '')).Length
+                    $allChars += ([string](Get-MetraProp -Object $t -Name 'message' -Default '')).Length
+                }
+                if ($allChars -gt $CharBudget -and $ordered.Count -gt $keep) {
+                    $needSummary = $true
+                }
+            }
+
+            if ($needSummary -and $ordered.Count -gt $keep) {
+                $older = @($ordered | Select-Object -First ($ordered.Count - $keep))
+                $recent = @($ordered | Select-Object -Last $keep)
+                $sessionSummary = New-MetraAskSessionSummaryText -Turns $older
+                $usedSummarization = -not [string]::IsNullOrWhiteSpace($sessionSummary)
+                $summarizedTurnCount = $older.Count
+                $recentTurns = @(
+                    $recent | ForEach-Object {
+                        [PSCustomObject]@{
+                            turnIndex = Get-MetraProp -Object $_ -Name 'turnIndex' -Default $null
+                            prompt    = Truncate-MetraAskContinuitySnippet -Text ([string](Get-MetraProp -Object $_ -Name 'prompt' -Default '')) -Max 200
+                            message   = Truncate-MetraAskContinuitySnippet -Text ([string](Get-MetraProp -Object $_ -Name 'message' -Default '')) -Max 320
+                        }
+                    }
+                )
+            }
+            else {
+                $recentTurns = @(
+                    $ordered | ForEach-Object {
+                        [PSCustomObject]@{
+                            turnIndex = Get-MetraProp -Object $_ -Name 'turnIndex' -Default $null
+                            prompt    = Truncate-MetraAskContinuitySnippet -Text ([string](Get-MetraProp -Object $_ -Name 'prompt' -Default '')) -Max 200
+                            message   = Truncate-MetraAskContinuitySnippet -Text ([string](Get-MetraProp -Object $_ -Name 'message' -Default '')) -Max 320
+                        }
+                    }
+                )
+            }
+        }
+    }
+
+    $recallSummary = $null
+    if ($recallSid -and $recallSid -ne $sid) {
+        $recallTurns = @(Get-MetraDeskAskSessionTurns -SessionId $recallSid -MetraRoot $MetraRoot -Limit 100)
+        if ($recallTurns.Count -gt 0) {
+            $recallSummary = New-MetraAskSessionSummaryText -Turns $recallTurns -MaxBullets 10
+        }
+    }
+
+    return [PSCustomObject]@{
+        sessionId           = $(if ($sid) { $sid } else { $null })
+        recallSessionId     = $(if ($recallSid) { $recallSid } else { $null })
+        sessionSummary      = $sessionSummary
+        recentTurns         = @($recentTurns)
+        recallSummary       = $recallSummary
+        usedSummarization   = [bool]$usedSummarization
+        summarizedTurnCount = [int]$summarizedTurnCount
+        recentTurnCount     = @($recentTurns).Count
+        totalTurnCount      = [int]$totalTurnCount
+    }
 }
 
 function Test-MetraDeskGreeting {
@@ -1548,6 +1762,7 @@ function Get-MetraDeskAskResult {
     param(
         [Parameter(Mandatory)][string]$Prompt,
         [string]$SessionId,
+        [string]$RecallSessionId,
         [string]$MetraRoot = (Get-MetraRoot)
     )
 
@@ -1580,17 +1795,31 @@ function Get-MetraDeskAskResult {
         $capability = Start-MetraAskEngine -MetraRoot $MetraRoot
     }
 
+    $continuity = Get-MetraAskContinuityContext `
+        -SessionId $SessionId `
+        -RecallSessionId $RecallSessionId `
+        -MetraRoot $MetraRoot
+
     if (-not $capability.available) {
         return [PSCustomObject]@{
-            handoff     = $handoff
-            message     = [string]$capability.message
-            sessionId   = $null
-            capability  = $capability
-            engine      = $null
-            model       = $null
-            answered    = $false
+            handoff         = $handoff
+            message         = [string]$capability.message
+            sessionId       = $null
+            capability      = $capability
+            engine          = $null
+            model           = $null
+            answered        = $false
+            continuity      = $continuity
+            secretsScrubbed = $false
+            secretsNotice   = $null
+            secretsKinds    = @()
+            secretsReason   = $null
+            scrubbedPrompt  = $q
         }
     }
+
+    $promptScrub = Invoke-MetraAskSecretsScrubText -Text $q
+    $enginePrompt = [string]$promptScrub.Text
 
     $context = @{
         where   = [string]$handoff.where
@@ -1600,17 +1829,81 @@ function Get-MetraDeskAskResult {
         next    = [string]$handoff.next
         score   = [int]$handoff.score
     }
+    if ($continuity.sessionSummary) {
+        $context['sessionSummary'] = [string]$continuity.sessionSummary
+    }
+    if (@($continuity.recentTurns).Count -gt 0) {
+        $context['recentTurns'] = @($continuity.recentTurns)
+    }
+    if ($continuity.recallSummary) {
+        $context['recall'] = [string]$continuity.recallSummary
+        $context['recallSessionId'] = [string]$continuity.recallSessionId
+    }
+    if ($continuity.usedSummarization -or $continuity.recallSummary) {
+        $context['forceContinuity'] = $true
+    }
 
-    $engineResult = Invoke-MetraAskEngine -Prompt $q -Cwd $cwd -Context $context -SessionId $SessionId -MetraRoot $MetraRoot
+    $ctxScrub = Invoke-MetraAskSecretsScrubObject -InputObject $context
+    $safeContext = if ($null -ne $ctxScrub.Value) { $ctxScrub.Value } else { @{} }
+
+    if ($promptScrub.Refuse -or $ctxScrub.Refuse) {
+        $refuseReason = if ($promptScrub.Refuse) { [string]$promptScrub.Reason } else { [string]$ctxScrub.Reason }
+        $refuseNotice = Join-MetraAskSecretsNotices -Notices @($promptScrub.Notice, $ctxScrub.Notice)
+        if (-not $refuseNotice) {
+            $refuseNotice = 'Private-key material was blocked and not sent to the Ask engine. Rephrase without the key block.'
+        }
+        return [PSCustomObject]@{
+            handoff         = $handoff
+            message         = [string]$refuseNotice
+            sessionId       = $SessionId
+            capability      = $capability
+            engine          = $null
+            model           = $null
+            answered        = $false
+            continuity      = $continuity
+            secretsScrubbed = $true
+            secretsNotice   = $refuseNotice
+            secretsKinds    = @($promptScrub.Kinds) + @($ctxScrub.Kinds)
+            secretsReason   = $refuseReason
+            scrubbedPrompt  = $enginePrompt
+        }
+    }
+
+    $engineResult = Invoke-MetraAskEngine -Prompt $enginePrompt -Cwd $cwd -Context $safeContext -SessionId $SessionId -MetraRoot $MetraRoot
 
     # A sidecar that died mid-session fails the call. Retry once after reviving, but only when
     # health says it is actually down - never re-run a prompt that merely took too long.
-    if (-not $engineResult.ok -and -not (Test-MetraAskEngineHealth -MetraRoot $MetraRoot -TimeoutSec 2)) {
+    if (-not $engineResult.ok -and [string](Get-MetraProp -Object $engineResult -Name 'error' -Default '') -ne 'secrets_refuse' -and -not (Test-MetraAskEngineHealth -MetraRoot $MetraRoot -TimeoutSec 2)) {
         $revived = Start-MetraAskEngine -MetraRoot $MetraRoot
         if ($revived.available) {
             $capability = $revived
             # Sessions live in the old process; start clean so the retry is not orphaned.
-            $engineResult = Invoke-MetraAskEngine -Prompt $q -Cwd $cwd -Context $context -MetraRoot $MetraRoot
+            # Journal continuity stays in context so the new agent can pick up the thread.
+            $safeContext['forceContinuity'] = $true
+            $engineResult = Invoke-MetraAskEngine -Prompt $enginePrompt -Cwd $cwd -Context $safeContext -MetraRoot $MetraRoot
+        }
+    }
+
+    if ([string](Get-MetraProp -Object $engineResult -Name 'error' -Default '') -eq 'secrets_refuse' -or [bool](Get-MetraProp -Object $engineResult -Name 'secretsRefuse' -Default $false)) {
+        $refuseNotice = [string](Get-MetraProp -Object $engineResult -Name 'secretsNotice' -Default '')
+        if ([string]::IsNullOrWhiteSpace($refuseNotice)) {
+            $refuseNotice = 'Private-key material was blocked and not sent to the Ask engine. Rephrase without the key block.'
+        }
+        $scrubbedFromEngine = [string](Get-MetraProp -Object $engineResult -Name 'scrubbedPrompt' -Default $enginePrompt)
+        return [PSCustomObject]@{
+            handoff         = $handoff
+            message         = $refuseNotice
+            sessionId       = $SessionId
+            capability      = $capability
+            engine          = $null
+            model           = $null
+            answered        = $false
+            continuity      = $continuity
+            secretsScrubbed = $true
+            secretsNotice   = $refuseNotice
+            secretsKinds    = @(Get-MetraProp -Object $engineResult -Name 'secretsKinds' -Default @())
+            secretsReason   = [string](Get-MetraProp -Object $engineResult -Name 'secretsReason' -Default 'pem_private_key')
+            scrubbedPrompt  = $scrubbedFromEngine
         }
     }
 
@@ -1633,25 +1926,52 @@ The Ask engine returned an error. Metra can still route work and recommend durab
         if ($engineResult.error) {
             $failCap | Add-Member -NotePropertyName detail -NotePropertyValue $engineResult.error -Force
         }
+        $preNotice = Join-MetraAskSecretsNotices -Notices @(
+            $(if ($promptScrub.Matched) { $promptScrub.Notice }),
+            $(if ($ctxScrub.Matched) { $ctxScrub.Notice }),
+            $(Get-MetraProp -Object $engineResult -Name 'secretsNotice' -Default $null)
+        )
         return [PSCustomObject]@{
-            handoff     = $handoff
-            message     = [string]$failCap.message
-            sessionId   = $null
-            capability  = $failCap
-            engine      = $capability.engine
-            model       = $null
-            answered    = $false
+            handoff         = $handoff
+            message         = Add-MetraAskSecretsNoticeToMessage -Message ([string]$failCap.message) -Notice $preNotice
+            sessionId       = $null
+            capability      = $failCap
+            engine          = $capability.engine
+            model           = $null
+            answered        = $false
+            continuity      = $continuity
+            secretsScrubbed = [bool]($promptScrub.Matched -or $ctxScrub.Matched -or (Get-MetraProp -Object $engineResult -Name 'secretsScrubbed' -Default $false))
+            secretsNotice   = $preNotice
+            secretsKinds    = @($promptScrub.Kinds) + @($ctxScrub.Kinds)
+            secretsReason   = $null
+            scrubbedPrompt  = $enginePrompt
         }
     }
 
+    $responseScrub = Invoke-MetraAskSecretsScrubText -Text ([string]$engineResult.message)
+    $notice = Join-MetraAskSecretsNotices -Notices @(
+        $(if ($promptScrub.Matched) { $promptScrub.Notice }),
+        $(if ($ctxScrub.Matched) { $ctxScrub.Notice }),
+        $(Get-MetraProp -Object $engineResult -Name 'secretsNotice' -Default $null),
+        $(if ($responseScrub.Matched) { $responseScrub.Notice })
+    )
+    $cleanMessage = Remove-MetraAskUiChrome -Message ([string]$responseScrub.Text)
+    $cleanMessage = Add-MetraAskSecretsNoticeToMessage -Message $cleanMessage -Notice $notice
+
     return [PSCustomObject]@{
-        handoff     = $handoff
-        message     = (Remove-MetraAskUiChrome -Message ([string]$engineResult.message))
-        sessionId   = [string]$engineResult.sessionId
-        capability  = $capability
-        engine      = [string]$engineResult.engine
-        model       = [string]$engineResult.model
-        answered    = $true
+        handoff         = $handoff
+        message         = $cleanMessage
+        sessionId       = [string]$engineResult.sessionId
+        capability      = $capability
+        engine          = [string]$engineResult.engine
+        model           = [string]$engineResult.model
+        answered        = $true
+        continuity      = $continuity
+        secretsScrubbed = [bool]($promptScrub.Matched -or $ctxScrub.Matched -or $responseScrub.Matched -or (Get-MetraProp -Object $engineResult -Name 'secretsScrubbed' -Default $false))
+        secretsNotice   = $notice
+        secretsKinds    = @($promptScrub.Kinds) + @($ctxScrub.Kinds) + @($responseScrub.Kinds)
+        secretsReason   = $null
+        scrubbedPrompt  = $enginePrompt
     }
 }
 
@@ -1860,13 +2180,18 @@ function ConvertTo-MetraDeskPayload {
         try {
             $tt = Get-MetraTicketTrackerProject
             if ($tt) {
-                # Local cache only during desk snapshot (CLI watch owns sync).
-                $candidates = Get-MetraTicketWatchCandidates -ModulePath $tt.ModulePath -Top 10
+                $ticketCfg = Get-MetraTicketWatchConfig -MetraRoot $MetraRoot
+                # Local cache by default; syncOnSnapshot opts in to pulling iSupport on a full refresh.
+                $candidates = Get-MetraTicketWatchCandidates `
+                    -ModulePath $tt.ModulePath `
+                    -Top ([int]$ticketCfg.top) `
+                    -DoSync ([bool]$ticketCfg.syncOnSnapshot)
                 foreach ($t in @($candidates.Tickets)) {
                     $qi = ConvertTo-MetraTicketAttentionQueueItem -Ticket $t -TicketTrackerPath $tt.Path
                     if ($qi) { $attentionQueue += $qi }
                 }
-                $ticketCovered = $true
+                # Truncated list is not full coverage - do not auto-close tickets past the cap.
+                $ticketCovered = -not [bool](Get-MetraProp -Object $candidates -Name 'Truncated' -Default $false)
             }
             else {
                 Write-Warning 'TicketTracker project or module not present; ticket watch skipped.'

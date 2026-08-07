@@ -125,8 +125,13 @@ Usage:
       Operator Communication Contract (candidates -> promote -> soft guidelines).
   .\metra.ps1 decisions show|note|promote|forget|search|get|supersede|gc|review|harvest|seed
       Decision Registry / Operational Why Memory (candidates -> promote; review = hygiene visibility).
-  .\metra.ps1 ask log|sessions
+  .\metra.ps1 ask log|sessions|get|recall
       Session Journal (recent Ask conversations - continuity window, not permanent memory).
+      get <sessionId> resumes/reads one session; recall "<query>" searches prompts/answers.
+  .\metra.ps1 ask engine show|set|recommend|menu
+  .\metra.ps1 ask key status|set|clear
+  .\metra.ps1 ask recommend|accept [-RuntimeOnly] [-SkipInstall] [-WhatIf]
+      Ask engine: Ollama recommended path; Cursor premium; enterprise when configured.
   .\metra.ps1 capture list|get|note|dismiss|promote|from-ask
       Capture Inbox (thin portfolio intake; promote on affirm - never auto).
   .\metra.ps1 coverage
@@ -534,8 +539,24 @@ switch ($Command) {
         if ($Rest.Count -gt 1) {
             $subArgs = @($Rest[1..($Rest.Count - 1)])
         }
-        $result = Invoke-MetraAskLogCommand -Subcommand $sub -ArgsRest $subArgs
-        $result | Format-Table -AutoSize
+        if ($sub -match '^(?i)(engine|key|recommend|accept|menu)$') {
+            $result = Invoke-MetraAskEngineCommand -Subcommand $sub -ArgsRest $subArgs
+            if ($sub -match '^(?i)(recommend|accept|menu)$' -or ($sub -match '^(?i)engine$' -and $subArgs.Count -gt 0 -and $subArgs[0] -match '^(?i)(recommend|menu)$')) {
+                $result | Format-List
+            }
+            else {
+                $result | Format-List
+            }
+        }
+        else {
+            $result = Invoke-MetraAskLogCommand -Subcommand $sub -ArgsRest $subArgs
+            if ($sub -match '^(?i)(get|resume)$') {
+                $result | Format-List
+            }
+            else {
+                $result | Format-Table -AutoSize
+            }
+        }
     }
 
     'capture' {

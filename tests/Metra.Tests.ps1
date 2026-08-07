@@ -1373,7 +1373,13 @@ Describe 'HTML Ops desk payload' {
             }
             elseif (-not $payload.nextAttention.proposalId) {
                 $payload.nextAttention.editCapability | Should -Be 'unsafe'
-                $payload.nextAttention.resolveCopy | Should -Match 'Open this in your editor'
+                if ($payload.nextAttention.kind -eq 'ticket') {
+                    $payload.nextAttention.resolveCopy | Should -Match 'brief this ticket|TicketTracker.ps1 brief'
+                    $payload.nextAttention.resolveCopy | Should -Match 'will not post to iSupport'
+                }
+                else {
+                    $payload.nextAttention.resolveCopy | Should -Match 'Open this in your editor'
+                }
             }
             else {
                 $payload.nextAttention.editCapability | Should -Be 'safe'
@@ -1385,9 +1391,10 @@ Describe 'HTML Ops desk payload' {
     It 'writes plain-language attention headlines for git hygiene' {
         InModuleScope Metra {
             $plain = Get-MetraAttentionPlainSummary -Project 'Brightspace' -Kind 'git' -Content 'Brightspace - git ahead 1'
-            $plain | Should -Be 'Brightspace has 1 change waiting to be published.'
+            $plain | Should -Be 'Git: Brightspace has 1 change waiting to be published.'
 
             $mixed = Get-MetraAttentionPlainSummary -Project 'Trivia' -Kind 'git' -Content 'Trivia - git dirty 2, ahead 1'
+            $mixed | Should -Match '^Git:'
             $mixed | Should -Match 'unfinished local changes'
             $mixed | Should -Match 'waiting to be published'
 
@@ -1451,8 +1458,19 @@ Describe 'HTML Ops desk payload' {
                 $git = @($mem2.items) | Where-Object { $_.key -eq 'Trivia:git' } | Select-Object -First 1
                 $git | Should -Not -BeNullOrEmpty
                 $git.state | Should -Be 'active'
-                $git.notRecheckedSince | Should -Not -BeNullOrEmpty
-                $git.confidence | Should -BeIn @('likelyStale', 'needsRevalidation')
+                # A scan that skips git does not make a minutes-old observation stale.
+                $git.notRecheckedSince | Should -BeNullOrEmpty
+                $git.confidence | Should -Be 'fresh'
+
+                $aged = Get-MetraAttentionMemory -MetraRoot $root
+                foreach ($i in @($aged.items)) {
+                    if ($i.key -eq 'Trivia:git') { $i.lastSeenAt = (Get-Date).AddHours(-30).ToString('o') }
+                }
+                $null = Set-MetraAttentionMemory -Memory $aged -MetraRoot $root
+                $mem2b = Update-MetraAttentionMemory -Queue @($driftItem) -CoveredKinds @('drift', 'decision', 'contract') -ScanMode quick -MetraRoot $root
+                $gitAged = @($mem2b.items) | Where-Object { $_.key -eq 'Trivia:git' } | Select-Object -First 1
+                $gitAged.notRecheckedSince | Should -Not -BeNullOrEmpty
+                $gitAged.confidence | Should -Be 'needsRevalidation'
 
                 $null = Invoke-MetraAttentionMutation -Key 'Trivia:git' -Action dismiss -MetraRoot $root
                 $mem3 = Update-MetraAttentionMemory -Queue @($gitItem, $driftItem) -CoveredKinds @('drift', 'decision', 'contract', 'git') -ScanMode full -MetraRoot $root
@@ -1898,6 +1916,51 @@ Hello from Ask.
         }
     }
 
+    It 'searches journal turns and builds continuity summary for long sessions' {
+        InModuleScope Metra {
+            $root = Join-Path ([IO.Path]::GetTempPath()) ("metra-askc-" + [guid]::NewGuid().ToString('n'))
+            New-Item -ItemType Directory -Path (Join-Path $root 'docs') -Force | Out-Null
+            try {
+                $sess = 'sess-continuity'
+                1..6 | ForEach-Object {
+                    Add-MetraDeskAskEntry -Prompt "gateway turn $_" -Message "answer about msal $_" `
+                        -Handoff ([PSCustomObject]@{ where = 'PBI' }) `
+                        -SessionId $sess -Origin loopback -Client ops-web -Answered $true -MetraRoot $root | Out-Null
+                }
+                $turns = @(Get-MetraDeskAskSessionTurns -SessionId $sess -MetraRoot $root)
+                $turns.Count | Should -Be 6
+                $turns[0].turnIndex | Should -Be 1
+                $turns[-1].turnIndex | Should -Be 6
+
+                $hits = @(Search-MetraDeskAskJournal -Query 'gateway msal' -MetraRoot $root -Limit 10)
+                $hits.Count | Should -BeGreaterThan 0
+                ($hits | Where-Object { $_.sessionId -eq $sess }).Count | Should -BeGreaterThan 0
+
+                $ctx = Get-MetraAskContinuityContext -SessionId $sess -MetraRoot $root -KeepRecent 4 -SummarizeAfterTurns 4
+                $ctx.usedSummarization | Should -BeTrue
+                $ctx.summarizedTurnCount | Should -Be 2
+                $ctx.recentTurnCount | Should -Be 4
+                $ctx.sessionSummary | Should -Match 'Turn 1'
+                $ctx.sessionSummary | Should -Match 'gateway'
+
+                $other = 'sess-recall'
+                Add-MetraDeskAskEntry -Prompt 'prior disk alert' -Message 'Orion disk brief' `
+                    -Handoff ([PSCustomObject]@{ where = 'Solarwinds' }) `
+                    -SessionId $other -Origin loopback -Client ops-web -Answered $true -MetraRoot $root | Out-Null
+                $withRecall = Get-MetraAskContinuityContext -SessionId $sess -RecallSessionId $other -MetraRoot $root
+                $withRecall.recallSummary | Should -Match 'disk'
+
+                $cliGet = Invoke-MetraAskLogCommand -Subcommand get -ArgsRest @($sess) -MetraRoot $root
+                $cliGet.turnCount | Should -Be 6
+                $cliRecall = @(Invoke-MetraAskLogCommand -Subcommand recall -ArgsRest @('gateway', 'msal') -MetraRoot $root)
+                $cliRecall.Count | Should -BeGreaterThan 0
+            }
+            finally {
+                Remove-Item -LiteralPath $root -Recurse -Force -ErrorAction SilentlyContinue
+            }
+        }
+    }
+
     It 'creates thin capture from askTurn without duplicating full answer' {
         InModuleScope Metra {
             $root = Join-Path ([IO.Path]::GetTempPath()) ("metra-cap-" + [guid]::NewGuid().ToString('n'))
@@ -1934,6 +1997,257 @@ Hello from Ask.
             Resolve-MetraAskOrigin -IsLoopback $false -HasLocalSession $true | Should -Be 'localSession'
             Resolve-MetraAskOrigin -IsLoopback $false -HasLocalSession $false | Should -Be 'remote'
         }
+    }
+}
+
+Describe 'Ask secrets scrub' {
+    It 'scrubs GitHub, Bearer, and connection secrets without refusing' {
+        InModuleScope Metra {
+            $gh = 'ghp_' + ('A' * 36)
+            $tok = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiIxIn0.abc123def456'
+            $text = "token $gh and Bearer $tok and Server=x;Password=s3cretValue;Database=y"
+            $r = Invoke-MetraAskSecretsScrubText -Text $text
+            $r.Matched | Should -BeTrue
+            $r.Refuse | Should -BeFalse
+            $r.Reason | Should -BeNullOrEmpty
+            $r.Text | Should -Match '\[REDACTED:github\]'
+            $r.Text | Should -Match '\[REDACTED:bearer\]'
+            $r.Text | Should -Match '\[REDACTED:connection\]'
+            $r.Text | Should -Not -Match [regex]::Escape($gh)
+            $r.Text | Should -Not -Match 's3cretValue'
+            $r.Notice | Should -Match 'Secrets scrubbed:'
+            ($r.Kinds | Where-Object { $_.Kind -eq 'github' }).Count | Should -Be 1
+        }
+    }
+
+    It 'refuses PEM private key blocks with reason pem_private_key' {
+        InModuleScope Metra {
+            $pem = @"
+-----BEGIN PRIVATE KEY-----
+MIIEvQIBADANBgkqhkiG9w0BAQEFAASCBKcwggSjAgEAAoIBAQC7examplekeymaterial
+-----END PRIVATE KEY-----
+"@
+            $r = Invoke-MetraAskSecretsScrubText -Text "here is a key:`n$pem"
+            $r.Matched | Should -BeTrue
+            $r.Refuse | Should -BeTrue
+            $r.Reason | Should -Be 'pem_private_key'
+            $r.Text | Should -Match '\[REDACTED:pem\]'
+            $r.Text | Should -Not -Match 'BEGIN PRIVATE KEY'
+            $r.Notice | Should -Match 'Private-key material was blocked'
+        }
+    }
+
+    It 'leaves ticket ids and short hex alone' {
+        InModuleScope Metra {
+            $text = 'Ticket 1035020 on commit abcdef1 needs routing to TicketTracker'
+            $r = Invoke-MetraAskSecretsScrubText -Text $text
+            $r.Matched | Should -BeFalse
+            $r.Refuse | Should -BeFalse
+            $r.Text | Should -Be $text
+        }
+    }
+
+    It 'flags heavy redaction ratio without refusing non-PEM content' {
+        InModuleScope Metra {
+            $gh = 'ghp_' + ('B' * 80)
+            $r = Invoke-MetraAskSecretsScrubText -Text $gh
+            $r.Matched | Should -BeTrue
+            $r.Refuse | Should -BeFalse
+            $r.RedactedCharsRatio | Should -BeGreaterThan 0.75
+            $r.Notice | Should -Match 'Large amount of sensitive content removed'
+        }
+    }
+
+    It 'ScrubObject walks nested recentTurns so recall cannot reintroduce secrets' {
+        InModuleScope Metra {
+            $gh = 'ghp_' + ('C' * 36)
+            $ctx = @{
+                where = 'Metra'
+                recentTurns = @(
+                    @{ turnIndex = 1; prompt = "paste $gh"; message = 'ok' }
+                )
+                sessionSummary = "Turn 1: Q: paste $gh"
+            }
+            $r = Invoke-MetraAskSecretsScrubObject -InputObject $ctx
+            $r.Matched | Should -BeTrue
+            $turns = @($r.Value.recentTurns)
+            $turns.Count | Should -BeGreaterThan 0
+            $firstPrompt = [string](Get-MetraProp -Object $turns[0] -Name 'prompt' -Default '')
+            if (-not $firstPrompt -and $turns[0] -is [hashtable]) {
+                $firstPrompt = [string]$turns[0]['prompt']
+            }
+            $firstPrompt | Should -Match '\[REDACTED:github\]'
+            $firstPrompt | Should -Not -Match [regex]::Escape($gh)
+            $r.Value.sessionSummary | Should -Not -Match [regex]::Escape($gh)
+        }
+    }
+
+    It 'Add-MetraDeskAskEntry never persists raw secret in journal JSON' {
+        InModuleScope Metra {
+            $root = Join-Path ([IO.Path]::GetTempPath()) ("metra-asksec-" + [guid]::NewGuid().ToString('n'))
+            New-Item -ItemType Directory -Path (Join-Path $root 'docs') -Force | Out-Null
+            try {
+                $gh = 'ghp_' + ('D' * 36)
+                $entry = Add-MetraDeskAskEntry -Prompt "help with $gh" -Message "Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.payload.sig" `
+                    -Handoff ([PSCustomObject]@{ where = 'Metra' }) `
+                    -SessionId 'sess-secrets' -Origin loopback -Client ops-web -Answered $true -MetraRoot $root
+                $entry.prompt | Should -Match '\[REDACTED:github\]'
+                $entry.prompt | Should -Not -Match [regex]::Escape($gh)
+                $entry.message | Should -Match '\[REDACTED:bearer\]'
+                $disk = Get-Content -LiteralPath (Join-Path $root 'docs\ops-ask-log.local.json') -Raw
+                $disk | Should -Not -Match [regex]::Escape($gh)
+                $disk | Should -Not -Match 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9'
+            }
+            finally {
+                Remove-Item -LiteralPath $root -Recurse -Force -ErrorAction SilentlyContinue
+            }
+        }
+    }
+
+    It 'Get-MetraDeskAskResult and Invoke-MetraAskEngine call scrub helpers' {
+        $snap = Get-Content -LiteralPath (Join-Path (Get-MetraRoot) 'scripts\private\Snapshot.ps1') -Raw
+        $eng = Get-Content -LiteralPath (Join-Path (Get-MetraRoot) 'scripts\private\AskEngine.ps1') -Raw
+        $snap | Should -Match 'Invoke-MetraAskSecretsScrubText'
+        $snap | Should -Match 'Invoke-MetraAskSecretsScrubObject'
+        $eng | Should -Match 'Invoke-MetraAskSecretsScrubText'
+        $eng | Should -Match 'Invoke-MetraAskSecretsScrubObject'
+        Test-Path -LiteralPath (Join-Path (Get-MetraRoot) 'scripts\private\AskSecrets.ps1') | Should -BeTrue
+    }
+}
+
+Describe 'Ask multi-engine (ladder 1)' {
+    It 'recommends ollama with a size band and model pin' {
+        $rec = Get-MetraAskEngineRecommendation
+        $rec.engine | Should -Be 'ollama'
+        $rec.sizeBand | Should -BeIn @('small', 'medium', 'large')
+        $rec.modelPin | Should -Not -BeNullOrEmpty
+        $rec.summary | Should -Match 'Ollama'
+    }
+
+    It 'exposes Settings portfolio with a primary projects path (consumer Settings)' {
+        $p = Get-MetraSettingsPortfolio
+        $p.primaryPath | Should -Not -BeNullOrEmpty
+        @($p.roots).Count | Should -BeGreaterThan 0
+        $null -ne $p.ask.apiKeyPresent | Should -BeTrue
+        $p.hint | Should -Match 'label'
+    }
+
+    It 'resolves ollama.exe from known install path when PATH lags' {
+        InModuleScope Metra {
+            Mock Get-Command { $null }
+            $exe = Join-Path $env:LOCALAPPDATA 'Programs\Ollama\ollama.exe'
+            if (-not (Test-Path -LiteralPath $exe)) {
+                Set-ItResult -Skipped -Because 'Ollama not installed at default LocalAppData path'
+                return
+            }
+            $resolved = Get-MetraAskOllamaExePath
+            $resolved | Should -Be $exe
+        }
+    }
+
+    It 'exposes Advanced menu without GPT4All and hides enterprise when unconfigured' {
+        $menu = @(Get-MetraAskEngineMenu)
+        $ids = @($menu | ForEach-Object { $_.id })
+        $ids | Should -Contain 'ollama'
+        $ids | Should -Contain 'cursor'
+        $ids | Should -Contain 'llamacpp'
+        $ids | Should -Not -Contain 'gpt4all'
+        $settings = Get-MetraAskSettings
+        if (-not $settings.enterpriseConfigured) {
+            $ids | Should -Not -Contain 'enterprise'
+        }
+    }
+
+    It 'capability reports runtime fields for ollama without requiring Node' {
+        InModuleScope Metra {
+            Mock Get-MetraAskSettings {
+                [PSCustomObject]@{
+                    enabled = $true
+                    engine = 'ollama'
+                    cursorPort = 7381
+                    cursorModel = 'composer-2.5'
+                    ollamaBaseUrl = 'http://127.0.0.1:11434'
+                    ollamaModel = 'qwen2.5:7b'
+                    ollamaSizeBand = 'medium'
+                    enterpriseBaseUrl = ''
+                    enterpriseModel = ''
+                    enterpriseApiKeyEnv = 'METRA_ASK_ENTERPRISE_KEY'
+                    enterpriseConfigured = $false
+                    llamacppBaseUrl = 'http://127.0.0.1:8080'
+                    llamacppModel = 'qwen2.5:14b'
+                    model = 'qwen2.5:7b'
+                    metraRoot = (Get-MetraRoot)
+                }
+            }
+            Mock Test-MetraAskOpenAICompatHealth { $false }
+            Mock Test-MetraCursorInstall { $false }
+            Mock Get-MetraCursorApiKey { $null }
+            Mock Get-MetraAskNodePath { $null }
+            $cap = Get-MetraAskCapability
+            $cap.engine | Should -Be 'ollama'
+            $cap.reason | Should -Be 'runtime_missing'
+            $cap.nodeReady | Should -BeFalse
+            $cap.message | Should -Match 'Ollama'
+            $cap.message | Should -Not -Match 'install Node yourself'
+        }
+    }
+
+    It 'accept WhatIf writes no failure and names ollama steps' {
+        $result = Invoke-MetraAskAcceptRecommended -WhatIf -SkipInstall
+        $result.recommendation.engine | Should -Be 'ollama'
+        $result.steps | Should -Not -BeNullOrEmpty
+    }
+
+    It 'installs Ollama silently without popping the Launch UI' {
+        $eng = Get-Content -LiteralPath (Join-Path (Get-MetraRoot) 'scripts\private\AskRecommend.ps1') -Raw
+        # Hidden-start marker + fully silent setup, and winget fallback carries silent overrides.
+        $eng | Should -Match "Ollama.*'upgraded'"
+        $eng | Should -Match '/VERYSILENT'
+        $eng | Should -Match '/SUPPRESSMSGBOXES'
+        $eng | Should -Match 'Set-MetraAskOllamaHiddenStartMarker'
+    }
+
+    It 'runtime WhatIf reports the silent setup path' {
+        InModuleScope Metra {
+            Mock Test-MetraAskOpenAICompatHealth { $false }
+            Mock Get-MetraAskOllamaExePath { $null }
+            $r = Install-MetraAskOllamaRuntime -WhatIf
+            $r.status | Should -Be 'whatif_silent_setup'
+            $r.ok | Should -BeTrue
+        }
+    }
+
+    It 'product updates reports Metra and Ollama status without auto-applying' {
+        $u = Get-MetraProductUpdates -Force
+        $u.metra | Should -Not -BeNullOrEmpty
+        $u.ollama | Should -Not -BeNullOrEmpty
+        $u.checkedAt | Should -Not -BeNullOrEmpty
+        $null -ne $u.anyUpdate | Should -BeTrue
+        # Dev checkout must not offer in-app Metra installer update.
+        if (Test-Path -LiteralPath (Join-Path (Get-MetraRoot) '.git')) {
+            $u.metra.channel | Should -Be 'dev'
+            $u.metra.canUpdate | Should -BeFalse
+        }
+    }
+
+    It 'Metra product update WhatIf is safe on a current or unavailable release' {
+        $r = Invoke-MetraProductUpdate -Target metra -WhatIf
+        $r.target | Should -Be 'metra'
+        $r.status | Should -BeIn @('whatif', 'already_current', 'dev_checkout')
+        if ($r.status -eq 'dev_checkout') {
+            $r.ok | Should -BeFalse
+        }
+        else {
+            $r.ok | Should -BeTrue
+        }
+    }
+
+    It 'openai_compat and recommend scripts are present' {
+        Test-Path -LiteralPath (Join-Path (Get-MetraRoot) 'scripts\private\AskOpenAICompat.ps1') | Should -BeTrue
+        Test-Path -LiteralPath (Join-Path (Get-MetraRoot) 'scripts\private\AskRecommend.ps1') | Should -BeTrue
+        $eng = Get-Content -LiteralPath (Join-Path (Get-MetraRoot) 'scripts\private\AskEngine.ps1') -Raw
+        $eng | Should -Match 'openai_compat|ollama'
+        $eng | Should -Match 'Get-MetraAskNodePath'
     }
 }
 

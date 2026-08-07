@@ -79,6 +79,22 @@ When bound non-loopback: proposal create and `request-apply` require a local Hos
 
 Ask Session Journal (`docs/ops-ask-log.local.json`) and Capture Inbox (`docs/ops-capture.local.json`) are Ask-class local ledgers (gitignored). Remote/iOS clients may append journal turns and create/dismiss Capture candidates via `/api/ask` and `/api/capture*` - same reach class as Ask and place upload. Promote into Future Development (local append) is available as Capture promote; tracked policy (`Decisions.md`), OCC render, AGENTS, and project law remain Host/CLI authority. Do not loosen remote Host apply so phone/iOS rewrites tracked files.
 
+### Ask secrets scrub
+
+Defense in depth for users who paste keys or passwords into Ask. Code path (not prompt theater):
+
+1. Scrub high-signal patterns on the prompt and continuity context before `POST /v1/complete`.
+2. Scrub engine responses before desk render.
+3. Scrub again at Session Journal write (`Add-MetraDeskAskEntry`) so raw matches are never persisted.
+4. Cursor sidecar mirrors the same patterns; PowerShell remains authoritative for journal and desk.
+
+Matches become `[REDACTED:<kind>]` placeholders with a short operator notice (kinds + counts only). PEM / private-key blocks set refuse reason `pem_private_key` and do not call the engine. Patterns require labeled or well-known prefixes (`ghp_`, `github_pat_`, `sk-`, `AKIA…`, `Bearer `, `Password=` / `Pwd=`, PEM fences) to protect ticket ids and short git SHAs. Complements Host ProposalJail and answer-only ceilings; does not replace them. Cursor IDE `askInChat` bridge is outside this Ops Ask scrub.
+
+### Ask API keys and engines
+
+- `CURSOR_API_KEY` for Cursor Ask is User-scope env only (`.\metra.ps1 ask key set|clear|status`). Never store it in `metra.config.json` or logs. Status never prints the key.
+- Local Ollama / llama.cpp / enterprise Ask use PowerShell `openai_compat` - no Node requirement. Enterprise optional auth via env name in `ask.enterprise.apiKeyEnv` (default `METRA_ASK_ENTERPRISE_KEY`).
+- Cursor Ask may use private Node under `runtimes/node` - do not teach consumers to install Node themselves.
 
 ### Explicitly rejected patterns
 

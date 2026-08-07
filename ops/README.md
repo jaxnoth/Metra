@@ -36,18 +36,20 @@ Vite proxies `/api` to `http://127.0.0.1:7380`.
 
 ## Layout
 
-Three peer panels (do not blend):
+One desk, three layers (see Decisions **Ops desk three-layer model**). Separate systems; shared awareness and handoffs - not one Observation Desk inbox.
 
-| Panel | Job |
+| Layer | Job |
 |-------|-----|
-| **Ask** | Help me think or do |
-| **Next attention** | Metra noticed something |
-| **Route something** | Help me find the right home |
+| **Awareness** | Metra presence + one truthful observation; updated time stays quiet, waiting / held counts live on expandable Attention |
+| **Work surface** | One shared composer with explicit **Ask** and **Put somewhere** destinations; **Attention** remains a separate expandable reality-claim surface |
+| **Motion** | Quiet bridges: Discuss, Capture (Save for portfolio), Put somewhere, Keep in view - move context without merging ledgers |
 
 | Mode | Surface |
 |------|---------|
-| General (default) | Ask, Next attention, Route something |
+| General (default) | Presence-first shared composer + compact/expandable Attention + recommendation result |
 | Advanced | + Projects, Recent conversations + Captures, Health |
+
+The primary surface stays presence-first even on loud days. Composer copy stays collaborative without slogan reuse (**Where should we start?**; quiet: toss me an idea; busy: discuss or type what you're thinking; placeholder: idea / question / rough draft). On mobile, Ask / Put somewhere always precedes a collapsed Attention count; wider screens open Attention by default. The shared text box does not merge systems: **Ask** calls the Ask API and journals a conversation; **Put somewhere** calls Place and returns a recommendation. Attachments are Place-only until Ask image intake ships. Recommendation-only trust copy remains visible beside the composer.
 
 Shared portfolio brain: `docs/canvas-snapshot.json` via `Get-MetraDeskPayload` (same snapshot as the Cursor canvas).
 
@@ -57,15 +59,21 @@ HTML Ops is the first client. Future native iOS (and phone browser over Tailscal
 
 | Method | Path | Class | Notes |
 |--------|------|-------|-------|
-| POST | `/api/ask` | Ask | Body: `prompt`, optional `sessionId`, `client`, `clientHint`. Header `X-Metra-Client`: `ops-web` \| `ops-ios` \| `cli`. Journals a turn (`turnIndex` within session). Returns `entry`, `message`, `handoff`, `sessionId`. |
-| GET | `/api/ask/journal` | Ask | Recent session summaries + turns (continuity window). |
+| GET | `/api/settings` | Settings | Portfolio roots (labeled list) + Ask key presence (never the key value). |
+| PUT | `/api/settings` | Settings | Body: `roots: [{ name?, label, path, primary, optional }]` (preferred); legacy `primaryPath` / `personalPath` / `clearPersonal`; `cursorApiKey` / `clearCursorApiKey`. Operator machine only (loopback or `X-Metra-Local-Session`). |
+| GET | `/api/updates` | Settings | Metra + Ollama update status (`?force=1` bypasses 24h cache). |
+| POST | `/api/updates` | Settings | Body: `{ target: "metra" \| "ollama" }`. Operator-confirm apply only - never auto. Operator machine only. |
+| POST | `/api/ask` | Ask | Body: `prompt`, optional `sessionId`, `recallSessionId`, `client`, `clientHint`. Header `X-Metra-Client`: `ops-web` \| `ops-ios` \| `cli`. Journals a turn (`turnIndex` within session). Returns `entry`, `message`, `handoff`, `sessionId`, `continuity` (summary / recent / recall flags). |
+| GET | `/api/ask/journal` | Ask | Default: recent session summaries + turns. `?sessionId=` one session (Resume). `?q=` keyword search (episodic recall). |
 | GET | `/api/capture` | Ask | List Capture Inbox (`?status=candidate\|all`). |
 | POST | `/api/capture` | Ask | Create candidate. Ask: `{ turnId, sessionId? }`. Place: `{ source: place, text, homeId, placeId?, attachmentIds? }`. Manual: `{ summary }`. Sets `derivedFrom` once. |
 | PATCH/POST | `/api/capture/{id}` | Ask | Update framing only - rejects `derivedFrom` mutation. |
 | POST | `/api/capture/{id}/dismiss` | Ask | Status dismissed. |
 | POST | `/api/capture/{id}/promote` | Ask (local homes) | Affirm into Future Development / Decision Registry candidate / OCC candidate. Never auto. |
 
-CLI mirrors: `.\metra.ps1 ask sessions|log`, `.\metra.ps1 capture list|note|promote|from-ask`.
+CLI mirrors: `.\metra.ps1 ask sessions|log|get|recall`, `.\metra.ps1 capture list|note|promote|from-ask`.
+
+**Ask continuity (Ops):** Advanced Recent offers **Resume** (reload journal turns into the Ask panel and keep `sessionId`) and **Recall into Ask** (arm `recallSessionId` for the next Ask as labeled evidence). Long sessions get an extractive Journal summary in engine context when older turns exceed the keep-recent window - not Capture, not silent memory soup.
 
 ## Route something (landing zone)
 

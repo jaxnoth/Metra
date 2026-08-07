@@ -145,6 +145,12 @@ function Get-MetraAttentionMemory {
                 kind               = [string](Get-MetraProp -Object $i -Name 'kind' -Default '')
                 source             = [string](Get-MetraProp -Object $i -Name 'source' -Default 'snapshot')
                 content            = [string](Get-MetraProp -Object $i -Name 'content' -Default '')
+                detail             = [string](Get-MetraProp -Object $i -Name 'detail' -Default '')
+                ticketStatus       = [string](Get-MetraProp -Object $i -Name 'ticketStatus' -Default '')
+                statusRank         = $(
+                    $sr = Get-MetraProp -Object $i -Name 'statusRank' -Default $null
+                    if ($null -eq $sr -or "$sr" -eq '') { $null } else { try { [int]$sr } catch { $null } }
+                )
                 command            = [string](Get-MetraProp -Object $i -Name 'command' -Default '')
                 evidenceSignature  = [string](Get-MetraProp -Object $i -Name 'evidenceSignature' -Default '')
                 state              = [string](Get-MetraProp -Object $i -Name 'state' -Default 'active')
@@ -253,15 +259,22 @@ function Get-MetraAttentionConfidenceRank {
 }
 
 function Get-MetraAttentionConfidenceFromAge {
+    <#
+    .SYNOPSIS
+        Age-based confidence. A scan that skips a kind does not make that kind stale on its own.
+    #>
     [CmdletBinding()]
     param(
         [datetime]$LastSeenAt,
-        [switch]$ConfirmedThisScan
+        [switch]$ConfirmedThisScan,
+        [double]$FreshHours = 6,
+        [double]$StaleHours = 24
     )
 
     if ($ConfirmedThisScan) { return 'fresh' }
     $ageHours = ((Get-Date) - $LastSeenAt).TotalHours
-    if ($ageHours -lt 24) { return 'likelyStale' }
+    if ($ageHours -lt $FreshHours) { return 'fresh' }
+    if ($ageHours -lt $StaleHours) { return 'likelyStale' }
     return 'needsRevalidation'
 }
 
@@ -297,18 +310,24 @@ function Get-MetraAttentionPlainSummary {
         }
         if ($parts.Count -gt 0) {
             $body = $parts -join '; '
-            if ($project) { return "$project has $body." }
-            return (Get-Culture).TextInfo.ToTitleCase($body) + '.'
+            if ($project) { return "Git: $project has $body." }
+            return 'Git: ' + (Get-Culture).TextInfo.ToTitleCase($body) + '.'
         }
-        if ($project) { return "$project has unpublished work." }
-        return 'Unpublished work needs a look.'
+        if ($project) { return "Git: $project has unpublished work." }
+        return 'Git: unpublished work needs a look.'
     }
 
     if ($kind -eq 'verify') {
-        if ($project) { return "$project failed a health check." }
-        return 'A health check needs attention.'
+        if ($project) { return "Health: $project failed a health check." }
+        return 'Health: a health check needs attention.'
     }
     if ($kind -eq 'ticket') {
+        if ($content -match '(?i)^Ticket\s+(\d+)\s*:\s*(.+)$') {
+            $id = $Matches[1]
+            $subject = $Matches[2].Trim()
+            if ($subject.Length -gt 90) { $subject = $subject.Substring(0, 87).TrimEnd() + '...' }
+            return "Ticket $id`: $subject"
+        }
         if ($content -match '(?i)^Ticket\s+(\d+)') {
             $id = $Matches[1]
             if ($content -match '(?i)-\s*(High|Medium|Low|Critical)\s+priority') {
@@ -316,12 +335,15 @@ function Get-MetraAttentionPlainSummary {
             }
             return "Ticket $id needs triage."
         }
-        if ($content) { return $content }
-        return 'A ticket needs triage.'
+        if ($content) {
+            if ($content -match '(?i)^Ticket\b') { return $content }
+            return "Ticket: $content"
+        }
+        return 'Ticket: a ticket needs triage.'
     }
     if ($kind -eq 'drift') {
-        if ($project) { return "$project does not match the expected setup." }
-        return 'A project setup does not match what Metra expects.'
+        if ($project) { return "Setup: $project does not match the expected setup." }
+        return 'Setup: a project setup does not match what Metra expects.'
     }
     if ($kind -eq 'decision') {
         if ($content) { return $content }
@@ -362,6 +384,17 @@ function Get-MetraAttentionWhyNext {
     if ($Item.notRecheckedSince -and $confidence -ne 'fresh') {
         return 'Metra has not double-checked this lately. A full refresh will confirm whether it still needs attention.'
     }
+    $ticketStatus = [string](Get-MetraProp -Object $Item -Name 'ticketStatus' -Default '')
+    if (-not $ticketStatus) {
+        $detail = [string](Get-MetraProp -Object $Item -Name 'detail' -Default '')
+        if ($detail -match '(?i)^Waiting on Customer') { $ticketStatus = 'Waiting on Customer' }
+    }
+    if ($kind -eq 'ticket' -and $ticketStatus -match '(?i)^waiting\b') {
+        if ($RankIndex -eq 0) {
+            return 'Waiting on customer - sorted below Open tickets; nudge or check back when ready.'
+        }
+        return 'Waiting on customer; lower priority than Open tickets.'
+    }
     if ($RankIndex -eq 0 -and $ActiveCount -eq 1) {
         switch ($kind) {
             'verify' { return 'This is the only health check waiting right now.' }
@@ -369,7 +402,7 @@ function Get-MetraAttentionWhyNext {
             'drift' { return 'This is the only setup mismatch waiting right now.' }
             'decision' { return 'This is the only open decision waiting right now.' }
             'contract' { return 'This is the only preference waiting for review right now.' }
-            'git' { return 'This is the only unpublished work waiting right now.' }
+            'git' { return 'This is the only Git change waiting right now.' }
             default { return 'This is the only item waiting right now.' }
         }
     }
@@ -380,7 +413,7 @@ function Get-MetraAttentionWhyNext {
             'drift' { return 'This is the top setup mismatch to look at next.' }
             'decision' { return 'This is the top open decision to look at next.' }
             'contract' { return 'This is the top preference to review next.' }
-            'git' { return 'This is the top unpublished work to look at next.' }
+            'git' { return 'This is the top Git change to look at next.' }
             default { return 'This is the top item to look at next.' }
         }
     }
@@ -390,7 +423,7 @@ function Get-MetraAttentionWhyNext {
         'drift' { return 'A setup mismatch is still waiting.' }
         'decision' { return 'An open decision is still waiting.' }
         'contract' { return 'A preference is still waiting for review.' }
-        'git' { return 'Unpublished work is still waiting.' }
+        'git' { return 'A Git change is still waiting.' }
         default { return 'Still waiting for attention.' }
     }
 }
@@ -404,7 +437,9 @@ function Update-MetraAttentionMemory {
     param(
         [AllowEmptyCollection()]
         [object[]]$Queue = @(),
-        [Parameter(Mandatory)][string[]]$CoveredKinds,
+        [Parameter(Mandatory)]
+        [AllowEmptyCollection()]
+        [string[]]$CoveredKinds,
         [ValidateSet('quick', 'full')]
         [string]$ScanMode = 'quick',
         [string]$MetraRoot = (Get-MetraRoot)
@@ -425,6 +460,16 @@ function Update-MetraAttentionMemory {
         $project = [string](Get-MetraProp -Object $q -Name 'project' -Default '')
         $kind = [string](Get-MetraProp -Object $q -Name 'kind' -Default '')
         $content = [string](Get-MetraProp -Object $q -Name 'content' -Default '')
+        $detail = [string](Get-MetraProp -Object $q -Name 'detail' -Default '')
+        $ticketStatus = [string](Get-MetraProp -Object $q -Name 'ticketStatus' -Default '')
+        $statusRankRaw = Get-MetraProp -Object $q -Name 'statusRank' -Default $null
+        $statusRank = $null
+        if ($null -ne $statusRankRaw -and "$statusRankRaw" -ne '') {
+            try { $statusRank = [int]$statusRankRaw } catch { $statusRank = $null }
+        }
+        if ($kind -eq 'ticket' -and $null -eq $statusRank) {
+            $statusRank = Get-MetraTicketAttentionStatusRank -Status $ticketStatus
+        }
         $command = [string](Get-MetraProp -Object $q -Name 'command' -Default '')
         $source = [string](Get-MetraProp -Object $q -Name 'source' -Default 'snapshot')
         if (-not $key) {
@@ -447,6 +492,9 @@ function Update-MetraAttentionMemory {
                 kind              = $kind
                 source            = $source
                 content           = $content
+                detail            = $detail
+                ticketStatus      = $ticketStatus
+                statusRank        = $statusRank
                 command           = $command
                 evidenceSignature = $sig
                 state             = 'active'
@@ -469,6 +517,12 @@ function Update-MetraAttentionMemory {
         $prevState = [string]$item.state
         $prevSig = [string]$item.evidenceSignature
         $item.content = $content
+        if ($item.PSObject.Properties['detail']) { $item.detail = $detail }
+        else { $item | Add-Member -NotePropertyName detail -NotePropertyValue $detail -Force }
+        if ($item.PSObject.Properties['ticketStatus']) { $item.ticketStatus = $ticketStatus }
+        else { $item | Add-Member -NotePropertyName ticketStatus -NotePropertyValue $ticketStatus -Force }
+        if ($item.PSObject.Properties['statusRank']) { $item.statusRank = $statusRank }
+        else { $item | Add-Member -NotePropertyName statusRank -NotePropertyValue $statusRank -Force }
         $item.command = $command
         $item.project = $project
         $item.kind = $kind
@@ -580,9 +634,6 @@ function Update-MetraAttentionMemory {
         }
 
         # Skipped kind or quick scan - stay active, age confidence.
-        if (-not $item.notRecheckedSince) {
-            $item.notRecheckedSince = $nowIso
-        }
         $lastSeen = $now
         if ($item.lastSeenAt) {
             try {
@@ -591,6 +642,12 @@ function Update-MetraAttentionMemory {
             catch { }
         }
         $item.confidence = Get-MetraAttentionConfidenceFromAge -LastSeenAt $lastSeen
+        if ([string]$item.confidence -eq 'fresh') {
+            $item.notRecheckedSince = $null
+        }
+        elseif (-not $item.notRecheckedSince) {
+            $item.notRecheckedSince = $nowIso
+        }
         $item.lastScanMode = $ScanMode
         $byKey[$key] = $item
     }
@@ -639,6 +696,7 @@ function Get-MetraAttentionActiveItems {
         $active |
             Sort-Object `
             @{ Expression = { Get-MetraAttentionKindPriority -Kind $_.kind } }, `
+            @{ Expression = { Get-MetraAttentionItemStatusRank -Item $_ } }, `
             @{ Expression = { Get-MetraAttentionConfidenceRank -Confidence $_.confidence } }, `
             @{ Expression = { [string]$_.content } }
     )
@@ -659,7 +717,11 @@ function ConvertTo-MetraDeskAttentionView {
 
     $projectName = [string]$MemItem.project
     $kind = [string]$MemItem.kind
+    if ($kind -eq 'ticket') {
+        $MemItem = Update-MetraTicketAttentionDisplayFields -MemItem $MemItem
+    }
     $content = [string]$MemItem.content
+    $detail = [string](Get-MetraProp -Object $MemItem -Name 'detail' -Default '')
     $command = [string]$MemItem.command
     $key = [string]$MemItem.key
 
@@ -678,21 +740,46 @@ function ConvertTo-MetraDeskAttentionView {
 
     $editCapability = Get-MetraAttentionEditCapability -Kind $kind -ProposalId $proposalId
     $summary = Get-MetraAttentionPlainSummary -Project $projectName -Kind $kind -Content $content
-    $askPrompt = if ($projectName) {
+    $ticketId = ''
+    if ($kind -eq 'ticket' -and $content -match '(?i)\b(\d{6,8})\b') { $ticketId = $Matches[1] }
+
+    $askPrompt = if ($kind -eq 'ticket' -and $ticketId) {
+        "In TicketTracker, run .\TicketTracker.ps1 brief $ticketId, then check similar and notes. Summarize the ask, the evidence so far, and the next action. Do not post, recommend, or resolve in iSupport without my confirmation."
+    }
+    elseif ($projectName) {
         "In project $projectName, help with: $content. Prefer that project's AGENTS.md and Metra routing. When done, summarize what changed and what I should verify."
     }
     else {
         "Help with: $content. Prefer Metra routing and AGENTS.md. When done, summarize what changed and what I should verify."
     }
-    $doneWhen = switch ($editCapability) {
-        'git' { 'The changes are published, or you have reviewed them and decided what to do next.' }
-        'safe' { 'You confirmed the change in the Metra tray (or rejected it), and it looks right.' }
-        default { 'You understand the issue and either fixed it or handed it off with a clear next step.' }
+    $operatorNote = [string](Get-MetraProp -Object $MemItem -Name 'note' -Default '')
+    if (-not [string]::IsNullOrWhiteSpace($operatorNote)) {
+        $askPrompt = "$askPrompt`n`nOperator feedback (treat as current evidence): $operatorNote"
     }
-    $resolveCopy = switch ($editCapability) {
-        'safe' { 'Metra can make this small change after you confirm in the Metra tray.' }
-        'git' { 'Open the project in your editor to review and publish the changes. Metra will not publish from this page.' }
-        default { 'Open this in your editor to work on it. Metra can help prepare context, but will not change files from this page.' }
+    $doneWhen = if ($kind -eq 'ticket') {
+        'You have read the ticket and either replied in iSupport or set a clear next step.'
+    }
+    else {
+        switch ($editCapability) {
+            'git' { 'The changes are published, or you have reviewed them and decided what to do next.' }
+            'safe' { 'You confirmed the change in the Metra tray (or rejected it), and it looks right.' }
+            default { 'You understand the issue and either fixed it or handed it off with a clear next step.' }
+        }
+    }
+    $resolveCopy = if ($kind -eq 'ticket') {
+        if ($ticketId) {
+            "Ask Metra to brief this ticket, or run .\TicketTracker.ps1 brief $ticketId. Metra will not post to iSupport from this page."
+        }
+        else {
+            'Ask Metra to brief this ticket in TicketTracker. Metra will not post to iSupport from this page.'
+        }
+    }
+    else {
+        switch ($editCapability) {
+            'safe' { 'Metra can make this small change after you confirm in the Metra tray.' }
+            'git' { 'Open the project in your editor to review and publish the changes. Metra will not publish from this page.' }
+            default { 'Open this in your editor to work on it. Metra can help prepare context, but will not change files from this page.' }
+        }
     }
 
     $projectPath = $null
@@ -732,6 +819,7 @@ function ConvertTo-MetraDeskAttentionView {
         key               = $key
         project           = $projectName
         content           = $content
+        detail            = $detail
         kind              = $kind
         command           = $command
         summary           = $summary
@@ -761,15 +849,18 @@ function ConvertTo-MetraDeskAttentionView {
 function Invoke-MetraAttentionMutation {
     <#
     .SYNOPSIS
-        Operator mutations: dismiss, snooze, reopen, hold, release.
+        Operator mutations: dismiss, snooze, reopen, hold, release, note.
+        -Note is optional operator feedback (email said resolved, etc.). Never posts to iSupport.
+        For ticket items, a local TicketTracker note is written when -Note is set.
     #>
     [CmdletBinding()]
     param(
         [Parameter(Mandatory)][string]$Key,
         [Parameter(Mandatory)]
-        [ValidateSet('dismiss', 'snooze', 'reopen', 'hold', 'release')]
+        [ValidateSet('dismiss', 'snooze', 'reopen', 'hold', 'release', 'note')]
         [string]$Action,
         [int]$Days = 1,
+        [string]$Note = '',
         [string]$MetraRoot = (Get-MetraRoot)
     )
 
@@ -780,13 +871,32 @@ function Invoke-MetraAttentionMutation {
     }
 
     $nowIso = (Get-Date).ToString('o')
+    $noteText = ([string]$Note).Trim()
+    if ($Action -eq 'note' -and -not $noteText) {
+        throw 'Note text is required for the note action.'
+    }
+
+    if ($noteText) {
+        $item.note = $noteText
+        $item = Add-MetraAttentionEvent -Item $item -Type 'operatorNote' -Note $noteText
+        if ([string]$item.kind -eq 'ticket') {
+            try {
+                Write-MetraTicketAttentionLocalNote -MemItem $item -Text $noteText
+            }
+            catch { }
+        }
+    }
+
     switch ($Action) {
+        'note' {
+            # Note already applied; keep current state (usually active).
+        }
         'dismiss' {
             $item.state = 'dismissed'
             $item.closedAt = $nowIso
             $item.closedBy = 'operator'
             $item.snoozedUntil = $null
-            $item = Add-MetraAttentionEvent -Item $item -Type 'dismissed'
+            $item = Add-MetraAttentionEvent -Item $item -Type 'dismissed' -Note $(if ($noteText) { $noteText } else { '' })
         }
         'snooze' {
             if ($Days -lt 1) { $Days = 1 }
@@ -828,4 +938,33 @@ function Invoke-MetraAttentionMutation {
     }
     $memory.items = $newItems
     return Set-MetraAttentionMemory -Memory $memory -MetraRoot $MetraRoot
+}
+
+function Write-MetraTicketAttentionLocalNote {
+    <#
+    .SYNOPSIS
+        Writes a local TicketTracker note from Attention feedback. Never posts to iSupport.
+    #>
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory)]$MemItem,
+        [Parameter(Mandatory)][string]$Text
+    )
+
+    $id = ''
+    $key = [string]$MemItem.key
+    $content = [string]$MemItem.content
+    if ($key -match '(?i)^ticket:(\d+)') { $id = $Matches[1] }
+    elseif ($content -match '(?i)\b(\d{6,8})\b') { $id = $Matches[1] }
+    if (-not $id) { return }
+
+    $tt = Get-MetraTicketTrackerProject
+    if (-not $tt) { return }
+    Import-Module $tt.ModulePath -Force
+    $body = @"
+[attention-feedback]
+$Text
+No iSupport update has been posted.
+"@
+    Add-TrackedTicketNote -Id $id -Text $body -Tags 'attention-feedback' | Out-Null
 }

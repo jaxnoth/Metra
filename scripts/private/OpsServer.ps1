@@ -248,6 +248,112 @@ function Invoke-MetraOpsApi {
             return
         }
 
+        if ($method -eq 'GET' -and $path -eq '/api/settings') {
+            Write-MetraOpsJsonResponse -Response $Response -Object (Get-MetraSettingsPortfolio -MetraRoot $MetraRoot) -Depth 8
+            return
+        }
+
+        if ($method -eq 'GET' -and $path -eq '/api/updates') {
+            $force = $false
+            try {
+                $q = [string]$Request.Url.Query
+                if ($q -match '[?&]force=1' -or $q -match '[?&]force=true') { $force = $true }
+            }
+            catch { }
+            Write-MetraOpsJsonResponse -Response $Response -Object (Get-MetraProductUpdates -MetraRoot $MetraRoot -Force:$force) -Depth 8
+            return
+        }
+
+        if ($method -eq 'POST' -and $path -eq '/api/updates') {
+            $isLocalCaller = Test-MetraOpsRequestIsSameMachine -Request $Request
+            $sessionToken = ''
+            try { $sessionToken = [string]$Request.Headers['X-Metra-Local-Session'] } catch { }
+            if (-not $isLocalCaller -and -not (Test-MetraOpsLocalSessionToken -SessionToken $sessionToken)) {
+                Write-MetraOpsJsonResponse -Response $Response -StatusCode 403 -Object ([PSCustomObject]@{
+                        error      = 'Updates run on the operator machine only.'
+                        reasonCode = 'updatesLocalOnly'
+                    })
+                return
+            }
+            $body = Read-MetraOpsRequestBody -Request $Request
+            try {
+                $parsed = if ($body) { $body | ConvertFrom-Json } else { [PSCustomObject]@{} }
+                $target = [string](Get-MetraProp -Object $parsed -Name 'target' -Default '').Trim().ToLowerInvariant()
+                if ($target -notin @('metra', 'ollama')) {
+                    Write-MetraOpsJsonResponse -Response $Response -StatusCode 400 -Object ([PSCustomObject]@{
+                            error = 'target must be metra or ollama'
+                        })
+                    return
+                }
+                $result = Invoke-MetraProductUpdate -Target $target -MetraRoot $MetraRoot
+                Write-MetraOpsJsonResponse -Response $Response -Object $result -Depth 8
+            }
+            catch {
+                Write-MetraOpsJsonResponse -Response $Response -StatusCode 400 -Object ([PSCustomObject]@{
+                        error = $_.Exception.Message
+                    })
+            }
+            return
+        }
+
+        if ($method -eq 'PUT' -and $path -eq '/api/settings') {
+            # Config + API key writes stay on the operator machine (loopback or Host session).
+            $isLocalCaller = Test-MetraOpsRequestIsSameMachine -Request $Request
+            $sessionToken = ''
+            try { $sessionToken = [string]$Request.Headers['X-Metra-Local-Session'] } catch { }
+            if (-not $isLocalCaller -and -not (Test-MetraOpsLocalSessionToken -SessionToken $sessionToken)) {
+                Write-MetraOpsJsonResponse -Response $Response -StatusCode 403 -Object ([PSCustomObject]@{
+                        error      = 'Settings changes run on the operator machine only.'
+                        reasonCode = 'settingsLocalOnly'
+                    })
+                return
+            }
+            $body = Read-MetraOpsRequestBody -Request $Request
+            try {
+                $parsed = if ($body) { $body | ConvertFrom-Json } else { [PSCustomObject]@{} }
+                $setArgs = @{ MetraRoot = $MetraRoot }
+                $rootsPayload = Get-MetraProp -Object $parsed -Name 'roots' -Default $null
+                if ($null -ne $rootsPayload) {
+                    $setArgs['Roots'] = @($rootsPayload)
+                }
+                else {
+                    # Legacy two-field Settings body.
+                    $primaryPath = Get-MetraProp -Object $parsed -Name 'primaryPath' -Default $null
+                    if ($null -ne $primaryPath -and -not [string]::IsNullOrWhiteSpace([string]$primaryPath)) {
+                        $setArgs['PrimaryPath'] = [string]$primaryPath
+                    }
+                    if ($null -ne (Get-MetraProp -Object $parsed -Name 'personalPath' -Default $null) -or
+                        [bool](Get-MetraProp -Object $parsed -Name 'clearPersonal' -Default $false)) {
+                        $clearPersonal = [bool](Get-MetraProp -Object $parsed -Name 'clearPersonal' -Default $false)
+                        $personalPath = [string](Get-MetraProp -Object $parsed -Name 'personalPath' -Default '')
+                        if ($clearPersonal -or [string]::IsNullOrWhiteSpace($personalPath)) {
+                            $setArgs['ClearPersonal'] = $true
+                        }
+                        else {
+                            $setArgs['PersonalPath'] = $personalPath
+                        }
+                    }
+                }
+                if ([bool](Get-MetraProp -Object $parsed -Name 'clearCursorApiKey' -Default $false)) {
+                    $setArgs['ClearCursorApiKey'] = $true
+                }
+                else {
+                    $cursorKey = Get-MetraProp -Object $parsed -Name 'cursorApiKey' -Default $null
+                    if ($null -ne $cursorKey -and -not [string]::IsNullOrWhiteSpace([string]$cursorKey)) {
+                        $setArgs['CursorApiKey'] = [string]$cursorKey
+                    }
+                }
+                $result = Save-MetraSettingsPortfolio @setArgs
+                Write-MetraOpsJsonResponse -Response $Response -Object $result -Depth 8
+            }
+            catch {
+                Write-MetraOpsJsonResponse -Response $Response -StatusCode 400 -Object ([PSCustomObject]@{
+                        error = $_.Exception.Message
+                    })
+            }
+            return
+        }
+
         if ($method -eq 'GET' -and $path -eq '/api/local-session') {
             # Loopback-only: browser / webview on the operator machine may fetch the Host session marker.
             if (-not (Test-MetraOpsRequestIsLoopback -Request $Request)) {
@@ -334,23 +440,27 @@ function Invoke-MetraOpsApi {
             return
         }
 
-        $attnMatch = [regex]::Match($path, '^/api/attention/([^/]+)/(dismiss|snooze|reopen|hold|release)$', [System.Text.RegularExpressions.RegexOptions]::IgnoreCase)
+        $attnMatch = [regex]::Match($path, '^/api/attention/([^/]+)/(dismiss|snooze|reopen|hold|release|note)$', [System.Text.RegularExpressions.RegexOptions]::IgnoreCase)
         if ($method -eq 'POST' -and $attnMatch.Success) {
             $attnKey = [System.Uri]::UnescapeDataString($attnMatch.Groups[1].Value)
             $action = $attnMatch.Groups[2].Value.ToLowerInvariant()
             $days = 1
-            if ($action -eq 'snooze') {
-                $body = Read-MetraOpsRequestBody -Request $Request
-                if ($body) {
-                    try {
-                        $parsed = $body | ConvertFrom-Json
+            $note = ''
+            $body = Read-MetraOpsRequestBody -Request $Request
+            if ($body) {
+                try {
+                    $parsed = $body | ConvertFrom-Json
+                    if ($action -eq 'snooze') {
                         $days = [int](Get-MetraProp -Object $parsed -Name 'days' -Default 1)
                     }
-                    catch { $days = 1 }
+                    $note = [string](Get-MetraProp -Object $parsed -Name 'note' -Default '')
+                }
+                catch {
+                    if ($action -eq 'snooze') { $days = 1 }
                 }
             }
             try {
-                $null = Invoke-MetraAttentionMutation -Key $attnKey -Action $action -Days $days -MetraRoot $MetraRoot
+                $null = Invoke-MetraAttentionMutation -Key $attnKey -Action $action -Days $days -Note $note -MetraRoot $MetraRoot
                 $payload = Get-MetraDeskPayload -MetraRoot $MetraRoot
                 Write-MetraOpsJsonResponse -Response $Response -Object $payload
             }
@@ -368,6 +478,7 @@ function Invoke-MetraOpsApi {
             if ($body) { $parsed = $body | ConvertFrom-Json }
             $prompt = [string](Get-MetraProp -Object $parsed -Name 'prompt' -Default '')
             $sessionId = [string](Get-MetraProp -Object $parsed -Name 'sessionId' -Default '')
+            $recallSessionId = [string](Get-MetraProp -Object $parsed -Name 'recallSessionId' -Default '')
             if ([string]::IsNullOrWhiteSpace($prompt)) {
                 Write-MetraOpsJsonResponse -Response $Response -StatusCode 400 -Object ([PSCustomObject]@{ error = 'prompt required' })
                 return
@@ -386,11 +497,13 @@ function Invoke-MetraOpsApi {
             $hasLocalSession = Test-MetraOpsLocalSessionToken -SessionToken $sessionToken
             $origin = Resolve-MetraAskOrigin -IsLoopback $isLoopback -HasLocalSession $hasLocalSession
 
-            $ask = Get-MetraDeskAskResult -Prompt $prompt -SessionId $sessionId -MetraRoot $MetraRoot
+            $ask = Get-MetraDeskAskResult -Prompt $prompt -SessionId $sessionId -RecallSessionId $recallSessionId -MetraRoot $MetraRoot
             $journalSession = [string]$ask.sessionId
             if ([string]::IsNullOrWhiteSpace($journalSession)) { $journalSession = $sessionId }
+            $journalPrompt = [string](Get-MetraProp -Object $ask -Name 'scrubbedPrompt' -Default $prompt)
+            if ([string]::IsNullOrWhiteSpace($journalPrompt)) { $journalPrompt = $prompt }
             $entry = Add-MetraDeskAskEntry `
-                -Prompt $prompt `
+                -Prompt $journalPrompt `
                 -Handoff $ask.handoff `
                 -Message ([string]$ask.message) `
                 -SessionId $journalSession `
@@ -404,26 +517,106 @@ function Invoke-MetraOpsApi {
                 -MetraRoot $MetraRoot
             $showWhere = Test-MetraAskShowWhere -Handoff $ask.handoff
             Write-MetraOpsJsonResponse -Response $Response -Object ([PSCustomObject]@{
-                    entry      = $entry
-                    handoff    = $ask.handoff
-                    message    = [string]$ask.message
-                    sessionId  = [string]$entry.sessionId
-                    capability = $ask.capability
-                    engine     = $ask.engine
-                    model      = $ask.model
-                    answered   = [bool]$ask.answered
-                    showWhere  = [bool]$showWhere
+                    entry           = $entry
+                    handoff         = $ask.handoff
+                    message         = [string]$ask.message
+                    sessionId       = [string]$entry.sessionId
+                    capability      = $ask.capability
+                    engine          = $ask.engine
+                    model           = $ask.model
+                    answered        = [bool]$ask.answered
+                    showWhere       = [bool]$showWhere
+                    continuity      = $ask.continuity
+                    secretsScrubbed = [bool](Get-MetraProp -Object $ask -Name 'secretsScrubbed' -Default $false)
+                    secretsNotice   = $(Get-MetraProp -Object $ask -Name 'secretsNotice' -Default $null)
+                    secretsKinds    = @(Get-MetraProp -Object $ask -Name 'secretsKinds' -Default @())
+                    secretsReason   = $(Get-MetraProp -Object $ask -Name 'secretsReason' -Default $null)
                 }) -Depth 12
+            return
+        }
+
+        if ($method -eq 'GET' -and $path -eq '/api/ask/engine') {
+            Write-MetraOpsJsonResponse -Response $Response -Object ([PSCustomObject]@{
+                    settings       = (Get-MetraAskSettings -MetraRoot $MetraRoot)
+                    capability     = (Get-MetraAskCapability -MetraRoot $MetraRoot)
+                    recommendation = (Get-MetraAskEngineRecommendation -MetraRoot $MetraRoot)
+                    menu           = @(Get-MetraAskEngineMenu -MetraRoot $MetraRoot)
+                }) -Depth 10
+            return
+        }
+
+        if ($method -eq 'POST' -and $path -eq '/api/ask/engine') {
+            $body = Read-MetraOpsRequestBody -Request $Request
+            $action = [string](Get-MetraProp -Object $body -Name 'action' -Default 'set').Trim().ToLowerInvariant()
+            if ($action -eq 'accept') {
+                $result = Invoke-MetraAskAcceptRecommended -MetraRoot $MetraRoot
+                Write-MetraOpsJsonResponse -Response $Response -Object $result -Depth 10
+                return
+            }
+            if ($action -eq 'set') {
+                $engine = [string](Get-MetraProp -Object $body -Name 'engine' -Default '').Trim().ToLowerInvariant()
+                if ([string]::IsNullOrWhiteSpace($engine)) {
+                    Write-MetraOpsJsonResponse -Response $Response -StatusCode 400 -Object ([PSCustomObject]@{ error = 'engine required' })
+                    return
+                }
+                $model = Get-MetraProp -Object $body -Name 'model' -Default $null
+                $band = Get-MetraProp -Object $body -Name 'sizeBand' -Default $null
+                $p = @{ Engine = $engine; MetraRoot = $MetraRoot }
+                if ($model) { $p['Model'] = [string]$model }
+                if ($band) { $p['SizeBand'] = [string]$band }
+                try {
+                    $cap = Set-MetraAskEngine @p
+                    Write-MetraOpsJsonResponse -Response $Response -Object ([PSCustomObject]@{
+                            ok         = $true
+                            capability = $cap
+                            menu       = @(Get-MetraAskEngineMenu -MetraRoot $MetraRoot)
+                        }) -Depth 10
+                }
+                catch {
+                    Write-MetraOpsJsonResponse -Response $Response -StatusCode 400 -Object ([PSCustomObject]@{ error = $_.Exception.Message })
+                }
+                return
+            }
+            Write-MetraOpsJsonResponse -Response $Response -StatusCode 400 -Object ([PSCustomObject]@{ error = 'action must be set or accept' })
             return
         }
 
         if ($method -eq 'GET' -and $path -eq '/api/ask/journal') {
             $limit = 40
+            $sessionIdFilter = ''
+            $searchQuery = ''
             try {
                 $q = [string]$Request.Url.Query
                 if ($q -match '[?&]limit=(\d+)') { $limit = [Math]::Min(100, [int]$Matches[1]) }
+                if ($q -match '[?&]sessionId=([^&]+)') {
+                    $sessionIdFilter = [uri]::UnescapeDataString($Matches[1])
+                }
+                if ($q -match '[?&]q=([^&]+)') {
+                    $searchQuery = [uri]::UnescapeDataString($Matches[1])
+                }
             }
             catch { }
+
+            if (-not [string]::IsNullOrWhiteSpace($searchQuery)) {
+                Write-MetraOpsJsonResponse -Response $Response -Object ([PSCustomObject]@{
+                        query = $searchQuery
+                        hits  = @(Search-MetraDeskAskJournal -Query $searchQuery -Limit $limit -MetraRoot $MetraRoot)
+                    }) -Depth 12
+                return
+            }
+
+            if (-not [string]::IsNullOrWhiteSpace($sessionIdFilter)) {
+                $turns = @(Get-MetraDeskAskSessionTurns -SessionId $sessionIdFilter -MetraRoot $MetraRoot -Limit $limit)
+                $continuity = Get-MetraAskContinuityContext -SessionId $sessionIdFilter -MetraRoot $MetraRoot
+                Write-MetraOpsJsonResponse -Response $Response -Object ([PSCustomObject]@{
+                        sessionId  = $sessionIdFilter
+                        turnCount  = $turns.Count
+                        continuity = $continuity
+                        turns      = $turns
+                    }) -Depth 12
+                return
+            }
+
             Write-MetraOpsJsonResponse -Response $Response -Object ([PSCustomObject]@{
                     sessions = @(Get-MetraDeskAskSessionSummaries -MetraRoot $MetraRoot -Limit 12)
                     turns    = @(Get-MetraDeskAskLog -MetraRoot $MetraRoot -Limit $limit)
