@@ -27,12 +27,18 @@ function Read-MetraOpsRequestBody {
     param([Parameter(Mandatory)]$Request)
 
     if (-not $Request.HasEntityBody) { return '' }
-    $reader = New-Object System.IO.StreamReader($Request.InputStream, $Request.ContentEncoding)
+    $bytes = Read-MetraOpsRequestBytes -Request $Request
+    if ($null -eq $bytes -or $bytes.Length -eq 0) { return '' }
+    # Strict UTF-8 - do not trust ContentEncoding; fail closed on invalid bytes.
+    $enc = [System.Text.UTF8Encoding]::new($false, $true)
     try {
-        return $reader.ReadToEnd()
+        return $enc.GetString($bytes)
     }
-    finally {
-        $reader.Close()
+    catch [System.Text.DecoderFallbackException] {
+        throw [System.ArgumentException]::new('Request body is not valid UTF-8.')
+    }
+    catch {
+        throw [System.ArgumentException]::new('Request body is not valid UTF-8.')
     }
 }
 
@@ -479,9 +485,25 @@ function Invoke-MetraOpsApi {
             $prompt = [string](Get-MetraProp -Object $parsed -Name 'prompt' -Default '')
             $sessionId = [string](Get-MetraProp -Object $parsed -Name 'sessionId' -Default '')
             $recallSessionId = [string](Get-MetraProp -Object $parsed -Name 'recallSessionId' -Default '')
-            if ([string]::IsNullOrWhiteSpace($prompt)) {
+            $rawImageIds = Get-MetraProp -Object $parsed -Name 'imageIds' -Default @()
+            $imageIds = @($rawImageIds | ForEach-Object { [string]$_ } | Where-Object { $_ } | Select-Object -Unique)
+            if ([string]::IsNullOrWhiteSpace($prompt) -and $imageIds.Count -eq 0) {
                 Write-MetraOpsJsonResponse -Response $Response -StatusCode 400 -Object ([PSCustomObject]@{ error = 'prompt required' })
                 return
+            }
+            $resolvedImages = @()
+            $journalImages = @()
+            if ($imageIds.Count -gt 0) {
+                $resolved = Resolve-MetraAskImages -ImageIds $imageIds
+                if (-not $resolved.ok) {
+                    Write-MetraOpsJsonResponse -Response $Response -StatusCode 400 -Object ([PSCustomObject]@{ error = [string]$resolved.error })
+                    return
+                }
+                $resolvedImages = @($resolved.images)
+                $journalImages = @($resolved.journal)
+            }
+            if ([string]::IsNullOrWhiteSpace($prompt) -and $resolvedImages.Count -gt 0) {
+                $prompt = Get-MetraAskImageDefaultPrompt
             }
             $headerClient = ''
             try { $headerClient = [string]$Request.Headers['X-Metra-Client'] } catch { }
@@ -497,11 +519,19 @@ function Invoke-MetraOpsApi {
             $hasLocalSession = Test-MetraOpsLocalSessionToken -SessionToken $sessionToken
             $origin = Resolve-MetraAskOrigin -IsLoopback $isLoopback -HasLocalSession $hasLocalSession
 
-            $ask = Get-MetraDeskAskResult -Prompt $prompt -SessionId $sessionId -RecallSessionId $recallSessionId -MetraRoot $MetraRoot
+            try {
+                $ask = Get-MetraDeskAskResult -Prompt $prompt -SessionId $sessionId -RecallSessionId $recallSessionId `
+                    -Images $resolvedImages -MetraRoot $MetraRoot
+            }
+            catch {
+                Write-MetraOpsJsonResponse -Response $Response -StatusCode 400 -Object ([PSCustomObject]@{ error = $_.Exception.Message })
+                return
+            }
             $journalSession = [string]$ask.sessionId
             if ([string]::IsNullOrWhiteSpace($journalSession)) { $journalSession = $sessionId }
             $journalPrompt = [string](Get-MetraProp -Object $ask -Name 'scrubbedPrompt' -Default $prompt)
             if ([string]::IsNullOrWhiteSpace($journalPrompt)) { $journalPrompt = $prompt }
+            $askJournalImages = @(Get-MetraProp -Object $ask -Name 'images' -Default $journalImages)
             $entry = Add-MetraDeskAskEntry `
                 -Prompt $journalPrompt `
                 -Handoff $ask.handoff `
@@ -514,23 +544,29 @@ function Invoke-MetraOpsApi {
                 -Model ([string]$ask.model) `
                 -Answered ([bool]$ask.answered) `
                 -Capability $ask.capability `
+                -Images $askJournalImages `
                 -MetraRoot $MetraRoot
             $showWhere = Test-MetraAskShowWhere -Handoff $ask.handoff
             Write-MetraOpsJsonResponse -Response $Response -Object ([PSCustomObject]@{
-                    entry           = $entry
-                    handoff         = $ask.handoff
-                    message         = [string]$ask.message
-                    sessionId       = [string]$entry.sessionId
-                    capability      = $ask.capability
-                    engine          = $ask.engine
-                    model           = $ask.model
-                    answered        = [bool]$ask.answered
-                    showWhere       = [bool]$showWhere
-                    continuity      = $ask.continuity
-                    secretsScrubbed = [bool](Get-MetraProp -Object $ask -Name 'secretsScrubbed' -Default $false)
-                    secretsNotice   = $(Get-MetraProp -Object $ask -Name 'secretsNotice' -Default $null)
-                    secretsKinds    = @(Get-MetraProp -Object $ask -Name 'secretsKinds' -Default @())
-                    secretsReason   = $(Get-MetraProp -Object $ask -Name 'secretsReason' -Default $null)
+                    entry            = $entry
+                    handoff          = $ask.handoff
+                    message          = [string]$ask.message
+                    sessionId        = [string]$entry.sessionId
+                    capability       = $ask.capability
+                    engine           = $ask.engine
+                    model            = $ask.model
+                    answered         = [bool]$ask.answered
+                    answerType       = [string](Get-MetraProp -Object $ask -Name 'answerType' -Default '')
+                    evidenceQuality  = [string](Get-MetraProp -Object $ask -Name 'evidenceQuality' -Default '')
+                    nextStep         = [string](Get-MetraProp -Object $ask -Name 'nextStep' -Default '')
+                    showWhere        = [bool]$showWhere
+                    suggestCapture   = [bool](Get-MetraProp -Object $ask -Name 'suggestCapture' -Default $false)
+                    continuity       = $ask.continuity
+                    secretsScrubbed  = [bool](Get-MetraProp -Object $ask -Name 'secretsScrubbed' -Default $false)
+                    secretsNotice    = $(Get-MetraProp -Object $ask -Name 'secretsNotice' -Default $null)
+                    secretsKinds     = @(Get-MetraProp -Object $ask -Name 'secretsKinds' -Default @())
+                    secretsReason    = $(Get-MetraProp -Object $ask -Name 'secretsReason' -Default $null)
+                    images           = @(Get-MetraProp -Object $entry -Name 'images' -Default @())
                 }) -Depth 12
             return
         }
@@ -547,20 +583,27 @@ function Invoke-MetraOpsApi {
 
         if ($method -eq 'POST' -and $path -eq '/api/ask/engine') {
             $body = Read-MetraOpsRequestBody -Request $Request
-            $action = [string](Get-MetraProp -Object $body -Name 'action' -Default 'set').Trim().ToLowerInvariant()
+            try {
+                $parsed = if ($body) { $body | ConvertFrom-Json } else { [PSCustomObject]@{} }
+            }
+            catch {
+                Write-MetraOpsJsonResponse -Response $Response -StatusCode 400 -Object ([PSCustomObject]@{ error = 'invalid JSON body' })
+                return
+            }
+            $action = [string](Get-MetraProp -Object $parsed -Name 'action' -Default 'set').Trim().ToLowerInvariant()
             if ($action -eq 'accept') {
                 $result = Invoke-MetraAskAcceptRecommended -MetraRoot $MetraRoot
                 Write-MetraOpsJsonResponse -Response $Response -Object $result -Depth 10
                 return
             }
             if ($action -eq 'set') {
-                $engine = [string](Get-MetraProp -Object $body -Name 'engine' -Default '').Trim().ToLowerInvariant()
+                $engine = [string](Get-MetraProp -Object $parsed -Name 'engine' -Default '').Trim().ToLowerInvariant()
                 if ([string]::IsNullOrWhiteSpace($engine)) {
                     Write-MetraOpsJsonResponse -Response $Response -StatusCode 400 -Object ([PSCustomObject]@{ error = 'engine required' })
                     return
                 }
-                $model = Get-MetraProp -Object $body -Name 'model' -Default $null
-                $band = Get-MetraProp -Object $body -Name 'sizeBand' -Default $null
+                $model = Get-MetraProp -Object $parsed -Name 'model' -Default $null
+                $band = Get-MetraProp -Object $parsed -Name 'sizeBand' -Default $null
                 $p = @{ Engine = $engine; MetraRoot = $MetraRoot }
                 if ($model) { $p['Model'] = [string]$model }
                 if ($band) { $p['SizeBand'] = [string]$band }
@@ -635,6 +678,24 @@ function Invoke-MetraOpsApi {
             return
         }
 
+        if ($method -eq 'POST' -and $path -eq '/api/capture/propose') {
+            $body = Read-MetraOpsRequestBody -Request $Request
+            $parsed = $null
+            if ($body) {
+                try { $parsed = $body | ConvertFrom-Json } catch { $parsed = $null }
+            }
+            try {
+                $turnId = [string](Get-MetraProp -Object $parsed -Name 'turnId' -Default '')
+                $sessionId = [string](Get-MetraProp -Object $parsed -Name 'sessionId' -Default '')
+                $proposals = @(Propose-MetraCaptureSplit -TurnId $turnId -SessionId $sessionId -MetraRoot $MetraRoot)
+                Write-MetraOpsJsonResponse -Response $Response -Object ([PSCustomObject]@{ proposals = $proposals }) -Depth 10
+            }
+            catch {
+                Write-MetraOpsJsonResponse -Response $Response -StatusCode 400 -Object ([PSCustomObject]@{ error = $_.Exception.Message })
+            }
+            return
+        }
+
         if ($method -eq 'POST' -and $path -eq '/api/capture') {
             $body = Read-MetraOpsRequestBody -Request $Request
             $parsed = $null
@@ -654,6 +715,16 @@ function Invoke-MetraOpsApi {
                     $attachmentIds = @($rawAtt | ForEach-Object { [string]$_ } | Where-Object { $_ })
                 }
                 catch { }
+
+                $acceptedRaw = Get-MetraProp -Object $parsed -Name 'acceptedProposals' -Default $null
+                if ($null -ne $acceptedRaw) {
+                    $created = @(Add-MetraCaptureFromAskSplit -Proposals @($acceptedRaw) -MetraRoot $MetraRoot)
+                    Write-MetraOpsJsonResponse -Response $Response -Object ([PSCustomObject]@{
+                            items = $created
+                            count = $created.Count
+                        }) -Depth 10
+                    return
+                }
 
                 $item = $null
                 if (-not [string]::IsNullOrWhiteSpace($turnId) -or $source -eq 'ask') {
@@ -699,7 +770,14 @@ function Invoke-MetraOpsApi {
                 }
                 if ($capAction -eq 'promote') {
                     $home = [string](Get-MetraProp -Object $parsed -Name 'home' -Default '')
-                    $item = Invoke-MetraCapturePromote -Id $capId -Home $home -MetraRoot $MetraRoot
+                    $project = [string](Get-MetraProp -Object $parsed -Name 'project' -Default '')
+                    $cross = [bool](Get-MetraProp -Object $parsed -Name 'crossRootConfirm' -Default $false)
+                    $isLocalCaller = Test-MetraOpsRequestIsSameMachine -Request $Request
+                    $sessionToken = ''
+                    try { $sessionToken = [string]$Request.Headers['X-Metra-Local-Session'] } catch { }
+                    $hasLocal = $isLocalCaller -or (Test-MetraOpsLocalSessionToken -SessionToken $sessionToken)
+                    $item = Invoke-MetraCapturePromote -Id $capId -Home $home -Project $project `
+                        -CrossRootConfirm:$cross -HasLocalAuthority:$hasLocal -MetraRoot $MetraRoot
                     Write-MetraOpsJsonResponse -Response $Response -Object $item -Depth 10
                     return
                 }
@@ -888,8 +966,14 @@ function Invoke-MetraOpsApi {
         Write-MetraOpsJsonResponse -Response $Response -StatusCode 404 -Object ([PSCustomObject]@{ error = 'not found' })
     }
     catch {
-        Write-MetraOpsJsonResponse -Response $Response -StatusCode 500 -Object ([PSCustomObject]@{
-                error = [string]$_.Exception.Message
+        $ex = $_.Exception
+        $msg = [string]$ex.Message
+        $code = 500
+        if ($ex -is [System.ArgumentException] -or $msg -match '(?i)not valid UTF-8|invalid UTF-8') {
+            $code = 400
+        }
+        Write-MetraOpsJsonResponse -Response $Response -StatusCode $code -Object ([PSCustomObject]@{
+                error = $msg
             })
     }
 }

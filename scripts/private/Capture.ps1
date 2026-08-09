@@ -95,37 +95,229 @@ function New-MetraCaptureDerivedFrom {
     }
 }
 
-function Resolve-MetraCaptureSuggestedHome {
+function Test-MetraLocalAuthority {
+    <#
+    .SYNOPSIS
+        Write-boundary authority check for project-tree Capture promotes.
+        Proposal may flag requiresHostSession; only promote enforces this.
+    #>
+    [CmdletBinding()]
+    param(
+        [bool]$HasLocalAuthority = $true
+    )
+    return [bool]$HasLocalAuthority
+}
+
+function Test-MetraCaptureRegisteredProject {
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory)][AllowEmptyString()][string]$Name,
+        [string]$MetraRoot = (Get-MetraRoot)
+    )
+    if ([string]::IsNullOrWhiteSpace($Name)) { return $null }
+    $home = Get-MetraHomeDestinationName
+    foreach ($p in @(Get-MetraProjects)) {
+        if ([string]$p.Name -eq $Name) { return $p }
+    }
+    try {
+        $reg = Get-MetraProjectRegistry
+        $row = @($reg.projects | Where-Object { [string]$_.name -eq $Name } | Select-Object -First 1)
+        if ($row) {
+            # Registry-only (not on disk) - still refuse invent but cannot write TODO without path
+            return [PSCustomObject]@{
+                Name = [string]$row.name
+                Path = $null
+                Root = $null
+            }
+        }
+    }
+    catch { }
+    if ($Name -eq $home) {
+        return [PSCustomObject]@{ Name = $home; Path = $MetraRoot; Root = 'metra' }
+    }
+    return $null
+}
+
+function Get-MetraCaptureCrossRootFlags {
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory)]$ProjectInfo,
+        [string]$MetraRoot = (Get-MetraRoot)
+    )
+
+    $homeName = Get-MetraHomeDestinationName
+    $metraProj = @(Get-MetraProjects | Where-Object { [string]$_.Name -eq $homeName } | Select-Object -First 1)
+    $metraRootLabel = if ($metraProj) { [string]$metraProj.Root } else { 'work' }
+    $projRoot = [string](Get-MetraProp -Object $ProjectInfo -Name 'Root' -Default '')
+    $requiresCrossRoot = $false
+    if ($projRoot -and $metraRootLabel -and ($projRoot -ne $metraRootLabel)) {
+        $requiresCrossRoot = $true
+    }
+    elseif ($ProjectInfo.Path -and $MetraRoot) {
+        $projFull = [System.IO.Path]::GetFullPath([string]$ProjectInfo.Path)
+        $metaFull = [System.IO.Path]::GetFullPath($MetraRoot)
+        if ($projFull -and $metaFull -and -not $projFull.StartsWith($metaFull, [StringComparison]::OrdinalIgnoreCase)) {
+            # Different folder tree under portfolio - treat as cross-root when roots differ OR path not under Metra
+            if ($projRoot -and $metraRootLabel -and ($projRoot -eq $metraRootLabel)) {
+                $requiresCrossRoot = $false
+            }
+            else {
+                $requiresCrossRoot = $true
+            }
+        }
+    }
+    return [PSCustomObject]@{
+        requiresCrossRoot   = $requiresCrossRoot
+        requiresHostSession = $true
+        rootLabel           = $(if ($projRoot) { $projRoot } else { [string]$ProjectInfo.Name })
+    }
+}
+
+function New-MetraCaptureSuggestedTargetObject {
+    param(
+        [string]$Home,
+        [string]$Project,
+        [string]$Confidence = 'usable',
+        [string]$Reason = '',
+        [bool]$RequiresCrossRoot = $false,
+        [bool]$RequiresHostSession = $false,
+        [string]$RootLabel = ''
+    )
+    return [PSCustomObject]@{
+        suggestedHome       = $Home
+        suggestedProject    = $Project
+        confidence          = $Confidence
+        reason              = $Reason
+        rootLabel           = $(if ($RootLabel) { $RootLabel } else { $Project })
+        requiresCrossRoot   = $RequiresCrossRoot
+        requiresHostSession = $RequiresHostSession
+    }
+}
+
+function Resolve-MetraCaptureSuggestedTarget {
+    <#
+    .SYNOPSIS
+        Registry-aware Capture home/project suggestion (Ladder 2b).
+    #>
     [CmdletBinding()]
     param(
         [string]$Text,
         [string]$Where,
-        [string]$HomeId
+        [string]$HomeId,
+        [string]$MetraRoot = (Get-MetraRoot)
     )
 
+    $homeName = Get-MetraHomeDestinationName
     $whereText = if (-not [string]::IsNullOrWhiteSpace($HomeId)) { $HomeId } else { $Where }
-    $blob = (('{0} {1}' -f $Text, $whereText) -replace '\s+', ' ').Trim().ToLowerInvariant()
+    $blob = (('{0} {1}' -f $Text, $whereText) -replace '\s+', ' ').Trim()
+    $blobLower = $blob.ToLowerInvariant()
 
-    if ($blob -match '\b(ticket|isupport|helpdesk|incident)\b' -or $blob -match '\b\d{6,8}\b') {
-        return [PSCustomObject]@{ suggestedHome = 'TicketTracker'; suggestedProject = 'TicketTracker' }
+    # 1) Metra portfolio homes
+    if ($blobLower -match '\b(always do|prefer terse|collaboration rhythm|operator contract|\bocc\b)\b') {
+        return New-MetraCaptureSuggestedTargetObject -Home 'OCC' -Project $homeName -Confidence 'high' -Reason 'occ-regex'
     }
-    if ($blob -match '\b(always do|prefer terse|collaboration rhythm|operator contract|occ)\b') {
-        return [PSCustomObject]@{ suggestedHome = 'OCC'; suggestedProject = 'Metra' }
+    if ($blobLower -match '\b(why we chose|decision registry|operational scar)\b') {
+        return New-MetraCaptureSuggestedTargetObject -Home 'DecisionRegistry' -Project $homeName -Confidence 'high' -Reason 'decision-registry-regex'
     }
-    if ($blob -match '\b(why we chose|decision registry|scar)\b') {
-        return [PSCustomObject]@{ suggestedHome = 'DecisionRegistry'; suggestedProject = 'Metra' }
+    if ($blobLower -match '\b(future development|future-dev)\b' -or
+        ($whereText -eq $homeName -and $blobLower -match '\b(metadata audit|should (add|build|ship))\b')) {
+        return New-MetraCaptureSuggestedTargetObject -Home 'FutureDevelopment' -Project $homeName -Confidence 'high' -Reason 'future-dev-regex'
     }
-    if ($blob -match '\b(agents\.md|playbook|runbook)\b' -and $whereText -and $whereText -notin @('Metra', 'Future Development', 'future-development')) {
-        return [PSCustomObject]@{ suggestedHome = 'ProjectAgents'; suggestedProject = [string]$whereText }
+
+    # 2) Registry / routing scores
+    $scored = @()
+    try {
+        $q = if ($blob) { $blob } else { [string]$whereText }
+        if ($q) { $scored = @(Get-MetraScoredRoutingProjects -Query $q -Limit 10) }
     }
-    if ($blob -match '\b(future development|backlog|feature idea|ios app|metadata audit|should (add|build|ship))\b' -or
-        $whereText -match '(?i)future' -or $whereText -eq 'Metra') {
-        return [PSCustomObject]@{ suggestedHome = 'FutureDevelopment'; suggestedProject = 'Metra' }
+    catch { $scored = @() }
+
+    $topNonTt = $null
+    foreach ($s in $scored) {
+        if ([string]$s.Name -ne 'TicketTracker') { $topNonTt = $s; break }
     }
-    if ($whereText -and $whereText -ne 'Metra') {
-        return [PSCustomObject]@{ suggestedHome = 'FutureDevelopment'; suggestedProject = [string]$whereText }
+    $whereProj = $null
+    if ($whereText) {
+        $whereProj = Test-MetraCaptureRegisteredProject -Name $whereText -MetraRoot $MetraRoot
     }
-    return [PSCustomObject]@{ suggestedHome = 'FutureDevelopment'; suggestedProject = 'Metra' }
+
+    # 3) Strong TicketTracker (not greedy)
+    $strongTicketId = [bool]($blob -match '\b\d{6,8}\b')
+    $helpdeskVocab = [bool]($blobLower -match '\b(isupport|helpdesk|incident)\b' `
+            -or $blobLower -match '\b(ticket tracker|tickettracker)\b')
+    $strongNonTt = $topNonTt -and [int]$topNonTt.Score -ge 2
+    if ($strongTicketId -or ($helpdeskVocab -and -not $strongNonTt)) {
+        return New-MetraCaptureSuggestedTargetObject -Home 'TicketTracker' -Project 'TicketTracker' `
+            -Confidence 'usable' -Reason 'strong-ticket'
+    }
+
+    # 4) Registered non-Metra project
+    $pick = $null
+    $pickScorePath = $null
+    if ($whereProj -and [string]$whereProj.Name -ne $homeName -and [string]$whereProj.Name -ne 'TicketTracker') {
+        $pick = $whereProj
+    }
+    elseif ($topNonTt -and [string]$topNonTt.Name -ne $homeName) {
+        $pick = Test-MetraCaptureRegisteredProject -Name ([string]$topNonTt.Name) -MetraRoot $MetraRoot
+        if (-not $pick) {
+            $pick = [PSCustomObject]@{
+                Name = [string]$topNonTt.Name
+                Path = [string]$topNonTt.Path
+                Root = [string]$topNonTt.Root
+            }
+        }
+        $pickScorePath = $topNonTt
+    }
+
+    if ($pick -and [string]$pick.Name -and [string]$pick.Name -ne $homeName) {
+        if (-not $pick.Path -and $pickScorePath) {
+            $pick = [PSCustomObject]@{
+                Name = [string]$pick.Name
+                Path = [string]$pickScorePath.Path
+                Root = [string]$pickScorePath.Root
+            }
+        }
+        $flags = Get-MetraCaptureCrossRootFlags -ProjectInfo $pick -MetraRoot $MetraRoot
+        $home = 'ProjectBacklog'
+        $reason = 'registry-routing'
+        if ($blobLower -match '\b(agents\.md|playbook|runbook)\b') {
+            $home = 'ProjectAgents'
+            $reason = 'agents-playbook-language'
+        }
+        return New-MetraCaptureSuggestedTargetObject -Home $home -Project ([string]$pick.Name) `
+            -Confidence 'usable' -Reason $reason `
+            -RequiresCrossRoot:([bool]$flags.requiresCrossRoot) -RequiresHostSession:$true `
+            -RootLabel ([string]$flags.rootLabel)
+    }
+
+    # 5) Fallback
+    return New-MetraCaptureSuggestedTargetObject -Home 'FutureDevelopment' -Project $homeName `
+        -Confidence 'thin' -Reason 'metra-fallback'
+}
+
+function Resolve-MetraCaptureSuggestedHome {
+    <#
+    .SYNOPSIS
+        Compatibility wrapper - returns suggestedHome + suggestedProject (v1 shape).
+    #>
+    [CmdletBinding()]
+    param(
+        [string]$Text,
+        [string]$Where,
+        [string]$HomeId,
+        [string]$MetraRoot = (Get-MetraRoot)
+    )
+
+    $t = Resolve-MetraCaptureSuggestedTarget -Text $Text -Where $Where -HomeId $HomeId -MetraRoot $MetraRoot
+    return [PSCustomObject]@{
+        suggestedHome       = [string]$t.suggestedHome
+        suggestedProject    = [string]$t.suggestedProject
+        confidence          = [string]$t.confidence
+        reason              = [string]$t.reason
+        rootLabel           = [string]$t.rootLabel
+        requiresCrossRoot   = [bool]$t.requiresCrossRoot
+        requiresHostSession = [bool]$t.requiresHostSession
+    }
 }
 
 function Add-MetraCaptureItem {
@@ -288,7 +480,7 @@ function Add-MetraCaptureFromPlace {
     $sum = ($Text -replace '\s+', ' ').Trim()
     if ($sum.Length -gt 120) { $sum = $sum.Substring(0, 120) }
     $derived = New-MetraCaptureDerivedFrom -Type routeSomething -PlaceId $PlaceId -AttachmentIds $AttachmentIds
-    $guess = Resolve-MetraCaptureSuggestedHome -Text $Text -HomeId $HomeId
+    $guess = Resolve-MetraCaptureSuggestedHome -Text $Text -HomeId $HomeId -MetraRoot $MetraRoot
     return Add-MetraCaptureItem `
         -Summary $sum `
         -Body $null `
@@ -299,16 +491,217 @@ function Add-MetraCaptureFromPlace {
         -MetraRoot $MetraRoot
 }
 
+function Propose-MetraCaptureSplit {
+    <#
+    .SYNOPSIS
+        Propose up to 5 Capture rows from an Ask turn and/or session. Never writes the ledger.
+    #>
+    [CmdletBinding()]
+    param(
+        [string]$TurnId,
+        [string]$SessionId,
+        [string]$MetraRoot = (Get-MetraRoot)
+    )
+
+    if ([string]::IsNullOrWhiteSpace($TurnId) -and [string]::IsNullOrWhiteSpace($SessionId)) {
+        throw 'Propose-MetraCaptureSplit requires TurnId and/or SessionId.'
+    }
+
+    $turns = @(Get-MetraDeskAskLog -MetraRoot $MetraRoot -Limit 100)
+    $primary = $null
+    if ($TurnId) {
+        $primary = $turns | Where-Object { [string]$_.id -eq $TurnId } | Select-Object -First 1
+        if (-not $primary) { throw "Ask journal turn not found: $TurnId" }
+    }
+    $sess = $SessionId
+    if ([string]::IsNullOrWhiteSpace($sess) -and $primary) {
+        $sess = [string](Get-MetraProp -Object $primary -Name 'sessionId' -Default '')
+    }
+
+    $seeds = [System.Collections.Generic.List[object]]::new()
+    if ($primary) {
+        $prompt = [string](Get-MetraProp -Object $primary -Name 'prompt' -Default '')
+        $where = [string](Get-MetraProp -Object (Get-MetraProp -Object $primary -Name 'handoff' -Default $null) -Name 'where' -Default '')
+        [void]$seeds.Add([PSCustomObject]@{
+                Text    = $prompt
+                Where   = $where
+                TurnId  = [string]$primary.id
+                Session = $sess
+            })
+    }
+
+    if ($sess) {
+        $sessionTurns = @($turns | Where-Object { [string](Get-MetraProp -Object $_ -Name 'sessionId' -Default '') -eq $sess } |
+                Select-Object -First 20)
+        $seenWhere = [System.Collections.Generic.HashSet[string]]::new([StringComparer]::OrdinalIgnoreCase)
+        foreach ($t in $sessionTurns) {
+            $w = [string](Get-MetraProp -Object (Get-MetraProp -Object $t -Name 'handoff' -Default $null) -Name 'where' -Default '')
+            if ([string]::IsNullOrWhiteSpace($w)) { continue }
+            if (-not $seenWhere.Add($w)) { continue }
+            $p = [string](Get-MetraProp -Object $t -Name 'prompt' -Default '')
+            [void]$seeds.Add([PSCustomObject]@{
+                    Text    = $p
+                    Where   = $w
+                    TurnId  = [string]$t.id
+                    Session = $sess
+                })
+        }
+    }
+
+    if ($seeds.Count -eq 0) {
+        $guess = Resolve-MetraCaptureSuggestedTarget -Text 'Ask capture' -Where (Get-MetraHomeDestinationName) -MetraRoot $MetraRoot
+        return @(
+            [PSCustomObject]@{
+                proposalId          = [guid]::NewGuid().ToString('n')
+                summary             = 'Ask capture'
+                suggestedHome       = [string]$guess.suggestedHome
+                suggestedProject    = [string]$guess.suggestedProject
+                derivedFrom         = @{ source = 'ask'; turnId = $TurnId; sessionId = $sess }
+                rootLabel           = [string]$guess.rootLabel
+                requiresCrossRoot   = [bool]$guess.requiresCrossRoot
+                requiresHostSession = [bool]$guess.requiresHostSession
+                accepted            = $true
+            }
+        )
+    }
+
+    $out = [System.Collections.Generic.List[object]]::new()
+    $dedupe = [System.Collections.Generic.HashSet[string]]::new([StringComparer]::OrdinalIgnoreCase)
+    foreach ($seed in $seeds) {
+        if ($out.Count -ge 5) { break }
+        $target = Resolve-MetraCaptureSuggestedTarget -Text $seed.Text -Where $seed.Where -MetraRoot $MetraRoot
+        $sum = ($seed.Text -replace '\s+', ' ').Trim()
+        if ([string]::IsNullOrWhiteSpace($sum)) { $sum = "Capture for $($target.suggestedProject)" }
+        if ($sum.Length -gt 120) { $sum = $sum.Substring(0, 120) }
+        $key = '{0}|{1}|{2}' -f $target.suggestedHome, $target.suggestedProject, ($sum.ToLowerInvariant())
+        if (-not $dedupe.Add($key)) { continue }
+        [void]$out.Add([PSCustomObject]@{
+                proposalId          = [guid]::NewGuid().ToString('n')
+                summary             = $sum
+                suggestedHome       = [string]$target.suggestedHome
+                suggestedProject    = [string]$target.suggestedProject
+                derivedFrom         = @{
+                    source    = 'ask'
+                    turnId    = [string]$seed.TurnId
+                    sessionId = [string]$seed.Session
+                }
+                rootLabel           = [string]$target.rootLabel
+                requiresCrossRoot   = [bool]$target.requiresCrossRoot
+                requiresHostSession = [bool]$target.requiresHostSession
+                accepted            = $true
+            })
+    }
+
+    if ($out.Count -eq 0) {
+        $t0 = $seeds[0]
+        $target = Resolve-MetraCaptureSuggestedTarget -Text $t0.Text -Where $t0.Where -MetraRoot $MetraRoot
+        [void]$out.Add([PSCustomObject]@{
+                proposalId          = [guid]::NewGuid().ToString('n')
+                summary             = 'Ask capture'
+                suggestedHome       = [string]$target.suggestedHome
+                suggestedProject    = [string]$target.suggestedProject
+                derivedFrom         = @{ source = 'ask'; turnId = [string]$t0.TurnId; sessionId = [string]$t0.Session }
+                rootLabel           = [string]$target.rootLabel
+                requiresCrossRoot   = [bool]$target.requiresCrossRoot
+                requiresHostSession = [bool]$target.requiresHostSession
+                accepted            = $true
+            })
+    }
+    return @($out)
+}
+
+function Add-MetraCaptureFromAskSplit {
+    <#
+    .SYNOPSIS
+        Create Capture candidates from affirmed proposal rows only.
+    #>
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory)][object[]]$Proposals,
+        [string]$MetraRoot = (Get-MetraRoot)
+    )
+
+    $created = [System.Collections.Generic.List[object]]::new()
+    foreach ($raw in @($Proposals)) {
+        $accepted = [bool](Get-MetraProp -Object $raw -Name 'accepted' -Default $false)
+        if (-not $accepted) { continue }
+        $summary = ([string](Get-MetraProp -Object $raw -Name 'summary' -Default '')).Trim()
+        if ([string]::IsNullOrWhiteSpace($summary)) { continue }
+        $home = [string](Get-MetraProp -Object $raw -Name 'suggestedHome' -Default '')
+        $project = [string](Get-MetraProp -Object $raw -Name 'suggestedProject' -Default '')
+        if ($project -and $project -notin @('Metra', 'TicketTracker', (Get-MetraHomeDestinationName))) {
+            $reg = Test-MetraCaptureRegisteredProject -Name $project -MetraRoot $MetraRoot
+            if (-not $reg) {
+                throw "suggestedProject '$project' is not a registered project. Refuse invent."
+            }
+        }
+        $dfIn = Get-MetraProp -Object $raw -Name 'derivedFrom' -Default $null
+        $turnId = ''
+        $sessionId = ''
+        if ($dfIn -is [System.Collections.IDictionary]) {
+            if ($dfIn.Contains('turnId')) { $turnId = [string]$dfIn['turnId'] }
+            elseif ($dfIn.Contains('TurnId')) { $turnId = [string]$dfIn['TurnId'] }
+            if ($dfIn.Contains('sessionId')) { $sessionId = [string]$dfIn['sessionId'] }
+            elseif ($dfIn.Contains('SessionId')) { $sessionId = [string]$dfIn['SessionId'] }
+        }
+        else {
+            $turnId = [string](Get-MetraProp -Object $dfIn -Name 'turnId' -Default '')
+            $sessionId = [string](Get-MetraProp -Object $dfIn -Name 'sessionId' -Default '')
+            if (-not $turnId) { $turnId = [string](Get-MetraProp -Object $dfIn -Name 'TurnId' -Default '') }
+            if (-not $sessionId) { $sessionId = [string](Get-MetraProp -Object $dfIn -Name 'SessionId' -Default '') }
+        }
+        $derived = New-MetraCaptureDerivedFrom -Type askTurn -SessionId $sessionId -TurnId $turnId
+        $item = Add-MetraCaptureItem `
+            -Summary $summary `
+            -Source ask `
+            -DerivedFrom $derived `
+            -SuggestedHome $home `
+            -SuggestedProject $project `
+            -MetraRoot $MetraRoot
+        [void]$created.Add($item)
+    }
+    return @($created)
+}
+
+function Add-MetraProjectBacklogCaptureStub {
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory)][string]$ProjectPath,
+        [Parameter(Mandatory)][string]$Summary,
+        [string]$Lineage,
+        [string]$CaptureId
+    )
+
+    $todo = Join-Path $ProjectPath 'TODO.md'
+    $stamp = (Get-Date).ToString('yyyy-MM-dd')
+    $block = @"
+- [ ] $stamp Capture: $Summary
+  - Source: $Lineage
+  - Home: ProjectBacklog
+  - CaptureId: $CaptureId
+"@
+    if (-not (Test-Path -LiteralPath $todo)) {
+        $header = "# TODO`r`n`r`n"
+        [System.IO.File]::WriteAllText($todo, $header + $block + "`r`n")
+    }
+    else {
+        [System.IO.File]::AppendAllText($todo, "`r`n" + $block + "`r`n")
+    }
+    return $todo
+}
+
 function Invoke-MetraCapturePromote {
     <#
     .SYNOPSIS
-        Affirms a capture into a local durable home. Future Development append is Ask-class local.
-        Tracked homes create candidates via existing CLI helpers only - never silent OCC promote.
+        Affirms a capture into a durable home. ProjectBacklog requires local authority + optional cross-root confirm.
     #>
     [CmdletBinding()]
     param(
         [Parameter(Mandatory)][string]$Id,
         [string]$Home,
+        [string]$Project,
+        [switch]$CrossRootConfirm,
+        [bool]$HasLocalAuthority = $true,
         [string]$MetraRoot = (Get-MetraRoot)
     )
 
@@ -354,8 +747,32 @@ function Invoke-MetraCapturePromote {
             $ref = 'profile-candidate'
             $target = 'OCC'
         }
+        '^(ProjectBacklog|project-backlog|Project Backlog)$' {
+            if (-not (Test-MetraLocalAuthority -HasLocalAuthority:$HasLocalAuthority)) {
+                throw 'ProjectBacklog promote requires a local Metra session. Remote Capture clients may create candidates, but project-tree writes must be performed from Host/CLI authority.'
+            }
+            $projName = if (-not [string]::IsNullOrWhiteSpace($Project)) { $Project } else {
+                [string](Get-MetraProp -Object $item -Name 'suggestedProject' -Default '')
+            }
+            $proj = Test-MetraCaptureRegisteredProject -Name $projName -MetraRoot $MetraRoot
+            if (-not $proj -or [string]::IsNullOrWhiteSpace([string]$proj.Path)) {
+                throw "ProjectBacklog promote requires a registered on-disk project. Unknown or pathless project: '$projName'."
+            }
+            $flags = Get-MetraCaptureCrossRootFlags -ProjectInfo $proj -MetraRoot $MetraRoot
+            if ($flags.requiresCrossRoot -and -not $CrossRootConfirm) {
+                throw ("Cross-root ProjectBacklog promote to '{0}' requires -CrossRootConfirm / crossRootConfirm:true." -f $projName)
+            }
+            $ref = Add-MetraProjectBacklogCaptureStub -ProjectPath ([string]$proj.Path) -Summary $summary -Lineage $lineage -CaptureId $Id
+            $target = 'ProjectBacklog'
+        }
+        '^(ProjectAgents|project-agents|Project Agents)$' {
+            throw 'ProjectAgents is suggest-only in Ladder 2b. Edit the registered project AGENTS.md in Cursor, or promote this Capture item to ProjectBacklog TODO.md instead.'
+        }
+        '^(TicketTracker|tickettracker|Ticket Tracker)$' {
+            throw 'TicketTracker Capture promote is suggest-only. Create a TicketTracker note or brief from this Capture item; Capture does not write to iSupport.'
+        }
         default {
-            throw ("Promote home '{0}' is not supported for automatic write in this release. Use FutureDevelopment or DecisionRegistry, or promote tracked homes via Host/CLI." -f $target)
+            throw ("Unknown Capture promote home '{0}'. Choose FutureDevelopment, DecisionRegistry, OCC, or ProjectBacklog." -f $target)
         }
     }
 
@@ -365,7 +782,6 @@ function Invoke-MetraCapturePromote {
         home = $target
         ref  = $ref
     }
-    # Preserve derivedFrom exactly - immutable
     $newItems = foreach ($row in $items) {
         if ([string]$row.id -eq $Id) { $item } else { $row }
     }
@@ -419,7 +835,7 @@ Gitignored (`docs/*.local.md`). Index of deferred ideas.
 function Invoke-MetraCaptureCommand {
     <#
     .SYNOPSIS
-        CLI surface: capture list|note|dismiss|promote|get
+        CLI surface: capture list|note|dismiss|promote|get|from-ask|propose-from-ask
     #>
     [CmdletBinding()]
     param(
@@ -458,13 +874,39 @@ function Invoke-MetraCaptureCommand {
         'promote' {
             $id = [string]$ArgsRest[0]
             $home = $null
+            $project = $null
+            $cross = $false
             for ($i = 1; $i -lt $ArgsRest.Count; $i++) {
                 if ($ArgsRest[$i] -eq '-Home' -and ($i + 1) -lt $ArgsRest.Count) {
                     $home = [string]$ArgsRest[$i + 1]
+                    $i++
+                }
+                elseif ($ArgsRest[$i] -eq '-Project' -and ($i + 1) -lt $ArgsRest.Count) {
+                    $project = [string]$ArgsRest[$i + 1]
+                    $i++
+                }
+                elseif ($ArgsRest[$i] -eq '-CrossRootConfirm') {
+                    $cross = $true
                 }
             }
-            if ([string]::IsNullOrWhiteSpace($id)) { throw 'capture promote <id> [-Home FutureDevelopment]' }
-            return Invoke-MetraCapturePromote -Id $id -Home $home -MetraRoot $MetraRoot
+            if ([string]::IsNullOrWhiteSpace($id)) {
+                throw 'capture promote <id> [-Home ProjectBacklog] [-Project Name] [-CrossRootConfirm]'
+            }
+            return Invoke-MetraCapturePromote -Id $id -Home $home -Project $project -CrossRootConfirm:$cross `
+                -HasLocalAuthority $true -MetraRoot $MetraRoot
+        }
+        'propose-from-ask' {
+            $turnId = [string]$ArgsRest[0]
+            $sessionId = $null
+            for ($i = 1; $i -lt $ArgsRest.Count; $i++) {
+                if ($ArgsRest[$i] -eq '-SessionId' -and ($i + 1) -lt $ArgsRest.Count) {
+                    $sessionId = [string]$ArgsRest[$i + 1]
+                }
+            }
+            if ([string]::IsNullOrWhiteSpace($turnId) -and [string]::IsNullOrWhiteSpace($sessionId)) {
+                throw 'capture propose-from-ask <turnId> [-SessionId <sessionId>]'
+            }
+            return ,@(Propose-MetraCaptureSplit -TurnId $turnId -SessionId $sessionId -MetraRoot $MetraRoot)
         }
         'from-ask' {
             $turnId = [string]$ArgsRest[0]
@@ -472,7 +914,7 @@ function Invoke-MetraCaptureCommand {
             return Add-MetraCaptureFromAskTurn -TurnId $turnId -MetraRoot $MetraRoot
         }
         default {
-            throw "Unknown capture subcommand: $Subcommand. Use list|get|note|dismiss|promote|from-ask."
+            throw "Unknown capture subcommand: $Subcommand. Use list|get|note|dismiss|promote|from-ask|propose-from-ask."
         }
     }
 }

@@ -4,11 +4,69 @@
  * Answer-only: do not edit, create, or delete files; do not run mutating commands.
  */
 import http from 'node:http'
+import fs from 'node:fs'
+import path from 'node:path'
 import { Agent, CursorAgentError } from '@cursor/sdk'
 
 const PORT = Number(process.env.METRA_ASK_PORT || 7381)
-const MODEL = process.env.METRA_ASK_MODEL || 'composer-2.5'
 const ENGINE = 'cursor'
+
+/**
+ * Cursor Ask defaults to Auto Cost (Cursor Router) - legacy Auto behavior on the
+ * Cursor Models pool. Balance/Intelligence remain available via optimize_for.
+ * Wire: auto-smart + optimize_for=cost.
+ */
+function resolveModelSelection() {
+  const rawId = String(process.env.METRA_ASK_MODEL || 'auto-smart').trim()
+  const rawOpt = String(process.env.METRA_ASK_OPTIMIZE_FOR || 'cost')
+    .trim()
+    .toLowerCase()
+  const aliasMap = {
+    'auto-cost': 'auto-smart',
+    'auto cost': 'auto-smart',
+    cost: 'auto-smart',
+    auto: 'auto-smart',
+    'auto-balance': 'auto-smart',
+    'auto balance': 'auto-smart',
+    balance: 'auto-smart',
+    balanced: 'auto-smart',
+    'auto-intelligence': 'auto-smart',
+    'auto intelligence': 'auto-smart',
+    intelligence: 'auto-smart',
+  }
+  const aliasOptimize = {
+    'auto-cost': 'cost',
+    'auto cost': 'cost',
+    cost: 'cost',
+    auto: 'cost',
+    'auto-balance': 'balanced',
+    'auto balance': 'balanced',
+    balance: 'balanced',
+    balanced: 'balanced',
+    'auto-intelligence': 'intelligence',
+    'auto intelligence': 'intelligence',
+    intelligence: 'intelligence',
+  }
+  const rawLower = rawId.toLowerCase()
+  const id = aliasMap[rawLower] || rawId || 'auto-smart'
+  if (id === 'auto-smart') {
+    const fromAlias = aliasOptimize[rawLower]
+    const optimizeFor = fromAlias
+      ? fromAlias
+      : ['cost', 'balanced', 'intelligence'].includes(rawOpt)
+        ? rawOpt
+        : 'cost'
+    return {
+      id: 'auto-smart',
+      params: [{ id: 'optimize_for', value: optimizeFor }],
+      label: `auto-smart/${optimizeFor}`,
+    }
+  }
+  return { id, label: id }
+}
+
+const MODEL_SELECTION = resolveModelSelection()
+const MODEL = MODEL_SELECTION.label
 
 /** @type {Map<string, Awaited<ReturnType<typeof Agent.create>>>} */
 const sessions = new Map()
@@ -51,22 +109,93 @@ function formatRecentTurns(recentTurns) {
   return lines.length ? lines.join('\n') : null
 }
 
+function formatEvidenceItems(items, maxItems = 6, maxCharsPerItem = 400) {
+  if (!Array.isArray(items) || items.length === 0) return null
+  const lines = []
+  let total = 0
+  const maxTotal = 2400
+  for (const raw of items.slice(0, maxItems)) {
+    if (!raw || typeof raw !== 'object') continue
+    const kind = String(raw.kind || 'item').trim()
+    const label = String(raw.label || '').trim()
+    let excerpt = String(raw.excerpt || '').trim().replace(/\s+/g, ' ')
+    if (excerpt.length > maxCharsPerItem) {
+      excerpt = `${excerpt.slice(0, Math.max(0, maxCharsPerItem - 1))}...`
+    }
+    if (!label && !excerpt) continue
+    if (total + excerpt.length > maxTotal && lines.length > 0) break
+    lines.push(`- [${kind}] ${label}${excerpt ? `: ${excerpt}` : ''}`)
+    total += excerpt.length
+  }
+  return lines.length ? lines.join('\n') : null
+}
+
 function buildPrompt(userPrompt, context, options = {}) {
-  const where = context?.where || 'Metra'
-  const what = context?.what || ''
-  const why = Array.isArray(context?.why) ? context.why.filter(Boolean).join('; ') : ''
-  const forWhom = Array.isArray(context?.forWhom) ? context.forWhom.filter(Boolean).join('; ') : ''
+  const where = context?.where || context?.route?.where || 'Metra'
+  const what = context?.what || context?.route?.what || ''
+  const whySrc = context?.why ?? context?.route?.why
+  const why = Array.isArray(whySrc) ? whySrc.filter(Boolean).join('; ') : ''
+  const forWhomSrc = context?.forWhom ?? context?.route?.forWhom
+  const forWhom = Array.isArray(forWhomSrc) ? forWhomSrc.filter(Boolean).join('; ') : ''
+  const evidence = context?.evidence && typeof context.evidence === 'object' ? context.evidence : null
+  const quality = String(evidence?.quality || '').toLowerCase()
+  const limits = evidence?.limits && typeof evidence.limits === 'object' ? evidence.limits : {}
+  const maxItems = Number(limits.maxItems) > 0 ? Number(limits.maxItems) : 6
+  const maxCharsPerItem = Number(limits.maxCharsPerItem) > 0 ? Number(limits.maxCharsPerItem) : 400
+  const evidenceBlock = formatEvidenceItems(evidence?.items, maxItems, maxCharsPerItem)
+  const capability = context?.capability && typeof context.capability === 'object' ? context.capability : null
+  const capStatus = capability?.status ? String(capability.status) : ''
   const includeJournal =
     Boolean(options.includeJournalContinuity) ||
     Boolean(context?.forceContinuity) ||
-    Boolean(context?.recall)
+    Boolean(context?.recall) ||
+    Boolean(context?.continuity?.hasJournalContext)
 
-  const sessionSummary = includeJournal && context?.sessionSummary
-    ? String(context.sessionSummary).trim()
+  const sessionSummary =
+    includeJournal &&
+    (context?.sessionSummary || context?.continuity?.sessionSummary)
+      ? String(context.sessionSummary || context.continuity.sessionSummary).trim()
+      : ''
+  const recentTurns = context?.recentTurns || context?.continuity?.recentTurns
+  const recentBlock = includeJournal ? formatRecentTurns(recentTurns) : null
+  const recallBlock = context?.recall || context?.continuity?.recallSummary
+    ? String(context.recall || context.continuity.recallSummary).trim()
     : ''
-  const recentBlock = includeJournal ? formatRecentTurns(context?.recentTurns) : null
-  const recallBlock = context?.recall ? String(context.recall).trim() : ''
-  const recallSid = context?.recallSessionId ? String(context.recallSessionId).trim() : ''
+  const recallSid = context?.recallSessionId || context?.continuity?.recallSessionId
+    ? String(context.recallSessionId || context.continuity.recallSessionId).trim()
+    : ''
+
+  const thinOrNone = quality === 'thin' || quality === 'none'
+  const hasImageEvidence =
+    Array.isArray(evidence?.items) &&
+    evidence.items.some((it) => String(it?.kind || '').toLowerCase() === 'image')
+  const evidenceRules = thinOrNone
+    ? [
+        'EVIDENCE QUALITY (mandatory):',
+        `- evidence.quality=${quality || 'thin'} - treat the answer as provisional, not grounded.`,
+        '- Do not invent live system status (Orion, iSupport, hosts, queues) without bound tool results in evidence.',
+        '- Prefer one concrete next check over a confident claim.',
+        '- Session Journal continuity is not factual evidence unless an evidence item is marked factual.',
+      ]
+    : [
+        'EVIDENCE QUALITY (mandatory):',
+        `- evidence.quality=${quality || 'adequate'} - ground claims in the evidence items below.`,
+        '- Do not invent live system status beyond what evidence items support.',
+        '- Session Journal continuity is not factual evidence unless an evidence item is marked factual.',
+      ]
+
+  const visionRules = hasImageEvidence || options.hasImages
+    ? [
+        '',
+        'VISION-READ (mandatory when images are attached):',
+        '- Describe visible content as observations, not live system truth.',
+        '- Prefer attributable phrasing: "The screenshot appears to show...", "Visible text in the image reads...", "The image appears to indicate...".',
+        '- Distinguish quoted visible text from your interpretation.',
+        '- Quote visible text when relevant; say when text is partially legible or uncertain.',
+        '- Do not claim current live status (Orion is down, ticket is resolved, host is failing) from screenshots alone.',
+        '- Recommend one concrete next check that would ground live status outside the image.',
+      ]
+    : []
 
   return [
     'You are Metra answering from the HTML Ops desk.',
@@ -87,11 +216,26 @@ function buildPrompt(userPrompt, context, options = {}) {
     '- Do not end with offers like "Want me to..." or "I can also walk through...".',
     '- Skip Brightspace / unrelated warnings unless the user asked about them.',
     '',
+    'DESK HONESTY (mandatory):',
+    '- Do not invent operator biography or personal observations.',
+    '- Session Journal is continuity evidence, not personal memory.',
+    '- Do not promise to write files, save notes, or create Capture entries.',
+    '- For park / save / remember asks, point at Save for portfolio or .\\metra.ps1 capture note.',
+    '',
+    ...evidenceRules,
+    ...visionRules,
+    capStatus ? `- capability.status=${capStatus}` : null,
+    '',
     'Route context from Metra (use for cwd and focus - do not reprint as labels):',
     `- Where: ${where}`,
     what ? `- What: ${what}` : null,
     why ? `- Why: ${why}` : null,
     forWhom ? `- For whom: ${forWhom}` : null,
+    evidenceBlock
+      ? ['', 'Bound evidence items (respect limits; do not invent beyond these):', evidenceBlock].join(
+          '\n',
+        )
+      : null,
     sessionSummary
       ? [
           '',
@@ -315,7 +459,51 @@ function scrubSecretsValue(node) {
   }
 }
 
-async function complete({ prompt, cwd, context, sessionId }) {
+function mimeFromFileName(fileName) {
+  const ext = path.extname(String(fileName || '')).toLowerCase()
+  switch (ext) {
+    case '.png':
+      return 'image/png'
+    case '.jpg':
+    case '.jpeg':
+      return 'image/jpeg'
+    case '.gif':
+      return 'image/gif'
+    case '.webp':
+      return 'image/webp'
+    default:
+      return 'application/octet-stream'
+  }
+}
+
+/**
+ * Resolve Host quarantine image refs (id + path) into SDK images.
+ * Never accept journal-style payloads with base64 from callers as the primary path.
+ */
+function loadImagesFromRefs(rawImages) {
+  if (!Array.isArray(rawImages) || rawImages.length === 0) return []
+  const out = []
+  for (const raw of rawImages.slice(0, 3)) {
+    if (!raw || typeof raw !== 'object') continue
+    const filePath = String(raw.path || '').trim()
+    const fileName = String(raw.fileName || path.basename(filePath) || 'image')
+    if (!filePath) continue
+    if (!fs.existsSync(filePath)) {
+      const err = new Error(`Ask image quarantine path missing: ${fileName}`)
+      err.code = 'image_missing'
+      throw err
+    }
+    const buf = fs.readFileSync(filePath)
+    if (!buf || buf.length === 0) continue
+    out.push({
+      data: buf.toString('base64'),
+      mimeType: mimeFromFileName(fileName),
+    })
+  }
+  return out
+}
+
+async function complete({ prompt, cwd, context, sessionId, images }) {
   const apiKey = process.env.CURSOR_API_KEY
   if (!apiKey) {
     const err = new Error('CURSOR_API_KEY missing')
@@ -341,15 +529,20 @@ async function complete({ prompt, cwd, context, sessionId }) {
   }
 
   const workDir = cwd && typeof cwd === 'string' && cwd.length > 0 ? cwd : process.cwd()
+  const sdkImages = loadImagesFromRefs(images)
 
   let agent
   let newSession = false
   if (sessionId && sessions.has(sessionId)) {
     agent = sessions.get(sessionId)
   } else {
+    const modelOpt =
+      MODEL_SELECTION.params && MODEL_SELECTION.params.length > 0
+        ? { id: MODEL_SELECTION.id, params: MODEL_SELECTION.params }
+        : { id: MODEL_SELECTION.id }
     agent = await Agent.create({
       apiKey,
-      model: { id: MODEL },
+      model: modelOpt,
       local: { cwd: workDir, settingSources: [] },
     })
     newSession = true
@@ -365,18 +558,39 @@ async function complete({ prompt, cwd, context, sessionId }) {
 
   const wrapped = buildPrompt(promptScrub.text, ctxScrub.value || {}, {
     includeJournalContinuity: newSession,
+    hasImages: sdkImages.length > 0,
   })
 
   try {
-    const run = await agent.send(wrapped)
+    const run =
+      sdkImages.length > 0
+        ? await agent.send({ text: wrapped, images: sdkImages })
+        : await agent.send(wrapped)
     const result = await run.wait()
     if (result.status === 'error') {
+      // Prefer SDK error text when present; otherwise keep the desk-safe fallback.
+      let detail = ''
+      if (typeof result.result === 'string' && result.result.trim()) {
+        detail = result.result.trim()
+      } else if (result.result && typeof result.result === 'object') {
+        detail = String(result.result.message || result.result.error || '').trim()
+      }
+      if (detail.length > 400) detail = `${detail.slice(0, 399)}...`
+      const scrubbed = detail ? scrubSecretsText(detail) : { text: '' }
+      const message = scrubbed.text
+        ? `The Ask engine run failed: ${scrubbed.text}`
+        : 'The Ask engine run failed. Try again, or use Classify for routing only.'
+      console.error(
+        `[ask-cursor] run error id=${result.id || 'n/a'} requestId=${result.requestId || 'n/a'} durationMs=${result.durationMs ?? 'n/a'} detail=${scrubbed.text || '(none)'}`,
+      )
       return {
-        message: 'The Ask engine run failed. Try again, or use Classify for routing only.',
+        message,
         engine: ENGINE,
         model: MODEL,
         sessionId: id,
         status: 'error',
+        runId: result.id || null,
+        requestId: result.requestId || null,
       }
     }
 
@@ -454,6 +668,7 @@ const server = http.createServer(async (req, res) => {
         cwd: body.cwd,
         context: body.context,
         sessionId: body.sessionId,
+        images: body.images,
       })
       sendJson(res, 200, result)
     } catch (err) {

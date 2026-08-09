@@ -641,6 +641,8 @@ function Test-MetraAskShowWhere {
     param([Parameter(Mandatory)]$Handoff)
 
     if (-not $Handoff) { return $false }
+    $kind = [string](Get-MetraProp -Object $Handoff -Name 'kind' -Default '')
+    if ($kind -in @('greeting', 'observation', 'park')) { return $false }
     if ([bool](Get-MetraProp -Object $Handoff -Name 'ambiguous' -Default $false)) { return $true }
     $score = [int](Get-MetraProp -Object $Handoff -Name 'score' -Default 0)
     if ($score -lt 2) { return $true }

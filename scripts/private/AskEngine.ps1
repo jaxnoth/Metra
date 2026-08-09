@@ -2,7 +2,7 @@
 # Implementers: cursor (Node sidecar) + openai_compat (PowerShell) for ollama / enterprise / llamacpp.
 
 function Get-MetraAskModelPinTable {
-    # Provisional tags - freeze after smoke (Decision 2026-08-07).
+    # Frozen 2026-08-08 from Accept / desk smoke (medium = qwen2.5:7b).
     return [ordered]@{
         small  = 'qwen2.5:3b'
         medium = 'qwen2.5:7b'
@@ -47,12 +47,32 @@ function Get-MetraAskSettings {
     $pins = Get-MetraAskModelPinTable
     $cursor = Get-MetraProp -Object $ask -Name 'cursor' -Default $null
     $cursorPort = 7381
-    $cursorModel = 'composer-2.5'
+    # Default: Cursor Router Auto Cost (legacy Auto - Cursor Models pool).
+    $cursorModel = 'auto-smart'
+    $cursorOptimizeFor = 'cost'
     if ($null -ne $cursor) {
         $p = Get-MetraProp -Object $cursor -Name 'port' -Default 7381
         if ($p -as [int]) { $cursorPort = [int]$p }
-        $m = [string](Get-MetraProp -Object $cursor -Name 'model' -Default 'composer-2.5')
-        if (-not [string]::IsNullOrWhiteSpace($m)) { $cursorModel = $m }
+        $m = [string](Get-MetraProp -Object $cursor -Name 'model' -Default 'auto-smart')
+        if (-not [string]::IsNullOrWhiteSpace($m)) { $cursorModel = $m.Trim() }
+        $of = [string](Get-MetraProp -Object $cursor -Name 'optimizeFor' -Default 'cost')
+        if (-not [string]::IsNullOrWhiteSpace($of)) { $cursorOptimizeFor = $of.Trim().ToLowerInvariant() }
+    }
+    $cursorModelLower = $cursorModel.ToLowerInvariant()
+    if ($cursorModelLower -in @('auto-cost', 'auto cost', 'cost', 'auto')) {
+        $cursorModel = 'auto-smart'
+        $cursorOptimizeFor = 'cost'
+    }
+    elseif ($cursorModelLower -in @('auto-balance', 'auto balance', 'balance', 'balanced')) {
+        $cursorModel = 'auto-smart'
+        $cursorOptimizeFor = 'balanced'
+    }
+    elseif ($cursorModelLower -in @('auto-intelligence', 'auto intelligence', 'intelligence')) {
+        $cursorModel = 'auto-smart'
+        $cursorOptimizeFor = 'intelligence'
+    }
+    if ($cursorModel -eq 'auto-smart' -and $cursorOptimizeFor -notin @('cost', 'balanced', 'intelligence')) {
+        $cursorOptimizeFor = 'cost'
     }
 
     $ollama = Get-MetraProp -Object $ask -Name 'ollama' -Default $null
@@ -91,7 +111,10 @@ function Get-MetraAskSettings {
     }
 
     $activeModel = switch ($engine) {
-        'cursor' { $cursorModel }
+        'cursor' {
+            if ($cursorModel -eq 'auto-smart') { "auto-smart/$cursorOptimizeFor" }
+            else { $cursorModel }
+        }
         'ollama' { $ollamaModel }
         'enterprise' { $entModel }
         'llamacpp' { $llamaModel }
@@ -103,6 +126,7 @@ function Get-MetraAskSettings {
         engine             = $engine
         cursorPort         = $cursorPort
         cursorModel        = $cursorModel
+        cursorOptimizeFor  = $cursorOptimizeFor
         ollamaBaseUrl      = $ollamaBase
         ollamaModel        = $ollamaModel
         ollamaSizeBand     = $sizeBand
@@ -536,6 +560,7 @@ function Invoke-MetraAskEngine {
         [Parameter(Mandatory)][string]$Cwd,
         [hashtable]$Context = @{},
         [string]$SessionId,
+        [object[]]$Images = @(),
         [string]$MetraRoot = (Get-MetraRoot),
         [int]$TimeoutSec = 180
     )
@@ -553,6 +578,42 @@ function Invoke-MetraAskEngine {
 
     $safeContext = if ($null -ne $ctxScrub.Value) { $ctxScrub.Value } else { @{} }
 
+    # MVP: Cursor sidecar only for vision. Ollama/enterprise/llamacpp always degrade before call.
+    $imageRefs = @(
+        foreach ($img in @($Images)) {
+            if ($null -eq $img) { continue }
+            $id = [string](Get-MetraProp -Object $img -Name 'id' -Default '')
+            $fileName = [string](Get-MetraProp -Object $img -Name 'fileName' -Default '')
+            $path = [string](Get-MetraProp -Object $img -Name 'path' -Default '')
+            if ([string]::IsNullOrWhiteSpace($id) -and [string]::IsNullOrWhiteSpace($path)) { continue }
+            [ordered]@{
+                id       = $id
+                fileName = $fileName
+                path     = $path
+            }
+        }
+    )
+    if ($imageRefs.Count -gt 0 -and $settings.engine -ne 'cursor') {
+        $deg = "Ask image intake needs the Cursor Ask engine for vision in this release. Current engine is '$($settings.engine)'. Switch Ask to Cursor, or remove the image and ask in text."
+        return [PSCustomObject]@{
+            ok              = $false
+            message         = $deg
+            engine          = $settings.engine
+            model           = $settings.model
+            sessionId       = $SessionId
+            status          = 'degraded'
+            error           = 'image_vision_unsupported'
+            secretsRefuse   = $false
+            secretsReason   = $null
+            secretsNotice   = $(if ($promptScrub.Matched -or $ctxScrub.Matched) {
+                    Join-MetraAskSecretsNotices -Notices @($promptScrub.Notice, $ctxScrub.Notice)
+                } else { $null })
+            secretsScrubbed = [bool]($promptScrub.Matched -or $ctxScrub.Matched)
+            secretsKinds    = @($promptScrub.Kinds) + @($ctxScrub.Kinds)
+            scrubbedPrompt  = [string]$promptScrub.Text
+        }
+    }
+
     if ($settings.engine -eq 'cursor') {
         $url = "http://127.0.0.1:$($settings.cursorPort)/v1/complete"
         $body = @{
@@ -562,7 +623,11 @@ function Invoke-MetraAskEngine {
             mode    = 'answer'
         }
         if ($SessionId) { $body.sessionId = $SessionId }
-        $json = $body | ConvertTo-Json -Depth 6 -Compress
+        if ($imageRefs.Count -gt 0) {
+            # Path/id only - sidecar reads quarantine bytes. Never put base64 in this JSON.
+            $body.images = @($imageRefs)
+        }
+        $json = $body | ConvertTo-Json -Depth 8 -Compress
         try {
             $response = Invoke-RestMethod -Uri $url -Method Post -Body $json -ContentType 'application/json; charset=utf-8' -TimeoutSec $TimeoutSec
             return Convert-MetraAskCursorResponse -Response $response -Settings $settings -SessionId $SessionId -PromptScrub $promptScrub -CtxScrub $ctxScrub
@@ -691,6 +756,7 @@ function Start-MetraAskEngine {
         $env:CURSOR_API_KEY = $key
         $env:METRA_ASK_PORT = "$($settings.cursorPort)"
         $env:METRA_ASK_MODEL = $settings.cursorModel
+        $env:METRA_ASK_OPTIMIZE_FOR = $settings.cursorOptimizeFor
         $env:METRA_ASK_ENGINE = 'cursor'
         try {
             $proc = Start-Process -FilePath $nodePath -ArgumentList @($sidecar) `
@@ -702,6 +768,7 @@ function Start-MetraAskEngine {
             else { $env:CURSOR_API_KEY = $previous }
             Remove-Item Env:METRA_ASK_PORT -ErrorAction SilentlyContinue
             Remove-Item Env:METRA_ASK_MODEL -ErrorAction SilentlyContinue
+            Remove-Item Env:METRA_ASK_OPTIMIZE_FOR -ErrorAction SilentlyContinue
             Remove-Item Env:METRA_ASK_ENGINE -ErrorAction SilentlyContinue
         }
         Set-Content -LiteralPath $pidFile -Value $proc.Id -Encoding ASCII
