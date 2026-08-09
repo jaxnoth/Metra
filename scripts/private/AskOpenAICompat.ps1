@@ -122,11 +122,35 @@ function Invoke-MetraAskOpenAICompatComplete {
     $systemParts = @(
         'You are Metra Ask - answer-only portfolio ops assistant.',
         'Follow route-first context. Do not invent live system state without evidence.',
+        'DESK HONESTY: Be brief. Do not paste routing furniture (Where / What / Why / Next).',
+        'Do not invent operator biography or personal observations - journal is continuity, not personal memory.',
+        'Do not promise to write files, save notes, or create Capture entries. For park/save/remember asks, point at Save for portfolio or .\metra.ps1 capture note.',
         "Working directory: $Cwd"
     )
+
+    $evQuality = ''
     if ($Context -is [hashtable] -or $Context -is [PSCustomObject]) {
+        $ev = Get-MetraProp -Object $Context -Name 'evidence' -Default $null
+        if ($ev) {
+            $evQuality = [string](Get-MetraProp -Object $ev -Name 'quality' -Default '')
+            $lim = Get-MetraProp -Object $ev -Name 'limits' -Default $null
+            $maxItems = if ($lim) { [int](Get-MetraProp -Object $lim -Name 'maxItems' -Default 6) } else { 6 }
+            $maxChars = if ($lim) { [int](Get-MetraProp -Object $lim -Name 'maxCharsPerItem' -Default 400) } else { 400 }
+            $maxTotal = if ($lim) { [int](Get-MetraProp -Object $lim -Name 'maxTotalChars' -Default 2400) } else { 2400 }
+            $systemParts += "EVIDENCE CONTRACT: quality=$evQuality; limits items<=$maxItems chars/item<=$maxChars total<=$maxTotal."
+            if ($evQuality -in @('thin', 'none')) {
+                $systemParts += 'evidence.quality is thin/none - answer provisionally; do not invent live Orion/iSupport/host status; give one concrete next check.'
+            }
+            else {
+                $systemParts += 'Ground claims in evidence.items. Journal continuity is not factual unless marked factualSupport.'
+            }
+        }
+        else {
+            $systemParts += 'No structured evidence bag - stay provisional; do not invent live system state.'
+        }
         try {
             $ctxJson = ($Context | ConvertTo-Json -Depth 6 -Compress)
+            # Keep ceiling aligned with evidence pack (2400) plus route/capability overhead.
             if ($ctxJson -and $ctxJson.Length -lt 12000) {
                 $systemParts += "Context JSON: $ctxJson"
             }

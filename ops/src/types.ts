@@ -86,7 +86,7 @@ export type Health = {
 
 export type Handoff = {
   query: string
-  kind?: 'greeting' | 'route'
+  kind?: 'greeting' | 'route' | 'observation' | 'park'
   preview: boolean
   where: string | null
   what: string
@@ -123,6 +123,20 @@ export type AskSessionSummary = {
   origin?: string
   client?: string
   turns?: { id: string; turnIndex?: number; at?: string; prompt?: string }[]
+}
+
+export type CaptureProposal = {
+  proposalId: string
+  summary: string
+  suggestedHome: string
+  suggestedProject?: string | null
+  confidence?: string
+  reason?: string
+  rootLabel?: string | null
+  requiresCrossRoot?: boolean
+  requiresHostSession?: boolean
+  derivedFrom?: { type?: string; sessionId?: string; turnId?: string }
+  accepted?: boolean
 }
 
 export type CaptureItem = {
@@ -297,8 +311,15 @@ export type AskResult = {
   engine?: string | null
   model?: string | null
   answered?: boolean
+  /** grounded | provisional | refusal | degraded | greeting | observation | park */
+  answerType?: string | null
+  /** adequate | thin | none */
+  evidenceQuality?: string | null
+  nextStep?: string | null
   /** Quiet Where chip when route is weak or ambiguous. */
   showWhere?: boolean
+  /** Park short-circuit: highlight Save for portfolio (never auto-create Capture). */
+  suggestCapture?: boolean
   continuity?: AskContinuity | null
   /** True when Ask scrubbed or refused secret-shaped content. */
   secretsScrubbed?: boolean

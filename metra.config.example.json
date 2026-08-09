@@ -33,7 +33,8 @@
     },
     "cursor": {
       "port": 7381,
-      "model": "composer-2.5"
+      "model": "auto-smart",
+      "optimizeFor": "cost"
     },
     "llamacpp": {
       "baseUrl": "http://127.0.0.1:8080",

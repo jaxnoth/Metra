@@ -210,9 +210,10 @@ function Get-MetraHomeDestinationName {
     param()
 
     $registry = Get-MetraProjectRegistry
-    $name = [string](Get-MetraProp -Object $registry.routing -Name 'homeDestination' -Default '')
+    $routing = Get-MetraProp -Object $registry -Name 'routing' -Default $null
+    $name = [string](Get-MetraProp -Object $routing -Name 'homeDestination' -Default '')
     if ([string]::IsNullOrWhiteSpace($name)) {
-        $name = [string](Get-MetraProp -Object $registry.routing -Name 'defaultEntry' -Default 'Metra')
+        $name = [string](Get-MetraProp -Object $routing -Name 'defaultEntry' -Default 'Metra')
     }
     if ([string]::IsNullOrWhiteSpace($name)) { $name = 'Metra' }
     return $name

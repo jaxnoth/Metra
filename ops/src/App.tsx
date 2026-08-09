@@ -8,9 +8,12 @@ import {
   noteAttention,
   openProjectPath,
   postAsk,
+  ensureLocalSessionToken,
+  postCaptureAccepted,
   postCaptureDismiss,
   postCaptureFromAsk,
   postCapturePromote,
+  postCapturePropose,
   postPlace,
   postPlaceConfirm,
   postPlaceCorrect,
@@ -29,6 +32,7 @@ import {
   fetchUpdates,
   postProductUpdate,
 } from './api'
+import { AskMarkdown } from './AskMarkdown'
 import { formatAskTabTitle, getMetraBridge } from './bridge'
 import { MetraPresence } from './MetraPresence'
 import type {
@@ -38,6 +42,7 @@ import type {
   SettingsPortfolio,
   ProductUpdates,
   CaptureItem,
+  CaptureProposal,
   DeskPayload,
   DeskMode,
   Handoff,
@@ -92,8 +97,13 @@ type ChatTurn = {
   text: string
   handoff?: Handoff | null
   answered?: boolean
+  answerType?: string | null
+  evidenceQuality?: string | null
+  nextStep?: string | null
   /** Quiet Where chip when Ask route is weak or ambiguous. */
   showWhere?: boolean
+  /** Park short-circuit: highlight Save for portfolio. */
+  suggestCapture?: boolean
   /** Journal turn id for Save for portfolio. */
   turnId?: string | null
   sessionId?: string | null
@@ -709,7 +719,7 @@ function WhereChip({
       .catch(() => setHomes([]))
   }, [open, homes.length])
 
-  if (handoff.kind === 'greeting') return null
+  if (handoff.kind === 'greeting' || handoff.kind === 'observation' || handoff.kind === 'park') return null
 
   return (
     <div className="where-chip">
@@ -755,6 +765,16 @@ function attachmentSuffix(attachments?: { fileName: string }[]): string {
   const names = (attachments ?? []).map((a) => a.fileName).filter(Boolean)
   if (names.length === 0) return ''
   return ` Linked ${names.join(', ')} (stays in quarantine).`
+}
+
+const ASK_IMAGE_EXT = /\.(png|jpe?g|gif|webp)$/i
+
+function isAskImageFile(file: { fileName?: string; name?: string } | File): boolean {
+  const name =
+    file instanceof File
+      ? file.name
+      : String((file as { fileName?: string }).fileName || (file as { name?: string }).name || '')
+  return ASK_IMAGE_EXT.test(name)
 }
 
 function PlaceResultCard({
@@ -965,11 +985,24 @@ export default function App() {
   )
   const [placeText, setPlaceText] = useState('')
   const [placeFiles, setPlaceFiles] = useState<PlaceUploadMeta[]>([])
+  const [placePreviews, setPlacePreviews] = useState<Record<string, string>>({})
   const [placeResult, setPlaceResult] = useState<PlaceRecommendation | null>(null)
   const [placeStatus, setPlaceStatus] = useState<string | null>(null)
   const [placePending, setPlacePending] = useState(false)
+  const [captureProposals, setCaptureProposals] = useState<
+    Array<CaptureProposal & { accepted: boolean }>
+  >([])
+  const [captureProposeOpen, setCaptureProposeOpen] = useState(false)
+  const [hasLocalSession, setHasLocalSession] = useState(false)
+  const [captureDrafts, setCaptureDrafts] = useState<
+    Record<string, { home: string; project: string; crossRootConfirm: boolean }>
+  >({})
   const composerRef = useRef<HTMLTextAreaElement | null>(null)
   const chatEndRef = useRef<HTMLDivElement | null>(null)
+
+  useEffect(() => {
+    void ensureLocalSessionToken().then((t) => setHasLocalSession(Boolean(t)))
+  }, [desk?.generatedAt])
 
   useEffect(() => {
     chatEndRef.current?.scrollIntoView({ behavior: 'smooth', block: 'nearest' })
@@ -1361,16 +1394,25 @@ export default function App() {
     setResolveStatus('Recall armed - next Ask includes that journal session as labeled evidence.')
   }
 
-  async function runAsk(question: string) {
-    if (!question.trim()) return
+  async function runAsk(question: string, imageIds?: string[]) {
+    const ids = (imageIds ?? []).filter(Boolean).slice(0, 3)
+    const q = question.trim()
+    if (!q && ids.length === 0) return
+    const displayPrompt = q || 'Describe what matters in this screenshot for the next check.'
     setPrompt('')
     setBusy(true)
     setAskPending(true)
     setError(null)
     const youId = nextChatId()
-    appendChat([{ id: youId, role: 'you', text: question }])
+    appendChat([
+      {
+        id: youId,
+        role: 'you',
+        text: ids.length > 0 ? `${displayPrompt} [${ids.length} image(s)]` : displayPrompt,
+      },
+    ])
     try {
-      const result = await postAsk(question, askSessionId, recallSessionId)
+      const result = await postAsk(q, askSessionId, recallSessionId, ids)
       if (result.sessionId) setAskSessionId(result.sessionId)
       setContinuityNote(continuityLabel(result.continuity))
       // Prefer journal/scrubbed prompt so chat state does not keep raw secrets.
@@ -1385,12 +1427,29 @@ export default function App() {
           role: 'metra',
           text: stripAskUiChrome(result.message || ''),
           answered: Boolean(result.answered),
+          answerType: result.answerType || null,
+          evidenceQuality: result.evidenceQuality || null,
+          nextStep: result.nextStep || null,
           handoff: result.handoff,
           showWhere: Boolean(result.showWhere),
+          suggestCapture: Boolean(result.suggestCapture),
           turnId: result.entry?.id || null,
           sessionId: result.sessionId || result.entry?.sessionId || askSessionId,
         },
       ])
+      if (ids.length > 0) {
+        setPlaceFiles((prev) => prev.filter((f) => !ids.includes(f.id)))
+        setPlacePreviews((prev) => {
+          const next = { ...prev }
+          for (const id of ids) {
+            if (next[id]) {
+              URL.revokeObjectURL(next[id])
+              delete next[id]
+            }
+          }
+          return next
+        })
+      }
       await load()
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err))
@@ -1405,8 +1464,56 @@ export default function App() {
     setBusy(true)
     setResolveStatus(null)
     try {
-      await postCaptureFromAsk(turn.turnId, turn.sessionId || askSessionId)
-      setResolveStatus('Saved for later in Metra Capture Inbox.')
+      const res = await postCapturePropose({
+        turnId: turn.turnId,
+        sessionId: turn.sessionId || askSessionId,
+      })
+      const rows = (res.proposals ?? []).map((p) => ({
+        ...p,
+        accepted: true,
+      }))
+      if (rows.length === 0) {
+        // Fallback: single create when propose returns empty (legacy path).
+        await postCaptureFromAsk(turn.turnId, turn.sessionId || askSessionId)
+        setResolveStatus('Saved for later in Metra Capture Inbox.')
+        setCaptureProposeOpen(false)
+        setCaptureProposals([])
+        await load()
+        return
+      }
+      setCaptureProposals(rows)
+      setCaptureProposeOpen(true)
+      setResolveStatus('Review proposed Capture rows, then Create selected.')
+    } catch (e) {
+      setResolveStatus(e instanceof Error ? e.message : String(e))
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  async function onCreateAcceptedCaptures() {
+    const accepted = captureProposals.filter((p) => p.accepted)
+    if (accepted.length === 0) {
+      setResolveStatus('Select at least one proposal to create.')
+      return
+    }
+    setBusy(true)
+    try {
+      const res = await postCaptureAccepted(
+        accepted.map((p) => ({
+          proposalId: p.proposalId,
+          summary: p.summary,
+          suggestedHome: p.suggestedHome,
+          suggestedProject: p.suggestedProject,
+          derivedFrom: p.derivedFrom,
+          accepted: true,
+        })),
+      )
+      setCaptureProposeOpen(false)
+      setCaptureProposals([])
+      setResolveStatus(
+        `Created ${res.count ?? res.items?.length ?? 0} Capture candidate(s). Promote from Captures when ready.`,
+      )
       await load()
     } catch (e) {
       setResolveStatus(e instanceof Error ? e.message : String(e))
@@ -1427,11 +1534,65 @@ export default function App() {
     }
   }
 
-  async function onPromoteCapture(id: string, home?: string) {
+  function captureDraftFor(c: CaptureItem) {
+    const existing = captureDrafts[c.id]
+    if (existing) return existing
+    return {
+      home: c.suggestedHome || 'FutureDevelopment',
+      project: c.suggestedProject || '',
+      crossRootConfirm: false,
+    }
+  }
+
+  function patchCaptureDraft(
+    id: string,
+    patch: Partial<{ home: string; project: string; crossRootConfirm: boolean }>,
+    seed?: CaptureItem,
+  ) {
+    setCaptureDrafts((prev) => {
+      const base =
+        prev[id] ||
+        (seed
+          ? {
+              home: seed.suggestedHome || 'FutureDevelopment',
+              project: seed.suggestedProject || '',
+              crossRootConfirm: false,
+            }
+          : { home: 'FutureDevelopment', project: '', crossRootConfirm: false })
+      return { ...prev, [id]: { ...base, ...patch } }
+    })
+  }
+
+  async function onPromoteCapture(id: string, seed?: CaptureItem) {
+    const draft = seed ? captureDraftFor(seed) : captureDrafts[id]
+    const home = draft?.home || seed?.suggestedHome || 'FutureDevelopment'
+    if (home === 'ProjectAgents' || home === 'TicketTracker') {
+      setError(
+        home === 'ProjectAgents'
+          ? 'ProjectAgents is suggest-only. Edit AGENTS.md in Cursor, or promote to ProjectBacklog instead.'
+          : 'TicketTracker promote is suggest-only. Use TicketTracker note/brief; Capture does not write iSupport.',
+      )
+      return
+    }
+    if (home === 'ProjectBacklog' && !hasLocalSession) {
+      setError(
+        'ProjectBacklog promote requires a local Metra session. Use Host/CLI, or promote to FutureDevelopment / OCC / DecisionRegistry from remote.',
+      )
+      return
+    }
     setBusy(true)
     try {
-      await postCapturePromote(id, home)
+      await postCapturePromote(id, {
+        home,
+        project: draft?.project || seed?.suggestedProject || undefined,
+        crossRootConfirm: draft?.crossRootConfirm === true,
+      })
       setResolveStatus('Promoted capture into the affirmed home.')
+      setCaptureDrafts((prev) => {
+        const next = { ...prev }
+        delete next[id]
+        return next
+      })
       await load()
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e))
@@ -1463,7 +1624,8 @@ export default function App() {
 
   async function onAsk(e: FormEvent) {
     e.preventDefault()
-    await runAsk(prompt.trim())
+    const imageIds = placeFiles.filter(isAskImageFile).map((f) => f.id)
+    await runAsk(prompt.trim(), imageIds)
   }
 
   function onAskFromAttention(seed: string) {
@@ -1474,6 +1636,31 @@ export default function App() {
   async function onPastePlace() {
     setPlaceStatus(null)
     try {
+      if (navigator.clipboard?.read) {
+        const items = await navigator.clipboard.read()
+        const imageFiles: File[] = []
+        for (const item of items) {
+          const type = item.types.find((t) => t.startsWith('image/'))
+          if (!type) continue
+          const blob = await item.getType(type)
+          const ext = type.includes('jpeg')
+            ? 'jpg'
+            : type.includes('png')
+              ? 'png'
+              : type.includes('webp')
+                ? 'webp'
+                : type.includes('gif')
+                  ? 'gif'
+                  : 'png'
+          imageFiles.push(new File([blob], `paste-${Date.now()}.${ext}`, { type }))
+        }
+        if (imageFiles.length > 0) {
+          await stageFiles(imageFiles)
+          setPlaceStatus(`Pasted ${imageFiles.length} image(s) for Ask or Put somewhere`)
+          composerRef.current?.focus()
+          return
+        }
+      }
       if (navigator.clipboard?.readText) {
         const text = await navigator.clipboard.readText()
         if (text) {
@@ -1497,11 +1684,29 @@ export default function App() {
     setPlaceStatus(null)
     try {
       const uploaded: PlaceUploadMeta[] = []
+      const previewAdds: Record<string, string> = {}
       for (const f of files) {
-        uploaded.push(await postPlaceUpload(f))
+        const meta = await postPlaceUpload(f)
+        uploaded.push(meta)
+        if (isAskImageFile(f) || isAskImageFile(meta)) {
+          previewAdds[meta.id] = URL.createObjectURL(f)
+        }
       }
       setPlaceFiles((prev) => [...prev, ...uploaded])
-      setPlaceStatus(`Staged ${uploaded.length} file(s)`)
+      if (Object.keys(previewAdds).length > 0) {
+        setPlacePreviews((prev) => ({ ...prev, ...previewAdds }))
+      }
+      const imageCount = uploaded.filter(isAskImageFile).length
+      const otherCount = uploaded.length - imageCount
+      if (imageCount > 0 && otherCount === 0) {
+        setPlaceStatus(`Staged ${imageCount} image(s) - Ask or Put somewhere`)
+      } else if (imageCount > 0) {
+        setPlaceStatus(
+          `Staged ${imageCount} image(s) for Ask; ${otherCount} other file(s) for Put somewhere`,
+        )
+      } else {
+        setPlaceStatus(`Staged ${uploaded.length} file(s) for Put somewhere`)
+      }
     } catch (e) {
       setPlaceStatus(e instanceof Error ? e.message : String(e))
     } finally {
@@ -1534,6 +1739,13 @@ export default function App() {
 
   const showSettings = settingsOpen || tab === 'settings'
   const showRoute = !showSettings && (!advanced || tab === 'route')
+  const askImageFiles = placeFiles.filter(isAskImageFile)
+  const placeOtherFiles = placeFiles.filter((f) => !isAskImageFile(f))
+  const canAsk =
+    !busy && (prompt.trim().length > 0 || askImageFiles.length > 0)
+  const askEngineName = String(askEnginePanel?.capability?.engine || '').toLowerCase()
+  const imageVisionDegrade =
+    askImageFiles.length > 0 && askEngineName.length > 0 && askEngineName !== 'cursor'
   const attentionWaiting =
     desk?.attentionCount ??
     desk?.attention?.activeCount ??
@@ -1641,11 +1853,13 @@ export default function App() {
                 <button
                   type="submit"
                   className="btn btn-primary"
-                  disabled={busy || !prompt.trim() || placeFiles.length > 0}
+                  disabled={!canAsk}
                   title={
-                    placeFiles.length > 0
-                      ? 'Ask image intake is not available yet. Use Put somewhere for attachments.'
-                      : undefined
+                    placeOtherFiles.length > 0 && askImageFiles.length === 0 && !prompt.trim()
+                      ? 'Non-image attachments go with Put somewhere.'
+                      : imageVisionDegrade
+                        ? 'Images need the Cursor Ask engine for vision in this release.'
+                        : undefined
                   }
                 >
                   {askPending ? 'Working...' : 'Ask'}
@@ -1675,6 +1889,7 @@ export default function App() {
                   <input
                     type="file"
                     multiple
+                    accept=".png,.jpg,.jpeg,.gif,.webp,.txt,.md,.json,.csv,.log,.pdf,.xml,.yaml,.yml,.ps1,.sql,.html,.htm,image/*"
                     hidden
                     onChange={(e) => {
                       if (e.target.files?.length) void stageFiles(e.target.files)
@@ -1687,21 +1902,49 @@ export default function App() {
                 Ask starts a conversation. Put somewhere recommends a home. Nothing is created until
                 you choose a next step.
               </p>
+              {imageVisionDegrade && (
+                <p className="composer-file-note muted">
+                  Screenshots need the Cursor Ask engine for vision. Current engine will degrade
+                  honestly if you Ask with images.
+                </p>
+              )}
               {placeFiles.length > 0 && (
                 <>
                   <p className="composer-file-note muted">
-                    Attachments go with Put somewhere; Ask image intake is not available yet.
+                    {askImageFiles.length > 0 && placeOtherFiles.length === 0
+                      ? 'Images go with Ask (vision-read) or Put somewhere.'
+                      : askImageFiles.length > 0
+                        ? 'Images go with Ask; other attachments go with Put somewhere.'
+                        : 'Attachments go with Put somewhere.'}
                   </p>
                   <ul className="place-files">
                     {placeFiles.map((f) => (
                       <li key={f.id}>
-                        <span>{f.fileName}</span>
+                        {placePreviews[f.id] ? (
+                          <img
+                            className="place-file-thumb"
+                            src={placePreviews[f.id]}
+                            alt={f.fileName}
+                          />
+                        ) : null}
+                        <span>
+                          {f.fileName}
+                          {isAskImageFile(f) ? ' (Ask)' : ' (Put)'}
+                        </span>
                         <button
                           type="button"
                           className="btn btn-quiet"
-                          onClick={() =>
+                          onClick={() => {
                             setPlaceFiles((prev) => prev.filter((x) => x.id !== f.id))
-                          }
+                            setPlacePreviews((prev) => {
+                              const next = { ...prev }
+                              if (next[f.id]) {
+                                URL.revokeObjectURL(next[f.id])
+                                delete next[f.id]
+                              }
+                              return next
+                            })
+                          }}
                         >
                           Remove
                         </button>
@@ -1719,19 +1962,15 @@ export default function App() {
                 {chat.map((turn) => (
                   <div key={turn.id} className={`chat-turn chat-turn-${turn.role}`}>
                     <div className="chat-role">{turn.role === 'you' ? 'You' : 'Reply'}</div>
-                    {turn.text && (
-                      <p
-                        className={
-                          turn.role === 'you'
-                            ? 'chat-you'
-                            : turn.answered
-                              ? 'ask-reply'
-                              : 'ask-unavailable'
-                        }
-                      >
-                        {turn.text}
-                      </p>
-                    )}
+                    {turn.text &&
+                      (turn.role === 'you' ? (
+                        <p className="chat-you">{turn.text}</p>
+                      ) : (
+                        <AskMarkdown
+                          text={turn.text}
+                          className={turn.answered ? 'ask-reply' : 'ask-unavailable'}
+                        />
+                      ))}
                     {turn.role === 'metra' && turn.showWhere && turn.handoff && (
                       <WhereChip
                         handoff={turn.handoff}
@@ -1741,11 +1980,25 @@ export default function App() {
                         onCorrected={(msg) => setResolveStatus(msg)}
                       />
                     )}
+                    {turn.role === 'metra' &&
+                      (turn.answerType || turn.evidenceQuality) &&
+                      !['greeting', 'observation', 'park'].includes(
+                        String(turn.answerType || '').toLowerCase(),
+                      ) && (
+                        <p className="muted small" style={{ marginTop: '0.35rem' }}>
+                          {[
+                            turn.answerType ? `answer=${turn.answerType}` : null,
+                            turn.evidenceQuality ? `evidence=${turn.evidenceQuality}` : null,
+                          ]
+                            .filter(Boolean)
+                            .join(' · ')}
+                        </p>
+                      )}
                     {turn.role === 'metra' && turn.turnId && (
                       <div className="actions wrap">
                         <button
                           type="button"
-                          className="btn btn-secondary"
+                          className={turn.suggestCapture ? 'btn btn-primary' : 'btn btn-secondary'}
                           disabled={busy}
                           onClick={() => void onSaveAskTurn(turn)}
                         >
@@ -1770,6 +2023,68 @@ export default function App() {
                   </div>
                 )}
                 <div ref={chatEndRef} />
+              </div>
+            )}
+            {captureProposeOpen && captureProposals.length > 0 && (
+              <div className="capture-propose-sheet" role="region" aria-label="Capture proposals">
+                <h3>Save for portfolio</h3>
+                <p className="muted small">
+                  Affirm rows to create Capture candidates. Nothing is written until you Create
+                  selected.
+                </p>
+                <ul className="list">
+                  {captureProposals.map((p, idx) => (
+                    <li key={p.proposalId || idx}>
+                      <label className="settings-check">
+                        <input
+                          type="checkbox"
+                          checked={p.accepted}
+                          disabled={busy}
+                          onChange={(e) => {
+                            const accepted = e.target.checked
+                            setCaptureProposals((prev) =>
+                              prev.map((row, i) =>
+                                i === idx ? { ...row, accepted } : row,
+                              ),
+                            )
+                          }}
+                        />
+                        <span>
+                          <strong>{p.summary}</strong>
+                        </span>
+                      </label>
+                      <div className="muted small">
+                        {p.suggestedHome}
+                        {p.suggestedProject ? ` · ${p.suggestedProject}` : ''}
+                        {p.rootLabel ? ` · root ${p.rootLabel}` : ''}
+                        {p.requiresHostSession ? ' · needs Host session' : ''}
+                        {p.requiresCrossRoot ? ' · cross-root' : ''}
+                      </div>
+                    </li>
+                  ))}
+                </ul>
+                <div className="actions wrap">
+                  <button
+                    type="button"
+                    className="btn btn-primary"
+                    disabled={busy || !captureProposals.some((p) => p.accepted)}
+                    onClick={() => void onCreateAcceptedCaptures()}
+                  >
+                    Create selected
+                  </button>
+                  <button
+                    type="button"
+                    className="btn btn-secondary"
+                    disabled={busy}
+                    onClick={() => {
+                      setCaptureProposeOpen(false)
+                      setCaptureProposals([])
+                      setResolveStatus(null)
+                    }}
+                  >
+                    Cancel
+                  </button>
+                </div>
               </div>
             )}
           </section>
@@ -2060,41 +2375,115 @@ export default function App() {
           </ul>
           <h2>Captures</h2>
           <p className="muted">
-            Portfolio intake candidates. Save for portfolio parks here; promote writes a durable home
-            on affirm. Keep in view stays on Attention.
+            Portfolio intake candidates. Save for portfolio proposes rows first; Create selected parks
+            here. Promote writes a durable home on affirm. Keep in view stays on Attention.
           </p>
+          {!hasLocalSession && (
+            <p className="muted small">
+              No local Host session detected - ProjectBacklog promote is disabled until you open Ops
+              from Host/loopback.
+            </p>
+          )}
           <ul className="list">
             {(desk?.captures ?? []).length === 0 && (
               <li className="muted">No capture candidates.</li>
             )}
-            {(desk?.captures ?? []).map((c: CaptureItem) => (
-              <li key={c.id}>
-                <strong>{c.summary}</strong>
-                <div className="muted">
-                  {c.suggestedHome || 'FutureDevelopment'}
-                  {c.derivedFrom?.type ? ` · from ${c.derivedFrom.type}` : ''}
-                  {c.at ? ` · ${c.at}` : ''}
-                </div>
-                <div className="actions wrap">
-                  <button
-                    type="button"
-                    className="btn btn-primary"
-                    disabled={busy}
-                    onClick={() => void onPromoteCapture(c.id, c.suggestedHome)}
-                  >
-                    Promote
-                  </button>
-                  <button
-                    type="button"
-                    className="btn btn-secondary"
-                    disabled={busy}
-                    onClick={() => void onDismissCapture(c.id)}
-                  >
-                    Dismiss
-                  </button>
-                </div>
-              </li>
-            ))}
+            {(desk?.captures ?? []).map((c: CaptureItem) => {
+              const draft = captureDraftFor(c)
+              const promoteBlocked =
+                draft.home === 'ProjectAgents' ||
+                draft.home === 'TicketTracker' ||
+                (draft.home === 'ProjectBacklog' && !hasLocalSession)
+              return (
+                <li key={c.id}>
+                  <strong>{c.summary}</strong>
+                  <div className="muted">
+                    {c.suggestedHome || 'FutureDevelopment'}
+                    {c.suggestedProject ? ` · ${c.suggestedProject}` : ''}
+                    {c.derivedFrom?.type ? ` · from ${c.derivedFrom.type}` : ''}
+                    {c.at ? ` · ${c.at}` : ''}
+                  </div>
+                  <div className="settings-roots" style={{ marginTop: '0.5rem' }}>
+                    <label className="settings-field settings-field-compact">
+                      <span className="muted">Home</span>
+                      <select
+                        disabled={busy}
+                        value={draft.home}
+                        onChange={(e) =>
+                          patchCaptureDraft(c.id, { home: e.target.value }, c)
+                        }
+                      >
+                        <option value="FutureDevelopment">FutureDevelopment</option>
+                        <option value="OCC">OCC</option>
+                        <option value="DecisionRegistry">DecisionRegistry</option>
+                        <option value="ProjectBacklog">ProjectBacklog</option>
+                        <option value="ProjectAgents">ProjectAgents (suggest-only)</option>
+                        <option value="TicketTracker">TicketTracker (suggest-only)</option>
+                      </select>
+                    </label>
+                    {(draft.home === 'ProjectBacklog' || draft.home === 'ProjectAgents') && (
+                      <label className="settings-field settings-field-compact">
+                        <span className="muted">Project</span>
+                        <input
+                          type="text"
+                          disabled={busy}
+                          value={draft.project}
+                          onChange={(e) =>
+                            patchCaptureDraft(c.id, { project: e.target.value }, c)
+                          }
+                          placeholder="Registered project name"
+                          spellCheck={false}
+                        />
+                      </label>
+                    )}
+                    {draft.home === 'ProjectBacklog' && (
+                      <label className="settings-check">
+                        <input
+                          type="checkbox"
+                          disabled={busy}
+                          checked={draft.crossRootConfirm}
+                          onChange={(e) =>
+                            patchCaptureDraft(
+                              c.id,
+                              { crossRootConfirm: e.target.checked },
+                              c,
+                            )
+                          }
+                        />
+                        <span>Confirm cross-root write</span>
+                      </label>
+                    )}
+                  </div>
+                  <div className="actions wrap">
+                    <button
+                      type="button"
+                      className="btn btn-primary"
+                      disabled={busy || promoteBlocked}
+                      title={
+                        draft.home === 'ProjectAgents'
+                          ? 'Suggest-only - edit AGENTS.md in Cursor'
+                          : draft.home === 'TicketTracker'
+                            ? 'Suggest-only - use TicketTracker note/brief'
+                            : draft.home === 'ProjectBacklog' && !hasLocalSession
+                              ? 'Requires local Host session'
+                              : undefined
+                      }
+                      onClick={() => void onPromoteCapture(c.id, c)}
+                    >
+                      Promote
+                    </button>
+                    <button
+                      type="button"
+                      className="btn btn-secondary"
+                      disabled={busy}
+                      onClick={() => void onDismissCapture(c.id)}
+                    >
+                      Dismiss
+                    </button>
+                  </div>
+                </li>
+              )
+            })}
           </ul>
         </section>
       )}

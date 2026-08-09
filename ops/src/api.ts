@@ -235,17 +235,19 @@ export function postAsk(
   prompt: string,
   sessionId?: string | null,
   recallSessionId?: string | null,
+  imageIds?: string[] | null,
 ): Promise<AskResult> {
   return fetch('/api/ask', {
     method: 'POST',
     headers: {
-      'Content-Type': 'application/json',
+      'Content-Type': 'application/json; charset=utf-8',
       'X-Metra-Client': 'ops-web',
     },
     body: JSON.stringify({
       prompt,
       sessionId: sessionId || undefined,
       recallSessionId: recallSessionId || undefined,
+      imageIds: imageIds && imageIds.length > 0 ? imageIds : undefined,
       client: 'ops-web',
       clientHint: /Mobi|Android|iPhone/i.test(navigator.userAgent) ? 'phone' : 'desktop',
     }),
@@ -284,6 +286,59 @@ export function postCaptureFromAsk(
   }).then((r) => parseJson(r))
 }
 
+/** Ladder 2b: propose Capture rows from Ask (no ledger write). */
+export async function postCapturePropose(opts: {
+  turnId?: string | null
+  sessionId?: string | null
+}): Promise<{ proposals: import('./types').CaptureProposal[] }> {
+  const token = await ensureLocalSessionToken()
+  return fetch(
+    '/api/capture/propose',
+    withSessionHeaders(
+      {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'X-Metra-Client': 'ops-web',
+        },
+        body: JSON.stringify({
+          turnId: opts.turnId || undefined,
+          sessionId: opts.sessionId || undefined,
+        }),
+      },
+      token,
+    ),
+  ).then((r) => parseJson(r))
+}
+
+/** Ladder 2b: create only accepted proposal rows. */
+export async function postCaptureAccepted(
+  acceptedProposals: Array<{
+    proposalId?: string
+    summary: string
+    suggestedHome?: string
+    suggestedProject?: string | null
+    derivedFrom?: { type?: string; sessionId?: string; turnId?: string }
+    accepted: boolean
+  }>,
+): Promise<{ items: import('./types').CaptureItem[]; count: number }> {
+  const token = await ensureLocalSessionToken()
+  return fetch(
+    '/api/capture',
+    withSessionHeaders(
+      {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'X-Metra-Client': 'ops-web',
+        },
+        body: JSON.stringify({ acceptedProposals }),
+      },
+      token,
+    ),
+  ).then((r) => parseJson(r))
+}
+
 export function postCaptureDismiss(id: string): Promise<import('./types').CaptureItem> {
   return fetch(`/api/capture/${encodeURIComponent(id)}/dismiss`, {
     method: 'POST',
@@ -291,18 +346,29 @@ export function postCaptureDismiss(id: string): Promise<import('./types').Captur
   }).then((r) => parseJson(r))
 }
 
-export function postCapturePromote(
+export async function postCapturePromote(
   id: string,
-  home?: string,
+  opts?: { home?: string; project?: string; crossRootConfirm?: boolean },
 ): Promise<import('./types').CaptureItem> {
-  return fetch(`/api/capture/${encodeURIComponent(id)}/promote`, {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-      'X-Metra-Client': 'ops-web',
-    },
-    body: JSON.stringify({ home: home || undefined }),
-  }).then((r) => parseJson(r))
+  const token = await ensureLocalSessionToken()
+  return fetch(
+    `/api/capture/${encodeURIComponent(id)}/promote`,
+    withSessionHeaders(
+      {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'X-Metra-Client': 'ops-web',
+        },
+        body: JSON.stringify({
+          home: opts?.home || undefined,
+          project: opts?.project || undefined,
+          crossRootConfirm: opts?.crossRootConfirm === true,
+        }),
+      },
+      token,
+    ),
+  ).then((r) => parseJson(r))
 }
 
 export function postPlace(

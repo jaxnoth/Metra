@@ -1683,6 +1683,19 @@ Describe 'HTML Ops desk payload' {
         $source | Should -Match '/api/place/confirm'
         $source | Should -Match 'Enable-MetraOpsTailscaleServe'
         $source | Should -Match 'showWhere'
+        $source | Should -Match 'answerType'
+        $source | Should -Match 'evidenceQuality'
+    }
+
+    It 'OpsServer parses the Ask engine JSON body before reading action and engine' {
+        $source = Get-Content -LiteralPath (Join-Path (Get-MetraRoot) 'scripts\private\OpsServer.ps1') -Raw
+        $routeStart = $source.IndexOf("if (`$method -eq 'POST' -and `$path -eq '/api/ask/engine')")
+        $routeStart | Should -BeGreaterThan -1
+        $route = $source.Substring($routeStart, [Math]::Min(4500, $source.Length - $routeStart))
+        $route | Should -Match '\$parsed\s*=\s*if\s*\(\$body\)\s*\{\s*\$body\s*\|\s*ConvertFrom-Json'
+        $route | Should -Match "Get-MetraProp -Object \`$parsed -Name 'action'"
+        $route | Should -Match "Get-MetraProp -Object \`$parsed -Name 'engine'"
+        $route | Should -Not -Match "Get-MetraProp -Object \`$body -Name '(action|engine)'"
     }
 
     It 'Tailscale binding prefers HTTPS share when Serve URL is provided' {
@@ -1701,7 +1714,7 @@ Describe 'HTML Ops desk payload' {
             Set-ItResult -Skipped -Because 'Ask engine is already available on this machine'
             return
         }
-        $ask = Get-MetraDeskAskResult -Prompt 'Hello Metra'
+        $ask = Get-MetraDeskAskResult -Prompt 'Explain Metra routing briefly'
         $ask.answered | Should -BeFalse
         $ask.handoff.kind | Should -Be 'route'
         $ask.handoff.where | Should -Be 'Metra'
@@ -1712,12 +1725,305 @@ Describe 'HTML Ops desk payload' {
         $ask.capability.available | Should -BeFalse
     }
 
-    It 'never uses greeting theater on the Ask path' {
-        $ask = Get-MetraDeskAskResult -Prompt 'Hello Metra'
-        $ask.handoff.kind | Should -Be 'route'
-        $ask.message | Should -Not -Match 'Hello - Metra here'
-        $ask.message | Should -Not -Match 'Local assistant is next'
-        $ask.message | Should -Not -Match 'Routing preview for'
+    It 'S05 greeting short-circuits without engine or sticky route theater' {
+        InModuleScope Metra {
+            Mock Invoke-MetraAskEngine {
+                throw 'Invoke-MetraAskEngine should not run for greeting short-circuit'
+            }
+            $ask = Get-MetraDeskAskResult -Prompt 'Hello Metra'
+            $ask.answered | Should -BeTrue
+            $ask.handoff.kind | Should -Be 'greeting'
+            $ask.message | Should -Match 'Ask desk'
+            $ask.message | Should -Match 'work through'
+            $ask.message | Should -Not -Match 'Stay on Metra until'
+            $ask.message | Should -Not -Match 'Hello - Metra here'
+            $ask.message | Should -Not -Match 'Routing preview'
+            $ask.engine | Should -BeNullOrEmpty
+            Should -Invoke Invoke-MetraAskEngine -Times 0
+        }
+    }
+
+    It 'S06 personal observation short-circuits with bound-evidence inventory' {
+        InModuleScope Metra {
+            Mock Invoke-MetraAskEngine {
+                throw 'Invoke-MetraAskEngine should not run for observation short-circuit'
+            }
+            $ask = Get-MetraDeskAskResult -Prompt 'Tell me something about myself from your observations.'
+            $ask.answered | Should -BeTrue
+            $ask.handoff.kind | Should -Be 'observation'
+            $ask.message | Should -Match 'Bound evidence'
+            $ask.message | Should -Match 'route='
+            $ask.message | Should -Match 'Journal continuity'
+            $ask.message | Should -Not -Match 'you tend to'
+            $ask.message | Should -Not -Match 'your personality'
+            $ask.message | Should -Not -Match 'I have observed'
+            Should -Invoke Invoke-MetraAskEngine -Times 0
+        }
+    }
+
+    It 'S07 UTF-8 apostrophe round-trips through journal I/O' {
+        InModuleScope Metra {
+            $root = Join-Path ([IO.Path]::GetTempPath()) ("metra-askutf8-" + [guid]::NewGuid().ToString('n'))
+            New-Item -ItemType Directory -Path (Join-Path $root 'docs') -Force | Out-Null
+            try {
+                $prompt = "aren't"
+                $entry = Add-MetraDeskAskEntry -Prompt $prompt -Message 'ok' `
+                    -Handoff ([PSCustomObject]@{ where = 'Metra'; kind = 'route' }) `
+                    -SessionId 'sess-utf8' -Origin loopback -Client ops-web -Answered $true -MetraRoot $root
+                $entry.prompt | Should -Be $prompt
+                $path = Join-Path $root 'docs\ops-ask-log.local.json'
+                $enc = Get-MetraUtf8NoBomEncoding
+                $disk = [System.IO.File]::ReadAllText($path, $enc)
+                $disk | Should -Match "aren't"
+                $disk | ConvertFrom-Json | Out-Null
+                $items = @(Get-MetraDeskAskLog -MetraRoot $root -Limit 5)
+                $items[0].prompt | Should -Be $prompt
+
+                $strict = [System.Text.UTF8Encoding]::new($false, $true)
+                $bad = [byte[]](0x22, 0x61, 0xff, 0x22) # invalid UTF-8
+                { $strict.GetString($bad) } | Should -Throw
+            }
+            finally {
+                Remove-Item -LiteralPath $root -Recurse -Force -ErrorAction SilentlyContinue
+            }
+        }
+    }
+
+    It 'S08 park short-circuits with suggestCapture and no write promise' {
+        InModuleScope Metra {
+            Mock Invoke-MetraAskEngine {
+                throw 'Invoke-MetraAskEngine should not run for park short-circuit'
+            }
+            $ask = Get-MetraDeskAskResult -Prompt 'Park this idea for later.'
+            $ask.answered | Should -BeTrue
+            $ask.handoff.kind | Should -Be 'park'
+            $ask.answerType | Should -Be 'park'
+            $ask.suggestCapture | Should -BeTrue
+            $ask.message | Should -Match 'cannot write'
+            $ask.message | Should -Match 'Save for portfolio'
+            $ask.message | Should -Match 'capture note'
+            $ask.message | Should -Not -Match "I'll save"
+            $ask.message | Should -Not -Match 'created a note'
+            Should -Invoke Invoke-MetraAskEngine -Times 0
+        }
+    }
+
+    It 'L2 evidence pack has quality, bounded items, and locked limits' {
+        InModuleScope Metra {
+            $handoff = Get-MetraDeskHandoff -Query 'What is Metra for?'
+            $pack = New-MetraAskEvidencePack -Prompt 'What is Metra for?' -Handoff $handoff
+            $pack.quality | Should -BeIn @('adequate', 'thin')
+            $pack.limits.maxItems | Should -Be 6
+            $pack.limits.maxCharsPerItem | Should -Be 400
+            $pack.limits.maxTotalChars | Should -Be 2400
+            @($pack.items).Count | Should -BeLessOrEqual 6
+            $total = 0
+            foreach ($it in @($pack.items)) {
+                ([string]$it.excerpt).Length | Should -BeLessOrEqual 400
+                $total += ([string]$it.excerpt).Length
+            }
+            $total | Should -BeLessOrEqual 2400
+            $pack.context.route | Should -Not -BeNullOrEmpty
+            $pack.context.evidence.quality | Should -Be $pack.quality
+            $pack.context.Keys | Should -Contain 'where'
+            $pack.context.Keys | Should -Contain 'what'
+        }
+    }
+
+    It 'L2 missing route evidence yields none quality' {
+        InModuleScope Metra {
+            $handoff = [PSCustomObject]@{
+                where = ''
+                what  = ''
+                why   = @()
+                next  = ''
+                score = 0
+            }
+            $q = Get-MetraAskEvidenceQuality -Handoff $handoff -Items @()
+            $q | Should -Be 'none'
+        }
+    }
+
+    It 'L2 thin/none cannot ground; none skips engine' {
+        InModuleScope Metra {
+            Mock Invoke-MetraAskEngine {
+                throw 'Invoke-MetraAskEngine should not run for none evidence'
+            }
+            Mock New-MetraAskEvidencePack {
+                param($Prompt, $Handoff, $Continuity, $Capability, $MetraRoot)
+                return [PSCustomObject]@{
+                    context          = @{
+                        route      = @{ where = 'Metra'; what = 'x'; why = @(); forWhom = @(); next = 'n'; score = 1 }
+                        evidence   = @{ quality = 'none'; items = @(); limits = @{ maxItems = 6; maxCharsPerItem = 400; maxTotalChars = 2400 } }
+                        continuity = @{ hasJournalContext = $false }
+                        capability = @{ status = 'normal'; reason = $null }
+                        where      = 'Metra'
+                        what       = 'x'
+                        why        = @()
+                        forWhom    = @()
+                        next       = 'n'
+                        score      = 1
+                    }
+                    quality          = 'none'
+                    items            = @()
+                    limits           = @{ maxItems = 6; maxCharsPerItem = 400; maxTotalChars = 2400 }
+                    liveSystemIntent = $false
+                }
+            }
+            Mock Get-MetraAskCapability {
+                [PSCustomObject]@{
+                    enabled       = $true
+                    selected      = $true
+                    available     = $true
+                    engine        = 'cursor'
+                    providerLabel = 'Cursor'
+                    reason        = $null
+                    message       = ''
+                    port          = 7381
+                    model         = 'auto'
+                }
+            }
+            $ask = Get-MetraDeskAskResult -Prompt 'Invent something with no evidence'
+            $ask.evidenceQuality | Should -Be 'none'
+            $ask.answerType | Should -Be 'provisional'
+            $ask.answered | Should -BeFalse
+            $ask.message | Should -Match 'enough routed evidence'
+            Should -Invoke Invoke-MetraAskEngine -Times 0
+
+            $thinSem = Resolve-MetraAskAnswerSemantics -EvidenceQuality 'thin' -PreferredType 'grounded'
+            $thinSem.answerType | Should -Be 'provisional'
+            $thinSem.answered | Should -BeFalse
+            $noneSem = Resolve-MetraAskAnswerSemantics -EvidenceQuality 'none'
+            $noneSem.answered | Should -BeFalse
+            $ok = Resolve-MetraAskAnswerSemantics -EvidenceQuality 'adequate' -PreferredType 'grounded'
+            $ok.answered | Should -BeTrue
+            $ok.answerType | Should -Be 'grounded'
+        }
+    }
+
+    It 'L2 honesty greeting keeps answered=true and answerType=greeting' {
+        InModuleScope Metra {
+            Mock Invoke-MetraAskEngine {
+                throw 'Invoke-MetraAskEngine should not run for greeting short-circuit'
+            }
+            $ask = Get-MetraDeskAskResult -Prompt 'Hello Metra'
+            $ask.answered | Should -BeTrue
+            $ask.answerType | Should -Be 'greeting'
+            $ask.evidenceQuality | Should -Be 'none'
+            Should -Invoke Invoke-MetraAskEngine -Times 0
+        }
+    }
+
+    It 'L2 ticket id adds bounded ticket item without full brief body' {
+        InModuleScope Metra {
+            $handoff = [PSCustomObject]@{
+                where   = 'TicketTracker'
+                what    = 'Ticket-first helpdesk entry.'
+                why     = @('ticket id in prompt')
+                forWhom = @()
+                next    = 'Run brief for the ticket id.'
+                score   = 5
+            }
+            $pack = New-MetraAskEvidencePack -Prompt 'What should I do with ticket 1035096?' -Handoff $handoff
+            $ticketItems = @($pack.items | Where-Object { $_.kind -eq 'ticket' })
+            $ticketItems.Count | Should -BeGreaterThan 0
+            ($ticketItems | ForEach-Object { $_.excerpt }) -join ' ' | Should -Match '1035096'
+            ($ticketItems | ForEach-Object { $_.excerpt }) -join ' ' | Should -Not -Match '(?i)PROBLEM_TEXT|full brief body|INCIDENT DESCRIPTION'
+            foreach ($it in @($pack.items)) {
+                ([string]$it.excerpt).Length | Should -BeLessOrEqual 400
+            }
+        }
+    }
+
+    It 'L2 secrets scrub runs on evidence context before engine' {
+        InModuleScope Metra {
+            $secret = 'sk-abcdefghijklmnopqrstuvwxyz12'
+            $itemList = [System.Collections.Generic.List[object]]::new()
+            [void]$itemList.Add(@{
+                    kind           = 'project'
+                    label          = 'secret'
+                    source         = 'x'
+                    excerpt        = "api_key=$secret"
+                    confidence     = 'high'
+                    factualSupport = $true
+                })
+            Mock Get-MetraAskCapability {
+                [PSCustomObject]@{
+                    enabled       = $true
+                    selected      = $true
+                    available     = $true
+                    engine        = 'cursor'
+                    providerLabel = 'Cursor'
+                    reason        = $null
+                    message       = ''
+                    port          = 7381
+                    model         = 'auto'
+                }
+            }
+            Mock New-MetraAskEvidencePack {
+                return [PSCustomObject]@{
+                    context          = @{
+                        route      = @{ where = 'Metra'; what = 'x'; why = @(); forWhom = @(); next = 'n'; score = 2 }
+                        evidence   = @{
+                            quality = 'adequate'
+                            items   = $itemList
+                            limits  = @{ maxItems = 6; maxCharsPerItem = 400; maxTotalChars = 2400 }
+                        }
+                        continuity = @{ hasJournalContext = $false }
+                        capability = @{ status = 'normal'; reason = $null }
+                        where      = 'Metra'
+                        what       = 'x'
+                        why        = @()
+                        forWhom    = @()
+                        next       = 'n'
+                        score      = 2
+                    }
+                    quality          = 'adequate'
+                    items            = @($itemList)
+                    limits           = @{ maxItems = 6; maxCharsPerItem = 400; maxTotalChars = 2400 }
+                    liveSystemIntent = $false
+                }
+            }
+            Mock Invoke-MetraAskEngine {
+                param($Prompt, $Cwd, $Context, $SessionId, $MetraRoot)
+                $json = ($Context | ConvertTo-Json -Depth 8 -Compress)
+                if ($json -match [regex]::Escape('sk-abcdefghijklmnopqrstuvwxyz12')) {
+                    throw 'raw secret reached engine context'
+                }
+                return [PSCustomObject]@{
+                    ok        = $true
+                    message   = 'Grounded answer from scrubbed context.'
+                    sessionId = 'sess-l2'
+                    engine    = 'cursor'
+                    model     = 'auto'
+                }
+            }
+            $ask = Get-MetraDeskAskResult -Prompt 'Explain routing with a secret in context'
+            $ask.answerType | Should -BeIn @('grounded', 'provisional', 'refusal')
+            if ($ask.answerType -eq 'grounded') {
+                $ask.answered | Should -BeTrue
+            }
+            else {
+                $ask.answered | Should -BeFalse
+            }
+        }
+    }
+
+    It 'Repair-MetraAskWritePromise scrubs offer-to-write but leaves honest memory denials' {
+        InModuleScope Metra {
+            $scrubbed = Repair-MetraAskWritePromise -Message "Would you like me to create a note for that?"
+            $scrubbed | Should -Match 'cannot write'
+            $scrubbed | Should -Match 'Save for portfolio'
+
+            $save = Repair-MetraAskWritePromise -Message "I'll save this for you."
+            $save | Should -Match 'cannot write'
+
+            $honest = Repair-MetraAskWritePromise -Message "I don't remember live state for that host."
+            $honest | Should -Be "I don't remember live state for that host."
+
+            $noMem = Repair-MetraAskWritePromise -Message 'I have no memory of that request.'
+            $noMem | Should -Be 'I have no memory of that request.'
+        }
     }
 
     It 'strips Metra Model disclosure chrome from Ask answers' {
@@ -2000,6 +2306,246 @@ Hello from Ask.
     }
 }
 
+Describe 'Capture Inbox v2 - Ladder 2b' {
+    It 'L2b classifier: soft ticket phrase stays ProjectBacklog for registered project' {
+        InModuleScope Metra {
+            $meta = Join-Path ([IO.Path]::GetTempPath()) ("metra-2b-meta-" + [guid]::NewGuid().ToString('n'))
+            $bq = Join-Path ([IO.Path]::GetTempPath()) ("metra-2b-bq-" + [guid]::NewGuid().ToString('n'))
+            New-Item -ItemType Directory -Path (Join-Path $meta 'docs') -Force | Out-Null
+            New-Item -ItemType Directory -Path $bq -Force | Out-Null
+            try {
+                $script:L2bMeta = $meta
+                $script:L2bBq = $bq
+                Mock Get-MetraHomeDestinationName { 'Metra' }
+                Mock Get-MetraProjects {
+                    @(
+                        [PSCustomObject]@{ Name = 'Metra'; Path = $script:L2bMeta; Root = 'work' }
+                        [PSCustomObject]@{ Name = 'BibleQuiz'; Path = $script:L2bBq; Root = 'personal' }
+                        [PSCustomObject]@{ Name = 'TicketTracker'; Path = (Join-Path $script:L2bMeta 'TicketTracker'); Root = 'work' }
+                    )
+                }
+                Mock Get-MetraScoredRoutingProjects {
+                    @(
+                        [PSCustomObject]@{ Name = 'BibleQuiz'; Score = 5; Path = $script:L2bBq; Root = 'personal' }
+                    )
+                }
+                Mock Get-MetraProjectRegistry {
+                    [PSCustomObject]@{
+                        projects = @()
+                        routing  = [PSCustomObject]@{ homeDestination = 'Metra' }
+                    }
+                }
+                $t = Resolve-MetraCaptureSuggestedTarget -Text 'Add a backlog ticket for BibleQuiz quiz handoff' -Where 'BibleQuiz' -MetraRoot $meta
+                $t.suggestedHome | Should -Be 'ProjectBacklog'
+                $t.suggestedProject | Should -Be 'BibleQuiz'
+                $t.requiresHostSession | Should -BeTrue
+                $t.requiresCrossRoot | Should -BeTrue
+            }
+            finally {
+                Remove-Item -LiteralPath $meta -Recurse -Force -ErrorAction SilentlyContinue
+                Remove-Item -LiteralPath $bq -Recurse -Force -ErrorAction SilentlyContinue
+            }
+        }
+    }
+
+    It 'L2b classifier: strong ticket id selects TicketTracker' {
+        InModuleScope Metra {
+            Mock Get-MetraHomeDestinationName { 'Metra' }
+            Mock Get-MetraScoredRoutingProjects { @() }
+            Mock Get-MetraProjects { @() }
+            Mock Get-MetraProjectRegistry {
+                [PSCustomObject]@{
+                    projects = @()
+                    routing  = [PSCustomObject]@{ homeDestination = 'Metra' }
+                }
+            }
+            $t = Resolve-MetraCaptureSuggestedTarget -Text 'iSupport incident 1035096 needs follow-up' -Where ''
+            $t.suggestedHome | Should -Be 'TicketTracker'
+            $t.reason | Should -Be 'strong-ticket'
+        }
+    }
+
+    It 'L2b propose bounds: max 5, min 1, no ledger write' {
+        InModuleScope Metra {
+            $root = Join-Path ([IO.Path]::GetTempPath()) ("metra-2b-prop-" + [guid]::NewGuid().ToString('n'))
+            New-Item -ItemType Directory -Path (Join-Path $root 'docs') -Force | Out-Null
+            try {
+                $script:L2bPropRoot = $root
+                Mock Get-MetraHomeDestinationName { 'Metra' }
+                Mock Get-MetraProjects {
+                    @(
+                        [PSCustomObject]@{ Name = 'Metra'; Path = $script:L2bPropRoot; Root = 'work' }
+                        [PSCustomObject]@{ Name = 'Trivia'; Path = (Join-Path $script:L2bPropRoot 'Trivia'); Root = 'work' }
+                    )
+                }
+                Mock Get-MetraScoredRoutingProjects {
+                    @(
+                        [PSCustomObject]@{ Name = 'Trivia'; Score = 4; Path = (Join-Path $script:L2bPropRoot 'Trivia'); Root = 'work' }
+                    )
+                }
+                Mock Get-MetraProjectRegistry {
+                    [PSCustomObject]@{
+                        projects = @()
+                        routing  = [PSCustomObject]@{ homeDestination = 'Metra' }
+                    }
+                }
+                $sess = 'sess-2b-prop'
+                1..6 | ForEach-Object {
+                    Add-MetraDeskAskEntry -Prompt "Trivia word search idea $_" -Message "ok $_" `
+                        -Handoff ([PSCustomObject]@{ where = "Where$_" }) `
+                        -SessionId $sess -Origin loopback -Client ops-web -Answered $true -MetraRoot $root | Out-Null
+                }
+                $turn = Add-MetraDeskAskEntry -Prompt 'Park Metra future development scar for Capture' -Message 'ok' `
+                    -Handoff ([PSCustomObject]@{ where = 'Metra' }) `
+                    -SessionId $sess -Origin loopback -Client ops-web -Answered $true -MetraRoot $root
+                $before = @(Get-MetraCaptureLedger -MetraRoot $root -Status all)
+                $proposals = @(Propose-MetraCaptureSplit -TurnId $turn.id -SessionId $sess -MetraRoot $root)
+                $proposals.Count | Should -BeGreaterOrEqual 1
+                $proposals.Count | Should -BeLessOrEqual 5
+                $after = @(Get-MetraCaptureLedger -MetraRoot $root -Status all)
+                $after.Count | Should -Be $before.Count
+            }
+            finally {
+                Remove-Item -LiteralPath $root -Recurse -Force -ErrorAction SilentlyContinue
+            }
+        }
+    }
+
+    It 'L2b accepted-only create; invent project refused; derivedFrom immutable' {
+        InModuleScope Metra {
+            $root = Join-Path ([IO.Path]::GetTempPath()) ("metra-2b-acc-" + [guid]::NewGuid().ToString('n'))
+            New-Item -ItemType Directory -Path (Join-Path $root 'docs') -Force | Out-Null
+            try {
+                $script:L2bAccRoot = $root
+                Mock Get-MetraHomeDestinationName { 'Metra' }
+                Mock Get-MetraProjects {
+                    @([PSCustomObject]@{ Name = 'Metra'; Path = $script:L2bAccRoot; Root = 'work' })
+                }
+                Mock Get-MetraScoredRoutingProjects { @() }
+                Mock Get-MetraProjectRegistry {
+                    [PSCustomObject]@{
+                        projects = @()
+                        routing  = [PSCustomObject]@{ homeDestination = 'Metra' }
+                    }
+                }
+                $turn = Add-MetraDeskAskEntry -Prompt 'future development metadata audit' -Message 'ok' `
+                    -Handoff ([PSCustomObject]@{ where = 'Metra' }) `
+                    -SessionId 's2b' -Origin loopback -Client ops-web -Answered $true -MetraRoot $root
+                $rejected = @(Add-MetraCaptureFromAskSplit -Proposals @(
+                        [PSCustomObject]@{
+                            summary = 'skip me'
+                            suggestedHome = 'FutureDevelopment'
+                            accepted = $false
+                            derivedFrom = @{ turnId = $turn.id; sessionId = 's2b' }
+                        }
+                    ) -MetraRoot $root)
+                $rejected.Count | Should -Be 0
+                { Add-MetraCaptureFromAskSplit -Proposals @(
+                        [PSCustomObject]@{
+                            summary = 'invent'
+                            suggestedHome = 'ProjectBacklog'
+                            suggestedProject = 'NotARealProjectXYZ'
+                            accepted = $true
+                            derivedFrom = @{ turnId = $turn.id; sessionId = 's2b' }
+                        }
+                    ) -MetraRoot $root } | Should -Throw -ExpectedMessage '*registered*'
+                $created = @(Add-MetraCaptureFromAskSplit -Proposals @(
+                        [PSCustomObject]@{
+                            summary = 'accepted scar'
+                            suggestedHome = 'FutureDevelopment'
+                            suggestedProject = 'Metra'
+                            accepted = $true
+                            derivedFrom = @{ turnId = $turn.id; sessionId = 's2b' }
+                        }
+                    ) -MetraRoot $root)
+                $created.Count | Should -Be 1
+                $created[0].derivedFrom.turnId | Should -Be $turn.id
+                { Update-MetraCaptureItem -Id $created[0].id -DerivedFrom ([PSCustomObject]@{ type = 'manual' }) -MetraRoot $root } |
+                    Should -Throw -ExpectedMessage '*immutable*'
+            }
+            finally {
+                Remove-Item -LiteralPath $root -Recurse -Force -ErrorAction SilentlyContinue
+            }
+        }
+    }
+
+    It 'L2b ProjectBacklog Host-session refuse; TODO append with cross-root confirm; ProjectAgents fail' {
+        InModuleScope Metra {
+            $meta = Join-Path ([IO.Path]::GetTempPath()) ("metra-2b-todo-" + [guid]::NewGuid().ToString('n'))
+            $bq = Join-Path ([IO.Path]::GetTempPath()) ("metra-2b-todo-bq-" + [guid]::NewGuid().ToString('n'))
+            New-Item -ItemType Directory -Path (Join-Path $meta 'docs') -Force | Out-Null
+            New-Item -ItemType Directory -Path $bq -Force | Out-Null
+            try {
+                $script:L2bTodoMeta = $meta
+                $script:L2bTodoBq = $bq
+                Mock Get-MetraHomeDestinationName { 'Metra' }
+                Mock Get-MetraProjects {
+                    @(
+                        [PSCustomObject]@{ Name = 'Metra'; Path = $script:L2bTodoMeta; Root = 'work' }
+                        [PSCustomObject]@{ Name = 'BibleQuiz'; Path = $script:L2bTodoBq; Root = 'personal' }
+                    )
+                }
+                Mock Get-MetraScoredRoutingProjects { @() }
+                Mock Get-MetraProjectRegistry {
+                    [PSCustomObject]@{
+                        projects = @()
+                        routing  = [PSCustomObject]@{ homeDestination = 'Metra' }
+                    }
+                }
+                $derived = New-MetraCaptureDerivedFrom -Type askTurn -SessionId 's' -TurnId 't1'
+                $cap = Add-MetraCaptureItem -Summary 'BibleQuiz backlog handoff' -Source ask -DerivedFrom $derived `
+                    -SuggestedHome ProjectBacklog -SuggestedProject BibleQuiz -MetraRoot $meta
+                { Invoke-MetraCapturePromote -Id $cap.id -Home ProjectBacklog -Project BibleQuiz `
+                        -HasLocalAuthority:$false -MetraRoot $meta } |
+                    Should -Throw -ExpectedMessage '*local Metra session*'
+                { Invoke-MetraCapturePromote -Id $cap.id -Home ProjectBacklog -Project BibleQuiz `
+                        -HasLocalAuthority:$true -MetraRoot $meta } |
+                    Should -Throw -ExpectedMessage '*Cross-root*'
+                $promoted = Invoke-MetraCapturePromote -Id $cap.id -Home ProjectBacklog -Project BibleQuiz `
+                    -CrossRootConfirm -HasLocalAuthority:$true -MetraRoot $meta
+                $promoted.status | Should -Be 'promoted'
+                $todo = Join-Path $bq 'TODO.md'
+                Test-Path -LiteralPath $todo | Should -BeTrue
+                (Get-Content -LiteralPath $todo -Raw) | Should -Match 'BibleQuiz backlog handoff'
+                (Get-Content -LiteralPath $todo -Raw) | Should -Match $cap.id
+
+                $agents = Add-MetraCaptureItem -Summary 'agents playbook idea' -Source ask -DerivedFrom $derived `
+                    -SuggestedHome ProjectAgents -SuggestedProject BibleQuiz -MetraRoot $meta
+                { Invoke-MetraCapturePromote -Id $agents.id -Home ProjectAgents -MetraRoot $meta } |
+                    Should -Throw -ExpectedMessage '*suggest-only*'
+                $tt = Add-MetraCaptureItem -Summary 'ticket follow-up' -Source ask -DerivedFrom $derived `
+                    -SuggestedHome TicketTracker -SuggestedProject TicketTracker -MetraRoot $meta
+                { Invoke-MetraCapturePromote -Id $tt.id -Home TicketTracker -MetraRoot $meta } |
+                    Should -Throw -ExpectedMessage '*suggest-only*'
+            }
+            finally {
+                Remove-Item -LiteralPath $meta -Recurse -Force -ErrorAction SilentlyContinue
+                Remove-Item -LiteralPath $bq -Recurse -Force -ErrorAction SilentlyContinue
+            }
+        }
+    }
+
+    It 'L2b Capture ledger is not loaded into Ask continuity / routing helpers' {
+        InModuleScope Metra {
+            $root = Join-Path ([IO.Path]::GetTempPath()) ("metra-2b-iso-" + [guid]::NewGuid().ToString('n'))
+            New-Item -ItemType Directory -Path (Join-Path $root 'docs') -Force | Out-Null
+            try {
+                $sess = 'sess-iso'
+                Add-MetraDeskAskEntry -Prompt 'gateway msal' -Message 'PBI notes' `
+                    -Handoff ([PSCustomObject]@{ where = 'PBI' }) `
+                    -SessionId $sess -Origin loopback -Client ops-web -Answered $true -MetraRoot $root | Out-Null
+                $derived = New-MetraCaptureDerivedFrom -Type askTurn -SessionId $sess -TurnId 'secret-turn'
+                Add-MetraCaptureItem -Summary 'SECRET_CAPTURE_SHOULD_NOT_LEAK' -Source ask -DerivedFrom $derived -MetraRoot $root | Out-Null
+                $ctx = Get-MetraAskContinuityContext -SessionId $sess -MetraRoot $root
+                ($ctx | ConvertTo-Json -Depth 6) | Should -Not -Match 'SECRET_CAPTURE_SHOULD_NOT_LEAK'
+            }
+            finally {
+                Remove-Item -LiteralPath $root -Recurse -Force -ErrorAction SilentlyContinue
+            }
+        }
+    }
+}
+
 Describe 'Ask secrets scrub' {
     # Fixture strings are assembled at runtime (split prefixes) so secret scanners
     # do not treat the test source as live credentials. Values are fake and unused.
@@ -2170,7 +2716,8 @@ Describe 'Ask multi-engine (ladder 1)' {
                     enabled = $true
                     engine = 'ollama'
                     cursorPort = 7381
-                    cursorModel = 'composer-2.5'
+                    cursorModel = 'auto-smart'
+                    cursorOptimizeFor = 'balanced'
                     ollamaBaseUrl = 'http://127.0.0.1:11434'
                     ollamaModel = 'qwen2.5:7b'
                     ollamaSizeBand = 'medium'
@@ -3162,5 +3709,200 @@ Describe 'Secure Ops webview bridge and Tailscale session' {
         $source | Should -Match 'localSessionLoopbackOnly'
         $source | Should -Match 'X-Metra-Local-Session'
         $source | Should -Match 'Initialize-MetraOpsLocalSessionToken'
+    }
+}
+
+Describe 'Ask image intake - Ladder 3' {
+    It 'refuses non-image quarantine ids and caps at 3' {
+        InModuleScope Metra {
+            $png = [Convert]::FromBase64String('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==')
+            $img = Save-MetraPlaceUpload -FileName 'ok.png' -Bytes $png -ContentType 'image/png'
+            $txt = Save-MetraPlaceUpload -FileName 'notes.txt' -Bytes ([Text.Encoding]::UTF8.GetBytes('hello')) -ContentType 'text/plain'
+            $bad = Resolve-MetraAskImages -ImageIds @($txt.id)
+            $bad.ok | Should -BeFalse
+            $bad.error | Should -Match 'png/jpeg/gif/webp'
+            $a = Save-MetraPlaceUpload -FileName 'a.png' -Bytes $png -ContentType 'image/png'
+            $b = Save-MetraPlaceUpload -FileName 'b.png' -Bytes $png -ContentType 'image/png'
+            $c = Save-MetraPlaceUpload -FileName 'c.png' -Bytes $png -ContentType 'image/png'
+            $d = Save-MetraPlaceUpload -FileName 'd.png' -Bytes $png -ContentType 'image/png'
+            $over = Resolve-MetraAskImages -ImageIds @($a.id, $b.id, $c.id, $d.id)
+            $over.ok | Should -BeFalse
+            $over.error | Should -Match 'at most 3'
+            $ok = Resolve-MetraAskImages -ImageIds @($img.id)
+            $ok.ok | Should -BeTrue
+            @($ok.images).Count | Should -Be 1
+            @($ok.journal).Count | Should -Be 1
+            $ok.journal[0].id | Should -Be $img.id
+            $ok.journal[0].fileName | Should -Match '\.png$'
+            ($ok.journal[0].PSObject.Properties.Name) | Should -Not -Contain 'path'
+            ($ok.journal[0].PSObject.Properties.Name) | Should -Not -Contain 'mimeType'
+        }
+    }
+
+    It 'journal stores id+fileName only (no path/mime/base64)' {
+        InModuleScope Metra {
+            $tmp = Join-Path ([IO.Path]::GetTempPath()) ('metra-l3-journal-' + [guid]::NewGuid().ToString('n'))
+            New-Item -ItemType Directory -Path (Join-Path $tmp 'docs') -Force | Out-Null
+            try {
+                $entry = Add-MetraDeskAskEntry `
+                    -Prompt 'Describe screenshot' `
+                    -Message 'The screenshot appears to show a dashboard.' `
+                    -SessionId 'l3-journal' `
+                    -Origin loopback `
+                    -Client cli `
+                    -Answered $false `
+                    -Images @([PSCustomObject]@{ id = 'abc123'; fileName = 'orion-dashboard.png'; path = 'C:\secret\path.png'; mimeType = 'image/png'; dataBase64 = 'AAAA' }) `
+                    -MetraRoot $tmp
+                @($entry.images).Count | Should -Be 1
+                $entry.images[0].id | Should -Be 'abc123'
+                $entry.images[0].fileName | Should -Be 'orion-dashboard.png'
+                ($entry.images[0].PSObject.Properties.Name) | Should -Not -Contain 'path'
+                ($entry.images[0].PSObject.Properties.Name) | Should -Not -Contain 'mimeType'
+                ($entry.images[0].PSObject.Properties.Name) | Should -Not -Contain 'dataBase64'
+                $raw = Get-Content -LiteralPath (Get-MetraDeskAskLogPath -MetraRoot $tmp) -Raw -Encoding UTF8
+                $raw | Should -Not -Match 'C:\\secret\\path'
+                $raw | Should -Not -Match 'dataBase64'
+                $raw | Should -Not -Match 'image/png'
+            }
+            finally {
+                Remove-Item -LiteralPath $tmp -Recurse -Force -ErrorAction SilentlyContinue
+            }
+        }
+    }
+
+    It 'evidence kind image has no FactualSupport; Cursor body includes path refs; Ollama+images degrades' {
+        InModuleScope Metra {
+            $png = [Convert]::FromBase64String('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==')
+            $meta = Save-MetraPlaceUpload -FileName 'shot.png' -Bytes $png -ContentType 'image/png'
+            $resolved = Resolve-MetraAskImages -ImageIds @($meta.id)
+            $handoff = [PSCustomObject]@{
+                where   = 'Solarwinds'
+                what    = 'Orion platform-as-code'
+                why     = @('orion')
+                forWhom = @()
+                next    = 'Check active alerts.'
+                score   = 4
+            }
+            $pack = New-MetraAskEvidencePack -Prompt 'What is in this screenshot?' -Handoff $handoff -Images $resolved.images
+            $imgItems = @($pack.items | Where-Object { $_.kind -eq 'image' })
+            $imgItems.Count | Should -BeGreaterThan 0
+            $imgItems[0].factualSupport | Should -BeFalse
+            $imgItems[0].excerpt | Should -Match 'Image attached for vision read'
+
+            $script:L3CursorBody = $null
+            Mock Get-MetraAskSettings {
+                [PSCustomObject]@{ engine = 'cursor'; model = 'auto'; cursorPort = 7381 }
+            }
+            Mock Invoke-RestMethod {
+                param($Uri, $Method, $Body, $ContentType, $TimeoutSec)
+                $script:L3CursorBody = $Body
+                return [PSCustomObject]@{
+                    message   = 'The screenshot appears to show a status panel.'
+                    engine    = 'cursor'
+                    model     = 'auto'
+                    sessionId = 's1'
+                    status    = 'finished'
+                }
+            }
+            $cursor = Invoke-MetraAskEngine -Prompt 'Describe' -Cwd (Get-MetraRoot) -Images $resolved.images
+            $cursor.ok | Should -BeTrue
+            $script:L3CursorBody | Should -Not -BeNullOrEmpty
+            $script:L3CursorBody | Should -Match '"path"'
+            $script:L3CursorBody | Should -Match '"fileName"'
+            $script:L3CursorBody | Should -Match 'shot\.png'
+            $script:L3CursorBody | Should -Not -Match 'dataBase64'
+
+            Mock Get-MetraAskSettings {
+                [PSCustomObject]@{ engine = 'ollama'; model = 'llama'; cursorPort = 7381 }
+            }
+            Mock Invoke-MetraAskOpenAICompatComplete {
+                throw 'Ollama should not be called when images are present'
+            }
+            $deg = Invoke-MetraAskEngine -Prompt 'Describe' -Cwd (Get-MetraRoot) -Images $resolved.images
+            $deg.ok | Should -BeFalse
+            $deg.error | Should -Be 'image_vision_unsupported'
+            $deg.message | Should -Match 'Cursor'
+            Should -Invoke Invoke-MetraAskOpenAICompatComplete -Times 0
+        }
+    }
+
+    It 'screenshot-only Orion status check stays provisional and attributable (not grounded live fact)' {
+        InModuleScope Metra {
+            $fixture = Join-Path (Get-MetraRoot) 'tests\fixtures\orion-dashboard.png'
+            Test-Path -LiteralPath $fixture | Should -BeTrue
+            $bytes = [IO.File]::ReadAllBytes($fixture)
+            $meta = Save-MetraPlaceUpload -FileName 'orion-dashboard.png' -Bytes $bytes -ContentType 'image/png'
+            $resolved = Resolve-MetraAskImages -ImageIds @($meta.id)
+            $resolved.ok | Should -BeTrue
+
+            Mock Get-MetraAskCapability {
+                [PSCustomObject]@{
+                    enabled       = $true
+                    selected      = $true
+                    available     = $true
+                    engine        = 'cursor'
+                    providerLabel = 'Cursor'
+                    reason        = $null
+                    message       = ''
+                    port          = 7381
+                    model         = 'auto'
+                }
+            }
+            Mock Invoke-MetraAskEngine {
+                param($Prompt, $Cwd, $Context, $SessionId, $Images, $MetraRoot, $TimeoutSec)
+                @($Images).Count | Should -BeGreaterThan 0
+                return [PSCustomObject]@{
+                    ok              = $true
+                    message         = 'The screenshot appears to show an Orion-style dashboard. That is not live status - next check: run Get-OrionActiveAlerts in Solarwinds.'
+                    engine          = 'cursor'
+                    model           = 'auto'
+                    sessionId       = 'orion-shot'
+                    status          = 'finished'
+                    secretsRefuse   = $false
+                    secretsScrubbed = $false
+                    secretsKinds    = @()
+                    scrubbedPrompt  = $Prompt
+                }
+            }
+
+            $ask = Get-MetraDeskAskResult -Prompt 'Is Orion down?' -Images $resolved.images
+            $ask.answerType | Should -Be 'provisional'
+            $ask.answered | Should -BeFalse
+            $ask.evidenceQuality | Should -BeIn @('thin', 'none')
+            $ask.message | Should -Match '(?i)screenshot appears|provisional|thin routed'
+            $ask.message | Should -Not -Match '(?i)^Orion is down\.?\s*$'
+            $ask.nextStep | Should -Match '(?i)live check|Orion|Solarwinds|alert'
+            $ask.message | Should -Not -Match '(?i)Orion is down\s*$'
+            # Must not present as grounded live fact
+            $ask.answerType | Should -Not -Be 'grounded'
+        }
+    }
+
+    It 'secrets scrub still runs on text when images are attached' {
+        InModuleScope Metra {
+            $png = [Convert]::FromBase64String('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==')
+            $meta = Save-MetraPlaceUpload -FileName 'secret-shot.png' -Bytes $png -ContentType 'image/png'
+            $resolved = Resolve-MetraAskImages -ImageIds @($meta.id)
+            Mock Get-MetraAskCapability {
+                [PSCustomObject]@{
+                    enabled = $true; selected = $true; available = $true
+                    engine = 'cursor'; providerLabel = 'Cursor'; reason = $null
+                    message = ''; port = 7381; model = 'auto'
+                }
+            }
+            Mock Invoke-MetraAskEngine {
+                param($Prompt, $Cwd, $Context, $SessionId, $Images, $MetraRoot, $TimeoutSec)
+                $Prompt | Should -Match 'REDACTED'
+                $Prompt | Should -Not -Match 'sk-abcdefghijklmnopqrstuvwxyz12'
+                return [PSCustomObject]@{
+                    ok = $true; message = 'ok'; engine = 'cursor'; model = 'auto'
+                    sessionId = 's'; status = 'finished'; secretsRefuse = $false
+                    secretsScrubbed = $false; secretsKinds = @(); scrubbedPrompt = $Prompt
+                }
+            }
+            $ask = Get-MetraDeskAskResult -Prompt 'Key sk-abcdefghijklmnopqrstuvwxyz12 in this shot' -Images $resolved.images
+            $ask.scrubbedPrompt | Should -Match 'REDACTED'
+            $ask.secretsScrubbed | Should -BeTrue
+        }
     }
 }
