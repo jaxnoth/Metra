@@ -446,6 +446,7 @@ switch ($Command) {
         if ($Months -ge 0) { $params.Months = $Months }
         if ($ScanDepth -ge 0) { $params.ScanDepth = $ScanDepth }
         Initialize-Metra @params | Format-List Preview, WouldSeedConfig, SeededConfig, Profile, MachineRole
+    }
 
     'verify' {
         $report = Test-MetraInstallation -Detailed

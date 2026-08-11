@@ -111,6 +111,7 @@ function Invoke-MetraSetup {
             Routing         = $routingRows
             Workspace       = $null
             ContextPack     = $null
+            MachineRole     = $(if ($Role) { ConvertTo-MetraMachineRole -Role $Role } else { $null })
         }
     }
 
