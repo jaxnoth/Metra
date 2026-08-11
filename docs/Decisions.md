@@ -18,6 +18,12 @@ Entry shape:
 
 ---
 
+## 2026-08-10 - First-run setup stays short and role-first
+
+- Decision: Interactive setup asks machine role before portfolio refresh. Human output is short summaries (roots lines, workspace count, routing present/missing counts) - not full routing tables or whenMissing walls. Satellite never gets local Ops host / Tailscale / Ask-accept prompts; Advanced networking is HQ/Standalone only. Satellite Next tips point at OpsBaseUrl and profile sync.
+- Why: 0.1.2/0.1.3 first-run dumped developer registry noise before the role questions, and Satellite Advanced still asked port-80 / Tailscale host knobs.
+- See: `Invoke-MetraSetup`; `Invoke-MetraMachineRoleSetup`; `Update-MetraWorkspace -Quiet`
+
 ## 2026-08-10 - Installer selected folder is the product root
 
 - Decision: Inno Setup uses `AppendDefaultDirName=no`. The folder chosen on the Dir page is `{app}` (e.g. `C:\Projects\_metra` or Documents\Metra). Do not choose the portfolio parent (`C:\Projects`). The wizard refuses paths that look like a portfolio root (child TicketTracker or Solarwinds) unless `metra.ps1` is present or the leaf is Metra / `_metra` / `_meta` / `metra`.

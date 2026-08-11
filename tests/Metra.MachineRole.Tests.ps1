@@ -32,6 +32,23 @@ Describe 'Metra machine role setup' {
         }
     }
 
+    It 'Satellite -Advanced still skips local Ops host prompts' {
+        $temp = Join-Path $env:TEMP ("metra-role-" + [guid]::NewGuid().ToString('n'))
+        New-Item -ItemType Directory -Path (Join-Path $temp 'docs') -Force | Out-Null
+        Copy-Item -LiteralPath (Join-Path $script:MetraRepoRoot 'metra.config.example.json') -Destination (Join-Path $temp 'metra.config.json')
+        try {
+            $result = Invoke-MetraMachineRoleSetup -MetraRoot $temp -Role Satellite -Advanced -Quiet
+            $result.MachineRole | Should -Be 'Satellite'
+            $prefs = Get-MetraDeskPreferences -MetraRoot $temp
+            $prefs.bindTailscale | Should -BeFalse
+            $prefs.preferFriendlyUrl | Should -BeFalse
+            $prefs.browserHost | Should -Be '127.0.0.1'
+        }
+        finally {
+            Remove-Item -LiteralPath $temp -Recurse -Force -ErrorAction SilentlyContinue
+        }
+    }
+
     It 'Standalone -Role persists machineRole without Tailscale' {
         $temp = Join-Path $env:TEMP ("metra-role-" + [guid]::NewGuid().ToString('n'))
         New-Item -ItemType Directory -Path (Join-Path $temp 'docs') -Force | Out-Null

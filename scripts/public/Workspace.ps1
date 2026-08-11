@@ -27,7 +27,8 @@ function Update-MetraWorkspace {
     param(
         [int]$Months,
         [int]$ScanDepth,
-        [switch]$WhatIfPreview
+        [switch]$WhatIfPreview,
+        [switch]$Quiet
     )
 
     $cfg = Get-MetraConfig
@@ -65,9 +66,11 @@ function Update-MetraWorkspace {
 
     $primaryRootName = (@(Get-MetraRoots -IncludeMissing) | Where-Object { $_.Primary } | Select-Object -First 1).Name
 
-    Write-Host ("Lookback: {0} month(s) | {1} project(s) (+ Metra)" -f $Months, $recent.Count) -ForegroundColor Cyan
-    $recent | ForEach-Object {
-        Write-Host ("  {0,-24} {1,-10} {2:yyyy-MM-dd}" -f $_.Name, $_.Root, $_.LastActivity)
+    if (-not $Quiet) {
+        Write-Host ("Lookback: {0} month(s) | {1} project(s) (+ Metra)" -f $Months, $recent.Count) -ForegroundColor Cyan
+        $recent | ForEach-Object {
+            Write-Host ("  {0,-24} {1,-10} {2:yyyy-MM-dd}" -f $_.Name, $_.Root, $_.LastActivity)
+        }
     }
 
     $written = @()
@@ -126,7 +129,9 @@ function Update-MetraWorkspace {
         # ConvertTo-Json can emit awkward escaping; normalize to UTF8 workspace JSON
         if ($WhatIfPreview -or $PSCmdlet.ShouldProcess($outPath, 'Write workspace')) {
             if ($WhatIfPreview) {
-                Write-Host ("Would write: {0}" -f $outPath) -ForegroundColor Yellow
+                if (-not $Quiet) {
+                    Write-Host ("Would write: {0}" -f $outPath) -ForegroundColor Yellow
+                }
             }
             else {
                 $dir = Split-Path -Parent $outPath
@@ -134,7 +139,9 @@ function Update-MetraWorkspace {
                     New-Item -ItemType Directory -Path $dir -Force | Out-Null
                 }
                 [System.IO.File]::WriteAllText($outPath, $json + "`r`n")
-                Write-Host ("Wrote {0}" -f $outPath) -ForegroundColor Green
+                if (-not $Quiet) {
+                    Write-Host ("Wrote {0}" -f $outPath) -ForegroundColor Green
+                }
                 $written += $outPath
             }
         }

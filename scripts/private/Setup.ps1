@@ -3,11 +3,11 @@
 function Invoke-MetraSetup {
     <#
     .SYNOPSIS
-        One-shot onboarding: ensure config, optional profile import, roots, workspace, routing, ctx.
+        One-shot onboarding: ensure config, machine role, roots, workspace, routing, ctx.
     .DESCRIPTION
         Seeds metra.config.json from metra.config.example.json when neither metra.config.json nor
-        legacy meta.config.json exists (never overwrites). Regenerates Metra.code-workspace from
-        roots. Prints short glosses for roots / routing / ctx.
+        legacy meta.config.json exists (never overwrites). Asks machine role early, then refreshes
+        workspace/routing with short human summaries (not full registry dumps).
     #>
     [CmdletBinding()]
     param(
@@ -34,6 +34,10 @@ function Invoke-MetraSetup {
     $ctxResult = $null
     $roots = @()
     $routingRows = @()
+    $deskBinding = $null
+    $machineRoleSetup = $null
+    $askAccept = $null
+    $startMenu = $null
 
     if (-not $Quiet) {
         $blockedScripts = @(
@@ -72,11 +76,7 @@ function Invoke-MetraSetup {
             if ($Profile) {
                 Write-Host '  Profile import previewed above (no files written)'
             }
-            Write-Host '  Would regenerate Metra.code-workspace, print routing, write ctx'
-            try {
-                $null = Initialize-MetraOpsDeskBinding -MetraRoot $metraRoot -Preview -Quiet:$Quiet
-            }
-            catch { }
+            Write-Host '  Would set machine role, regenerate workspace, write ctx'
             if ($Role -or $Advanced) {
                 Write-Host ("  Would apply machine role setup Role={0} Advanced={1}" -f $(if ($Role) { $Role } else { '(prompt)' }), [bool]$Advanced)
             }
@@ -86,13 +86,8 @@ function Invoke-MetraSetup {
                 $roots = @(Get-MetraRoots -IncludeMissing)
                 $routingRows = @(Get-MetraRoutingTable)
                 if (-not $Quiet) {
-                    Write-Host ''
-                    Write-Host 'Roots (would scan; not Cursor folders until workspace runs):' -ForegroundColor Cyan
-                    $roots |
-                        Select-Object Name, Primary, Exists, Optional, Path |
-                        Format-Table -AutoSize | Out-Host
-                    Write-Host ("Routing: {0} entr(ies); {1} present (full table on real setup)" -f `
-                        $routingRows.Count, @($routingRows | Where-Object Present).Count)
+                    $present = @($routingRows | Where-Object Present).Count
+                    Write-Host ("  Roots OK; routing would show {0} present of {1}." -f $present, $routingRows.Count)
                 }
             }
             catch {
@@ -125,91 +120,11 @@ function Invoke-MetraSetup {
         $configPresent = $true
         if (-not $Quiet) {
             Write-Host ''
-            Write-Host ("Seeded metra.config.json from metra.config.example.json") -ForegroundColor Cyan
-            Write-Host '  Edit roots / workspace.alwaysInclude for this machine, then re-run .\metra.ps1 setup' -ForegroundColor Yellow
+            Write-Host 'Created metra.config.json from the example.' -ForegroundColor Cyan
         }
     }
 
-    if (-not $Quiet) {
-        Write-Host ''
-        Write-Host 'Roots (paths Metra scans for projects - not Cursor folders until workspace runs):' -ForegroundColor Cyan
-    }
-    $roots = @(Get-MetraRoots -IncludeMissing)
-    if (-not $Quiet) {
-        $roots |
-            Select-Object Name, Primary, Exists, Optional, Audit, Path |
-            Format-Table -AutoSize | Out-Host
-        $missing = @($roots | Where-Object { -not $_.Exists })
-        if ($missing.Count -gt 0) {
-            Write-Host ("Not present on this machine: {0}" -f (($missing.Name) -join ', ')) -ForegroundColor Yellow
-        }
-        $primaryMissing = @($roots | Where-Object { $_.Primary -and -not $_.Exists })
-        if ($primaryMissing.Count -gt 0) {
-            throw ("Primary root(s) missing: {0}. Fix metra.config.json roots.path and re-run setup." -f (($primaryMissing.Name) -join ', '))
-        }
-    }
-    else {
-        $primaryMissing = @($roots | Where-Object { $_.Primary -and -not $_.Exists })
-        if ($primaryMissing.Count -gt 0) {
-            throw ("Primary root(s) missing: {0}. Fix metra.config.json roots.path and re-run setup." -f (($primaryMissing.Name) -join ', '))
-        }
-    }
-
-    if (-not $Quiet) {
-        Write-Host ''
-        Write-Host 'Workspace (rebuild Cursor/VS Code folder list from roots + recent activity):' -ForegroundColor Cyan
-    }
-    $wsParams = @{}
-    if ($PSBoundParameters.ContainsKey('Months')) { $wsParams.Months = $Months }
-    if ($PSBoundParameters.ContainsKey('ScanDepth')) { $wsParams.ScanDepth = $ScanDepth }
-    $workspaceResult = Update-MetraWorkspace @wsParams
-    if (-not $Quiet -and $workspaceResult) {
-        $workspaceResult | Format-List | Out-Host
-    }
-
-    if (-not $Quiet) {
-        Write-Host ''
-        Write-Host 'Routing (registry names + triggers vs Present on disk):' -ForegroundColor Cyan
-    }
-    $routingRows = @(Get-MetraRoutingTable)
-    if (-not $Quiet) {
-        if ($routingRows.Count -eq 0) {
-            Write-Host 'No registry entries matched.' -ForegroundColor Yellow
-        }
-        else {
-            $routingRows |
-                Select-Object Name, Source, Root, Present, Optional,
-                    @{ n = 'Triggers'; e = { ($_.Triggers -join ', ') } } |
-                Format-Table -AutoSize | Out-Host
-            foreach ($row in @($routingRows | Where-Object { -not $_.Present })) {
-                Write-Host ("{0}: {1}" -f $row.Name, $row.Advice) -ForegroundColor Yellow
-            }
-            Write-Host ("{0} entr(ies); {1} present" -f $routingRows.Count, @($routingRows | Where-Object Present).Count)
-        }
-    }
-
-    if (-not $Quiet) {
-        Write-Host ''
-        Write-Host 'Context pack (hand docs/context-pack.md to any agent):' -ForegroundColor Cyan
-    }
-    $ctxResult = Export-MetraContextPack -Quiet:$Quiet
-
-    $startMenu = $null
-    try {
-        $startMenu = Install-MetraOpsStartMenuShortcuts -MetraRoot $metraRoot
-        if (-not $Quiet) {
-            Write-Host ''
-            Write-Host 'Start Menu: Metra Ops shortcut refreshed (brand icon).' -ForegroundColor Cyan
-        }
-    }
-    catch {
-        if (-not $Quiet) {
-            Write-Warning "Start Menu shortcut skipped: $($_.Exception.Message)"
-        }
-    }
-
-    $deskBinding = $null
-    $machineRoleSetup = $null
+    # Machine role first - before noisy portfolio refresh.
     try {
         $machineRoleSetup = Invoke-MetraMachineRoleSetup -MetraRoot $metraRoot `
             -Role $Role `
@@ -222,16 +137,70 @@ function Invoke-MetraSetup {
     }
     catch {
         if (-not $Quiet) {
-            Write-Warning "Machine role / Ops desk URL setup skipped: $($_.Exception.Message)"
+            Write-Warning "Machine role setup skipped: $($_.Exception.Message)"
         }
     }
 
-    $askAccept = $null
-    if (-not $Quiet -and -not $Preview) {
+    $roots = @(Get-MetraRoots -IncludeMissing)
+    $primaryMissing = @($roots | Where-Object { $_.Primary -and -not $_.Exists })
+    if ($primaryMissing.Count -gt 0) {
+        throw ("Primary root(s) missing: {0}. Fix metra.config.json roots.path and re-run setup." -f (($primaryMissing.Name) -join ', '))
+    }
+    if (-not $Quiet) {
+        Write-Host ''
+        Write-Host 'Portfolio folders:' -ForegroundColor Cyan
+        foreach ($r in $roots) {
+            $mark = if ($r.Exists) { 'ok' } else { 'missing' }
+            $prim = if ($r.Primary) { 'primary' } else { 'optional' }
+            Write-Host ("  {0,-10} {1,-8} {2}  {3}" -f $r.Name, $prim, $mark, $r.Path)
+        }
+    }
+
+    $wsParams = @{ Quiet = $true }
+    if ($PSBoundParameters.ContainsKey('Months')) { $wsParams.Months = $Months }
+    if ($PSBoundParameters.ContainsKey('ScanDepth')) { $wsParams.ScanDepth = $ScanDepth }
+    $workspaceResult = Update-MetraWorkspace @wsParams
+    if (-not $Quiet -and $workspaceResult) {
+        $wsFile = @($workspaceResult.Files) | Select-Object -First 1
+        Write-Host ''
+        Write-Host ("Workspace: {0} project(s) -> {1}" -f $workspaceResult.ProjectCount, $(if ($wsFile) { $wsFile } else { '(see Files)' })) -ForegroundColor Cyan
+    }
+
+    $routingRows = @(Get-MetraRoutingTable)
+    if (-not $Quiet) {
+        $presentRows = @($routingRows | Where-Object Present)
+        $missingCount = $routingRows.Count - $presentRows.Count
+        Write-Host ("Routing: {0} on disk, {1} registered elsewhere (details: .\metra.ps1 routing)." -f $presentRows.Count, $missingCount) -ForegroundColor Cyan
+    }
+
+    $ctxResult = Export-MetraContextPack -Quiet
+    if (-not $Quiet -and $ctxResult) {
+        $ctxPath = Get-MetraProp -Object $ctxResult -Name 'Path' -Default ''
+        if (-not $ctxPath) { $ctxPath = Get-MetraProp -Object $ctxResult -Name 'OutPath' -Default 'docs/context-pack.md' }
+        Write-Host ("Context pack: {0}" -f $ctxPath) -ForegroundColor Cyan
+    }
+
+    try {
+        $startMenu = Install-MetraOpsStartMenuShortcuts -MetraRoot $metraRoot
+        if (-not $Quiet) {
+            Write-Host 'Start Menu: Metra Ops shortcut ready.' -ForegroundColor Cyan
+        }
+    }
+    catch {
+        if (-not $Quiet) {
+            Write-Warning "Start Menu shortcut skipped: $($_.Exception.Message)"
+        }
+    }
+
+    $roleName = $(if ($machineRoleSetup) { [string]$machineRoleSetup.MachineRole } else { '' })
+    $isSatellite = ($roleName -eq 'Satellite')
+
+    # Local Ask engine install is for HQ / Standalone hosts - satellites use HQ Ask.
+    if (-not $Quiet -and -not $isSatellite) {
         try {
             $rec = Get-MetraAskEngineRecommendation -MetraRoot $metraRoot
             Write-Host ''
-            Write-Host 'Ask engine (recommended for this PC):' -ForegroundColor Cyan
+            Write-Host 'Ask engine (local):' -ForegroundColor Cyan
             Write-Host ("  {0}" -f $rec.summary)
             Write-Host '  Accept installs Ollama when needed, pulls the model, and verifies Ask.'
             $answer = Read-Host '  Use recommended Ask settings now? [Y/n]'
@@ -254,27 +223,32 @@ function Invoke-MetraSetup {
             Write-Warning "Ask recommend/accept skipped: $($_.Exception.Message)"
         }
     }
+    elseif (-not $Quiet -and $isSatellite) {
+        Write-Host ''
+        Write-Host 'Ask: use HQ (no local Ollama install on Satellite).' -ForegroundColor Cyan
+        Write-Host '  After OpsBaseUrl is set: .\metra.ps1 profile sync   then   .\metra.ps1 ask sessions'
+    }
 
     if (-not $Quiet) {
         Write-Host ''
         Write-Host 'Next:' -ForegroundColor Yellow
-        Write-Host '  - Open or reload Metra.code-workspace (siblings appear after workspace regenerate)'
-        Write-Host '  - Edit metra.config.json roots / alwaysInclude if paths differ, then: .\metra.ps1 setup'
-        Write-Host '  - Optional personal/cloud root snippets: docs/Customizing-Metra.md'
-        Write-Host '  - If using Cursor: set operator display name in .cursor/rules/metra-persona.local.mdc'
-        Write-Host '  - Ask: .\metra.ps1 ask accept   (Ollama recommended) or Advanced Cursor via ask engine set cursor'
-        Write-Host '  - Front door: Start Menu Metra Ops (or .\metra.ps1 host)'
-        if ($machineRoleSetup -and $machineRoleSetup.MachineRole) {
-            Write-Host ("  - Machine role: {0}" -f $machineRoleSetup.MachineRole)
-        }
-        if ($machineRoleSetup -and $machineRoleSetup.MachineRole -eq 'Satellite') {
-            Write-Host '  - Satellite: do not start local Ops as HQ; use profile sync / ask against OpsBaseUrl'
-            if ($machineRoleSetup.OpsBaseUrl) {
+        Write-Host '  - Open Metra.code-workspace in Cursor'
+        if ($isSatellite) {
+            Write-Host '  - Do not run .\metra.ps1 ops / host on this PC (use HQ)'
+            if ($machineRoleSetup -and $machineRoleSetup.OpsBaseUrl) {
                 Write-Host ("  - OpsBaseUrl: {0}" -f $machineRoleSetup.OpsBaseUrl)
             }
+            Write-Host '  - Pull overlays: .\metra.ps1 profile sync'
         }
-        if ($deskBinding -and $deskBinding.Binding) {
-            Write-Host ("  - Ops desk URL: {0}" -f $deskBinding.Binding.BrowserUrl)
+        else {
+            Write-Host '  - Front door: Start Menu Metra Ops (or .\metra.ps1 host)'
+            if ($roleName -eq 'Hq') {
+                Write-Host '  - Share Ops URL with satellites (Tailscale Serve / MagicDNS)'
+            }
+            Write-Host '  - Optional Ask later: .\metra.ps1 ask accept'
+        }
+        if ($roleName) {
+            Write-Host ("  - Machine role: {0}" -f $roleName)
         }
     }
 
@@ -294,4 +268,3 @@ function Invoke-MetraSetup {
         AskAccept       = $askAccept
     }
 }
-
