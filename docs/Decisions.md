@@ -18,9 +18,21 @@ Entry shape:
 
 ---
 
+## 2026-08-11 - Quiet setup runs during install; no Finished checkbox
+
+- Decision: After the wizard collects role and preferences, `Metra-Setup.cmd -Quiet ...` runs from `[Run]` during install (`runhidden waituntilterminated`), not as an Inno Finished `postinstall` checkbox. Files only still skips via `Check`. Finished is handoff-only (Metra Ops / Metra Setup).
+- Why: A "Setting up Metra" checkbox after answering every question felt like a second decision and could be unchecked by accident.
+- See: `packaging/inno/Metra.iss`; `packaging/README.md`
+
+## 2026-08-11 - Installer defaults to Standalone; folder page always shown
+
+- Decision: Installer role list order is Standalone (default) / HQ / Satellite / Files only. No machine detection. Select Dir always shows (`DisableDirPage=no`) while `UsePreviousAppDir=yes` prefills the prior AppId path when present.
+- Why: Satellite-as-default was desk-story bias and a false start for most first installs; skipping the folder page on reinstall hid a real choice.
+- See: `packaging/inno/Metra.iss`; `docs/Brand.md`; `packaging/README.md`
+
 ## 2026-08-11 - Brand owns operator vocabulary
 
-- Decision: Operator-facing terminology is defined in `docs/Brand.md` (Operator vocabulary + voice/humor boundary). New operator surfaces (installer, Metra Ops Settings, onboarding) must use that glossary. Implementation names (`machineRole`, `opsBaseUrl`, Ask engine, etc.) are not operator-facing copy. Review standard: is this operator text? Check Brand.md. Product = Metra; primary UI = Metra Ops (introduced after install). Installer role = intent (HQ / Satellite / Standalone / Files only); no Run-setup checkbox. Dry humor boundary is in Brand; dials stay in persona / humor-desk.
+- Decision: Operator-facing terminology is defined in `docs/Brand.md` (Operator vocabulary + voice/humor boundary). New operator surfaces (installer, Metra Ops Settings, onboarding) must use that glossary. Implementation names (`machineRole`, `opsBaseUrl`, Ask engine, etc.) are not operator-facing copy. Review standard: is this operator text? Check Brand.md. Product = Metra; primary UI = Metra Ops (introduced after install). Installer role = intent (Standalone / HQ / Satellite / Files only); no Run-setup checkbox. Dry humor boundary is in Brand; dials stay in persona / humor-desk.
 - Why: Glossary drift (Main Metra machine vs HQ Ops vs jumpbox vs OpsBaseUrl) makes a simple architecture feel hard; Brand as single mouth keeps installer and Settings aligned after ship.
 - See: `docs/Brand.md`; `packaging/inno/Metra.iss`; `ops/src/App.tsx` Settings machine-role row
 

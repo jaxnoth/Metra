@@ -29,9 +29,9 @@ Or set `METRA_ISCC` to the full path of `ISCC.exe`.
 - Installer replaces **product** files; never stages user state (`metra.config.json`, local registries, `*.local.mdc`, generated packs).
 - Destination: the folder you select **is** `{app}` (`AppendDefaultDirName=no`). Choose the Metra product folder (e.g. `C:\Projects\_metra` or Documents\Metra), not the portfolio parent (`C:\Projects`).
 - The wizard refuses paths that look like a portfolio root (child `TicketTracker` or `Solarwinds`) unless `metra.ps1` is already present or the leaf is `Metra` / `_metra` / `_meta` / `metra`.
-- Upgrades reuse the prior install directory (`UsePreviousAppDir`) under a stable AppId.
-- Wizard collects **machine role** as intent (HQ / Satellite / Standalone / **Files only**). No "Run Metra setup now" checkbox. Follow-ons: Satellite **Main Metra address**; HQ open-Metra + Tailscale; Standalone open-Metra; HQ/Standalone **Ask assistant** (default No). Summary: **Here's where we're landing**. Operator copy from `docs/Brand.md`.
-- Post-install quiet setup runs for HQ / Satellite / Standalone only (Files only skips). Status: `docs\setup.local.log`.
+- Upgrades reuse the prior install directory (`UsePreviousAppDir`) under a stable AppId, but the Select Dir page always shows (`DisableDirPage=no`) so the path can be changed.
+- Wizard collects **machine role** as intent (**Standalone** default, listed first / HQ / Satellite / **Files only**). No "Run Metra setup now" checkbox. Follow-ons: Satellite **Main Metra address**; HQ open-Metra + Tailscale; Standalone open-Metra; HQ/Standalone **Ask assistant** (default No). Summary: **Here's where we're landing**. Operator copy from `docs/Brand.md`.
+- Post-install quiet setup runs during install (no Finished checkbox) for Standalone / HQ / Satellite only (Files only skips). Status: `docs\setup.local.log`.
 - Start Menu **Metra Setup** stays interactive for re-runs (no `-Quiet`). Finished introduces **Metra Ops** (or Metra Setup for Files only).
 - Troubleshooting logs (machine-local, not staged):
   - `docs/setup.local.log` - bootstrap + `metra setup` transcript
