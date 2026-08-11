@@ -187,6 +187,7 @@ Canonical **operator-facing** words. Brand owns this glossary; installer, Metra 
 | **Satellite** - connects to your main Metra machine | use HQ Ops URL | `machineRole: Satellite` |
 | **Files only** - Install Metra now. Choose a role later. (installer only) | Skip setup / uncheck Run setup | no postinstall setup |
 | **Main Metra address** | OpsBaseUrl, HQ Ops URL | profile `opsBaseUrl` |
+| **Profile sync token** (optional; Satellite) | sync bearer, X-Metra-Profile-Sync | `docs/profile-sync.local.json` `syncToken` |
 | **Ask assistant** | Ask engine (operator labels) | engine APIs / Ollama under the hood |
 | **Here's where we're landing** | Setup Summary | - |
 

@@ -83,6 +83,7 @@ $excludeRelativeExact = [System.Collections.Generic.HashSet[string]]::new([Strin
     'docs/ops-capture.local.json',
     'docs/setup.local.log',
     'docs/installer.local.log',
+    'docs/profile-sync.local.json',
     '.cursor/mcp.json'
 ) | ForEach-Object { [void]$excludeRelativeExact.Add(($_ -replace '/', '\')) }
 

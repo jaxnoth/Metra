@@ -175,7 +175,7 @@ end;
 
 function GetSetupRunParams(Param: String): String;
 var
-  Role, Url: String;
+  Role, Url, Token: String;
 begin
   Role := GetSelectedRole;
   if CompareText(Role, 'FilesOnly') = 0 then
@@ -188,6 +188,10 @@ begin
   begin
     Url := Trim(OpsUrlPage.Values[0]);
     Result := Result + ' -OpsBaseUrl "' + Url + '"';
+    Token := Trim(OpsUrlPage.Values[1]);
+    StringChange(Token, '"', '');
+    if Token <> '' then
+      Result := Result + ' -SyncToken "' + Token + '"';
   end
   else
   begin
@@ -223,6 +227,10 @@ begin
   else if RolePage.Values[2] then
   begin
     OpsLine := 'Main Metra machine: ' + Trim(OpsUrlPage.Values[0]);
+    if Trim(OpsUrlPage.Values[1]) <> '' then
+      OpsLine := OpsLine + #13#10 + 'Profile sync token: Provided'
+    else
+      OpsLine := OpsLine + #13#10 + 'Profile sync token: Not provided (optional)';
     AskLine := 'Ask assistant: Not installed';
   end
   else
@@ -274,8 +282,10 @@ begin
   OpsUrlPage := CreateInputQueryPage(RolePage.ID,
     'Connect to your main Metra machine',
     'Enter the address you already use for Metra on another device.',
-    'Example: https://metra.example.ts.net');
+    'Example address: https://metra.example.ts.net' + #13#10 +
+    'Profile sync token is optional - paste from HQ Metra Ops Settings (Issue sync token) for easy overlay setup.');
   OpsUrlPage.Add('Main Metra address:', False);
+  OpsUrlPage.Add('Profile sync token (optional):', True);
 
   NetPage := CreateCustomPage(OpsUrlPage.ID,
     'How you open Metra',

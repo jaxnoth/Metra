@@ -5,7 +5,7 @@
     Intended to be launched via Metra-Setup.cmd with process-scoped -ExecutionPolicy Bypass.
     Does not change the machine ExecutionPolicy. Prefer this over explaining ADS streams.
     Use -NoPause for installer post-install tasks (no interactive Read-Host pause).
-    Use -Quiet -Role [-OpsBaseUrl] [-PreferFriendly|-NoPreferFriendly] [-BindTailscale] [-AcceptAsk]
+    Use -Quiet -Role [-OpsBaseUrl] [-SyncToken] [-PreferFriendly|-NoPreferFriendly] [-BindTailscale] [-AcceptAsk]
     when the installer already collected choices (no terminal quiz).
     Writes a durable transcript to docs/setup.local.log and copies Inno logs when found.
 #>
@@ -18,6 +18,7 @@ param(
     [ValidateSet('Hq', 'Satellite', 'Standalone')]
     [string]$Role,
     [string]$OpsBaseUrl,
+    [string]$SyncToken,
     [switch]$PreferFriendly,
     [switch]$NoPreferFriendly,
     [switch]$BindTailscale,
@@ -81,6 +82,9 @@ try {
         if ($Role) { $setupArgs += @('-Role', $Role) }
         if (-not [string]::IsNullOrWhiteSpace($OpsBaseUrl)) {
             $setupArgs += @('-OpsBaseUrl', $OpsBaseUrl.Trim())
+        }
+        if (-not [string]::IsNullOrWhiteSpace($SyncToken)) {
+            $setupArgs += @('-SyncToken', $SyncToken.Trim())
         }
         if ($PreferFriendly) { $setupArgs += '-PreferFriendly' }
         if ($NoPreferFriendly) { $setupArgs += '-NoPreferFriendly' }

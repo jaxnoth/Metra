@@ -19,6 +19,7 @@ function Invoke-MetraSetup {
         [ValidateSet('Hq', 'Satellite', 'Standalone')]
         [string]$Role,
         [string]$OpsBaseUrl,
+        [string]$SyncToken,
         [switch]$Advanced,
         [switch]$PreferFriendly,
         [switch]$NoPreferFriendly,
@@ -142,6 +143,7 @@ function Invoke-MetraSetup {
         $machineRoleSetup = Invoke-MetraMachineRoleSetup -MetraRoot $metraRoot `
             -Role $Role `
             -OpsBaseUrl $OpsBaseUrl `
+            -SyncToken $SyncToken `
             -Advanced:$Advanced `
             -PreferFriendly:$PreferFriendly `
             -NoPreferFriendly:$NoPreferFriendly `
@@ -150,6 +152,19 @@ function Invoke-MetraSetup {
             -Quiet:$Quiet
         if ($machineRoleSetup -and $machineRoleSetup.DeskBinding) {
             $deskBinding = $machineRoleSetup.DeskBinding
+        }
+        if ($machineRoleSetup -and $machineRoleSetup.SyncTokenPath -and -not $Preview) {
+            try {
+                $null = Sync-MetraProfile -OpsBaseUrl $OpsBaseUrl -SyncToken $SyncToken -Force -Quiet:$Quiet
+                if (-not $Quiet) {
+                    Write-Host 'Profile sync: pulled from main Metra machine.' -ForegroundColor Cyan
+                }
+            }
+            catch {
+                if (-not $Quiet) {
+                    Write-Warning ("Profile sync deferred: {0}. Retry: .\metra.ps1 profile sync" -f $_.Exception.Message)
+                }
+            }
         }
     }
     catch {

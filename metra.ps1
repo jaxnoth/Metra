@@ -132,9 +132,9 @@ Usage:
   .\metra.ps1 export-profile -Path <dir-or-zip>
   .\metra.ps1 import-profile -Path <dir-or-zip> [-Preview] [-Force]
   .\metra.ps1 ctx [-Query 'terms'] [-Path <file|->] [-Format markdown|json] [-Limit 25]
-  .\metra.ps1 setup [-Profile <dir-or-zip>] [-Force] [-Preview] [-Quiet] [-Role Hq|Satellite|Standalone] [-OpsBaseUrl https://...] [-PreferFriendly|-NoPreferFriendly] [-BindTailscale] [-AcceptAsk] [-Advanced] [-Months 6] [-ScanDepth 2]
+  .\metra.ps1 setup [-Profile <dir-or-zip>] [-Force] [-Preview] [-Quiet] [-Role Hq|Satellite|Standalone] [-OpsBaseUrl https://...] [-SyncToken ...] [-PreferFriendly|-NoPreferFriendly] [-BindTailscale] [-AcceptAsk] [-Advanced] [-Months 6] [-ScanDepth 2]
       First-run / refresh. Role picks HQ, Satellite, or Standalone; -Quiet skips prompts (installer path).
-      Installer passes PreferFriendly / BindTailscale / AcceptAsk. -Advanced keeps interactive local Ops knobs.
+      Installer passes PreferFriendly / BindTailscale / AcceptAsk / SyncToken. -Advanced keeps interactive local Ops knobs.
   .\metra.ps1 unblock [-Preview]
       Clear mark-of-the-web from checkout script files (ZIP / OneDrive / email). Supports -Preview.
   .\metra.ps1 profile show|note|promote|forget|render|gc
@@ -454,6 +454,7 @@ switch ($Command) {
         if ($profilePath) { $params.Profile = $profilePath }
         if ($Role) { $params.Role = $Role }
         if ($OpsBaseUrl) { $params.OpsBaseUrl = $OpsBaseUrl }
+        if ($SyncToken) { $params.SyncToken = $SyncToken }
         if ($Months -ge 0) { $params.Months = $Months }
         if ($ScanDepth -ge 0) { $params.ScanDepth = $ScanDepth }
         $setupResult = Initialize-Metra @params

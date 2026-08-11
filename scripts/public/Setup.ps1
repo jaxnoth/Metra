@@ -19,6 +19,8 @@ function Initialize-Metra {
         Machine role: Hq, Satellite, or Standalone.
     .PARAMETER OpsBaseUrl
         HQ Ops URL for Satellite (no prompt when set with -Quiet).
+    .PARAMETER SyncToken
+        Optional profile sync token for Satellite (writes docs/profile-sync.local.json).
     .PARAMETER PreferFriendly
         Prefer http://metra/ when port 80 is free (HQ/Standalone).
     .PARAMETER NoPreferFriendly
@@ -36,7 +38,7 @@ function Initialize-Metra {
     .EXAMPLE
         Initialize-Metra
     .EXAMPLE
-        Initialize-Metra -Quiet -Role Satellite -OpsBaseUrl 'https://hq.example.ts.net'
+        Initialize-Metra -Quiet -Role Satellite -OpsBaseUrl 'https://hq.example.ts.net' -SyncToken '...'
     .EXAMPLE
         Initialize-Metra -Quiet -Role Hq -PreferFriendly -AcceptAsk
     .OUTPUTS
@@ -53,6 +55,7 @@ function Initialize-Metra {
         [ValidateSet('Hq', 'Satellite', 'Standalone')]
         [string]$Role,
         [string]$OpsBaseUrl,
+        [string]$SyncToken,
         [switch]$PreferFriendly,
         [switch]$NoPreferFriendly,
         [switch]$BindTailscale,
