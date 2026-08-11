@@ -236,6 +236,9 @@ export async function putSettings(body: {
   clearPersonal?: boolean
   cursorApiKey?: string
   clearCursorApiKey?: boolean
+  machineRole?: 'Hq' | 'Satellite' | 'Standalone'
+  opsBaseUrl?: string
+  clearOpsBaseUrl?: boolean
 }): Promise<import('./types').SettingsSaveResult> {
   const token = await ensureLocalSessionToken()
   return fetch(

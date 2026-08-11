@@ -406,6 +406,45 @@ function Get-MetraProfileOpsBaseUrlOrNull {
     return $null
 }
 
+function Set-MetraConfiguredOpsBaseUrl {
+    <#
+    .SYNOPSIS
+        Writes opsBaseUrl into metra.config.json (and clears an empty value).
+    #>
+    [CmdletBinding()]
+    param(
+        [AllowEmptyString()]
+        [string]$OpsBaseUrl,
+        [string]$MetraRoot = (Get-MetraRoot)
+    )
+
+    $configPath = Join-Path $MetraRoot 'metra.config.json'
+    if (-not (Test-Path -LiteralPath $configPath)) {
+        throw "Missing $configPath - run setup to seed config first."
+    }
+    $cfg = Get-Content -LiteralPath $configPath -Raw -Encoding UTF8 | ConvertFrom-Json
+    $url = ([string]$OpsBaseUrl).Trim().TrimEnd('/')
+    if ([string]::IsNullOrWhiteSpace($url)) {
+        if ($null -ne (Get-MetraProp -Object $cfg -Name 'opsBaseUrl' -Default $null)) {
+            $cfg.PSObject.Properties.Remove('opsBaseUrl')
+        }
+    }
+    else {
+        if ($cfg.PSObject.Properties.Name -contains 'opsBaseUrl') {
+            $cfg.opsBaseUrl = $url
+        }
+        else {
+            $cfg | Add-Member -NotePropertyName opsBaseUrl -NotePropertyValue $url -Force
+        }
+    }
+    $json = ($cfg | ConvertTo-Json -Depth 20)
+    [System.IO.File]::WriteAllText($configPath, $json + "`r`n", (Get-MetraUtf8NoBomEncoding))
+    return [PSCustomObject]@{
+        Path       = $configPath
+        OpsBaseUrl = $(if ([string]::IsNullOrWhiteSpace($url)) { $null } else { $url })
+    }
+}
+
 function Test-MetraOpsBaseUrlIsLocal {
     <#
     .SYNOPSIS

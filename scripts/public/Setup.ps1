@@ -33,7 +33,10 @@ function Initialize-Metra {
         [switch]$Preview,
         [switch]$Quiet,
         [int]$Months,
-        [int]$ScanDepth
+        [int]$ScanDepth,
+        [ValidateSet('Hq', 'Satellite', 'Standalone')]
+        [string]$Role,
+        [switch]$Advanced
     )
 
     Invoke-MetraSetup @PSBoundParameters
