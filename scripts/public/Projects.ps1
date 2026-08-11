@@ -7,13 +7,15 @@ function New-MetraProject {
     .DESCRIPTION
         Creates a folder from a Metra template, replaces template tokens, adds a README
         when needed, and initializes a Git repository unless NoGit is specified.
+        Supports -WhatIf / -Confirm.
     .PARAMETER Name
-        Name of the new project folder.
+        Name of the new project folder (required; not null or empty).
     .PARAMETER Description
         Description used for the README and template token replacement.
     .PARAMETER Template
-        Template folder name under the configured templates directory. Uses defaultTemplate
-        from metra.config.json when omitted.
+        Single-segment template folder name under the configured templates directory
+        (letters, digits, dot, underscore, hyphen only). Uses defaultTemplate from
+        metra.config.json when omitted.
     .PARAMETER Root
         Configured root name in which to create the project. Uses the primary root by default.
     .PARAMETER NoGit
@@ -24,31 +26,57 @@ function New-MetraProject {
         New-MetraProject -Name ReportingOps -Description 'Reporting operations scripts'
     .EXAMPLE
         New-MetraProject -Name PersonalNotes -Root personal -NoGit
+    .EXAMPLE
+        New-MetraProject -Name ScratchOps -WhatIf
     .OUTPUTS
         PSCustomObject describing the created project.
     #>
-    [CmdletBinding()]
+    [CmdletBinding(SupportsShouldProcess)]
+    [OutputType([PSCustomObject])]
     param(
-        [Parameter(Mandatory)][string]$Name,
+        [Parameter(Mandatory)]
+        [ValidateNotNullOrEmpty()]
+        [string]$Name,
+
         [string]$Description = '',
+
         [string]$Template,
+
         [string]$Root,
+
         [switch]$NoGit,
+
         [switch]$Force
     )
 
     $cfg = Get-MetraConfig
     $metraRoot = Get-MetraRoot
+    $Name = $Name.Trim()
+    if ([string]::IsNullOrWhiteSpace($Name)) {
+        throw 'Name cannot be empty or whitespace.'
+    }
 
     if ($Root) {
         $targetRoot = @(Get-MetraRoots -Name $Root -IncludeMissing) | Select-Object -First 1
+        if (-not $targetRoot) {
+            throw ("Unknown root '{0}'." -f $Root)
+        }
         if (-not $targetRoot.Exists) {
             throw ("Root '{0}' is not available on this machine: {1}" -f $targetRoot.Name, $targetRoot.Path)
         }
         $projectsRoot = $targetRoot.Path
+        $rootName = [string]$targetRoot.Name
     }
     else {
-        $projectsRoot = Get-ProjectsRoot
+        $primary = @(Get-MetraRoots -IncludeMissing | Where-Object { $_.Primary }) | Select-Object -First 1
+        if (-not $primary) {
+            $primary = @(Get-MetraRoots -IncludeMissing) | Select-Object -First 1
+        }
+        if (-not $primary -or -not $primary.Exists) {
+            throw 'No primary project root is available on this machine.'
+        }
+        $projectsRoot = $primary.Path
+        $rootName = [string]$primary.Name
     }
 
     if ($Name -match '[\\/:*?"<>|]') {
@@ -56,29 +84,45 @@ function New-MetraProject {
     }
 
     $target = Join-Path $projectsRoot $Name
-    if ((Test-Path $target) -and -not $Force) {
+    if ((Test-Path -LiteralPath $target) -and -not $Force) {
         throw "Project already exists: $target (use -Force to reuse)"
     }
 
-    if (-not (Test-Path $target)) {
-        New-Item -ItemType Directory -Path $target | Out-Null
+    $templateName = if (-not [string]::IsNullOrWhiteSpace($Template)) { $Template.Trim() } else { [string]$cfg.defaultTemplate }
+    if ([string]::IsNullOrWhiteSpace($templateName)) {
+        throw 'Template name is missing and metra.config.json defaultTemplate is not set.'
+    }
+    if ($templateName -notmatch '^[A-Za-z0-9._-]+$') {
+        throw "Invalid template name: $templateName"
     }
 
-    $templateName = if ($Template) { $Template } else { $cfg.defaultTemplate }
-    $templateDir = Join-Path $metraRoot (Join-Path $cfg.templatesDir $templateName)
+    $templatesRoot = Join-Path $metraRoot ([string]$cfg.templatesDir)
+    $templateDir = Join-Path $templatesRoot $templateName
+    if (-not (Test-MetraPathWithinRoot -Path $templateDir -Root $templatesRoot)) {
+        throw "Template path escapes templates directory: $templateDir"
+    }
 
     $descLine = if ($Description) { $Description } else { "Project $Name" }
+    $action = if ((Test-Path -LiteralPath $target)) { "Reuse project folder $target" } else { "Create project $target" }
 
-    if (Test-Path $templateDir) {
+    if (-not $PSCmdlet.ShouldProcess($target, $action)) {
+        return
+    }
+
+    if (-not (Test-Path -LiteralPath $target)) {
+        [void][System.IO.Directory]::CreateDirectory($target)
+    }
+
+    if (Test-Path -LiteralPath $templateDir) {
         Copy-Item -Path (Join-Path $templateDir '*') -Destination $target -Recurse -Force
-        Get-ChildItem -Path $target -Recurse -File | ForEach-Object {
-            $text = Get-Content -Raw -Path $_.FullName -ErrorAction SilentlyContinue
+        Get-ChildItem -LiteralPath $target -Recurse -File | ForEach-Object {
+            $text = Get-Content -LiteralPath $_.FullName -Raw -ErrorAction SilentlyContinue
             if ($null -eq $text) { return }
             if ($text -notmatch '\{\{ProjectName\}\}|\{\{Description\}\}') { return }
             $updated = $text.
                 Replace('{{ProjectName}}', $Name).
                 Replace('{{Description}}', $descLine)
-            Set-Content -Path $_.FullName -Value $updated -Encoding UTF8 -NoNewline
+            Set-Content -LiteralPath $_.FullName -Value $updated -Encoding UTF8 -NoNewline
         }
     }
     else {
@@ -86,36 +130,31 @@ function New-MetraProject {
     }
 
     $readme = Join-Path $target 'README.md'
-    if (-not (Test-Path $readme)) {
+    if (-not (Test-Path -LiteralPath $readme)) {
         @"
 # $Name
 
 $descLine
-"@ | Set-Content -Path $readme -Encoding UTF8
+"@ | Set-Content -LiteralPath $readme -Encoding UTF8
     }
 
     if (-not $NoGit) {
-        if (-not (Test-Path (Join-Path $target '.git'))) {
-            Push-Location $target
-            try {
-                git init | Out-Null
-                git add .
-                $msg = "Initial commit for $Name"
-                git commit -m $msg 2>$null | Out-Null
-            }
-            finally {
-                Pop-Location
-            }
+        $gitDir = Join-Path $target '.git'
+        if (-not (Test-Path -LiteralPath $gitDir)) {
+            git -C $target init | Out-Null
+            git -C $target add .
+            $msg = "Initial commit for $Name"
+            git -C $target commit -m $msg 2>$null | Out-Null
         }
     }
 
     Write-Host ("Created project: {0}" -f $target) -ForegroundColor Green
     return [PSCustomObject]@{
-        Name = $Name
-        Path = $target
-        Root = if ($Root) { $Root } else { 'primary' }
+        Name     = $Name
+        Path     = $target
+        Root     = $rootName
         Template = $templateName
-        IsGit = (Test-Path (Join-Path $target '.git'))
+        IsGit    = (Test-Path -LiteralPath (Join-Path $target '.git'))
     }
 }
 
@@ -127,9 +166,11 @@ function Get-MetraProject {
         Scans roots in configuration order. The first project with a given name wins unless
         IncludeShadowed is used. Results are objects suitable for filtering and pipelines.
     .PARAMETER Filter
-        Wildcard applied to project folder names.
+        Wildcard applied to project folder names (not -Name).
     .PARAMETER Name
-        One or more exact project names. Tab completion uses projects found on disk.
+        One or more exact project names. Wildcards are not supported (use -Filter for wildcards).
+        Accepts pipeline input by value (string) or by property name (Name).
+        Tab completion uses projects found on disk.
     .PARAMETER Root
         One or more configured root names. Tab completion uses metra.config.json.
     .PARAMETER GitOnly
@@ -140,31 +181,51 @@ function Get-MetraProject {
         Get-MetraProject -Root work -GitOnly
     .EXAMPLE
         Get-MetraProject -Name TicketTracker,Solarwinds
+    .EXAMPLE
+        'TicketTracker', 'Solarwinds' | Get-MetraProject
     .OUTPUTS
         PSCustomObject with Name, Path, IsGit, Root, Primary, and Shadowed properties.
     #>
     [CmdletBinding()]
+    [OutputType([PSCustomObject])]
     param(
         [string]$Filter = '*',
+
+        [Parameter(ValueFromPipeline, ValueFromPipelineByPropertyName)]
         [string[]]$Name,
+
         [string[]]$Root,
+
         [switch]$GitOnly,
+
         [switch]$IncludeShadowed
     )
 
-    $params = @{
-        Filter          = $Filter
-        GitOnly         = [bool]$GitOnly
-        IncludeShadowed = [bool]$IncludeShadowed
+    begin {
+        $nameBuf = New-Object System.Collections.Generic.List[string]
     }
-    if ($Root) { $params.Root = $Root }
+    process {
+        foreach ($n in @($Name)) {
+            if (-not [string]::IsNullOrWhiteSpace([string]$n)) {
+                [void]$nameBuf.Add([string]$n)
+            }
+        }
+    }
+    end {
+        $params = @{
+            Filter          = $Filter
+            GitOnly         = [bool]$GitOnly
+            IncludeShadowed = [bool]$IncludeShadowed
+        }
+        if ($Root) { $params.Root = $Root }
 
-    $projects = @(Get-MetraProjects @params)
-    if ($Name) {
-        $wanted = @($Name | ForEach-Object { $_.ToLowerInvariant() })
-        $projects = @($projects | Where-Object { $wanted -contains $_.Name.ToLowerInvariant() })
+        $projects = @(Get-MetraProjects @params)
+        if ($nameBuf.Count -gt 0) {
+            $wanted = @($nameBuf | ForEach-Object { $_.ToLowerInvariant() })
+            $projects = @($projects | Where-Object { $wanted -contains $_.Name.ToLowerInvariant() })
+        }
+        return $projects
     }
-    return $projects
 }
 
 function Get-MetraProjectRoot {
@@ -175,7 +236,7 @@ function Get-MetraProjectRoot {
         Resolves configured root paths, expands environment variables, and reports whether
         each root exists on the current machine.
     .PARAMETER Name
-        One or more exact configured root names.
+        One or more exact configured root names. Accepts pipeline input by value or property name.
     .PARAMETER IncludeMissing
         Includes optional roots that are not present on this machine.
     .EXAMPLE
@@ -186,12 +247,30 @@ function Get-MetraProjectRoot {
         PSCustomObject describing each configured root.
     #>
     [CmdletBinding()]
+    [OutputType([PSCustomObject])]
     param(
+        [Parameter(ValueFromPipeline, ValueFromPipelineByPropertyName)]
         [string[]]$Name,
+
         [switch]$IncludeMissing
     )
 
-    Get-MetraRoots @PSBoundParameters
+    begin {
+        $nameBuf = New-Object System.Collections.Generic.List[string]
+    }
+    process {
+        foreach ($n in @($Name)) {
+            if (-not [string]::IsNullOrWhiteSpace([string]$n)) {
+                [void]$nameBuf.Add([string]$n)
+            }
+        }
+    }
+    end {
+        $params = @{}
+        if ($nameBuf.Count -gt 0) { $params.Name = @($nameBuf.ToArray()) }
+        if ($IncludeMissing) { $params.IncludeMissing = $true }
+        Get-MetraRoots @params
+    }
 }
 
 function Get-MetraProjectStatus {
@@ -202,24 +281,46 @@ function Get-MetraProjectStatus {
         Runs git status -sb in every matching Git project. A failed project is returned
         as an unsuccessful result without stopping the remaining projects.
     .PARAMETER Filter
-        Wildcard applied to project folder names.
+        Wildcard applied to project folder names (not -Name).
     .PARAMETER Name
-        One or more exact project names.
+        One or more exact project names. Wildcards are not supported (use -Filter).
+        Accepts pipeline input by value (string) or by property name (Name).
     .PARAMETER Root
         One or more configured root names.
     .EXAMPLE
         Get-MetraProjectStatus -Name TicketTracker,Solarwinds
+    .EXAMPLE
+        Get-MetraProject -Name TicketTracker | Get-MetraProjectStatus
     .OUTPUTS
         PSCustomObject with project identity, exit code, success state, and command output.
     #>
     [CmdletBinding()]
+    [OutputType([PSCustomObject])]
     param(
         [string]$Filter = '*',
+
+        [Parameter(ValueFromPipeline, ValueFromPipelineByPropertyName)]
         [string[]]$Name,
+
         [string[]]$Root
     )
 
-    Get-MetraStatus @PSBoundParameters
+    begin {
+        $nameBuf = New-Object System.Collections.Generic.List[string]
+    }
+    process {
+        foreach ($n in @($Name)) {
+            if (-not [string]::IsNullOrWhiteSpace([string]$n)) {
+                [void]$nameBuf.Add([string]$n)
+            }
+        }
+    }
+    end {
+        $params = @{ Filter = $Filter }
+        if ($nameBuf.Count -gt 0) { $params.Name = @($nameBuf.ToArray()) }
+        if ($Root) { $params.Root = $Root }
+        Get-MetraStatus @params
+    }
 }
 
 function Update-MetraProject {
@@ -228,11 +329,12 @@ function Update-MetraProject {
         Pulls or fetches matching git projects.
     .DESCRIPTION
         Runs git pull --ff-only by default. FetchOnly runs git fetch --all --prune.
-        Processing continues when an individual repository fails.
+        Processing continues when an individual repository fails. Supports -WhatIf / -Confirm.
     .PARAMETER Filter
-        Wildcard applied to project folder names.
+        Wildcard applied to project folder names (not -Name).
     .PARAMETER Name
-        One or more exact project names.
+        One or more exact project names. Wildcards are not supported (use -Filter).
+        Accepts pipeline input by value (string) or by property name (Name).
     .PARAMETER Root
         One or more configured root names.
     .PARAMETER FetchOnly
@@ -241,18 +343,43 @@ function Update-MetraProject {
         Update-MetraProject -Root work
     .EXAMPLE
         Update-MetraProject -Name Reporting -FetchOnly
+    .EXAMPLE
+        Get-MetraProject -Name Reporting | Update-MetraProject -WhatIf
     .OUTPUTS
         PSCustomObject with project identity, exit code, success state, and command output.
     #>
-    [CmdletBinding()]
+    [CmdletBinding(SupportsShouldProcess)]
+    [OutputType([PSCustomObject])]
     param(
         [string]$Filter = '*',
+
+        [Parameter(ValueFromPipeline, ValueFromPipelineByPropertyName)]
         [string[]]$Name,
+
         [string[]]$Root,
+
         [switch]$FetchOnly
     )
 
-    Update-MetraProjects @PSBoundParameters
+    begin {
+        $nameBuf = New-Object System.Collections.Generic.List[string]
+    }
+    process {
+        foreach ($n in @($Name)) {
+            if (-not [string]::IsNullOrWhiteSpace([string]$n)) {
+                [void]$nameBuf.Add([string]$n)
+            }
+        }
+    }
+    end {
+        $params = @{ Filter = $Filter }
+        if ($nameBuf.Count -gt 0) { $params.Name = @($nameBuf.ToArray()) }
+        if ($Root) { $params.Root = $Root }
+        if ($FetchOnly) { $params.FetchOnly = $true }
+        $params.WhatIf = [bool]$WhatIfPreference
+        if ($PSBoundParameters.ContainsKey('Confirm')) { $params.Confirm = $Confirm }
+        Update-MetraProjects @params
+    }
 }
 
 function Invoke-MetraProjectCommand {
@@ -260,16 +387,20 @@ function Invoke-MetraProjectCommand {
     .SYNOPSIS
         Runs a command or script block in matching projects.
     .DESCRIPTION
-        Changes to each matching project directory and invokes trusted operator-provided
-        content. Command text is evaluated as PowerShell and must not contain untrusted input.
+        Changes to each matching project directory and runs trusted operator-provided content.
+        -Command is a simple whitespace-separated executable and arguments (never Invoke-Expression).
+        Prefer -ScriptBlock for PowerShell. See SECURITY.md. Supports -WhatIf / -Confirm.
     .PARAMETER Command
-        PowerShell command text to evaluate in each project directory.
+        Whitespace-separated executable and arguments to run in each project directory.
+        Quoting is not shell-compatible. For arguments containing spaces or shell-style
+        quoting, use -ScriptBlock instead.
     .PARAMETER ScriptBlock
         Script block to invoke in each project directory.
     .PARAMETER Filter
-        Wildcard applied to project folder names.
+        Wildcard applied to project folder names (not -Name).
     .PARAMETER Name
-        One or more exact project names.
+        One or more exact project names. Wildcards are not supported (use -Filter).
+        Accepts pipeline input by value (string) or by property name (Name).
     .PARAMETER Root
         One or more configured root names.
     .PARAMETER GitOnly
@@ -282,26 +413,64 @@ function Invoke-MetraProjectCommand {
         Invoke-MetraProjectCommand -Command 'git remote -v' -GitOnly
     .EXAMPLE
         Invoke-MetraProjectCommand -ScriptBlock { Get-ChildItem -Filter AGENTS.md } -Root work
+    .EXAMPLE
+        Get-MetraProject -Name TicketTracker | Invoke-MetraProjectCommand -Command 'git status -sb' -WhatIf
     .OUTPUTS
         PSCustomObject with project identity, exit code, success state, and captured output.
     #>
-    [CmdletBinding(DefaultParameterSetName = 'Command')]
+    [CmdletBinding(DefaultParameterSetName = 'Command', SupportsShouldProcess)]
+    [OutputType([PSCustomObject])]
     param(
         [Parameter(ParameterSetName = 'Command', Mandatory, Position = 0)]
+        [ValidateNotNullOrEmpty()]
         [string]$Command,
 
         [Parameter(ParameterSetName = 'Script', Mandatory)]
         [scriptblock]$ScriptBlock,
 
         [string]$Filter = '*',
+
+        [Parameter(ValueFromPipeline, ValueFromPipelineByPropertyName)]
         [string[]]$Name,
+
         [string[]]$Root,
+
         [switch]$GitOnly,
+
         [switch]$ContinueOnError,
+
         [switch]$Quiet
     )
 
-    Invoke-AcrossProjects @PSBoundParameters
+    begin {
+        $nameBuf = New-Object System.Collections.Generic.List[string]
+    }
+    process {
+        foreach ($n in @($Name)) {
+            if (-not [string]::IsNullOrWhiteSpace([string]$n)) {
+                [void]$nameBuf.Add([string]$n)
+            }
+        }
+    }
+    end {
+        $params = @{ Filter = $Filter }
+        if ($nameBuf.Count -gt 0) { $params.Name = @($nameBuf.ToArray()) }
+        if ($Root) { $params.Root = $Root }
+        if ($GitOnly) { $params.GitOnly = $true }
+        if ($ContinueOnError) { $params.ContinueOnError = $true }
+        if ($Quiet) { $params.Quiet = $true }
+
+        if ($PSCmdlet.ParameterSetName -eq 'Script') {
+            $params.ScriptBlock = $ScriptBlock
+        }
+        else {
+            $params.Command = $Command
+        }
+
+        $params.WhatIf = [bool]$WhatIfPreference
+        if ($PSBoundParameters.ContainsKey('Confirm')) { $params.Confirm = $Confirm }
+        Invoke-AcrossProjects @params
+    }
 }
 
 function Copy-MetraProjectFile {
@@ -310,15 +479,17 @@ function Copy-MetraProjectFile {
         Copies a file into matching projects.
     .DESCRIPTION
         Copies one source file to a relative destination in each matching project. Supports
-        PowerShell WhatIf and Confirm semantics.
+        PowerShell WhatIf and Confirm semantics. Source must exist as a file.
     .PARAMETER Source
         Source file to copy.
     .PARAMETER RelativePath
-        Destination path relative to each project root. Defaults to the source file name.
+        Destination path relative to each project root (no rooted paths, no '..' segments).
+        Defaults to the source file name.
     .PARAMETER Filter
-        Wildcard applied to project folder names.
+        Wildcard applied to project folder names (not -Name).
     .PARAMETER Name
-        One or more exact project names.
+        One or more exact project names. Wildcards are not supported (use -Filter).
+        Accepts pipeline input by value (string) or by property name (Name).
     .PARAMETER Root
         One or more configured root names.
     .PARAMETER Force
@@ -332,14 +503,59 @@ function Copy-MetraProjectFile {
     #>
     [CmdletBinding(SupportsShouldProcess)]
     param(
-        [Parameter(Mandatory)][string]$Source,
+        [Parameter(Mandatory)]
+        [ValidateNotNullOrEmpty()]
+        [string]$Source,
+
         [string]$RelativePath,
+
         [string]$Filter = '*',
+
+        [Parameter(ValueFromPipeline, ValueFromPipelineByPropertyName)]
         [string[]]$Name,
+
         [string[]]$Root,
+
         [switch]$Force
     )
 
-    Copy-AcrossProjects @PSBoundParameters
-}
+    begin {
+        $nameBuf = New-Object System.Collections.Generic.List[string]
+    }
+    process {
+        foreach ($n in @($Name)) {
+            if (-not [string]::IsNullOrWhiteSpace([string]$n)) {
+                [void]$nameBuf.Add([string]$n)
+            }
+        }
+    }
+    end {
+        if (-not (Test-Path -LiteralPath $Source -PathType Leaf)) {
+            throw ("Source file not found: {0}" -f $Source)
+        }
 
+        if (-not [string]::IsNullOrWhiteSpace($RelativePath)) {
+            if ([System.IO.Path]::IsPathRooted($RelativePath)) {
+                throw "RelativePath must be relative, not rooted: $RelativePath"
+            }
+            if (($RelativePath -split '[\\/]') -contains '..') {
+                throw "RelativePath cannot contain '..': $RelativePath"
+            }
+            if ($RelativePath -match '[\x00-\x1F]') {
+                throw 'RelativePath contains invalid control characters.'
+            }
+        }
+
+        $params = @{
+            Source = $Source
+            Filter = $Filter
+            WhatIf = [bool]$WhatIfPreference
+        }
+        if (-not [string]::IsNullOrWhiteSpace($RelativePath)) { $params.RelativePath = $RelativePath }
+        if ($nameBuf.Count -gt 0) { $params.Name = @($nameBuf.ToArray()) }
+        if ($Root) { $params.Root = $Root }
+        if ($Force) { $params.Force = $true }
+        if ($PSBoundParameters.ContainsKey('Confirm')) { $params.Confirm = $Confirm }
+        Copy-AcrossProjects @params
+    }
+}

@@ -10,11 +10,22 @@ param(
     [switch]$Full,
     [switch]$Quick,
     [switch]$ForceLocal,
+    [ValidateRange(1, 65535)]
     [int]$Port = 7380
 )
 
 $ErrorActionPreference = 'Stop'
+
+if ($Full -and $Quick) {
+    throw '-Full and -Quick cannot both be specified.'
+}
+
 $metraRoot = (Resolve-Path -LiteralPath (Join-Path $PSScriptRoot '..\..')).Path
+$metraCli = Join-Path $metraRoot 'metra.ps1'
+if (-not (Test-Path -LiteralPath $metraCli -PathType Leaf)) {
+    throw "Unable to locate Metra CLI: $metraCli"
+}
+
 Set-Location -LiteralPath $metraRoot
 
 # Stay in-process so Ctrl+C reaches the Ops listener (do not nest powershell.exe).
@@ -27,5 +38,5 @@ if ($Full) { $opsArgs.Full = $true }
 if ($Quick) { $opsArgs.Quick = $true }
 if ($ForceLocal) { $opsArgs.ForceLocal = $true }
 
-& (Join-Path $metraRoot 'metra.ps1') 'ops' @opsArgs
-exit $LASTEXITCODE
+& $metraCli 'ops' @opsArgs
+exit $(if ($null -ne $LASTEXITCODE) { $LASTEXITCODE } else { 0 })

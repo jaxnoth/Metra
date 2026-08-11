@@ -7,6 +7,8 @@ function ConvertTo-MetraCursorProjectSlug {
     .DESCRIPTION
         Cursor names its state folder after the workspace path: C:\Projects\_metra becomes
         c-Projects-metra (leading underscores stripped). C:\Projects\_meta becomes c-Projects-meta.
+        Self-folder aliases (_metra, _meta, Metra, meta) always resolve through Get-MetraRoot so a
+        live _meta checkout is not missed when the caller passes _metra.
         Projects outside the primary root (for example a cloud-synced
         personal folder) therefore need the path form, not the name form.
     #>
@@ -29,6 +31,13 @@ function ConvertTo-MetraCursorProjectSlug {
 
     $trimmed = $Name.Trim()
     if (Test-MetraSelfFolderName -Name $trimmed) {
+        # Aliases (_metra, _meta, Metra, meta) all map to this live checkout's Cursor slug.
+        # Name-leaf inventing (_metra -> c-Projects-metra) misses a _meta checkout (c-Projects-meta).
+        $metraRoot = $null
+        try { $metraRoot = Get-MetraRoot } catch { $metraRoot = $null }
+        if (-not [string]::IsNullOrWhiteSpace($metraRoot)) {
+            return (ConvertTo-MetraCursorProjectSlug -Path $metraRoot)
+        }
         $leaf = ($trimmed.TrimStart('_')).ToLowerInvariant()
         return "c-Projects-$leaf"
     }
@@ -80,6 +89,13 @@ function Get-MetraCursorTranscriptRoots {
     foreach ($projectName in $wanted) {
         $candidates = [System.Collections.Generic.List[string]]::new()
         $known = $pathByName[$projectName.ToLowerInvariant()]
+        if (-not $known -and (Test-MetraSelfFolderName -Name $projectName)) {
+            # Registry exposes orchestration as Name=Metra; accept _metra/_meta aliases too.
+            $known = $pathByName['metra']
+            if (-not $known) {
+                try { $known = Get-MetraRoot } catch { $known = $null }
+            }
+        }
         if ($known) {
             [void]$candidates.Add((ConvertTo-MetraCursorProjectSlug -Path $known))
         }
@@ -153,6 +169,72 @@ function Get-MetraChatSnippet {
     return $snip.Trim()
 }
 
+function Read-MetraBoundedText {
+    <#
+    .SYNOPSIS
+        Reads bounded text from a potentially large file.
+    .DESCRIPTION
+        Returns Head, Tail, and Combined text. This keeps title extraction cheap while
+        allowing search terms to match recent transcript content near the end of JSONL
+        files without dumping full transcripts into memory.
+    #>
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory)][string]$Path,
+        [int]$HeadBytes = 256KB,
+        [int]$TailBytes = 512KB
+    )
+
+    $fs = [System.IO.File]::Open(
+        $Path,
+        [System.IO.FileMode]::Open,
+        [System.IO.FileAccess]::Read,
+        [System.IO.FileShare]::ReadWrite
+    )
+
+    try {
+        $length = $fs.Length
+
+        if ($length -le 0) {
+            return [PSCustomObject]@{
+                Head     = ''
+                Tail     = ''
+                Combined = ''
+            }
+        }
+
+        $headCount = [Math]::Min($HeadBytes, $length)
+        $headBuf = New-Object byte[] $headCount
+        [void]$fs.Read($headBuf, 0, $headCount)
+        $head = [System.Text.Encoding]::UTF8.GetString($headBuf, 0, $headCount)
+
+        $tail = ''
+        if ($length -gt $headCount) {
+            $tailCount = [Math]::Min($TailBytes, $length)
+            [void]$fs.Seek(-1 * $tailCount, [System.IO.SeekOrigin]::End)
+            $tailBuf = New-Object byte[] $tailCount
+            [void]$fs.Read($tailBuf, 0, $tailCount)
+            $tail = [System.Text.Encoding]::UTF8.GetString($tailBuf, 0, $tailCount)
+        }
+
+        $combined = if ($tail) {
+            $head + "`n... [middle omitted by Metra bounded chat search] ...`n" + $tail
+        }
+        else {
+            $head
+        }
+
+        return [PSCustomObject]@{
+            Head     = $head
+            Tail     = $tail
+            Combined = $combined
+        }
+    }
+    finally {
+        $fs.Dispose()
+    }
+}
+
 function Get-MetraChatTitle {
     param([Parameter(Mandatory)][string]$Raw)
 
@@ -214,10 +296,13 @@ function Resolve-MetraChatProjectFromRepo {
     $leaf = ($normalized -split '/')[-1]
     if ([string]::IsNullOrWhiteSpace($leaf)) { return $null }
 
-    if ($leaf -match '^(?i)Metra$') {
+    if ([string]::Equals($leaf, 'Metra', [StringComparison]::OrdinalIgnoreCase)) {
         if (-not $WantedNames -or $WantedNames.Count -eq 0) { return 'Metra' }
         foreach ($wanted in $WantedNames) {
-            if ((Test-MetraSelfFolderName -Name $wanted) -or ($wanted -match '^(?i)Metra$')) {
+            if (
+                (Test-MetraSelfFolderName -Name $wanted) -or
+                [string]::Equals($wanted, 'Metra', [StringComparison]::OrdinalIgnoreCase)
+            ) {
                 return $(if (Test-MetraSelfFolderName -Name $wanted) { $wanted } else { 'Metra' })
             }
         }
@@ -273,18 +358,22 @@ function Get-MetraCloudAgentChats {
         [string[]]$Name,
         [string]$Query,
         [string]$Ticket,
+        [ValidateRange(1, 3650)]
         [int]$Days = 90,
+        [ValidateRange(1, 100)]
         [int]$Limit = 10,
+        [ValidateRange(40, 2000)]
         [int]$SnippetChars = 160,
+        [ValidateRange(1, 100)]
         [int]$MaxFetch = 20,
         [Alias('IncludeMeta')]
         [switch]$IncludeMetra,
         [string]$ApiKey
     )
 
-    if ($Limit -lt 1) { $Limit = 10 }
-    if ($Days -lt 1) { $Days = 90 }
-    if ($MaxFetch -lt 1) { $MaxFetch = 20 }
+    if (-not [string]::IsNullOrWhiteSpace($Query) -and -not [string]::IsNullOrWhiteSpace($Ticket)) {
+        throw 'Query and Ticket are mutually exclusive.'
+    }
 
     if ([string]::IsNullOrWhiteSpace($ApiKey)) {
         $ApiKey = Get-MetraCursorApiKey
@@ -303,7 +392,13 @@ function Get-MetraCloudAgentChats {
     if ($IncludeMetra) {
         $hasSelf = $false
         foreach ($n in $wanted) {
-            if ((Test-MetraSelfFolderName -Name $n) -or ($n -match '^(?i)Metra$')) { $hasSelf = $true; break }
+            if (
+                (Test-MetraSelfFolderName -Name $n) -or
+                [string]::Equals($n, 'Metra', [StringComparison]::OrdinalIgnoreCase)
+            ) {
+                $hasSelf = $true
+                break
+            }
         }
         if (-not $hasSelf) { [void]$wanted.Add('Metra') }
     }
@@ -372,7 +467,9 @@ function Get-MetraCloudAgentChats {
         $title = [string]$agent.name
         if (-not $title) { $title = $agentId }
         $url = [string]$agent.url
-        if (-not $url -and $agentId) { $url = "https://cursor.com/agents/$agentId" }
+        if (-not $url -and $agentId) {
+            $url = "https://cursor.com/agents/$([Uri]::EscapeDataString($agentId))"
+        }
 
         $hay = @(
             $title
@@ -382,12 +479,18 @@ function Get-MetraCloudAgentChats {
         ) -join "`n"
 
         $resultText = ''
-        $shouldFetch = ($terms.Count -gt 0) -or ($fetched -lt [Math]::Min($MaxFetch, $Limit))
         $runId = [string]$agent.latestRunId
-        if ($shouldFetch -and $runId -and $fetched -lt $MaxFetch) {
+        $shouldFetch = (
+            $runId -and
+            ($fetched -lt $MaxFetch) -and
+            (($terms.Count -gt 0) -or ($results.Count -lt $Limit))
+        )
+        if ($shouldFetch) {
             $fetched++
             try {
-                $run = Invoke-MetraCursorApi -ApiKey $ApiKey -Path ("/v1/agents/{0}/runs/{1}" -f $agentId, $runId)
+                $agentPathId = [Uri]::EscapeDataString($agentId)
+                $runPathId = [Uri]::EscapeDataString($runId)
+                $run = Invoke-MetraCursorApi -ApiKey $ApiKey -Path ("/v1/agents/{0}/runs/{1}" -f $agentPathId, $runPathId)
                 $resultText = [string]$run.result
                 if ($resultText) { $hay = $hay + "`n" + $resultText }
             }
@@ -464,16 +567,20 @@ function Get-MetraProjectChats {
         [string[]]$Name,
         [string]$Query,
         [string]$Ticket,
+        [ValidateRange(1, 3650)]
         [int]$Days = 90,
+        [ValidateRange(1, 100)]
         [int]$Limit = 10,
+        [ValidateRange(40, 2000)]
         [int]$SnippetChars = 160,
         [Alias('IncludeMeta')]
         [switch]$IncludeMetra,
         [switch]$Cloud
     )
 
-    if ($Limit -lt 1) { $Limit = 10 }
-    if ($Days -lt 1) { $Days = 90 }
+    if (-not [string]::IsNullOrWhiteSpace($Query) -and -not [string]::IsNullOrWhiteSpace($Ticket)) {
+        throw 'Query and Ticket are mutually exclusive.'
+    }
 
     $terms = @(Get-MetraChatSearchTerms -Query $Query -Ticket $Ticket | ForEach-Object { [string]$_ })
     Write-Verbose ("Chat search terms ({0}): {1}" -f $terms.Count, ($terms -join ' | '))
@@ -508,17 +615,9 @@ function Get-MetraProjectChats {
 
         $ordered = @($candidates | Sort-Object Modified -Descending)
         foreach ($c in $ordered) {
-            # Bound read: first ~512KB is enough for titles + recent clue search without dumping huge files.
-            $fs = [System.IO.File]::Open($c.Path, [System.IO.FileMode]::Open, [System.IO.FileAccess]::Read, [System.IO.FileShare]::ReadWrite)
-            try {
-                $max = [Math]::Min(512KB, $fs.Length)
-                $buf = New-Object byte[] $max
-                $read = $fs.Read($buf, 0, $max)
-                $raw = [System.Text.Encoding]::UTF8.GetString($buf, 0, $read)
-            }
-            finally {
-                $fs.Dispose()
-            }
+            $bounded = Read-MetraBoundedText -Path $c.Path -HeadBytes 256KB -TailBytes 512KB
+            $titleRaw = $bounded.Head
+            $raw = $bounded.Combined
 
             $matched = New-Object System.Collections.Generic.List[string]
             $snippets = New-Object System.Collections.Generic.List[string]
@@ -541,7 +640,7 @@ function Get-MetraProjectChats {
                 if ($matched.Count -eq 0) { continue }
             }
 
-            $title = Get-MetraChatTitle -Raw $raw
+            $title = Get-MetraChatTitle -Raw $titleRaw
             $combined.Add([PSCustomObject]@{
                 Project      = [string]$c.Project
                 Source       = 'local'
@@ -585,7 +684,7 @@ function Get-MetraProjectChats {
 
     $final = @(
         $combined |
-            Sort-Object @{ Expression = '_Sort'; Descending = $true }, Source, Title |
+            Sort-Object @{ Expression = { $_._Sort }; Descending = $true }, Source, Title |
             Select-Object -First $Limit |
             ForEach-Object {
                 [PSCustomObject]@{

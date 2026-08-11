@@ -1,4 +1,10 @@
-# Generated from the original Metra.psm1 domain split. Edit this file directly.
+# Snapshot.ps1 - portfolio snapshot + Ops desk helpers (multi-domain; prefer future splits).
+# Domains colocated here today (split when edits collide):
+#   Snapshot/canvas   Export-MetraCanvasSnapshot, Install-MetraOpsCanvas, staleness
+#   Desk preferences  Get/Set-MetraDeskPreferences
+#   Ask journal       Get/Add-MetraDeskAskEntry, Search-MetraDeskAskJournal, continuity
+#   Ask orchestration Get-MetraDeskAskResult, honesty short-circuits
+#   Desk payload      ConvertTo-MetraDeskPayload, Get-MetraDeskPayload
 
 $script:MetraGitProbeSkip = @(
     'node_modules', 'bin', 'obj', '.vs', '.vscode', '.idea',
@@ -23,15 +29,20 @@ function Get-MetraGitFolderCounts {
         failed = $false
     }
 
-    Push-Location $Path
+    if (-not (Test-Path -LiteralPath $Path)) {
+        $counts.failed = $true
+        return $counts
+    }
+
     try {
-        $branch = (git rev-parse --abbrev-ref HEAD 2>$null)
+        # git -C avoids Push-Location side effects in the host session.
+        $branch = (git -C $Path rev-parse --abbrev-ref HEAD 2>$null)
         if ($branch) { $counts.branch = [string]$branch.Trim() }
 
-        $porcelain = @(git status --porcelain 2>$null)
+        $porcelain = @(git -C $Path status --porcelain 2>$null)
         $counts.dirty = @($porcelain | Where-Object { $_ -and $_.Trim().Length -gt 0 }).Count
 
-        $ab = (git rev-list --left-right --count '@{u}...HEAD' 2>$null)
+        $ab = (git -C $Path rev-list --left-right --count '@{u}...HEAD' 2>$null)
         if ($ab -match '^\s*(\d+)\s+(\d+)\s*$') {
             $counts.behind = [int]$Matches[1]
             $counts.ahead = [int]$Matches[2]
@@ -39,9 +50,6 @@ function Get-MetraGitFolderCounts {
     }
     catch {
         $counts.failed = $true
-    }
-    finally {
-        Pop-Location
     }
 
     return $counts
@@ -657,7 +665,7 @@ function Install-MetraOpsCanvas {
             return $false
         }
         if ($canvasDir -and -not (Test-Path -LiteralPath $canvasDir)) {
-            New-Item -ItemType Directory -Path $canvasDir -Force | Out-Null
+            [void][System.IO.Directory]::CreateDirectory($canvasDir)
         }
         Copy-Item -LiteralPath $templatePath -Destination $CanvasPath -Force
         Write-Host ("Installed Metra Ops canvas from template: {0}" -f $CanvasPath) -ForegroundColor Green
@@ -791,13 +799,19 @@ function Export-MetraCanvasSnapshot {
     .PARAMETER Quick
         Hook-friendly refresh: registry + present/missing + AGENTS/.cursorignore/README only.
         Skips recursive large-file scan and per-project git counts.
+    .PARAMETER RefreshSelfDocumentation
+        Also run Update-MetraSelfDocumentation. Off by default - setup/snapshot pairing is
+        explicit (setup already refreshes selfdoc with the context pack).
     #>
     [CmdletBinding()]
+    [OutputType([PSCustomObject])]
     param(
         [string]$OutPath,
         [string]$CanvasPath,
+        [ValidateRange(1, 100)]
         [int]$ScanDepth = 2,
-        [switch]$Quick
+        [switch]$Quick,
+        [switch]$RefreshSelfDocumentation
     )
 
     $metraRoot = Get-MetraRoot
@@ -1074,8 +1088,11 @@ function Export-MetraCanvasSnapshot {
         gitChecked        = (-not $Quick)
         verifyChecked     = (-not $Quick -and [bool]$verifySummary.checked)
         projectCount      = @($projects).Count
+        # driftCount = audit findings; driftProjects/driftProjectCount = projects flagged drift.
         driftCount        = [int]$auditDriftCount
-        driftProjects     = $driftProjects
+        auditDriftCount   = [int]$auditDriftCount
+        driftProjects     = [int]$driftProjects
+        driftProjectCount = [int]$driftProjects
         notInstalled      = $notInstalled
         missingAgents     = $missingAgents
         missingIgnore     = $missingIgnore
@@ -1103,12 +1120,8 @@ function Export-MetraCanvasSnapshot {
         verify            = [PSCustomObject]$verifySummary
     }
 
-    $dir = Split-Path -Parent $OutPath
-    if ($dir -and -not (Test-Path $dir)) {
-        New-Item -ItemType Directory -Path $dir -Force | Out-Null
-    }
     $json = ($snapshot | ConvertTo-Json -Depth 8)
-    [System.IO.File]::WriteAllText($OutPath, $json + "`r`n")
+    Write-MetraAtomicUtf8Text -Path $OutPath -Text ($json + "`r`n")
     Write-Host ("Wrote snapshot: {0}" -f $OutPath) -ForegroundColor Green
 
     $canvasReady = Install-MetraOpsCanvas -CanvasPath $CanvasPath
@@ -1130,7 +1143,7 @@ const SNAPSHOT: MetaSnapshot = $json;
 $embedEnd
 "@
                 $updated = $canvas.Substring(0, $bi) + $embed + $canvas.Substring($ei + $end.Length)
-                [System.IO.File]::WriteAllText($CanvasPath, $updated)
+                Write-MetraAtomicUtf8Text -Path $CanvasPath -Text $updated
                 Write-Host ("Updated canvas embed: {0}" -f $CanvasPath) -ForegroundColor Green
                 $updatedEmbed = $true
                 break
@@ -1142,16 +1155,28 @@ $embedEnd
     }
 
     $selfDoc = $null
-    try {
-        $selfDoc = Update-MetraSelfDocumentation
+    if ($RefreshSelfDocumentation) {
+        try {
+            $selfDoc = Update-MetraSelfDocumentation
+        }
+        catch {
+            Write-Warning ("Self-documentation refresh failed: {0}" -f $_.Exception.Message)
+        }
+    }
+
+    $generatedUtc = try {
+        ([datetimeoffset]$snapshot.generatedAt).UtcDateTime
     }
     catch {
-        Write-Warning ("Self-documentation refresh failed: {0}" -f $_.Exception.Message)
+        [datetime]::UtcNow
     }
 
     return [PSCustomObject]@{
+        SnapshotPath = $OutPath
         OutPath      = $OutPath
         CanvasPath   = $CanvasPath
+        Quick        = [bool]$Quick
+        GeneratedUtc = $generatedUtc
         ProjectCount = $snapshot.projectCount
         DriftCount   = $snapshot.driftCount
         TodoCount    = @($snapshot.todos).Count
@@ -1369,12 +1394,8 @@ function Set-MetraDeskPreferences {
     }
     $current.updatedAt = (Get-Date).ToString('o')
     $path = Get-MetraDeskPreferencesPath -MetraRoot $MetraRoot
-    $dir = Split-Path -Parent $path
-    if ($dir -and -not (Test-Path $dir)) {
-        New-Item -ItemType Directory -Path $dir -Force | Out-Null
-    }
     $json = ($current | ConvertTo-Json -Depth 4)
-    [System.IO.File]::WriteAllText($path, $json + "`r`n")
+    Write-MetraAtomicUtf8Text -Path $path -Text ($json + "`r`n")
     return $current
 }
 
@@ -1384,6 +1405,59 @@ function Get-MetraUtf8NoBomEncoding {
         UTF-8 without BOM for Ask journal and Ops text I/O.
     #>
     return [System.Text.UTF8Encoding]::new($false)
+}
+
+function Write-MetraAtomicUtf8Text {
+    <#
+    .SYNOPSIS
+        Atomically replace a UTF-8 (no BOM) text file via temp + Move-Item.
+    .NOTES
+        Preferred for canvas-snapshot, desk preferences, and Ask journal writes.
+        Profile.ps1 has Write-MetraProfileAtomicText for OCC/ledger files (same pattern).
+    #>
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory)][string]$Path,
+        [Parameter(Mandatory)][AllowEmptyString()][string]$Text
+    )
+
+    $dir = Split-Path -Parent $Path
+    if ($dir -and -not (Test-Path -LiteralPath $dir)) {
+        [void][System.IO.Directory]::CreateDirectory($dir)
+    }
+    $tmp = "$Path.tmp"
+    [System.IO.File]::WriteAllText($tmp, $Text, (Get-MetraUtf8NoBomEncoding))
+    Move-Item -LiteralPath $tmp -Destination $Path -Force
+}
+
+function Invoke-MetraWithNamedMutex {
+    <#
+    .SYNOPSIS
+        Serialize a short critical section with a local named mutex.
+    #>
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory)][string]$Name,
+        [Parameter(Mandatory)][scriptblock]$Script,
+        [int]$TimeoutMs = 15000
+    )
+
+    $mutexName = "Local\Metra_$Name"
+    $mutex = New-Object System.Threading.Mutex($false, $mutexName)
+    $acquired = $false
+    try {
+        $acquired = $mutex.WaitOne($TimeoutMs)
+        if (-not $acquired) {
+            throw "Timed out waiting for mutex $Name (${TimeoutMs}ms)."
+        }
+        return (& $Script)
+    }
+    finally {
+        if ($acquired) {
+            [void]$mutex.ReleaseMutex()
+        }
+        $mutex.Dispose()
+    }
 }
 
 function Get-MetraDeskAskLog {
@@ -1416,6 +1490,8 @@ function Add-MetraDeskAskEntry {
     <#
     .SYNOPSIS
         Appends one Session Journal turn (canonical Ask evidence). Cap 100 recent turns.
+    .NOTES
+        Read-modify-write is guarded by a named mutex and written atomically.
     #>
     [CmdletBinding()]
     param(
@@ -1435,72 +1511,69 @@ function Add-MetraDeskAskEntry {
         [string]$MetraRoot = (Get-MetraRoot)
     )
 
-    $path = Get-MetraDeskAskLogPath -MetraRoot $MetraRoot
-    $existing = @(Get-MetraDeskAskLog -MetraRoot $MetraRoot -Limit 100)
-    $sess = if (-not [string]::IsNullOrWhiteSpace($SessionId)) {
-        $SessionId.Trim()
-    }
-    else {
-        [guid]::NewGuid().ToString('N')
-    }
-
-    $maxIndex = 0
-    foreach ($row in $existing) {
-        $rowSess = [string](Get-MetraProp -Object $row -Name 'sessionId' -Default '')
-        if ($rowSess -ne $sess) { continue }
-        $ti = Get-MetraProp -Object $row -Name 'turnIndex' -Default $null
-        if ($null -ne $ti) {
-            $n = [int]$ti
-            if ($n -gt $maxIndex) { $maxIndex = $n }
+    return Invoke-MetraWithNamedMutex -Name 'ask-journal' -Script {
+        $path = Get-MetraDeskAskLogPath -MetraRoot $MetraRoot
+        $existing = @(Get-MetraDeskAskLog -MetraRoot $MetraRoot -Limit 100)
+        $sess = if (-not [string]::IsNullOrWhiteSpace($SessionId)) {
+            $SessionId.Trim()
         }
-    }
+        else {
+            [guid]::NewGuid().ToString('N')
+        }
 
-    $scrubbedPrompt = Invoke-MetraAskSecretsScrubText -Text $Prompt.Trim()
-    $scrubbedMessage = Invoke-MetraAskSecretsScrubText -Text ([string]$Message)
-    $cleanMessage = Truncate-MetraAskJournalMessage -Message (Remove-MetraAskUiChrome -Message ([string]$scrubbedMessage.Text))
-    # Journal image pointers: id + fileName only (never path / mime / binary / base64).
-    $journalImages = @(
-        foreach ($img in @($Images)) {
-            if ($null -eq $img) { continue }
-            $jid = [string](Get-MetraProp -Object $img -Name 'id' -Default '')
-            $jname = [string](Get-MetraProp -Object $img -Name 'fileName' -Default '')
-            if ([string]::IsNullOrWhiteSpace($jid) -and [string]::IsNullOrWhiteSpace($jname)) { continue }
-            [PSCustomObject]@{
-                id       = $jid
-                fileName = $jname
+        $maxIndex = 0
+        foreach ($row in $existing) {
+            $rowSess = [string](Get-MetraProp -Object $row -Name 'sessionId' -Default '')
+            if ($rowSess -ne $sess) { continue }
+            $ti = Get-MetraProp -Object $row -Name 'turnIndex' -Default $null
+            if ($null -ne $ti) {
+                $n = [int]$ti
+                if ($n -gt $maxIndex) { $maxIndex = $n }
             }
         }
-    )
-    $entry = [PSCustomObject]@{
-        id            = [guid]::NewGuid().ToString('N')
-        sessionId     = $sess
-        turnIndex     = $maxIndex + 1
-        at            = (Get-Date).ToString('o')
-        prompt        = [string]$scrubbedPrompt.Text
-        message       = $cleanMessage
-        handoff       = $Handoff
-        engine        = $(if ([string]::IsNullOrWhiteSpace($Engine)) { $null } else { $Engine })
-        model         = $(if ([string]::IsNullOrWhiteSpace($Model)) { $null } else { $Model })
-        answered      = [bool]$Answered
-        capability    = $Capability
-        origin        = $Origin
-        client        = $Client
-        clientHint    = $ClientHint
-        attachmentIds = @($AttachmentIds | ForEach-Object { [string]$_ } | Where-Object { $_ })
-        images        = $journalImages
+
+        $scrubbedPrompt = Invoke-MetraAskSecretsScrubText -Text $Prompt.Trim()
+        $scrubbedMessage = Invoke-MetraAskSecretsScrubText -Text ([string]$Message)
+        $cleanMessage = Truncate-MetraAskJournalMessage -Message (Remove-MetraAskUiChrome -Message ([string]$scrubbedMessage.Text))
+        # Journal image pointers: id + fileName only (never path / mime / binary / base64).
+        $journalImages = @(
+            foreach ($img in @($Images)) {
+                if ($null -eq $img) { continue }
+                $jid = [string](Get-MetraProp -Object $img -Name 'id' -Default '')
+                $jname = [string](Get-MetraProp -Object $img -Name 'fileName' -Default '')
+                if ([string]::IsNullOrWhiteSpace($jid) -and [string]::IsNullOrWhiteSpace($jname)) { continue }
+                [PSCustomObject]@{
+                    id       = $jid
+                    fileName = $jname
+                }
+            }
+        )
+        $entry = [PSCustomObject]@{
+            id            = [guid]::NewGuid().ToString('N')
+            sessionId     = $sess
+            turnIndex     = $maxIndex + 1
+            at            = (Get-Date).ToString('o')
+            prompt        = [string]$scrubbedPrompt.Text
+            message       = $cleanMessage
+            handoff       = $Handoff
+            engine        = $(if ([string]::IsNullOrWhiteSpace($Engine)) { $null } else { $Engine })
+            model         = $(if ([string]::IsNullOrWhiteSpace($Model)) { $null } else { $Model })
+            answered      = [bool]$Answered
+            capability    = $Capability
+            origin        = $Origin
+            client        = $Client
+            clientHint    = $ClientHint
+            attachmentIds = @($AttachmentIds | ForEach-Object { [string]$_ } | Where-Object { $_ })
+            images        = $journalImages
+        }
+        $items = @($entry) + @($existing) | Select-Object -First 100
+        $payload = [ordered]@{
+            schemaVersion = Get-MetraAskJournalSchemaVersion
+            items         = @($items)
+        }
+        Write-MetraAtomicUtf8Text -Path $path -Text (($payload | ConvertTo-Json -Depth 10) + "`r`n")
+        return $entry
     }
-    $items = @($entry) + @($existing) | Select-Object -First 100
-    $payload = [ordered]@{
-        schemaVersion = Get-MetraAskJournalSchemaVersion
-        items         = @($items)
-    }
-    $dir = Split-Path -Parent $path
-    if ($dir -and -not (Test-Path $dir)) {
-        New-Item -ItemType Directory -Path $dir -Force | Out-Null
-    }
-    $enc = Get-MetraUtf8NoBomEncoding
-    [System.IO.File]::WriteAllText($path, (($payload | ConvertTo-Json -Depth 10) + "`r`n"), $enc)
-    return $entry
 }
 
 function Get-MetraDeskAskSessionSummaries {
@@ -1596,8 +1669,9 @@ function Search-MetraDeskAskJournal {
     $q = $Query.Trim()
     if ([string]::IsNullOrWhiteSpace($q)) { return @() }
 
+    # Align with routing-ish tokenization: strip punctuation so tickettracker? matches tickettracker.
     $tokens = @(
-        $q.ToLowerInvariant() -split '\s+' |
+        $q.ToLowerInvariant() -split '[^a-z0-9_+]+' |
             Where-Object { $_.Length -ge 2 } |
             Select-Object -Unique
     )
@@ -2459,11 +2533,14 @@ function ConvertTo-MetraDeskPayload {
     <#
     .SYNOPSIS
         Shapes canvas-snapshot.json into the HTML Ops desk payload (one brain, many faces).
+    .PARAMETER Request
+        Optional Ops HTTP request. When present without local authority, meta.metraRoot is omitted.
     #>
     [CmdletBinding()]
     param(
         [Parameter(Mandatory)]$Snapshot,
-        [string]$MetraRoot = (Get-MetraRoot)
+        [string]$MetraRoot = (Get-MetraRoot),
+        $Request = $null
     )
 
     $stale = $false
@@ -2636,7 +2713,7 @@ function ConvertTo-MetraDeskPayload {
     try {
         $psd1 = Join-Path $MetraRoot 'scripts\Metra.psd1'
         if (Test-Path -LiteralPath $psd1) {
-            $data = Import-PowerShellDataFile -Path $psd1
+            $data = Import-PowerShellDataFile -LiteralPath $psd1
             $manifest = [string]$data.ModuleVersion
         }
     }
@@ -2667,6 +2744,20 @@ function ConvertTo-MetraDeskPayload {
         }
     }
 
+    # Display leaf only; full path stays on meta.metraRoot for local/CLI callers.
+    $homeLabel = Split-Path -Leaf $MetraRoot
+    $publicMetraRoot = $MetraRoot
+    if ($null -ne $Request) {
+        try {
+            if (-not (Test-MetraOpsRequestHasLocalAuthority -Request $Request)) {
+                $publicMetraRoot = $null
+            }
+        }
+        catch {
+            $publicMetraRoot = $null
+        }
+    }
+
     return [PSCustomObject]@{
         generatedAt        = [string]$Snapshot.generatedAt
         mode               = [string]$Snapshot.mode
@@ -2686,6 +2777,8 @@ function ConvertTo-MetraDeskPayload {
             snapshotStale      = $stale
             projectCount       = [int]$Snapshot.projectCount
             driftCount         = [int]$Snapshot.driftCount
+            auditDriftCount    = [int](Get-MetraProp -Object $Snapshot -Name 'auditDriftCount' -Default $Snapshot.driftCount)
+            driftProjectCount  = [int](Get-MetraProp -Object $Snapshot -Name 'driftProjectCount' -Default $Snapshot.driftProjects)
         }
         recent             = $recent
         captures           = $captures
@@ -2700,8 +2793,8 @@ function ConvertTo-MetraDeskPayload {
         }
         meta               = [PSCustomObject]@{
             version   = $manifest
-            metraRoot = $MetraRoot
-            homeLabel = $MetraRoot
+            metraRoot = $publicMetraRoot
+            homeLabel = $homeLabel
             editor    = $editorInfo
         }
     }
@@ -2715,13 +2808,16 @@ function Get-MetraDeskPayload {
         Rebuild snapshot first (Quick by default unless -Full).
     .PARAMETER Full
         With -Refresh, run a full snapshot (git + verify).
+    .PARAMETER Request
+        Optional Ops HTTP request for public meta shaping (masks metraRoot without local authority).
     #>
     [CmdletBinding()]
     param(
         [switch]$Refresh,
         [switch]$Full,
         [int]$ScanDepth = 2,
-        [string]$MetraRoot = (Get-MetraRoot)
+        [string]$MetraRoot = (Get-MetraRoot),
+        $Request = $null
     )
 
     $snapPath = Join-Path $MetraRoot 'docs\canvas-snapshot.json'
@@ -2734,6 +2830,6 @@ function Get-MetraDeskPayload {
     }
 
     $snapshot = Get-Content -LiteralPath $snapPath -Raw | ConvertFrom-Json
-    return ConvertTo-MetraDeskPayload -Snapshot $snapshot -MetraRoot $MetraRoot
+    return ConvertTo-MetraDeskPayload -Snapshot $snapshot -MetraRoot $MetraRoot -Request $Request
 }
 
