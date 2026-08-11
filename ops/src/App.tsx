@@ -2811,9 +2811,9 @@ export default function App() {
             <div>
               <strong>How I show up on this PC</strong>
               <p className="muted">
-                Choose how this machine fits into your Metra setup. HQ is home base - other
-                devices come here to work in Metra. Satellite connects to your main Metra
-                machine. Standalone keeps everything on this PC.
+                Choose how this machine fits into your Metra setup. Standalone keeps everything
+                on this PC. HQ is home base - other devices come here to work in Metra.
+                Satellite connects to your main Metra machine.
               </p>
               <label className="settings-field">
                 <span className="muted">Role</span>
@@ -2824,9 +2824,9 @@ export default function App() {
                     setMachineRoleDraft(e.target.value as 'Hq' | 'Satellite' | 'Standalone')
                   }
                 >
+                  <option value="Standalone">Standalone - everything stays on this PC</option>
                   <option value="Hq">HQ (Main Metra machine)</option>
                   <option value="Satellite">Satellite - connects to your main Metra machine</option>
-                  <option value="Standalone">Standalone - everything stays on this PC</option>
                 </select>
               </label>
               <label className="settings-field">

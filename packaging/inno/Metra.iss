@@ -27,6 +27,8 @@ DefaultGroupName={#MyAppName}
 DisableProgramGroupPage=yes
 ; Selected destination IS {app} - do not append \Metra under the chosen folder.
 AppendDefaultDirName=no
+; Always show Select Dir so the operator can change it; UsePreviousAppDir still prefills.
+DisableDirPage=no
 PrivilegesRequired=lowest
 OutputDir=..\out
 OutputBaseFilename=MetraSetup-{#MyAppVersion}
@@ -73,9 +75,10 @@ Name: "{autoprograms}\Metra Setup"; Filename: "{app}\{#MyAppExeName}"; WorkingDi
 Name: "{group}\Uninstall Metra"; Filename: "{uninstallexe}"
 
 [Run]
-; Quiet setup for HQ / Satellite / Standalone only (Files only skips via Check).
+; Quiet setup for Standalone / HQ / Satellite only (Files only skips via Check).
+; Runs during install (no Finished checkbox) - wizard already collected the answers.
 ; Transcript: {app}\docs\setup.local.log
-Filename: "{app}\{#MyAppExeName}"; Parameters: "{code:GetSetupRunParams}"; WorkingDir: "{app}"; Description: "Setting up Metra"; StatusMsg: "Setting up Metra (see docs\setup.local.log)..."; Flags: postinstall skipifsilent runhidden waituntilterminated; Check: ShouldRunQuietSetup
+Filename: "{app}\{#MyAppExeName}"; Parameters: "{code:GetSetupRunParams}"; WorkingDir: "{app}"; StatusMsg: "Setting up Metra (see docs\setup.local.log)..."; Flags: skipifsilent runhidden waituntilterminated; Check: ShouldRunQuietSetup
 
 [UninstallDelete]
 ; Do not delete user state (metra.config.json, projects.local.json, ledgers, local mdc).
@@ -127,6 +130,7 @@ begin
             DirExists(AddBackslash(Dir) + 'Solarwinds');
 end;
 
+// Role radio order: 0 Standalone (default), 1 HQ, 2 Satellite, 3 Files only.
 function IsFilesOnly: Boolean;
 begin
   Result := RolePage.Values[3];
@@ -135,18 +139,18 @@ end;
 function GetSelectedRole: String;
 begin
   if RolePage.Values[0] then
-    Result := 'Hq'
-  else if RolePage.Values[1] then
-    Result := 'Satellite'
-  else if RolePage.Values[2] then
     Result := 'Standalone'
+  else if RolePage.Values[1] then
+    Result := 'Hq'
+  else if RolePage.Values[2] then
+    Result := 'Satellite'
   else
     Result := 'FilesOnly';
 end;
 
 function IsHostRole: Boolean;
 begin
-  Result := RolePage.Values[0] or RolePage.Values[2];
+  Result := RolePage.Values[0] or RolePage.Values[1];
 end;
 
 function ShouldRunQuietSetup: Boolean;
@@ -156,9 +160,9 @@ end;
 
 function PreferFriendlySelected: Boolean;
 begin
-  if RolePage.Values[0] then
+  if RolePage.Values[1] then
     Result := NetOpenRec.Checked
-  else if RolePage.Values[2] then
+  else if RolePage.Values[0] then
     Result := FriendlyPage.Values[0]
   else
     Result := True;
@@ -166,7 +170,7 @@ end;
 
 function BindTailscaleSelected: Boolean;
 begin
-  Result := RolePage.Values[0] and NetTsYes.Checked;
+  Result := RolePage.Values[1] and NetTsYes.Checked;
 end;
 
 function GetSetupRunParams(Param: String): String;
@@ -203,11 +207,11 @@ var
   Lines, RoleLabel, OpsLine, AskLine: String;
 begin
   if RolePage.Values[0] then
-    RoleLabel := 'HQ (Main Metra machine)'
-  else if RolePage.Values[1] then
-    RoleLabel := 'Satellite'
-  else if RolePage.Values[2] then
     RoleLabel := 'Standalone'
+  else if RolePage.Values[1] then
+    RoleLabel := 'HQ (Main Metra machine)'
+  else if RolePage.Values[2] then
+    RoleLabel := 'Satellite'
   else
     RoleLabel := 'Files only';
 
@@ -216,7 +220,7 @@ begin
     OpsLine := 'Setup: Not run - choose a role later via Metra Setup';
     AskLine := 'Ask assistant: Not installed';
   end
-  else if RolePage.Values[1] then
+  else if RolePage.Values[2] then
   begin
     OpsLine := 'Main Metra machine: ' + Trim(OpsUrlPage.Values[0]);
     AskLine := 'Ask assistant: Not installed';
@@ -227,7 +231,7 @@ begin
       OpsLine := 'Open Metra: Recommended (http://metra/)'
     else
       OpsLine := 'Open Metra: Local only (http://127.0.0.1:7380/)';
-    if RolePage.Values[0] then
+    if RolePage.Values[1] then
     begin
       if BindTailscaleSelected then
         OpsLine := OpsLine + #13#10 + 'Tailscale access: Yes'
@@ -255,17 +259,17 @@ begin
   RolePage := CreateInputOptionPage(wpSelectDir,
     'Machine role', 'How should I show up on this PC?',
     'Choose how this machine fits into your Metra setup.' + #13#10 +
+    'Standalone keeps everything on this PC (best for most people).' + #13#10 +
     'HQ is home base - other devices come here to work in Metra.' + #13#10 +
     'Satellite connects to your main Metra machine (laptops and secondary devices).' + #13#10 +
-    'Standalone keeps everything on this PC.' + #13#10 +
-    'HQ, Satellite, and Standalone configure Metra after installation.' + #13#10 +
+    'Standalone, HQ, and Satellite configure Metra after installation.' + #13#10 +
     'Files only installs Metra without choosing a role yet.',
     True, False);
-  RolePage.Add('HQ (Main Metra machine)');
-  RolePage.Add('Satellite (Recommended for laptops)');
   RolePage.Add('Standalone (Everything stays on this PC)');
+  RolePage.Add('HQ (Main Metra machine)');
+  RolePage.Add('Satellite (Connects to your main Metra machine)');
   RolePage.Add('Files only (Choose a role later)');
-  RolePage.Values[1] := True;
+  RolePage.Values[0] := True;
 
   OpsUrlPage := CreateInputQueryPage(RolePage.ID,
     'Connect to your main Metra machine',
@@ -358,11 +362,11 @@ function ShouldSkipPage(PageID: Integer): Boolean;
 begin
   Result := False;
   if PageID = OpsUrlPage.ID then
-    Result := not RolePage.Values[1]
-  else if PageID = NetPage.ID then
-    Result := not RolePage.Values[0]
-  else if PageID = FriendlyPage.ID then
     Result := not RolePage.Values[2]
+  else if PageID = NetPage.ID then
+    Result := not RolePage.Values[1]
+  else if PageID = FriendlyPage.ID then
+    Result := not RolePage.Values[0]
   else if PageID = AskPage.ID then
     Result := not IsHostRole
   else if PageID = SummaryPage.ID then

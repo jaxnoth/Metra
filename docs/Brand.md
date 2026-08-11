@@ -182,9 +182,9 @@ Canonical **operator-facing** words. Brand owns this glossary; installer, Metra 
 | **Metra Ops** (desk UI; name after first handoff) | Ops desk, Ops host, jumpbox | HTML `ops/`, `opsBaseUrl` key |
 | **desk** / **work in Metra** | Ops desk (until Metra Ops is named) | - |
 | **How should I show up on this PC?** | Run Metra setup now? | `Invoke-MetraSetup` |
+| **Standalone** - everything stays on this PC (installer default; best for most people) | local only; no remote Ops | `machineRole: Standalone` |
 | **HQ (Main Metra machine)** - Home base. Other devices come here to work in Metra | HQ hosts Ops / jumpbox | `machineRole: Hq` |
 | **Satellite** - connects to your main Metra machine | use HQ Ops URL | `machineRole: Satellite` |
-| **Standalone** - everything stays on this PC | local only; no remote Ops | `machineRole: Standalone` |
 | **Files only** - Install Metra now. Choose a role later. (installer only) | Skip setup / uncheck Run setup | no postinstall setup |
 | **Main Metra address** | OpsBaseUrl, HQ Ops URL | profile `opsBaseUrl` |
 | **Ask assistant** | Ask engine (operator labels) | engine APIs / Ollama under the hood |
