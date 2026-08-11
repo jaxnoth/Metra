@@ -22,7 +22,8 @@ function Get-MetraProposalStoreRoot {
     }
 
     if (-not (Test-Path -LiteralPath $root)) {
-        $null = New-Item -ItemType Directory -Path $root -Force
+        # Directory.CreateDirectory is literal-path safe; New-Item -LiteralPath is not on all hosts.
+        [void][System.IO.Directory]::CreateDirectory($root)
     }
 
     return $root
@@ -210,6 +211,35 @@ function Test-MetraProposalStatusTransition {
     return ($allowed -contains $To)
 }
 
+function Assert-MetraProposalPathRelative {
+    <#
+    .SYNOPSIS
+        Rejects rooted, UNC, or parent-segment pathRelative values before jail/apply.
+    #>
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory)][AllowEmptyString()][string]$PathRelative
+    )
+
+    $norm = $PathRelative.Trim().Replace('\', '/')
+    if ([string]::IsNullOrWhiteSpace($norm)) {
+        throw 'Each proposal file requires pathRelative.'
+    }
+    if ($norm.Contains([char]0)) {
+        throw "Invalid pathRelative (null byte): $PathRelative"
+    }
+    if ($norm.StartsWith('/') -or $norm.StartsWith('\\') -or $norm -match '^[A-Za-z]:') {
+        throw "Invalid pathRelative (must be relative): $PathRelative"
+    }
+    if ([System.IO.Path]::IsPathRooted(($norm -replace '/', '\'))) {
+        throw "Invalid pathRelative (must be relative): $PathRelative"
+    }
+    if ($norm -match '(^|/)\.\.(/|$)') {
+        throw "Invalid pathRelative (parent segment not allowed): $PathRelative"
+    }
+    return $norm
+}
+
 function Assert-MetraProposalFileEntries {
     param(
         [Parameter(Mandatory)][object[]]$Files
@@ -219,27 +249,32 @@ function Assert-MetraProposalFileEntries {
         throw 'Proposal files must contain at least one entry.'
     }
 
+    $seen = @{}
     foreach ($file in $Files) {
         $pathRelative = [string](Get-MetraProposalEntryValue -Entry $file -Name 'pathRelative')
         $action = [string](Get-MetraProposalEntryValue -Entry $file -Name 'action')
         $hasContent = Test-MetraProposalEntryHasName -Entry $file -Name 'contentUtf8'
 
-        if ([string]::IsNullOrWhiteSpace($pathRelative)) {
-            throw 'Each proposal file requires pathRelative.'
+        $normPath = Assert-MetraProposalPathRelative -PathRelative $pathRelative
+        $key = $normPath.ToLowerInvariant()
+        if ($seen.ContainsKey($key)) {
+            throw "Duplicate proposal path: $normPath"
         }
+        $seen[$key] = $true
+
         if ($action -notin @('create', 'replace')) {
             throw "Proposal file action must be create or replace (got '$action')."
         }
         if (-not $hasContent) {
-            throw "Proposal file '$pathRelative' requires contentUtf8."
+            throw "Proposal file '$normPath' requires contentUtf8."
         }
 
         $previousHash = Get-MetraProposalEntryValue -Entry $file -Name 'previousHash'
         if ($action -eq 'replace' -and [string]::IsNullOrWhiteSpace([string]$previousHash)) {
-            throw "Replace action for '$pathRelative' requires previousHash."
+            throw "Replace action for '$normPath' requires previousHash."
         }
         if ($action -eq 'create' -and -not [string]::IsNullOrWhiteSpace([string]$previousHash)) {
-            throw "Create action for '$pathRelative' must not include previousHash."
+            throw "Create action for '$normPath' must not include previousHash."
         }
     }
 }
@@ -252,11 +287,11 @@ function ConvertTo-MetraProposalNormalizedFiles {
     Assert-MetraProposalFileEntries -Files $Files
 
     return @($Files | ForEach-Object {
-            $pathRelative = [string](Get-MetraProposalEntryValue -Entry $_ -Name 'pathRelative')
+            $pathRelative = Assert-MetraProposalPathRelative -PathRelative ([string](Get-MetraProposalEntryValue -Entry $_ -Name 'pathRelative'))
             $action = [string](Get-MetraProposalEntryValue -Entry $_ -Name 'action')
             $contentUtf8 = [string](Get-MetraProposalEntryValue -Entry $_ -Name 'contentUtf8')
             $row = [ordered]@{
-                pathRelative = $pathRelative.Replace('\', '/')
+                pathRelative = $pathRelative
                 action       = $action
                 contentUtf8  = $contentUtf8
             }
@@ -328,11 +363,14 @@ function Write-MetraProposalJsonFile {
     )
 
     $dir = Split-Path -Parent $Path
-    if (-not (Test-Path -LiteralPath $dir)) {
-        $null = New-Item -ItemType Directory -Path $dir -Force
+    if ($dir -and -not (Test-Path -LiteralPath $dir)) {
+        # Directory.CreateDirectory is literal-path safe; New-Item -LiteralPath is not on all hosts.
+        [void][System.IO.Directory]::CreateDirectory($dir)
     }
-    $json = $Object | ConvertTo-Json -Depth 30
-    Set-Content -LiteralPath $Path -Value $json -Encoding UTF8
+    $json = ($Object | ConvertTo-Json -Depth 30) + "`r`n"
+    $tmp = "$Path.tmp"
+    [System.IO.File]::WriteAllText($tmp, $json, (Get-MetraUtf8NoBomEncoding))
+    Move-Item -LiteralPath $tmp -Destination $Path -Force
 }
 
 function New-MetraProposal {
@@ -662,6 +700,9 @@ function Find-MetraActiveProposalForProject {
     }
 
     $store = Get-MetraProposalStoreRoot -StoreRoot $StoreRoot
+    # One store-wide expiration pass (not per-id) so N proposals do not mean N rescans.
+    try { $null = Sync-MetraProposalExpiration -StoreRoot $store } catch { }
+
     $ids = @(Get-ChildItem -LiteralPath $store -Filter '*.json' -File -ErrorAction SilentlyContinue |
         Where-Object { $_.Name -notlike '*.body.json' } |
         ForEach-Object { [System.IO.Path]::GetFileNameWithoutExtension($_.Name) })
@@ -670,7 +711,6 @@ function Find-MetraActiveProposalForProject {
     $draft = $null
     foreach ($id in $ids) {
         try {
-            $null = Sync-MetraProposalExpiration -Id $id -StoreRoot $store
             $proposal = Get-MetraProposal -Id $id -StoreRoot $store
             if ([string]$proposal.Body.project -ne $Project) {
                 continue

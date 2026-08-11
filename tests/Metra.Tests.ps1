@@ -140,6 +140,169 @@ Describe 'Import-MetraProfile' {
     }
 }
 
+Describe 'Test-MetraOpsRequestIsSameMachine Serve headers' {
+    It 'loopback without Serve headers is local' {
+        InModuleScope Metra {
+            $req = [PSCustomObject]@{
+                Headers        = @{}
+                RemoteEndPoint = [PSCustomObject]@{ Address = [System.Net.IPAddress]::Loopback }
+            }
+            Test-MetraOpsRequestIsSameMachine -Request $req | Should -BeTrue
+        }
+    }
+
+    It 'IPv6 loopback without Serve headers is local' {
+        InModuleScope Metra {
+            $req = [PSCustomObject]@{
+                Headers        = @{}
+                RemoteEndPoint = [PSCustomObject]@{ Address = [System.Net.IPAddress]::IPv6Loopback }
+            }
+            Test-MetraOpsRequestIsSameMachine -Request $req | Should -BeTrue
+        }
+    }
+
+    It 'validated X-Metra-Local-Session makes non-loopback local' {
+        InModuleScope Metra {
+            Mock Test-MetraOpsLocalSessionToken { param($SessionToken) $SessionToken -eq 'desk-token' }
+            $req = [PSCustomObject]@{
+                Headers        = @{ 'X-Metra-Local-Session' = 'desk-token' }
+                RemoteEndPoint = [PSCustomObject]@{ Address = [System.Net.IPAddress]::Parse('100.64.1.9') }
+            }
+            Test-MetraOpsRequestIsSameMachine -Request $req | Should -BeTrue
+        }
+    }
+
+    It 'forged X-Metra-Local-Session without valid token is not local by header alone' {
+        InModuleScope Metra {
+            Mock Test-MetraOpsLocalSessionToken { $false }
+            $req = [PSCustomObject]@{
+                Headers        = @{ 'X-Metra-Local-Session' = 'forged' }
+                RemoteEndPoint = [PSCustomObject]@{ Address = [System.Net.IPAddress]::Parse('100.64.1.9') }
+            }
+            Test-MetraOpsRequestIsSameMachine -Request $req | Should -BeFalse
+        }
+    }
+
+    It 'own-IP match is local when session header is absent' {
+        InModuleScope Metra {
+            $mine = @([System.Net.Dns]::GetHostAddresses([System.Net.Dns]::GetHostName()) |
+                    Where-Object { -not [System.Net.IPAddress]::IsLoopback($_) } |
+                    Select-Object -First 1)
+            if ($mine.Count -lt 1) {
+                Set-ItResult -Skipped -Because 'no non-loopback host address available'
+                return
+            }
+            $req = [PSCustomObject]@{
+                Headers        = @{}
+                RemoteEndPoint = [PSCustomObject]@{ Address = $mine[0] }
+            }
+            Test-MetraOpsRequestIsSameMachine -Request $req | Should -BeTrue
+        }
+    }
+
+    It 'loopback with Tailscale-User-Login is remote' {
+        InModuleScope Metra {
+            $req = [PSCustomObject]@{
+                Headers        = @{ 'Tailscale-User-Login' = 'user@example.com' }
+                RemoteEndPoint = [PSCustomObject]@{ Address = [System.Net.IPAddress]::Loopback }
+            }
+            Test-MetraOpsRequestIsSameMachine -Request $req | Should -BeFalse
+        }
+    }
+
+    It 'Serve headers deny even when a valid local session token is present' {
+        InModuleScope Metra {
+            Mock Test-MetraOpsLocalSessionToken { $true }
+            $req = [PSCustomObject]@{
+                Headers        = @{
+                    'Tailscale-User-Login'   = 'user@example.com'
+                    'X-Metra-Local-Session' = 'desk-token'
+                }
+                RemoteEndPoint = [PSCustomObject]@{ Address = [System.Net.IPAddress]::Loopback }
+            }
+            Test-MetraOpsRequestIsSameMachine -Request $req | Should -BeFalse
+        }
+    }
+
+    It 'loopback with non-loopback X-Forwarded-For is remote' {
+        InModuleScope Metra {
+            $req = [PSCustomObject]@{
+                Headers        = @{ 'X-Forwarded-For' = '100.64.1.2' }
+                RemoteEndPoint = [PSCustomObject]@{ Address = [System.Net.IPAddress]::Loopback }
+            }
+            Test-MetraOpsRequestIsSameMachine -Request $req | Should -BeFalse
+        }
+    }
+}
+
+Describe 'Get-MetraProfileSyncClientStatus' {
+    It 'Current when hashes match' {
+        InModuleScope Metra {
+            $temp = Join-Path $TestDrive 'profile-status-current'
+            New-Item -ItemType Directory -Path (Join-Path $temp 'docs') -Force | Out-Null
+            Mock Get-MetraRoot { $temp }
+            $null = Save-MetraProfileSyncLocalState -State ([ordered]@{
+                    lastAppliedHash = 'sha256:abc'
+                    syncToken       = 'tok'
+                    opsBaseUrl      = 'https://hq.example'
+                }) -MetraRoot $temp
+            $r = Get-MetraProfileSyncClientStatus -RemoteStatus ([PSCustomObject]@{ contentHash = 'sha256:abc' }) -Quiet
+            $r.State | Should -Be 'Current'
+            $r.Ok | Should -BeTrue
+        }
+    }
+
+    It 'Behind when hashes differ' {
+        InModuleScope Metra {
+            $temp = Join-Path $TestDrive 'profile-status-behind'
+            New-Item -ItemType Directory -Path (Join-Path $temp 'docs') -Force | Out-Null
+            Mock Get-MetraRoot { $temp }
+            $null = Save-MetraProfileSyncLocalState -State ([ordered]@{
+                    lastAppliedHash = 'sha256:old'
+                    syncToken       = 'tok'
+                    opsBaseUrl      = 'https://hq.example'
+                }) -MetraRoot $temp
+            $r = Get-MetraProfileSyncClientStatus -RemoteStatus ([PSCustomObject]@{ contentHash = 'sha256:new' }) -Quiet
+            $r.State | Should -Be 'Behind'
+            $r.Ok | Should -BeTrue
+        }
+    }
+
+    It 'Unknown when OpsBaseUrl cannot resolve' {
+        InModuleScope Metra {
+            $temp = Join-Path $TestDrive 'profile-status-unknown'
+            New-Item -ItemType Directory -Path (Join-Path $temp 'docs') -Force | Out-Null
+            Mock Get-MetraRoot { $temp }
+            $r = Get-MetraProfileSyncClientStatus -Quiet
+            $r.State | Should -Be 'Unknown'
+            $r.Ok | Should -BeFalse
+            $r.Message | Should -Match 'Unable to reach'
+        }
+    }
+}
+
+Describe 'Profile satellite check-in roster' {
+    It 'upserts and derives Current Behind Stale' {
+        InModuleScope Metra {
+            $path = Join-Path $TestDrive 'profile-satellites.local.json'
+            $null = Save-MetraProfileSatelliteCheckIn -MachineName 'Laptop-A' -LastAppliedHash 'sha256:pub' -Path $path
+            $null = Save-MetraProfileSatelliteCheckIn -MachineName 'Laptop-B' -LastAppliedHash 'sha256:old' -Path $path
+
+            $raw = Get-Content -LiteralPath $path -Raw | ConvertFrom-Json
+            $row = @($raw.satellites) | Where-Object { $_.machineName -eq 'Laptop-A' } | Select-Object -First 1
+            $row.lastSeenUtc = ([DateTime]::UtcNow.AddDays(-21)).ToString('o')
+            $payload = [ordered]@{ updatedUtc = [DateTime]::UtcNow.ToString('o'); satellites = @($raw.satellites) }
+            ($payload | ConvertTo-Json -Depth 6) | Set-Content -Path $path -Encoding utf8
+
+            $roster = Get-MetraProfileSatelliteRoster -PublisherHash 'sha256:pub' -Path $path
+            $a = @($roster.Satellites) | Where-Object { $_.machineName -eq 'Laptop-A' } | Select-Object -First 1
+            $b = @($roster.Satellites) | Where-Object { $_.machineName -eq 'Laptop-B' } | Select-Object -First 1
+            $a.state | Should -Be 'Stale'
+            $b.state | Should -Be 'Behind'
+        }
+    }
+}
+
 Describe 'Export-MetraContext' {
     It 'Path - with Quiet does not rewrite docs/context-pack.md' {
         $packPath = Join-Path (Get-MetraRoot) 'docs\context-pack.md'
@@ -160,6 +323,22 @@ Describe 'Export-MetraContext' {
         if ($null -ne $before -and (Test-Path -LiteralPath $packPath)) {
             (Get-Item -LiteralPath $packPath).LastWriteTimeUtc | Should -Be $before
         }
+    }
+
+    It 'AsString matches Path - stdout semantics' {
+        $result = Export-MetraContext -Query 'ticket' -AsString -Quiet |
+            Select-Object -Last 1
+        $result.Path | Should -Be '-'
+    }
+
+    It 'rejects Limit outside 1-100' {
+        { Export-MetraContext -Limit 5000 -Quiet } |
+            Should -Throw -ErrorId 'ParameterArgumentValidationError,Export-MetraContext'
+    }
+
+    It 'rejects missing parent directory for file Path' {
+        $missing = Join-Path $env:TEMP ("metra-ctx-missing-{0}\pack.md" -f [guid]::NewGuid().ToString('n'))
+        { Export-MetraContext -Path $missing -Quiet } | Should -Throw
     }
 }
 
@@ -1285,6 +1464,14 @@ Describe 'HTML Ops desk payload' {
         $boot | Should -Not -Match "@\('ops'"
     }
 
+    It 'calls Initialize-Metra by name from Start-MetraSetup (no array splat through metra.ps1)' {
+        # Array splatting switches into metra.ps1 lands them in $Rest; setup treated -Quiet as a profile path.
+        $boot = Get-Content -LiteralPath (Join-Path (Get-MetraRoot) 'scripts\bootstrap\Start-MetraSetup.ps1') -Raw
+        $boot | Should -Match 'Initialize-Metra @setupParams'
+        $boot | Should -Not -Match "metra\.ps1'\) @setupArgs"
+        $boot | Should -Not -Match "@\('setup'"
+    }
+
     It 'defaults deskMode to general and accepts advanced' {
         $prefs = Set-MetraDeskPreferences -DeskMode general
         $prefs.deskMode | Should -Be 'general'
@@ -1558,6 +1745,35 @@ Describe 'HTML Ops desk payload' {
             $editor.Kind | Should -Be 'system'
             $editor.Exe | Should -BeNullOrEmpty
             $editor.Label | Should -Be 'Windows default'
+        }
+    }
+
+    It 'resolves a custom editor path when the file exists; missing falls back to system' {
+        InModuleScope Metra {
+            $custom = Join-Path $TestDrive 'fake-editor.exe'
+            Set-Content -LiteralPath $custom -Value '' -Encoding ascii
+            $hit = Resolve-MetraOpsEditor -Preference $custom
+            $hit.Kind | Should -Be 'custom'
+            $hit.Exe | Should -Be (Resolve-Path -LiteralPath $custom).Path
+
+            $miss = Resolve-MetraOpsEditor -Preference (Join-Path $TestDrive 'missing-editor.exe')
+            $miss.Kind | Should -Be 'system'
+            $miss.Exe | Should -BeNullOrEmpty
+            $miss.Label | Should -Match 'not found'
+        }
+    }
+
+    It 'Test-MetraPathWithinRoot accepts descendants and rejects sibling prefix tricks' {
+        InModuleScope Metra {
+            $root = Join-Path $TestDrive 'portfolio'
+            $child = Join-Path $root 'TicketTracker'
+            $sibling = Join-Path $TestDrive 'portfolio-evil'
+            New-Item -ItemType Directory -Path $child, $sibling -Force | Out-Null
+
+            Test-MetraPathWithinRoot -Path $root -Root $root | Should -BeTrue
+            Test-MetraPathWithinRoot -Path $child -Root $root | Should -BeTrue
+            Test-MetraPathWithinRoot -Path $sibling -Root $root | Should -BeFalse
+            Test-MetraPathWithinRoot -Path ([Environment]::GetFolderPath('Windows')) -Root $root | Should -BeFalse
         }
     }
 
@@ -1929,6 +2145,9 @@ Describe 'HTML Ops desk payload' {
             $ticketItems.Count | Should -BeGreaterThan 0
             ($ticketItems | ForEach-Object { $_.excerpt }) -join ' ' | Should -Match '1035096'
             ($ticketItems | ForEach-Object { $_.excerpt }) -join ' ' | Should -Not -Match '(?i)PROBLEM_TEXT|full brief body|INCIDENT DESCRIPTION'
+            foreach ($t in $ticketItems) {
+                [bool]$t.factualSupport | Should -BeFalse
+            }
             foreach ($it in @($pack.items)) {
                 ([string]$it.excerpt).Length | Should -BeLessOrEqual 400
             }
@@ -2757,6 +2976,8 @@ Describe 'Ask multi-engine (ladder 1)' {
         $eng | Should -Match '/VERYSILENT'
         $eng | Should -Match '/SUPPRESSMSGBOXES'
         $eng | Should -Match 'Set-MetraAskOllamaHiddenStartMarker'
+        $eng | Should -Match 'Test-MetraAskOllamaInstallerSignature'
+        $eng | Should -Match 'O=Ollama Inc\.'
     }
 
     It 'runtime WhatIf reports the silent setup path' {
@@ -3325,9 +3546,15 @@ Describe 'Secure Ops proposal host apply' {
         New-Item -ItemType Directory -Path (Join-Path $script:applyRoot 'docs') -Force | Out-Null
         New-Item -ItemType Directory -Path $script:applyData -Force | Out-Null
         Set-Content -LiteralPath (Join-Path $script:applyRoot 'docs\notes.md') -Value "hello`n" -Encoding utf8NoBOM
+        # Unattended apply is test-gated; host apply suite may use -SkipConfirmForTest.
+        $env:METRA_ALLOW_UNATTENDED_APPLY = '1'
+        # Temp roots are not the live Metra checkout path - skip registry RootPath match in jail apply.
+        $env:METRA_JAIL_SKIP_ROOT_MATCH = '1'
     }
 
     AfterEach {
+        Remove-Item Env:\METRA_ALLOW_UNATTENDED_APPLY -ErrorAction SilentlyContinue
+        Remove-Item Env:\METRA_JAIL_SKIP_ROOT_MATCH -ErrorAction SilentlyContinue
         foreach ($path in @($script:applyStore, $script:applyRoot, $script:applyData)) {
             if ($path -and (Test-Path -LiteralPath $path)) {
                 Remove-Item -LiteralPath $path -Recurse -Force -ErrorAction SilentlyContinue
@@ -3703,12 +3930,45 @@ Describe 'Secure Ops webview bridge and Tailscale session' {
         $source | Should -Match 'Get-MetraOpsDeskBindingForPort'
     }
 
-    It 'OpsServer exposes loopback-only local-session and CORS session header' {
+    It 'OpsServer local-authority hardening (no wildcard CORS)' {
         $source = Get-Content -LiteralPath (Join-Path (Get-MetraRoot) 'scripts\private\OpsServer.ps1') -Raw
+        $source | Should -Match 'function Test-MetraOpsRequestHasLocalAuthority'
+        $source | Should -Match 'function Assert-MetraOpsLocalAuthority'
+        $source | Should -Not -Match "Access-Control-Allow-Origin'\] = '\*'"
         $source | Should -Match '/api/local-session'
         $source | Should -Match 'localSessionLoopbackOnly'
-        $source | Should -Match 'X-Metra-Local-Session'
-        $source | Should -Match 'Initialize-MetraOpsLocalSessionToken'
+        $source | Should -Match 'Test-MetraOpsRequestLooksProxiedThroughServe'
+        $source | Should -Match 'localSessionServeDenied'
+        $source | Should -Match '/api/profile/satellites'
+        $source | Should -Match 'Test-MetraOpsRequestHasLocalAuthority -Request \$Request'
+        $source | Should -Match 'Test-MetraPathWithinRoot -Path \$candidate -Root \$DistPath'
+        $source | Should -Match 'MaxBytes = 1048576'
+        $source | Should -Match 'Request body too large'
+    }
+
+    It 'Test-MetraOpsRequestHasLocalAuthority accepts same-machine or valid session' {
+        InModuleScope Metra {
+            $req = [PSCustomObject]@{
+                Headers = @{ 'X-Metra-Local-Session' = 'bad-token' }
+            }
+            Mock Test-MetraOpsRequestIsSameMachine { $true }
+            Mock Test-MetraOpsLocalSessionToken { $false }
+            Test-MetraOpsRequestHasLocalAuthority -Request $req | Should -BeTrue
+
+            Mock Test-MetraOpsRequestIsSameMachine { $false }
+            Mock Test-MetraOpsLocalSessionToken { $true }
+            Test-MetraOpsRequestHasLocalAuthority -Request $req | Should -BeTrue
+
+            Mock Test-MetraOpsLocalSessionToken { $false }
+            Test-MetraOpsRequestHasLocalAuthority -Request $req | Should -BeFalse
+        }
+    }
+
+    It 'Read-MetraOpsRequestBytes enforces MaxBytes default and too-large message' {
+        $source = Get-Content -LiteralPath (Join-Path (Get-MetraRoot) 'scripts\private\OpsServer.ps1') -Raw
+        $source | Should -Match '\[int\]\$MaxBytes = 1048576'
+        $source | Should -Match 'Request body too large'
+        $source | Should -Match 'MaxBytes 10485760'
     }
 }
 

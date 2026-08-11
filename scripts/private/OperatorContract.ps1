@@ -54,7 +54,16 @@ function Get-MetraOperatorContract {
         return New-MetraOperatorContractEmpty
     }
 
-    $obj = $raw | ConvertFrom-Json
+    try {
+        $obj = $raw | ConvertFrom-Json
+    }
+    catch {
+        throw (
+            "Failed to parse operator contract ledger '{0}': {1}" -f
+            $paths.LedgerPath,
+            $_.Exception.Message
+        )
+    }
     $candidates = @()
     if ($null -ne $obj.candidates) {
         $candidates = @($obj.candidates)
@@ -96,7 +105,8 @@ function Save-MetraOperatorContract {
     $paths = Get-MetraOperatorContractPaths -MetraRoot $MetraRoot
     $docsDir = Split-Path -Parent $paths.LedgerPath
     if (-not (Test-Path -LiteralPath $docsDir)) {
-        New-Item -ItemType Directory -Path $docsDir -Force | Out-Null
+        # Directory.CreateDirectory is literal-path safe; New-Item -LiteralPath is not on all hosts.
+        [void][System.IO.Directory]::CreateDirectory($docsDir)
     }
 
     $payload = [ordered]@{
@@ -156,6 +166,46 @@ function Normalize-MetraOperatorContractClaim {
     ($Text -replace '\s+', ' ').Trim()
 }
 
+function Get-MetraOperatorContractUtcDateTime {
+    <#
+    .SYNOPSIS
+        Normalizes a DateTime to UTC so Kind-safe comparisons succeed under StrictMode.
+    #>
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory)][datetime]$Value
+    )
+
+    if ($Value.Kind -eq [DateTimeKind]::Utc) { return $Value }
+    if ($Value.Kind -eq [DateTimeKind]::Unspecified) {
+        return [datetime]::SpecifyKind($Value, [DateTimeKind]::Utc)
+    }
+    return $Value.ToUniversalTime()
+}
+
+function Get-MetraOperatorContractCandidateTimestamp {
+    <#
+    .SYNOPSIS
+        Parses candidate updatedAt (else createdAt) as UTC DateTime, or $null.
+    #>
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory)]$Candidate
+    )
+
+    $updated = [string](Get-MetraProp -Object $Candidate -Name 'updatedAt' -Default '')
+    $created = [string](Get-MetraProp -Object $Candidate -Name 'createdAt' -Default '')
+    $stampText = if ($updated) { $updated } else { $created }
+    if ([string]::IsNullOrWhiteSpace($stampText)) { return $null }
+    try {
+        $parsed = [datetime]::Parse($stampText, $null, [System.Globalization.DateTimeStyles]::RoundtripKind)
+        return (Get-MetraOperatorContractUtcDateTime -Value $parsed)
+    }
+    catch {
+        return $null
+    }
+}
+
 function Find-MetraOperatorContractSimilarCandidate {
     param(
         $Contract,
@@ -165,7 +215,8 @@ function Find-MetraOperatorContractSimilarCandidate {
     $norm = (Normalize-MetraOperatorContractClaim $Text).ToLowerInvariant()
     foreach ($c in @($Contract.candidates)) {
         $ct = [string](Get-MetraProp -Object $c -Name 'text' -Default '')
-        if ($ct.ToLowerInvariant() -eq $norm) {
+        $ctNorm = (Normalize-MetraOperatorContractClaim $ct).ToLowerInvariant()
+        if ($ctNorm -eq $norm) {
             return $c
         }
     }
@@ -193,13 +244,15 @@ function Resolve-MetraOperatorContractEntry {
     $norm = (Normalize-MetraOperatorContractClaim $key).ToLowerInvariant()
     foreach ($c in @($Contract.candidates)) {
         $ct = [string](Get-MetraProp -Object $c -Name 'text' -Default '')
-        if ($ct.ToLowerInvariant() -eq $norm) {
+        $ctNorm = (Normalize-MetraOperatorContractClaim $ct).ToLowerInvariant()
+        if ($ctNorm -eq $norm) {
             return [PSCustomObject]@{ Bucket = 'candidates'; Entry = $c }
         }
     }
     foreach ($c in @($Contract.confirmedGuidelines)) {
         $ct = [string](Get-MetraProp -Object $c -Name 'text' -Default '')
-        if ($ct.ToLowerInvariant() -eq $norm) {
+        $ctNorm = (Normalize-MetraOperatorContractClaim $ct).ToLowerInvariant()
+        if ($ctNorm -eq $norm) {
             return [PSCustomObject]@{ Bucket = 'confirmedGuidelines'; Entry = $c }
         }
     }
@@ -220,7 +273,7 @@ function Write-MetraOperatorContractLearnedRule {
     $paths = Get-MetraOperatorContractPaths -MetraRoot $MetraRoot
     $rulesDir = Split-Path -Parent $paths.LearnedPath
     if (-not (Test-Path -LiteralPath $rulesDir)) {
-        New-Item -ItemType Directory -Path $rulesDir -Force | Out-Null
+        [void][System.IO.Directory]::CreateDirectory($rulesDir)
     }
 
     $lines = New-Object System.Collections.Generic.List[string]
@@ -353,9 +406,11 @@ function Promote-MetraOperatorContractGuideline {
         throw ("Confirmed guideline budget is full ({0}). Run profile forget <id> before promoting another." -f $max)
     }
 
+    $textNorm = (Normalize-MetraOperatorContractClaim $text).ToLowerInvariant()
     foreach ($g in $confirmed) {
         $gt = [string](Get-MetraProp -Object $g -Name 'text' -Default '')
-        if ($gt.ToLowerInvariant() -eq $text.ToLowerInvariant()) {
+        $gtNorm = (Normalize-MetraOperatorContractClaim $gt).ToLowerInvariant()
+        if ($gtNorm -eq $textNorm) {
             throw ("Already confirmed as {0}" -f $g.id)
         }
     }
@@ -444,17 +499,12 @@ function Clear-MetraOperatorContractStaleCandidates {
     $contract = Get-MetraOperatorContract -MetraRoot $MetraRoot
     $days = [int]$contract.candidateStaleDays
     if ($days -le 0) { $days = $script:MetraOperatorContractStaleDays }
-    $cutoff = (Get-Date).ToUniversalTime().AddDays(-1 * $days)
+    $asOfUtc = Get-MetraOperatorContractUtcDateTime -Value (Get-Date).ToUniversalTime()
+    $cutoff = $asOfUtc.AddDays(-1 * $days)
     $kept = New-Object System.Collections.Generic.List[object]
     $removed = 0
     foreach ($c in @($contract.candidates)) {
-        $updated = [string](Get-MetraProp -Object $c -Name 'updatedAt' -Default '')
-        $created = [string](Get-MetraProp -Object $c -Name 'createdAt' -Default '')
-        $stampText = if ($updated) { $updated } else { $created }
-        $stamp = $null
-        if ($stampText) {
-            try { $stamp = [datetime]::Parse($stampText, $null, [System.Globalization.DateTimeStyles]::RoundtripKind) } catch { $stamp = $null }
-        }
+        $stamp = Get-MetraOperatorContractCandidateTimestamp -Candidate $c
         if ($stamp -and $stamp -lt $cutoff) {
             $removed++
         }

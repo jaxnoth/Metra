@@ -2,6 +2,7 @@
 
 $script:MetraPlaceMaxUploadBytes = 8MB
 $script:MetraPlaceMaxMemoryItems = 80
+$script:MetraPlaceUploadMaxAgeDays = 30
 $script:MetraPlaceAllowedExtensions = @(
     '.txt', '.md', '.json', '.csv', '.log', '.png', '.jpg', '.jpeg', '.gif', '.webp',
     '.pdf', '.xml', '.yaml', '.yml', '.ps1', '.sql', '.html', '.htm'
@@ -12,7 +13,8 @@ function Get-MetraPlaceQuarantineRoot {
     param()
     $root = Join-Path $env:LOCALAPPDATA 'Metra\ops-place-quarantine'
     if (-not (Test-Path -LiteralPath $root)) {
-        New-Item -ItemType Directory -Path $root -Force | Out-Null
+        # Directory.CreateDirectory is literal-path safe; New-Item -LiteralPath is not on all hosts.
+        [void][System.IO.Directory]::CreateDirectory($root)
     }
     return $root
 }
@@ -125,7 +127,8 @@ function Set-MetraPlaceMemory {
     $path = Get-MetraPlaceMemoryPath -MetraRoot $MetraRoot
     $dir = Split-Path -Parent $path
     if (-not (Test-Path -LiteralPath $dir)) {
-        New-Item -ItemType Directory -Path $dir -Force | Out-Null
+        # Directory.CreateDirectory is literal-path safe; New-Item -LiteralPath is not on all hosts.
+        [void][System.IO.Directory]::CreateDirectory($dir)
     }
     $payload = [PSCustomObject]@{
         version = 1
@@ -161,15 +164,15 @@ function Add-MetraPlaceMemoryItem {
         throw 'Summary required for place memory'
     }
 
-    # Attachments stay in quarantine; memory keeps only a pointer so the note can be traced back.
+    # Attachments stay in quarantine; memory keeps id pointers only (no absolute filesystem paths).
     $attachments = @(
         Get-MetraPlaceUploadMeta -Id $AttachmentIds | ForEach-Object {
             [PSCustomObject]@{
                 id          = [string]$_.id
+                storageKey  = [string]$_.id
                 fileName    = [string]$_.fileName
                 contentType = [string]$_.contentType
                 size        = [int64]$_.size
-                path        = [string]$_.path
             }
         }
     )
@@ -213,8 +216,11 @@ function Find-MetraPlaceSimilarMemory {
             if ($hay.Contains($t)) { $hits++ }
         }
         if ($hits -le 0) { continue }
+        # Prefer denser overlap so shared words like "ticket" do not all collide equally.
+        $ratio = [double]$hits / [double]$tokens.Count
         [PSCustomObject]@{
             Score     = $hits
+            Ratio     = [math]::Round($ratio, 3)
             HomeId    = [string]$item.homeId
             HomeLabel = [string]$item.homeLabel
             Summary   = [string]$item.summary
@@ -224,7 +230,7 @@ function Find-MetraPlaceSimilarMemory {
 
     return @(
         $scored |
-            Sort-Object Score -Descending |
+            Sort-Object @{ Expression = 'Ratio'; Descending = $true }, @{ Expression = 'Score'; Descending = $true } |
             Select-Object -First $Limit
     )
 }
@@ -248,7 +254,7 @@ function Test-MetraPlacePathReference {
     $seen = @{}
 
     foreach ($m in $pathMatches) {
-        $raw = $m.Value.TrimEnd('.,;:)')
+        $raw = $m.Value.TrimEnd('.,;:)]}')
         if ($seen.ContainsKey($raw.ToLowerInvariant())) { continue }
         $seen[$raw.ToLowerInvariant()] = $true
 
@@ -344,11 +350,13 @@ function Get-MetraDeskPlaceRecommendation {
     $similar = @(Find-MetraPlaceSimilarMemory -Text $combined -MetraRoot $MetraRoot -Limit 3)
     $homeId = $heuristicId
     $learningNote = $null
+    $confidence = 'weak'
     if ($similar.Count -gt 0) {
         $top = $similar[0]
         if ([int]$top.Score -ge 2) {
             $homeId = [string]$top.HomeId
             $learningNote = "Past similar items were stored as $($top.HomeLabel)."
+            $confidence = if ([double]$top.Ratio -ge 0.5 -or [int]$top.Score -ge 3) { 'strong' } else { 'moderate' }
         }
         elseif ($similar.Count -ge 2) {
             $byHome = $similar | Group-Object HomeId | Sort-Object Count -Descending | Select-Object -First 1
@@ -356,8 +364,12 @@ function Get-MetraDeskPlaceRecommendation {
                 $homeId = [string]$byHome.Name
                 $label = [string]$byHome.Group[0].HomeLabel
                 $learningNote = "You usually place similar notes in $label."
+                $confidence = 'moderate'
             }
         }
+    }
+    elseif ($homeId -ne 'future-development') {
+        $confidence = 'moderate'
     }
 
     $home = Resolve-MetraPlaceHome -IdOrLabel $homeId
@@ -381,6 +393,7 @@ function Get-MetraDeskPlaceRecommendation {
     $pathRefs = @(Test-MetraPlacePathReference -Text $body -MetraRoot $MetraRoot)
     $draft = @"
 Recommended home: $($home.label)
+Confidence: $confidence
 
 Why:
 $($why -join "`n")
@@ -396,6 +409,7 @@ $($home.draftHint)
         ok               = $true
         homeId           = [string]$home.id
         homeLabel        = [string]$home.label
+        confidence       = $confidence
         why              = @($why)
         whatHappensThere = [string]$home.whatHappensThere
         nextStep         = [string]$home.draftHint
@@ -441,28 +455,58 @@ function Save-MetraPlaceUpload {
     $root = Get-MetraPlaceQuarantineRoot
     $safeName = ($base -replace '[^\w\.\- ]', '_').Trim()
     if ([string]::IsNullOrWhiteSpace($safeName)) { $safeName = "upload$ext" }
-    $binPath = Join-Path $root "$id-$safeName"
+    # Store under randomized id only - never use the original filename for filesystem location.
+    $storedExt = if ($ext) { $ext } else { '.bin' }
+    $binPath = Join-Path $root "$id$storedExt"
     $metaPath = Join-Path $root "$id.json"
     [System.IO.File]::WriteAllBytes($binPath, $Bytes)
     $meta = [PSCustomObject]@{
         id          = $id
+        storageKey  = $id
         fileName    = $safeName
         contentType = $ContentType
         size        = $Bytes.Length
+        # path stays on the quarantine sidecar for AskImage / local readers only.
         path        = $binPath
         at          = (Get-Date).ToUniversalTime().ToString('o')
     }
     ($meta | ConvertTo-Json) | Set-Content -LiteralPath $metaPath -Encoding UTF8
+
+    try { $null = Remove-MetraPlaceExpiredUploads -MaxAgeDays $script:MetraPlaceUploadMaxAgeDays } catch { }
+
     return $meta
+}
+
+function ConvertTo-MetraPlaceUploadPublicMeta {
+    <#
+    .SYNOPSIS
+        Public upload metadata without absolute filesystem paths.
+    #>
+    [CmdletBinding()]
+    param([Parameter(Mandatory)]$Meta)
+
+    return [PSCustomObject]@{
+        id          = [string](Get-MetraProp -Object $Meta -Name 'id' -Default '')
+        storageKey  = [string](Get-MetraProp -Object $Meta -Name 'storageKey' -Default (Get-MetraProp -Object $Meta -Name 'id' -Default ''))
+        fileName    = [string](Get-MetraProp -Object $Meta -Name 'fileName' -Default '')
+        contentType = [string](Get-MetraProp -Object $Meta -Name 'contentType' -Default '')
+        size        = [int64](Get-MetraProp -Object $Meta -Name 'size' -Default 0)
+        at          = [string](Get-MetraProp -Object $Meta -Name 'at' -Default '')
+    }
 }
 
 function Get-MetraPlaceUploadMeta {
     <#
     .SYNOPSIS
         Resolves quarantine upload ids to their sidecar metadata. Unknown ids are skipped.
+    .PARAMETER Public
+        Omit absolute path (safe for API / memory surfaces). Internal readers omit this switch.
     #>
     [CmdletBinding()]
-    param([string[]]$Id = @())
+    param(
+        [string[]]$Id = @(),
+        [switch]$Public
+    )
 
     $quarantine = Get-MetraPlaceQuarantineRoot
     foreach ($raw in @($Id)) {
@@ -472,9 +516,102 @@ function Get-MetraPlaceUploadMeta {
         $metaPath = Join-Path $quarantine "$safe.json"
         if (-not (Test-Path -LiteralPath $metaPath)) { continue }
         try {
-            Get-Content -LiteralPath $metaPath -Raw -Encoding UTF8 | ConvertFrom-Json
+            $meta = Get-Content -LiteralPath $metaPath -Raw -Encoding UTF8 | ConvertFrom-Json
+            if ($Public) {
+                ConvertTo-MetraPlaceUploadPublicMeta -Meta $meta
+            }
+            else {
+                $meta
+            }
         }
         catch { }
+    }
+}
+
+function Remove-MetraPlaceExpiredUploads {
+    <#
+    .SYNOPSIS
+        Deletes quarantine upload sidecars (and binaries) older than MaxAgeDays.
+    .DESCRIPTION
+        Place uploads are temporary staging, not durable portfolio storage. Default retention
+        is 30 days. Safe to re-run; unknown/corrupt sidecars are skipped.
+    #>
+    [CmdletBinding(SupportsShouldProcess)]
+    param(
+        [int]$MaxAgeDays = $(if ($script:MetraPlaceUploadMaxAgeDays) { [int]$script:MetraPlaceUploadMaxAgeDays } else { 30 })
+    )
+
+    if ($MaxAgeDays -lt 1) {
+        throw "MaxAgeDays must be >= 1 (got $MaxAgeDays)"
+    }
+
+    $root = Join-Path $env:LOCALAPPDATA 'Metra\ops-place-quarantine'
+    if (-not (Test-Path -LiteralPath $root)) {
+        return [PSCustomObject]@{
+            Ok      = $true
+            Removed = 0
+            Kept    = 0
+            MaxAgeDays = $MaxAgeDays
+        }
+    }
+
+    $cutoff = [datetime]::UtcNow.AddDays(-1 * $MaxAgeDays)
+    $removed = 0
+    $kept = 0
+    foreach ($metaFile in @(Get-ChildItem -LiteralPath $root -Filter '*.json' -File -ErrorAction SilentlyContinue)) {
+        $meta = $null
+        try {
+            $meta = Get-Content -LiteralPath $metaFile.FullName -Raw -Encoding UTF8 | ConvertFrom-Json
+        }
+        catch {
+            continue
+        }
+
+        $stamp = $null
+        $atRaw = [string](Get-MetraProp -Object $meta -Name 'at' -Default '')
+        if (-not [string]::IsNullOrWhiteSpace($atRaw)) {
+            try { $stamp = [datetime]::Parse($atRaw, $null, [System.Globalization.DateTimeStyles]::RoundtripKind).ToUniversalTime() } catch { }
+        }
+        if ($null -eq $stamp) {
+            $stamp = $metaFile.LastWriteTimeUtc
+        }
+        if ($stamp -gt $cutoff) {
+            $kept++
+            continue
+        }
+
+        $id = [string](Get-MetraProp -Object $meta -Name 'id' -Default ([System.IO.Path]::GetFileNameWithoutExtension($metaFile.Name)))
+        $binPath = [string](Get-MetraProp -Object $meta -Name 'path' -Default '')
+        if ($PSCmdlet.ShouldProcess($metaFile.FullName, 'Remove expired Place quarantine upload')) {
+            $rootFull = [System.IO.Path]::GetFullPath($root).TrimEnd('\') + '\'
+            $safeBin = $false
+            if (-not [string]::IsNullOrWhiteSpace($binPath)) {
+                try {
+                    $binFull = [System.IO.Path]::GetFullPath($binPath)
+                    if ($binFull.StartsWith($rootFull, [System.StringComparison]::OrdinalIgnoreCase) -and
+                        (Test-Path -LiteralPath $binFull)) {
+                        Remove-Item -LiteralPath $binFull -Force -ErrorAction SilentlyContinue
+                        $safeBin = $true
+                    }
+                }
+                catch { }
+            }
+            if (-not $safeBin) {
+                foreach ($extra in @(Get-ChildItem -LiteralPath $root -Filter "$id*" -File -ErrorAction SilentlyContinue)) {
+                    if ($extra.Extension -eq '.json') { continue }
+                    Remove-Item -LiteralPath $extra.FullName -Force -ErrorAction SilentlyContinue
+                }
+            }
+            Remove-Item -LiteralPath $metaFile.FullName -Force -ErrorAction SilentlyContinue
+            $removed++
+        }
+    }
+
+    return [PSCustomObject]@{
+        Ok         = $true
+        Removed    = $removed
+        Kept       = $kept
+        MaxAgeDays = $MaxAgeDays
     }
 }
 

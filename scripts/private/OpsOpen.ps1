@@ -2,20 +2,77 @@
 # process (already running in the operator session) does it. Paths are constrained to
 # configured Metra roots; this never writes files - Host still owns disk writes.
 
-function Test-MetraOpsRequestIsSameMachine {
+function Test-MetraOpsRequestLooksProxiedThroughServe {
     <#
     .SYNOPSIS
-        True when the caller is this machine (loopback or one of its own addresses).
+        True when request headers indicate Tailscale Serve (or similar) proxying.
     .DESCRIPTION
-        Launching an editor is operator-desktop reach, so a MagicDNS URL used on the operator
-        machine still counts as local. A different device does not.
+        Request origin may appear loopback when proxied through Tailscale Serve.
+        Treat Serve-header requests as remote for authorization purposes.
     #>
     [CmdletBinding()]
     param([Parameter(Mandatory)]$Request)
 
     try {
+        $headers = $Request.Headers
+        foreach ($name in @(
+                'Tailscale-User-Login',
+                'Tailscale-User-Name',
+                'Tailscale-Headers-Info'
+            )) {
+            $v = [string]$headers[$name]
+            if (-not [string]::IsNullOrWhiteSpace($v)) { return $true }
+        }
+
+        foreach ($fwdName in @('X-Forwarded-For', 'X-Real-IP')) {
+            $raw = [string]$headers[$fwdName]
+            if ([string]::IsNullOrWhiteSpace($raw)) { continue }
+            $first = ($raw -split ',')[0].Trim()
+            if ([string]::IsNullOrWhiteSpace($first)) { continue }
+            try {
+                $fwdAddr = [System.Net.IPAddress]::Parse($first)
+                if (-not [System.Net.IPAddress]::IsLoopback($fwdAddr)) { return $true }
+            }
+            catch {
+                # Non-IP forwarded value still means a proxy sat in front.
+                return $true
+            }
+        }
+    }
+    catch { }
+    return $false
+}
+
+function Test-MetraOpsRequestIsSameMachine {
+    <#
+    .SYNOPSIS
+        True when the caller is this machine (loopback, local session, or own address).
+    .DESCRIPTION
+        Order: deny Serve proxying, allow loopback, allow a validated Host-issued
+        X-Metra-Local-Session token (primary identity for MagicDNS / non-loopback desk URLs),
+        then treat ownership of the remote IP as supplemental. Transport location alone
+        does not define authority - request identity does.
+        Launching an editor is operator-desktop reach. A different device does not qualify.
+    #>
+    [CmdletBinding()]
+    param([Parameter(Mandatory)]$Request)
+
+    try {
+        if (Test-MetraOpsRequestLooksProxiedThroughServe -Request $Request) {
+            return $false
+        }
+
         $addr = $Request.RemoteEndPoint.Address
         if ([System.Net.IPAddress]::IsLoopback($addr)) { return $true }
+
+        # Identity signal (stronger than IP ownership for MagicDNS on this host).
+        $sessionToken = ''
+        try { $sessionToken = [string]$Request.Headers['X-Metra-Local-Session'] } catch { }
+        if (Test-MetraOpsLocalSessionToken -SessionToken $sessionToken) {
+            return $true
+        }
+
+        # Supplemental: caller IP is one of this machine's addresses (IPv4/IPv6).
         $mine = @([System.Net.Dns]::GetHostAddresses([System.Net.Dns]::GetHostName()))
         foreach ($ip in $mine) {
             if ($ip.Equals($addr)) { return $true }
@@ -25,6 +82,40 @@ function Test-MetraOpsRequestIsSameMachine {
     catch {
         return $false
     }
+}
+
+function Test-MetraPathWithinRoot {
+    <#
+    .SYNOPSIS
+        True when Path is the root folder itself or a descendant of Root.
+    #>
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory)][AllowEmptyString()][string]$Path,
+        [Parameter(Mandatory)][AllowEmptyString()][string]$Root
+    )
+
+    if ([string]::IsNullOrWhiteSpace($Path) -or [string]::IsNullOrWhiteSpace($Root)) {
+        return $false
+    }
+
+    $full = $null
+    $rootFull = $null
+    try {
+        $full = [System.IO.Path]::GetFullPath($Path)
+        $rootFull = [System.IO.Path]::GetFullPath($Root)
+    }
+    catch {
+        return $false
+    }
+
+    $rootFull = $rootFull.TrimEnd('\', '/')
+    if (-not $rootFull) { return $false }
+    if ([string]::Equals($full, $rootFull, [StringComparison]::OrdinalIgnoreCase)) {
+        return $true
+    }
+    $prefix = $rootFull + [System.IO.Path]::DirectorySeparatorChar
+    return $full.StartsWith($prefix, [StringComparison]::OrdinalIgnoreCase)
 }
 
 function Get-MetraEditorCandidatePaths {
@@ -74,13 +165,35 @@ function Find-MetraEditorExecutable {
     return $null
 }
 
+function Test-MetraOpsEditorExecutablePath {
+    <#
+    .SYNOPSIS
+        True when Path is an existing .exe / .cmd / .bat file (not a folder or other path).
+    #>
+    [CmdletBinding()]
+    param([Parameter(Mandatory)][AllowEmptyString()][string]$Path)
+
+    if ([string]::IsNullOrWhiteSpace($Path)) { return $false }
+    try {
+        if (-not (Test-Path -LiteralPath $Path)) { return $false }
+        $item = Get-Item -LiteralPath $Path -ErrorAction Stop
+        return ($item -is [System.IO.FileInfo] -and $item.Extension -match '^\.(exe|cmd|bat)$')
+    }
+    catch {
+        return $false
+    }
+}
+
 function Resolve-MetraOpsEditor {
     <#
     .SYNOPSIS
         Resolves the editor Ops should use for Open in editor.
     .DESCRIPTION
         Preference values: auto (Cursor, then VS Code, then Windows default), cursor, code,
-        system (Windows default handler), or a full executable path.
+        system (Windows default handler), or a full executable path (.exe / .cmd / .bat).
+        editorCommand may be a custom executable path intentionally - not limited to
+        cursor | code | system. A missing or non-executable custom path falls back to
+        Windows default; Open still means "take me there," not "validate my editor configuration."
     #>
     [CmdletBinding()]
     param(
@@ -91,12 +204,13 @@ function Resolve-MetraOpsEditor {
     $pref = if ([string]::IsNullOrWhiteSpace($Preference)) { 'auto' } else { $Preference.Trim() }
 
     if ($pref -notin @('auto', 'cursor', 'code', 'system')) {
-        if (Test-Path -LiteralPath $pref) {
+        if (Test-MetraOpsEditorExecutablePath -Path $pref) {
+            $exe = (Resolve-Path -LiteralPath $pref).Path
             return [PSCustomObject]@{
                 Preference = $pref
                 Kind       = 'custom'
-                Exe        = (Resolve-Path -LiteralPath $pref).Path
-                Label      = [System.IO.Path]::GetFileNameWithoutExtension($pref)
+                Exe        = $exe
+                Label      = [System.IO.Path]::GetFileNameWithoutExtension($exe)
                 Available  = $true
             }
         }
@@ -194,22 +308,29 @@ function Resolve-MetraOpsOpenPath {
     }
     $full = (Resolve-Path -LiteralPath $full).Path
 
-    $allowed = @()
+    $allowed = [System.Collections.Generic.List[string]]::new()
     try {
-        $allowed += @(Get-MetraRoots -IncludeMissing | ForEach-Object { [string]$_.Path })
+        foreach ($root in @(Get-MetraRoots -IncludeMissing)) {
+            try {
+                $rootPath = [string](Get-MetraProp -Object $root -Name 'Path' -Default '')
+                if ([string]::IsNullOrWhiteSpace($rootPath)) { continue }
+                [void]$allowed.Add([System.IO.Path]::GetFullPath($rootPath))
+            }
+            catch {
+                continue
+            }
+        }
     }
     catch { }
-    if ($MetraRoot) { $allowed += [string]$MetraRoot }
-
-    foreach ($rootPath in @($allowed | Where-Object { $_ })) {
-        $rootFull = $null
-        try { $rootFull = [System.IO.Path]::GetFullPath($rootPath) } catch { continue }
-        $rootFull = $rootFull.TrimEnd('\', '/')
-        if (-not $rootFull) { continue }
-        if ($full -eq $rootFull) {
-            return [PSCustomObject]@{ Ok = $true; Path = $full; Reason = $null }
+    if (-not [string]::IsNullOrWhiteSpace($MetraRoot)) {
+        try {
+            [void]$allowed.Add([System.IO.Path]::GetFullPath([string]$MetraRoot))
         }
-        if ($full.StartsWith($rootFull + [System.IO.Path]::DirectorySeparatorChar, [StringComparison]::OrdinalIgnoreCase)) {
+        catch { }
+    }
+
+    foreach ($rootPath in @($allowed)) {
+        if (Test-MetraPathWithinRoot -Path $full -Root $rootPath) {
             return [PSCustomObject]@{ Ok = $true; Path = $full; Reason = $null }
         }
     }
@@ -241,21 +362,28 @@ function Invoke-MetraOpsOpenInEditor {
     $preference = [string](Get-MetraProp -Object $prefs -Name 'editorCommand' -Default 'auto')
     $editor = Resolve-MetraOpsEditor -Preference $preference -MetraRoot $MetraRoot
 
-    if ($editor.Exe) {
-        $startArgs = @{
-            FilePath     = $editor.Exe
-            ArgumentList = @($resolved.Path)
-            ErrorAction  = 'Stop'
+    try {
+        if ($editor.Exe) {
+            $startArgs = @{
+                FilePath     = $editor.Exe
+                ArgumentList = @($resolved.Path)
+                ErrorAction  = 'Stop'
+            }
+            if ([System.IO.Path]::GetExtension($editor.Exe) -in @('.cmd', '.bat')) {
+                $startArgs['WindowStyle'] = 'Hidden'
+            }
+            Start-Process @startArgs | Out-Null
         }
-        if ([System.IO.Path]::GetExtension($editor.Exe) -in @('.cmd', '.bat')) {
-            $startArgs['WindowStyle'] = 'Hidden'
+        else {
+            Start-Process -FilePath 'explorer.exe' -ArgumentList @($resolved.Path) -ErrorAction Stop | Out-Null
         }
-        Start-Process @startArgs | Out-Null
     }
-    else {
-        Start-Process -FilePath 'explorer.exe' -ArgumentList @($resolved.Path) -ErrorAction Stop | Out-Null
+    catch {
+        Write-MetraOpsHostLog "Editor launch failed for '$($resolved.Path)' - $($_.Exception.Message)" 'warn'
+        throw
     }
 
+    Write-MetraOpsHostLog "Opened path '$($resolved.Path)' in $($editor.Label)"
     return [PSCustomObject]@{
         ok      = $true
         path    = $resolved.Path

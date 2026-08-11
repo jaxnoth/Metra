@@ -46,14 +46,15 @@ function Get-MetraAskSecretsPatternSet {
             Kind   = 'bearer'
             Refuse = $false
             Reason = $null
-            Regex  = [regex]::new('\bBearer\s+[A-Za-z0-9\-._~+/]+=*', 'IgnoreCase')
+            # Length-gated so "Bearer test" / doc placeholders do not redact.
+            Regex  = [regex]::new('\bBearer\s+[A-Za-z0-9\-._~+/]{20,}=*', 'IgnoreCase')
         }
         [PSCustomObject]@{
             Kind   = 'connection'
             Refuse = $false
             Reason = $null
-            # Connection-string password shapes (Password= / Pwd=).
-            Regex  = [regex]::new('(?i)(?:Password|Pwd)\s*=\s*([^;"''\s][^;"'']*)')
+            # Password= / Pwd= : quoted, brace, or unquoted values (empty Password= skipped).
+            Regex  = [regex]::new('(?i)(?:Password|Pwd)\s*=\s*(?:"[^"]*"|''[^'']*''|\{[^}]*\}|[^;"''\s][^;"'']*)')
         }
     )
 }
@@ -284,20 +285,21 @@ function Invoke-MetraAskSecretsScrubObjectWalk {
         return $out
     }
 
-    if ($Node -is [System.Collections.IEnumerable] -and -not ($Node -is [string])) {
-        $list = [System.Collections.Generic.List[object]]::new()
-        foreach ($item in @($Node)) {
-            [void]$list.Add((Invoke-MetraAskSecretsScrubObjectWalk -Node $item -State $State))
-        }
-        return $list
-    }
-
+    # PSCustomObject before IEnumerable - some custom types implement both; prefer property walk.
     if ($Node -is [PSCustomObject]) {
         $props = [ordered]@{}
         foreach ($p in $Node.PSObject.Properties) {
             $props[$p.Name] = Invoke-MetraAskSecretsScrubObjectWalk -Node $p.Value -State $State
         }
         return [PSCustomObject]$props
+    }
+
+    if ($Node -is [System.Collections.IEnumerable] -and -not ($Node -is [string])) {
+        $list = [System.Collections.Generic.List[object]]::new()
+        foreach ($item in @($Node)) {
+            [void]$list.Add((Invoke-MetraAskSecretsScrubObjectWalk -Node $item -State $State))
+        }
+        return $list
     }
 
     return $Node

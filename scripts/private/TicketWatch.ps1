@@ -1,22 +1,54 @@
-function Get-MetraTicketTrackerProject {
+$script:MetraTicketWatchCorpusCache = $null
+
+# Routing.ps1 owns Get-MetraTicketTrackerProject (project row + ModulePath).
+# TicketWatch callers prefer Resolve-MetraTicketTrackerModule + Import-MetraTicketTrackerModule.
+
+function Resolve-MetraTicketTrackerModule {
     <#
     .SYNOPSIS
-        Resolves the TicketTracker companion path from the Metra registry (present on disk).
+        TicketWatch-facing TicketTracker resolver (usable module on disk).
+    .DESCRIPTION
+        Wraps Get-MetraTicketTrackerProject from Routing.ps1. Use this in TicketWatch so
+        the name means "importable TicketTracker module," not a routing project-row lookup.
     #>
     [CmdletBinding()]
     param()
 
-    $proj = @(Get-MetraProject -Name TicketTracker | Select-Object -First 1)
-    if ($proj.Count -eq 0) { return $null }
-    $path = [string]$proj[0].Path
-    if (-not $path -or -not (Test-Path -LiteralPath $path)) { return $null }
-    $module = Join-Path $path 'src\TicketTracker.psm1'
-    if (-not (Test-Path -LiteralPath $module)) { return $null }
-    return [PSCustomObject]@{
-        Name       = 'TicketTracker'
-        Path       = $path
-        ModulePath = $module
+    return Get-MetraTicketTrackerProject
+}
+
+function Import-MetraTicketTrackerModule {
+    <#
+    .SYNOPSIS
+        Import TicketTracker.psm1 without force-reloading when already loaded from the same path.
+    .NOTES
+        Does not preflight Test-Path so Pester can mock Import-Module against fixture paths.
+    #>
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory)][string]$ModulePath,
+        [switch]$Force
+    )
+
+    $resolved = $ModulePath
+    if (Test-Path -LiteralPath $ModulePath) {
+        try {
+            $resolved = [string](Resolve-Path -LiteralPath $ModulePath).Path
+        }
+        catch { }
     }
+
+    $loaded = @(Get-Module -Name TicketTracker -ErrorAction SilentlyContinue) | Where-Object {
+        $p = [string]$_.Path
+        [string]::Equals($p, $resolved, [StringComparison]::OrdinalIgnoreCase) -or
+        [string]::Equals($p, $ModulePath, [StringComparison]::OrdinalIgnoreCase)
+    } | Select-Object -First 1
+
+    if ($loaded -and -not $Force) {
+        return $loaded
+    }
+
+    return Import-Module -Name $ModulePath -Force:$Force -PassThru -ErrorAction Stop
 }
 
 function Get-MetraTicketWatchConfig {
@@ -34,7 +66,8 @@ function Get-MetraTicketWatchConfig {
     # scope mine: TT cache may be broader; Attention stays person-filter only.
     # autoAnalyze: opt-in M2; Scan tickets / CLI only - never Portfolio refresh.
     # evidenceRouter: opt-in E1; after local analyze draft - Next evidence only (never recommend).
-    # autoStoreRecommend: M3 Affirm A auto-write - stays false through Mine quality loop (revisit after M4).
+    # autoStoreRecommend: reserved / unused for auto-write through Mine quality loop.
+    # Config may set true for experiments, but TicketWatch never auto-writes iSupport from it (M4+).
     $defaults = [PSCustomObject]@{
         writeLocalDraft     = $false
         autoAnalyze         = $false
@@ -44,6 +77,9 @@ function Get-MetraTicketWatchConfig {
         syncOnScan          = $true
         syncOnSnapshot      = $false   # legacy; portfolio snapshot no longer runs ticket intake
         scope               = 'mine'
+        productCues              = @()      # local escape hatch; not a TicketWatch catalog
+        vocabularyMinSightings   = 2        # subject-DF floor for non-acronym proposals
+        vocabularyMaxSubjectShare = 0.40    # drop tokens that appear in too many subjects
     }
     $cfgPath = Join-Path $MetraRoot 'docs\ticket-watch.local.json'
     if (-not (Test-Path -LiteralPath $cfgPath)) { return $defaults }
@@ -59,7 +95,7 @@ function Get-MetraTicketWatchConfig {
             $defaults.evidenceRouter = [bool]$raw.evidenceRouter
         }
         if ($null -ne (Get-MetraProp -Object $raw -Name 'autoStoreRecommend' -Default $null)) {
-            # Config may set true, but Mine policy keeps default false; still honor explicit true for later M4 experiments.
+            # Surface the flag only - never used to auto-write Affirm A (Confirm remains explicit).
             $defaults.autoStoreRecommend = [bool]$raw.autoStoreRecommend
         }
         if ($null -ne (Get-MetraProp -Object $raw -Name 'top' -Default $null)) {
@@ -82,6 +118,18 @@ function Get-MetraTicketWatchConfig {
                 # M1 only allows mine; unknown scopes fail closed to mine.
                 $defaults.scope = 'mine'
             }
+        }
+        $cuesRaw = Get-MetraProp -Object $raw -Name 'productCues' -Default $null
+        if ($null -ne $cuesRaw) {
+            $defaults.productCues = @($cuesRaw | ForEach-Object { [string]$_ } | Where-Object { $_ })
+        }
+        if ($null -ne (Get-MetraProp -Object $raw -Name 'vocabularyMinSightings' -Default $null)) {
+            $ms = [int]$raw.vocabularyMinSightings
+            if ($ms -ge 1) { $defaults.vocabularyMinSightings = $ms }
+        }
+        if ($null -ne (Get-MetraProp -Object $raw -Name 'vocabularyMaxSubjectShare' -Default $null)) {
+            $share = [double]$raw.vocabularyMaxSubjectShare
+            if ($share -gt 0 -and $share -le 1) { $defaults.vocabularyMaxSubjectShare = $share }
         }
     }
     catch { }
@@ -113,47 +161,447 @@ function Test-MetraTicketWatchShouldAnalyze {
     return ($ChangeKind -eq 'added' -or $ChangeKind -eq 'refreshed')
 }
 
+function Get-MetraTicketWatchProductCueStopList {
+    <#
+    .SYNOPSIS
+        Generic routing/ops tokens excluded from registry-derived product cues.
+    .DESCRIPTION
+        TicketWatch may filter generic routing triggers when deriving product cues from the
+        registry. That filter is not a vocabulary proposal blacklist and must not grow in
+        response to ticket-subject noise. Solutions keywords and local productCues are not
+        filtered by this list (only length-gated during normalize).
+    #>
+    [CmdletBinding()]
+    param()
+
+    return [System.Collections.Generic.HashSet[string]]::new(
+        [string[]]@(
+            'ticket', 'tickets', 'helpdesk', 'incident', 'incidents', 'report', 'reports',
+            'sql', 'data', 'integration', 'server', 'servers', 'database', 'databases',
+            'monitoring', 'project', 'projects', 'ops', 'metra', 'isupport', 'work',
+            'item', 'items', 'change', 'changes', 'alert', 'alerts', 'disk', 'email',
+            'mail', 'chat', 'chats', 'note', 'notes', 'draft', 'sync', 'scan'
+        ),
+        [StringComparer]::OrdinalIgnoreCase
+    )
+}
+
+function ConvertTo-MetraTicketWatchNormalizedProductCues {
+    <#
+    .SYNOPSIS
+        Deterministic product-cue union: trim, lowercase, length gate, unique, sort.
+    .DESCRIPTION
+        Solutions keywords (primary) and local productCues (escape hatch) are length-gated.
+        Registry triggers (secondary) are also filtered by the generic stop list.
+        TicketWatch consumes vocabulary; it does not author a portfolio product catalog.
+    #>
+    [CmdletBinding()]
+    param(
+        [string[]]$SolutionsKeywords = @(),
+        [string[]]$RegistryTriggers = @(),
+        [string[]]$LocalProductCues = @(),
+        [int]$MinLength = 3
+    )
+
+    if ($MinLength -lt 1) { $MinLength = 3 }
+    $stop = Get-MetraTicketWatchProductCueStopList
+    $set = [System.Collections.Generic.HashSet[string]]::new([StringComparer]::Ordinal)
+
+    foreach ($raw in @($SolutionsKeywords)) {
+        $n = ([string]$raw).Trim().ToLowerInvariant()
+        if ($n.Length -lt $MinLength) { continue }
+        if ($n -match '^\d{6,8}$') { continue }
+        [void]$set.Add($n)
+    }
+    foreach ($raw in @($LocalProductCues)) {
+        $n = ([string]$raw).Trim().ToLowerInvariant()
+        if ($n.Length -lt $MinLength) { continue }
+        if ($n -match '^\d{6,8}$') { continue }
+        [void]$set.Add($n)
+    }
+    foreach ($raw in @($RegistryTriggers)) {
+        $n = ([string]$raw).Trim().ToLowerInvariant()
+        if ($n.Length -lt $MinLength) { continue }
+        if ($n -match '^\d{6,8}$') { continue }
+        if ($stop.Contains($n)) { continue }
+        [void]$set.Add($n)
+    }
+
+    return @($set | Sort-Object)
+}
+
 function Get-MetraTicketWatchProductCueList {
     <#
     .SYNOPSIS
-        Known product/process tokens for ephemeral E1 product-cue detection (not a score ledger).
+        Portfolio-derived product cues for ephemeral E1 recognition (not a score ledger).
+    .DESCRIPTION
+        Union of TicketTracker solutions keywords (primary), filtered registry triggers
+        (secondary), and ticket-watch.local.json productCues (escape hatch). Pass source
+        arrays to unit-test the builder without depending on a live portfolio catalog.
     #>
-    @(
-        'colleague', 'ellucian', 'webadvisor', 'wagc', 'wafm', 'prqm', 'edqm', 'unidata',
-        'jitterbit', 'harmony', 'plansource', 'acadeum', 'folio', 'slate',
-        'brightspace', 'd2l', 'pharos', 'thrive', 'orion', 'solarwinds',
-        'powerbi', 'power bi', 'pbi', 'ssrs', 'openemr', 'm365', 'outlook', 'teams'
+    [CmdletBinding()]
+    param(
+        [string]$MetraRoot = (Get-MetraRoot),
+        [string[]]$SolutionsKeywords,
+        [string[]]$RegistryTriggers,
+        [string[]]$LocalProductCues
+    )
+
+    $solutions = if ($PSBoundParameters.ContainsKey('SolutionsKeywords')) {
+        @($SolutionsKeywords)
+    }
+    else {
+        try { @(Get-MetraTicketTrackerSolutionsKeywords) } catch { @() }
+    }
+
+    $registry = if ($PSBoundParameters.ContainsKey('RegistryTriggers')) {
+        @($RegistryTriggers)
+    }
+    else {
+        $collected = [System.Collections.Generic.List[string]]::new()
+        try {
+            foreach ($row in @(Get-MetraRoutingTable)) {
+                if (-not [bool](Get-MetraProp -Object $row -Name 'Present' -Default $false)) { continue }
+                foreach ($t in @(Get-MetraProp -Object $row -Name 'Triggers' -Default @())) {
+                    if ($t) { [void]$collected.Add([string]$t) }
+                }
+            }
+        }
+        catch { }
+        @($collected)
+    }
+
+    $local = if ($PSBoundParameters.ContainsKey('LocalProductCues')) {
+        @($LocalProductCues)
+    }
+    else {
+        try {
+            $cfg = Get-MetraTicketWatchConfig -MetraRoot $MetraRoot
+            @($cfg.productCues)
+        }
+        catch { @() }
+    }
+
+    return @(
+        ConvertTo-MetraTicketWatchNormalizedProductCues `
+            -SolutionsKeywords $solutions `
+            -RegistryTriggers $registry `
+            -LocalProductCues $local
     )
 }
 
 function Get-MetraTicketWatchSubjectTokens {
+    <#
+    .SYNOPSIS
+        Tokenize ticket subject text using Routing language stopwords (not TicketWatch policy).
+    #>
     [CmdletBinding()]
     param([string]$Text = '')
 
+    $stop = Get-MetraRoutingStopWords
     $parts = [regex]::Split(([string]$Text).ToLowerInvariant(), '[^a-z0-9]+') |
         Where-Object { $_ -and $_.Length -ge 3 } |
-        Where-Object {
-            $_ -notin @(
-                'the', 'and', 'for', 'with', 'from', 'this', 'that', 'have', 'were', 'was',
-                'are', 'you', 'your', 'not', 'can', 'unable', 'issue', 'help', 'please', 'need'
-            )
-        }
+        Where-Object { -not $stop.Contains($_) }
     return @($parts | Select-Object -Unique)
+}
+
+function Get-MetraTicketWatchSubjectTokenSpans {
+    <#
+    .SYNOPSIS
+        Subject tokens with original casing preserved for acronym detection.
+    #>
+    [CmdletBinding()]
+    param([string]$Text = '')
+
+    $stop = Get-MetraRoutingStopWords
+    $spans = [System.Collections.Generic.List[object]]::new()
+    foreach ($raw in @([regex]::Split([string]$Text, '[^A-Za-z0-9]+'))) {
+        if (-not $raw) { continue }
+        $lower = $raw.ToLowerInvariant()
+        if ($lower.Length -lt 3) { continue }
+        if ($stop.Contains($lower)) { continue }
+        [void]$spans.Add([PSCustomObject]@{
+                Raw   = $raw
+                Token = $lower
+            })
+    }
+    return @($spans)
+}
+
+function Test-MetraTicketWatchTokenLooksAcronymLike {
+    <#
+    .SYNOPSIS
+        True for acronym-shaped tokens (OCLC, MSAL, ASFTN). Vendor title-case is false.
+    #>
+    [CmdletBinding()]
+    param([string]$RawToken = '')
+
+    $t = ([string]$RawToken).Trim()
+    if ($t.Length -lt 3 -or $t.Length -gt 8) { return $false }
+    if ($t -notmatch '^[A-Za-z]+$') { return $false }
+    # All caps: OCLC, MSAL, SSO
+    if ($t -ceq $t.ToUpperInvariant()) { return $true }
+    # Mostly uppercase letters (at least 75%)
+    $letters = @($t.ToCharArray())
+    $upper = @($letters | Where-Object { [char]::IsUpper($_) }).Count
+    return ($upper / [double]$letters.Count) -ge 0.75
+}
+
+function Get-MetraTicketWatchDfValue {
+    <#
+    .SYNOPSIS
+        Read a token's subject-DF from a hashtable / IDictionary / note property bag.
+    #>
+    [CmdletBinding()]
+    param(
+        $Map,
+        [string]$Token
+    )
+
+    if (-not $Map -or -not $Token) { return 0 }
+
+    if ($Map -is [System.Collections.IDictionary]) {
+        if ($Map.Contains($Token)) { return [int]$Map[$Token] }
+        return 0
+    }
+
+    $prop = $Map.PSObject.Properties[$Token]
+    if ($prop) { return [int]$prop.Value }
+    return 0
+}
+
+function Test-MetraTicketWatchTextHasCue {
+    <#
+    .SYNOPSIS
+        True when text contains a product cue (phrase substring or token-boundary match).
+    #>
+    [CmdletBinding()]
+    param(
+        [string]$Text = '',
+        [string]$Cue = ''
+    )
+
+    $blob = ([string]$Text).ToLowerInvariant()
+    $c = ([string]$Cue).Trim().ToLowerInvariant()
+    if (-not $blob.Trim() -or -not $c) { return $false }
+
+    # Multi-word cues keep phrase substring (e.g. "plan source", "power bi").
+    if ($c -match '\s') {
+        return $blob.Contains($c)
+    }
+
+    $escaped = [regex]::Escape($c)
+    return [bool]($blob -match "(^|[^a-z0-9])$escaped([^a-z0-9]|$)")
+}
+
+function Get-MetraTicketWatchSubjectCorpusStats {
+    <#
+    .SYNOPSIS
+        Subject-level document frequency over ticket subjects (not term frequency).
+    .DESCRIPTION
+        Pass -Subjects for fixtures. Pass -UseLiveTickets to read TicketTracker cache.
+        Without either, returns an empty corpus (fail soft).
+    #>
+    [CmdletBinding()]
+    param(
+        [string[]]$Subjects,
+        [switch]$UseLiveTickets
+    )
+
+    $list = [System.Collections.Generic.List[string]]::new()
+    $maxUpdated = [datetime]::MinValue
+    $injected = $PSBoundParameters.ContainsKey('Subjects')
+    if ($injected) {
+        foreach ($s in @($Subjects)) {
+            if ($s) { [void]$list.Add([string]$s) }
+        }
+    }
+    elseif ($UseLiveTickets) {
+        try {
+            $tt = Resolve-MetraTicketTrackerModule
+            if ($tt) {
+                $null = Import-MetraTicketTrackerModule -ModulePath $tt.ModulePath
+                foreach ($t in @(Get-TrackedTickets)) {
+                    $subj = [string](Get-MetraProp -Object $t -Name 'Subject' -Default '')
+                    if ($subj) { [void]$list.Add($subj) }
+                    $upd = Get-MetraProp -Object $t -Name 'Updated' -Default $null
+                    if ($upd) {
+                        try {
+                            $dt = [datetime]$upd
+                            if ($dt -gt $maxUpdated) { $maxUpdated = $dt }
+                        }
+                        catch { }
+                    }
+                }
+            }
+        }
+        catch { }
+    }
+
+    # Include a cheap subject fingerprint so subject-only edits invalidate the corpus cache.
+    $subjectFingerprint = ''
+    if ($list.Count -gt 0) {
+        $joined = ($list -join "`n")
+        $bytes = [System.Text.Encoding]::UTF8.GetBytes($joined)
+        $sha = [System.Security.Cryptography.SHA256]::Create()
+        try {
+            $hash = $sha.ComputeHash($bytes)
+            $subjectFingerprint = [BitConverter]::ToString($hash).Replace('-', '').Substring(0, 16)
+        }
+        finally {
+            $sha.Dispose()
+        }
+    }
+    $cacheKey = '{0}|{1}|{2}' -f $list.Count, $maxUpdated.ToUniversalTime().Ticks, $subjectFingerprint
+    if (
+        -not $injected -and
+        $script:MetraTicketWatchCorpusCache -and
+        $script:MetraTicketWatchCorpusCache.Key -eq $cacheKey -and
+        $null -ne $script:MetraTicketWatchCorpusCache.Stats
+    ) {
+        return $script:MetraTicketWatchCorpusCache.Stats
+    }
+
+    $df = @{}
+    foreach ($subj in $list) {
+        $seen = [System.Collections.Generic.HashSet[string]]::new([StringComparer]::Ordinal)
+        foreach ($tok in @(Get-MetraTicketWatchSubjectTokens -Text $subj)) {
+            if (-not $seen.Add($tok)) { continue }
+            if (-not $df.ContainsKey($tok)) { $df[$tok] = 0 }
+            $df[$tok]++
+        }
+    }
+
+    $stats = [PSCustomObject]@{
+        SubjectCount           = $list.Count
+        TokenDocumentFrequency = $df
+        CacheKey               = $cacheKey
+    }
+    if (-not $injected) {
+        $script:MetraTicketWatchCorpusCache = @{
+            Key   = $cacheKey
+            Stats = $stats
+        }
+    }
+    return $stats
 }
 
 function Test-MetraTicketWatchHasProductCue {
     [CmdletBinding()]
     param(
         [string]$Subject = '',
-        [string]$Description = ''
+        [string]$Description = '',
+        [string[]]$CueList
     )
 
     $blob = ('{0} {1}' -f $Subject, $Description).ToLowerInvariant()
     if (-not $blob.Trim()) { return $false }
-    foreach ($cue in @(Get-MetraTicketWatchProductCueList)) {
-        if ($blob.Contains($cue)) { return $true }
+    $cues = if ($PSBoundParameters.ContainsKey('CueList')) {
+        @($CueList)
+    }
+    else {
+        @(Get-MetraTicketWatchProductCueList)
+    }
+    foreach ($cue in $cues) {
+        if (Test-MetraTicketWatchTextHasCue -Text $blob -Cue ([string]$cue)) { return $true }
     }
     return $false
+}
+
+function Get-MetraTicketWatchSuggestedVocabulary {
+    <#
+    .SYNOPSIS
+        Evidence-driven vocabulary proposals - propose only (never auto-write).
+    .DESCRIPTION
+        Drops tokens already in portfolio cue union. Proposes tokens with subject-DF
+        evidence: df >= minSightings, or df == 1 and strong acronym (length >= 4).
+        Common language dies via max subject-share. TicketWatch does not maintain a
+        product/noise blacklist.
+    #>
+    [CmdletBinding()]
+    param(
+        [string]$Subject = '',
+        [string[]]$CueList,
+        $CorpusStats = $null,
+        [int]$MinSightings = -1,
+        [double]$MaxSubjectShare = -1,
+        [int]$MaxSuggestions = 3,
+        [string]$MetraRoot = (Get-MetraRoot)
+    )
+
+    if ($MaxSuggestions -lt 1) { $MaxSuggestions = 3 }
+    if (-not $Subject.Trim()) { return @() }
+
+    $cfg = $null
+    try { $cfg = Get-MetraTicketWatchConfig -MetraRoot $MetraRoot } catch { }
+    if ($MinSightings -lt 1) {
+        $MinSightings = if ($cfg) { [int]$cfg.vocabularyMinSightings } else { 2 }
+    }
+    if ($MaxSubjectShare -le 0) {
+        $MaxSubjectShare = if ($cfg) { [double]$cfg.vocabularyMaxSubjectShare } else { 0.40 }
+    }
+
+    $known = [System.Collections.Generic.HashSet[string]]::new([StringComparer]::Ordinal)
+    $knownSource = if ($PSBoundParameters.ContainsKey('CueList')) {
+        @($CueList)
+    }
+    else {
+        @(Get-MetraTicketWatchProductCueList)
+    }
+    foreach ($cue in $knownSource) {
+        $nCue = ([string]$cue).Trim().ToLowerInvariant()
+        if ($nCue) { [void]$known.Add($nCue) }
+    }
+
+    $stats = if ($null -ne $CorpusStats) {
+        $CorpusStats
+    }
+    else {
+        Get-MetraTicketWatchSubjectCorpusStats -UseLiveTickets
+    }
+    $total = [int](Get-MetraProp -Object $stats -Name 'SubjectCount' -Default 0)
+    $dfMap = Get-MetraProp -Object $stats -Name 'TokenDocumentFrequency' -Default @{}
+    $emptyCorpus = $total -lt 1
+    if ($emptyCorpus) { $total = 1 }
+
+    $candidates = [System.Collections.Generic.List[object]]::new()
+    $seenTok = [System.Collections.Generic.HashSet[string]]::new([StringComparer]::Ordinal)
+    foreach ($span in @(Get-MetraTicketWatchSubjectTokenSpans -Text $Subject)) {
+        $n = [string]$span.Token
+        $raw = [string]$span.Raw
+        if (-not $seenTok.Add($n)) { continue }
+        if ($known.Contains($n)) { continue }
+        if ($n -match '^\d{6,8}$' -or $n -match '^pr\d') { continue }
+
+        $isAcronym = Test-MetraTicketWatchTokenLooksAcronymLike -RawToken $raw
+        $minLen = if ($isAcronym) { 3 } else { 4 }
+        if ($n.Length -lt $minLen) { continue }
+
+        $dfVal = Get-MetraTicketWatchDfValue -Map $dfMap -Token $n
+        # Current subject counts as one sighting when absent from the corpus map.
+        if ($dfVal -lt 1) { $dfVal = 1 }
+
+        if (-not $emptyCorpus) {
+            $share = $dfVal / [double]$total
+            if ($share -gt $MaxSubjectShare) { continue }
+        }
+
+        # Single-sighting path: strong acronym only (length >= 4) - OCLC/MSAL yes; SSO noise no.
+        $strongAcronym = $isAcronym -and ($raw.Length -ge 4)
+        $passesSighting = ($dfVal -ge $MinSightings) -or ($dfVal -eq 1 -and $strongAcronym)
+        if (-not $passesSighting) { continue }
+
+        [void]$candidates.Add([PSCustomObject]@{
+                Token        = $n
+                SubjectCount = $dfVal
+            })
+    }
+
+    return @(
+        $candidates |
+            Sort-Object SubjectCount -Descending |
+            Select-Object -First $MaxSuggestions
+    )
 }
 
 function Get-MetraTicketWatchEvidenceSignals {
@@ -229,7 +677,7 @@ function Get-MetraTicketWatchEvidenceSuggestion {
             draftState     = 'recommendable'
             action         = 'none'
             reason         = 'Existing information appears sufficient for a recommendation draft.'
-            operatorHint   = 'Evidence appears sufficient. Ready for recommendation (M3 store-as-review) - E1 does not write recommend.'
+            operatorHint   = 'Evidence appears sufficient. Ready for recommendation (M3 store-as-review). This step does not write recommend.'
             suggestedQuery = ''
             deskLabel      = 'Evidence appears sufficient'
         }
@@ -289,7 +737,7 @@ function Get-MetraTicketWatchEvidenceSuggestion {
             draftState     = 'needsEvidence'
             action         = 'boundedWeb'
             reason         = 'Institutional look exhausted or sparse; external docs may help.'
-            operatorHint   = 'Run the suggested query yourself if useful. E1 does not fetch or scrape.'
+            operatorHint   = 'Run the suggested query yourself if useful. Metra does not fetch or scrape the web.'
             suggestedQuery = $q
             deskLabel      = 'Next evidence: Bounded web search'
         }
@@ -336,8 +784,214 @@ function Format-MetraTicketWatchEvidenceNextNote {
         $lines += ("Suggested query: {0}" -f $query)
     }
     $lines += ''
-    $lines += 'E1 suggests next evidence source only - not a recommendation and does not propose a solution.'
+    $lines += 'Next evidence only - not a recommendation and does not propose a solution.'
     return ($lines -join "`n")
+}
+
+function New-MetraTicketWatchNextEvidenceBody {
+    <#
+    .SYNOPSIS
+        Honest thin-evidence Preview body. Not a recommendation; no fake Findings/investigation.
+    #>
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory)][string]$TicketId,
+        [string]$Subject = '',
+        $Suggestion = $null,
+        [int]$SimilarCount = 0,
+        [int]$SolutionsCount = 0,
+        [string[]]$SimilarLines = @(),
+        [string[]]$SolutionLines = @(),
+        [string[]]$CueList,
+        $CorpusStats = $null
+    )
+
+    $action = [string](Get-MetraProp -Object $Suggestion -Name 'action' -Default 'none')
+    $reason = [string](Get-MetraProp -Object $Suggestion -Name 'reason' -Default '')
+    $hint = [string](Get-MetraProp -Object $Suggestion -Name 'operatorHint' -Default '')
+    $query = [string](Get-MetraProp -Object $Suggestion -Name 'suggestedQuery' -Default '')
+    $label = [string](Get-MetraProp -Object $Suggestion -Name 'deskLabel' -Default 'Next evidence')
+
+    $checked = [System.Collections.Generic.List[string]]::new()
+    $checked.Add(("- Local similar tickets: {0}" -f $SimilarCount))
+    $checked.Add(("- Solutions index matches: {0}" -f $SolutionsCount))
+    foreach ($line in @($SolutionLines | Where-Object { $_ -and $_ -notmatch '(?i)\(no solutions' })) {
+        $checked.Add(($line -replace '^\s*-\s*', '- Solutions: ').Trim())
+    }
+    foreach ($line in @($SimilarLines | Where-Object { $_ -and $_ -notmatch '(?i)\(none' })) {
+        $checked.Add(($line -replace '^\s*-\s*', '- Similar: ').Trim())
+    }
+
+    $next = [System.Collections.Generic.List[string]]::new()
+    if ($label) { $next.Add("- $label") }
+    if ($reason) { $next.Add("- Why: $reason") }
+    if ($hint) { $next.Add("- Next: $hint") }
+    switch -Regex ($action) {
+        '^(?i)solutionsKb$' {
+            $next.Add('- Try: open TicketTracker solutions/ or run brief, then Save note with what you found.')
+        }
+        '^(?i)m365Mail$' {
+            $next.Add('- Try: M365 mail/Teams search for the requester, cite into a local note.')
+        }
+        '^(?i)boundedWeb$' {
+            if ($query) { $next.Add("- Try web search: $query") }
+            else { $next.Add('- Try a bounded vendor/docs search for the product symptom.') }
+        }
+        '^(?i)askOperator$' {
+            $next.Add('- Ask requester for product, environment, and expected vs actual behavior; Save note here.')
+        }
+        default {
+            if ($next.Count -eq 0) {
+                $next.Add('- Run brief, check similar/notes, then Discuss if you want Metra to dig further.')
+            }
+        }
+    }
+    $next.Add(("- Command: .\TicketTracker.ps1 brief {0}" -f $TicketId))
+    $next.Add('- Discuss / Ask Metra after you have one concrete clue - do not Force-write empty Gaps.')
+
+    $vocabParams = @{ Subject = $Subject }
+    if ($PSBoundParameters.ContainsKey('CueList')) { $vocabParams.CueList = $CueList }
+    if ($null -ne $CorpusStats) { $vocabParams.CorpusStats = $CorpusStats }
+    $vocab = @(Get-MetraTicketWatchSuggestedVocabulary @vocabParams)
+    if ($vocab.Count -gt 0) {
+        $bits = @(
+            $vocab | ForEach-Object {
+                $tok = [string](Get-MetraProp -Object $_ -Name 'Token' -Default $_)
+                $n = [int](Get-MetraProp -Object $_ -Name 'SubjectCount' -Default 0)
+                if ($n -gt 0) { '{0} ({1} subjects)' -f $tok, $n } else { $tok }
+            }
+        )
+        $next.Add(
+            ("- Vocabulary gap (propose only): {0} - add to solutions/README keywords or ticket-watch.local.json productCues" -f ($bits -join ', '))
+        )
+    }
+
+    $subjLine = if ($Subject) { "Ticket $TicketId`: $Subject" } else { "Ticket $TicketId" }
+    $parts = @(
+        'Not a recommendation yet - local evidence is thin.'
+        ''
+        $subjLine
+        ''
+        'What we checked (local only):'
+        ($checked -join "`n")
+        ''
+        'Next evidence:'
+        ($next -join "`n")
+        ''
+        'Write recommendation stays blocked until similar/solutions (or your note) improve - or Force intentionally.'
+    )
+    return ($parts -join "`n").Trim()
+}
+
+function ConvertFrom-MetraTicketWatchAnalyzeNote {
+    <#
+    .SYNOPSIS
+        Fallback parser for analyze-draft note text when structured analysis is unavailable.
+    #>
+    [CmdletBinding()]
+    param(
+        [string]$NoteText
+    )
+
+    $similarLines = @()
+    $solutionLines = @()
+    if ([string]::IsNullOrWhiteSpace($NoteText)) {
+        return [PSCustomObject]@{
+            SimilarLines   = @()
+            SolutionLines  = @()
+            SimilarCount   = 0
+            SolutionsCount = 0
+        }
+    }
+
+    if ($NoteText -match '(?s)Similar \(local cache\):\s*(.*?)\s*Solutions index hits:') {
+        $similarLines = @($Matches[1] -split "`n" | ForEach-Object { $_.TrimEnd() } | Where-Object { $_ })
+    }
+    if ($NoteText -match '(?s)Solutions index hits:\s*(.*)$') {
+        $solutionLines = @($Matches[1] -split "`n" | ForEach-Object { $_.TrimEnd() } | Where-Object { $_ })
+    }
+
+    return [PSCustomObject]@{
+        SimilarLines   = $similarLines
+        SolutionLines  = $solutionLines
+        SimilarCount   = @($similarLines | Where-Object { $_ -match '^\s*-\s+' -and $_ -notmatch '(?i)\(none' }).Count
+        SolutionsCount = @($solutionLines | Where-Object { $_ -match '^\s*-\s+' -and $_ -notmatch '(?i)\(no solutions' }).Count
+    }
+}
+
+function Invoke-MetraTicketWatchEnsureAnalyzeEvidence {
+    <#
+    .SYNOPSIS
+        Refresh local analyze-draft + evidence-next for Affirm A Preview/Confirm.
+    #>
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory)]$Ticket,
+        [Parameter(Mandatory)][string]$TicketId,
+        [switch]$RefreshAnalyze
+    )
+
+    $analyzeNote = Get-MetraTicketWatchLatestNoteText -TicketId $TicketId -Tag 'analyze-draft'
+    $priorEvidenceNote = Get-MetraTicketWatchLatestNoteText -TicketId $TicketId -Tag 'evidence-next'
+    $similarN = 0
+    $solutionsN = 0
+    $similarLines = @()
+    $solutionLines = @()
+    $fromStructured = $false
+
+    if ($RefreshAnalyze -or -not $analyzeNote) {
+        $analysis = New-TicketDraftAnalysis -Id $TicketId
+        if ($analysis) {
+            $similarLines = @(foreach ($s in @($analysis.Similar)) {
+                    '- {0}: {1}' -f $s.Id, $s.Subject
+                })
+            $solutionLines = @(foreach ($h in @($analysis.Solutions)) {
+                    '- {0} ({1})' -f $h.Title, $h.File
+                })
+            $similarN = @($analysis.Similar).Count
+            $solutionsN = @($analysis.Solutions).Count
+            $fromStructured = $true
+        }
+        $analyzeNote = Get-MetraTicketWatchLatestNoteText -TicketId $TicketId -Tag 'analyze-draft'
+    }
+
+    # Prefer structured analysis objects; parse analyze-draft text only as fallback.
+    if (-not $fromStructured) {
+        $parsed = ConvertFrom-MetraTicketWatchAnalyzeNote -NoteText $analyzeNote
+        $similarLines = @($parsed.SimilarLines)
+        $solutionLines = @($parsed.SolutionLines)
+        $similarN = [int]$parsed.SimilarCount
+        $solutionsN = [int]$parsed.SolutionsCount
+    }
+
+    $subject = [string](Get-MetraProp -Object $Ticket -Name 'Subject' -Default '')
+    $desc = [string](Get-MetraProp -Object $Ticket -Name 'Description' -Default '')
+    # Analyze already queried similar + solutions - mark institutional checked for router.
+    $signals = Get-MetraTicketWatchEvidenceSignals `
+        -Subject $subject `
+        -Description $desc `
+        -SimilarCount $similarN `
+        -SolutionsCount $solutionsN `
+        -PersonPriorCount 0 `
+        -MailCue:$false `
+        -InstitutionalExhausted:$true
+    $suggestion = Get-MetraTicketWatchEvidenceSuggestion -Signals $signals
+    $evidenceNote = Format-MetraTicketWatchEvidenceNextNote -Suggestion $suggestion
+    if ($evidenceNote.Trim() -ne ([string]$priorEvidenceNote).Trim()) {
+        $null = Add-TrackedTicketNote -Id $TicketId -Text $evidenceNote -Tags 'evidence-next'
+    }
+
+    return [PSCustomObject]@{
+        AnalyzeNote    = $analyzeNote
+        EvidenceNote   = $evidenceNote
+        Suggestion     = $suggestion
+        SimilarCount   = $similarN
+        SolutionsCount = $solutionsN
+        SimilarLines   = $similarLines
+        SolutionLines  = $solutionLines
+        Recommendable  = Test-MetraTicketWatchNoteIsRecommendable -NoteText $evidenceNote
+        Subject        = $subject
+    }
 }
 
 function New-MetraTicketWatchRecommendBasis {
@@ -466,6 +1120,82 @@ function Test-MetraTicketWatchNoteIsRecommendable {
     return ($NoteText -match '(?im)^\s*Draft state:\s*recommendable\s*$')
 }
 
+function Get-MetraTicketWatchRecommendBlockedMessage {
+    <#
+    .SYNOPSIS
+        Operator-facing next steps when Affirm A is gated (no E1 jargon).
+    #>
+    [CmdletBinding()]
+    param(
+        [string]$EvidenceNote = '',
+        [string]$AnalyzeNote = '',
+        [ValidateSet('preview', 'confirm')]
+        [string]$Mode = 'preview'
+    )
+
+    $draftState = ''
+    $action = ''
+    $hint = ''
+    $reason = ''
+    $query = ''
+    $desk = ''
+    if ($EvidenceNote) {
+        if ($EvidenceNote -match '(?im)^\s*Draft state:\s*(.+)\s*$') { $draftState = $Matches[1].Trim() }
+        if ($EvidenceNote -match '(?im)^\s*Action:\s*(\S+)') { $action = $Matches[1].Trim() }
+        if ($EvidenceNote -match '(?im)^\s*Operator hint:\s*(.+)\s*$') { $hint = $Matches[1].Trim() }
+        if ($EvidenceNote -match '(?im)^\s*Reason:\s*(.+)\s*$') { $reason = $Matches[1].Trim() }
+        if ($EvidenceNote -match '(?im)^\s*Suggested query:\s*(.+)\s*$') { $query = $Matches[1].Trim() }
+        if ($EvidenceNote -match '(?im)^\s*Desk:\s*(.+)\s*$') { $desk = $Matches[1].Trim() }
+    }
+
+    $parts = [System.Collections.Generic.List[string]]::new()
+    if ($Mode -eq 'confirm') {
+        $parts.Add('Write to iSupport is blocked until local evidence looks sufficient.')
+    }
+    else {
+        $parts.Add('Evidence is still thin for an iSupport recommendation.')
+    }
+
+    if (-not $AnalyzeNote) {
+        $parts.Add('No local analyze draft yet. Next: run Scan tickets with analyze/draft on, or Discuss / brief this ticket first.')
+    }
+    elseif (-not $EvidenceNote) {
+        $parts.Add('No next-evidence note yet. Re-scan with evidence router on, or check similar/solutions yourself via brief.')
+    }
+    else {
+        if ($desk) { $parts.Add($desk) }
+        elseif ($reason) { $parts.Add("Why: $reason") }
+        if ($hint) { $parts.Add("Next: $hint") }
+        switch -Regex ($action) {
+            '^(?i)solutionsKb$' {
+                $parts.Add('Try: TicketTracker solutions/ (or brief) for product keywords on this subject.')
+            }
+            '^(?i)m365Mail$' {
+                $parts.Add('Try: M365 mail search for related requester mail, then cite back with a local note.')
+            }
+            '^(?i)boundedWeb$' {
+                if ($query) { $parts.Add("Try web search: $query") }
+                else { $parts.Add('Try a bounded web search for the product symptom, then add a local note.') }
+            }
+            '^(?i)askOperator$' {
+                $parts.Add('Ask the requester or assignee for the missing detail, then Save note here.')
+            }
+        }
+        if ($draftState -and $draftState -ne 'recommendable') {
+            $parts.Add("(Local draft state: $draftState.)")
+        }
+    }
+
+    if ($Mode -eq 'preview') {
+        $parts.Add('Preview still saves a local draft for review. Write recommendation stays blocked until evidence improves (or Force).')
+    }
+    else {
+        $parts.Add('Preview first, gather the next evidence step, then Write - or Force only if you intentionally override.')
+    }
+
+    return (($parts | ForEach-Object { $_.Trim() } | Where-Object { $_ }) -join ' ')
+}
+
 function Format-MetraTicketWatchRecommendDraftNote {
     [CmdletBinding()]
     param(
@@ -505,9 +1235,9 @@ function Invoke-MetraTicketWatchStoreRecommend {
     .SYNOPSIS
         M3: Preview local recommend-draft, or Confirm TT recommend (Affirm A store-as-review).
     .DESCRIPTION
-        Mine-eligible only. Gates on E1 recommendable unless -Force.
-        Preview never writes iSupport. Confirm supersedes single Metra AI Recommendation section.
-        Affirm B (resolve/close) is never called.
+        Mine-eligible only. Confirm (Write) gates on evidence recommendable unless -Force.
+        Preview is local-only and always drafts when Mine-eligible; thin evidence yields
+        actionable nextSteps instead of a hard fail.
     #>
     [CmdletBinding()]
     param(
@@ -537,16 +1267,17 @@ function Invoke-MetraTicketWatchStoreRecommend {
         iSupportWrite      = $false
         recommendationWritten = $false
         warning            = ''
+        nextSteps          = ''
         autoStoreRecommend = [bool]$cfg.autoStoreRecommend
     }
 
-    $tt = Get-MetraTicketTrackerProject
+    $tt = Resolve-MetraTicketTrackerModule
     if (-not $tt) {
         $result.warning = 'TicketTracker project or module not present.'
         return $result
     }
 
-    Import-Module $tt.ModulePath -Force
+    $null = Import-MetraTicketTrackerModule -ModulePath $tt.ModulePath
     $ticket = @(Get-TrackedTickets -Id $Id | Select-Object -First 1)
     if ($ticket.Count -eq 0) {
         $result.warning = "Ticket '$Id' not found in local cache. Sync or pull first."
@@ -577,46 +1308,104 @@ function Invoke-MetraTicketWatchStoreRecommend {
     }
     $result.mineEligible = $true
 
-    $evidenceNote = Get-MetraTicketWatchLatestNoteText -TicketId $canonicalId -Tag 'evidence-next'
-    $analyzeNote = Get-MetraTicketWatchLatestNoteText -TicketId $canonicalId -Tag 'analyze-draft'
-    $isRecommendable = Test-MetraTicketWatchNoteIsRecommendable -NoteText $evidenceNote
+    # Preview refreshes local analyze + next-evidence so the desk is not a subject echo.
+    # Confirm uses existing notes unless analyze is missing (then one refresh).
+    $hadAnalyze = [bool](Get-MetraTicketWatchLatestNoteText -TicketId $canonicalId -Tag 'analyze-draft')
+    $refreshAnalyze = [bool]$Preview -or (-not $hadAnalyze)
+    $ev = $null
+    if ($Preview -or (-not $hadAnalyze)) {
+        try {
+            $ev = Invoke-MetraTicketWatchEnsureAnalyzeEvidence `
+                -Ticket $ticketObj `
+                -TicketId $canonicalId `
+                -RefreshAnalyze:$refreshAnalyze
+        }
+        catch {
+            $result.warning = "Local analyze failed: $($_.Exception.Message). Sync/pull the ticket, then Preview again."
+            if ($Confirm) { return $result }
+        }
+    }
+
+    $evidenceNote = if ($ev) { [string]$ev.EvidenceNote } else {
+        Get-MetraTicketWatchLatestNoteText -TicketId $canonicalId -Tag 'evidence-next'
+    }
+    $analyzeNote = if ($ev) { [string]$ev.AnalyzeNote } else {
+        Get-MetraTicketWatchLatestNoteText -TicketId $canonicalId -Tag 'analyze-draft'
+    }
+    $isRecommendable = if ($ev) { [bool]$ev.Recommendable } else {
+        Test-MetraTicketWatchNoteIsRecommendable -NoteText $evidenceNote
+    }
     $result.recommendable = $isRecommendable
 
+    # Confirm (Write) stays hard-gated unless -Force. Preview soft-gates with an honest next-evidence body.
     if (-not $isRecommendable -and -not $Force) {
-        $result.warning = 'E1 draftState is not recommendable. Gather evidence or use -Force to override.'
-        return $result
+        $blockedMsg = Get-MetraTicketWatchRecommendBlockedMessage `
+            -EvidenceNote $evidenceNote `
+            -AnalyzeNote $analyzeNote `
+            -Mode $(if ($Confirm) { 'confirm' } else { 'preview' })
+        $result.nextSteps = $blockedMsg
+        if ($Confirm) {
+            $result.warning = $blockedMsg
+            return $result
+        }
+        $result.warning = $blockedMsg
     }
 
     $similarLines = @()
     $solutionLines = @()
     $evidenceHint = ''
-    if ($analyzeNote) {
-        if ($analyzeNote -match '(?s)Similar \(local cache\):\s*(.*?)\s*Solutions index hits:') {
-            $similarLines = @($Matches[1] -split "`n" | ForEach-Object { $_.TrimEnd() } | Where-Object { $_ })
-        }
-        if ($analyzeNote -match '(?s)Solutions index hits:\s*(.*)$') {
-            $solutionLines = @($Matches[1] -split "`n" | ForEach-Object { $_.TrimEnd() } | Where-Object { $_ })
-        }
+    $simCount = 0
+    $solCount = 0
+    $subject = [string](Get-MetraProp -Object $ticketObj -Name 'Subject' -Default '')
+    if ($ev) {
+        $similarLines = @($ev.SimilarLines)
+        $solutionLines = @($ev.SolutionLines)
+        $simCount = [int]$ev.SimilarCount
+        $solCount = [int]$ev.SolutionsCount
+        if ($ev.Subject) { $subject = [string]$ev.Subject }
+    }
+    elseif ($analyzeNote) {
+        $parsed = ConvertFrom-MetraTicketWatchAnalyzeNote -NoteText $analyzeNote
+        $similarLines = @($parsed.SimilarLines)
+        $solutionLines = @($parsed.SolutionLines)
+        $simCount = [int]$parsed.SimilarCount
+        $solCount = [int]$parsed.SolutionsCount
     }
     if ($evidenceNote -match '(?im)^\s*Action:\s*(\S+)') {
         $evidenceHint = $Matches[1]
     }
 
-    $simCount = @($similarLines | Where-Object { $_ -match '^\s*-\s+' -and $_ -notmatch '(?i)\(none' }).Count
-    $solCount = @($solutionLines | Where-Object { $_ -match '^\s*-\s+' -and $_ -notmatch '(?i)\(no solutions' }).Count
     $basis = New-MetraTicketWatchRecommendBasis `
         -SimilarCount $simCount `
         -SolutionsCount $solCount `
         -MailEvidence:($evidenceHint -eq 'm365Mail') `
         -WebSuggested:($evidenceHint -eq 'boundedWeb')
 
-    $subject = [string](Get-MetraProp -Object $ticketObj -Name 'Subject' -Default '')
-    $body = New-MetraTicketWatchRecommendBody `
-        -Subject $subject `
-        -SimilarLines $similarLines `
-        -SolutionLines $solutionLines `
-        -EvidenceHint $evidenceHint `
-        -Basis $basis
+    $useNextEvidenceBody = $Preview -and (-not $isRecommendable) -and (-not $Force)
+    if ($useNextEvidenceBody) {
+        $body = New-MetraTicketWatchNextEvidenceBody `
+            -TicketId $canonicalId `
+            -Subject $subject `
+            -Suggestion $(if ($ev) { $ev.Suggestion } else { $null }) `
+            -SimilarCount $simCount `
+            -SolutionsCount $solCount `
+            -SimilarLines $similarLines `
+            -SolutionLines $solutionLines
+    }
+    else {
+        $body = New-MetraTicketWatchRecommendBody `
+            -Subject $subject `
+            -SimilarLines $similarLines `
+            -SolutionLines $solutionLines `
+            -EvidenceHint $evidenceHint `
+            -Basis $basis
+    }
+    $forceOverride = [bool]($Force -and -not $isRecommendable)
+    if ($forceOverride -and -not $useNextEvidenceBody) {
+        $overrideLine = 'Operator override: recommendation written despite thin local evidence.'
+        $body = ($overrideLine + "`n`n" + $body).Trim()
+        $result.warning = 'Force override used; evidence was not recommendable.'
+    }
     $result.body = $body
 
     if ($Preview) {
@@ -627,7 +1416,15 @@ function Invoke-MetraTicketWatchStoreRecommend {
             $result.ok = $true
             if (-not $Quiet) {
                 Write-Host ''
-                Write-Host 'M3 Preview: local recommend-draft written (no iSupport write).'
+                if ($useNextEvidenceBody) {
+                    Write-Host 'M3 Preview: next-evidence brief (not a recommendation; no iSupport write).'
+                }
+                else {
+                    Write-Host 'M3 Preview: local recommend-draft written (no iSupport write).'
+                }
+                if ($result.warning) {
+                    Write-Host $result.warning
+                }
                 Write-Host $body
                 Write-Host ''
             }
@@ -646,7 +1443,12 @@ function Invoke-MetraTicketWatchStoreRecommend {
         $result.ok = $true
         if (-not $Quiet) {
             Write-Host ''
-            Write-Host 'M3 Affirm A: Recommendation written (store-as-review). Re-run supersedes the same section.'
+            if ($forceOverride) {
+                Write-Host 'M3 Affirm A: Force override write (thin local evidence). Re-run supersedes the same section.'
+            }
+            else {
+                Write-Host 'M3 Affirm A: Recommendation written (store-as-review). Re-run supersedes the same section.'
+            }
             Write-Host ''
         }
     }
@@ -796,21 +1598,57 @@ function Test-MetraTicketStatusIsActive {
 function Get-MetraTicketAttentionStatusRank {
     <#
     .SYNOPSIS
-        Lower number = higher Attention priority. Waiting on Customer sorts below Open work.
+        Lower number = higher Attention priority.
+        Update from Representative/Customer sorts above Open; Waiting on Customer below Open.
     #>
     [CmdletBinding()]
     param([string]$Status = '')
 
     $s = ([string]$Status).Trim()
-    if (-not $s) { return 1 }
-    # Ball in operator court - surface first.
-    if ($s -match '(?i)^open\b') { return 0 }
+    if (-not $s) { return 15 }
+    # New inbound signal - surface before steady Open work.
     if ($s -match '(?i)^update from\b') { return 0 }
-    if ($s -match '(?i)^(in\s*progress|assigned|new|active)\b') { return 5 }
+    # Ball in operator court.
+    if ($s -match '(?i)^open\b') { return 10 }
+    if ($s -match '(?i)^reopened\b') { return 10 }
+    if ($s -match '(?i)^(in\s*progress|assigned|new|active)\b') { return 20 }
     # Ball with customer / parked - keep in queue but below Open work.
     if ($s -match '(?i)^waiting\b') { return 40 }
     if ($s -match '(?i)^(pending|on\s*hold)\b') { return 30 }
-    return 20
+    return 25
+}
+
+function Get-MetraAttentionItemUpdatedUtcTicks {
+    <#
+    .SYNOPSIS
+        Newer ticket updates sort first within the same statusRank (descending ticks).
+    #>
+    [CmdletBinding()]
+    param($Item)
+
+    if ([string]$Item.kind -ne 'ticket') { return [long]0 }
+    $sig = [string](Get-MetraProp -Object $Item -Name 'evidenceSignature' -Default '')
+    if ($sig -match '(?i)\|updated:([^|]+)') {
+        $raw = $Matches[1].Trim()
+        if ($raw) {
+            try {
+                $dt = [datetime]::Parse($raw, $null, [System.Globalization.DateTimeStyles]::RoundtripKind)
+                return $dt.ToUniversalTime().Ticks
+            }
+            catch {
+                try { return ([datetime]$raw).ToUniversalTime().Ticks } catch { }
+            }
+        }
+    }
+    $lastSeen = [string](Get-MetraProp -Object $Item -Name 'lastSeenAt' -Default '')
+    if ($lastSeen) {
+        try {
+            $dt = [datetime]::Parse($lastSeen, $null, [System.Globalization.DateTimeStyles]::RoundtripKind)
+            return $dt.ToUniversalTime().Ticks
+        }
+        catch { }
+    }
+    return [long]0
 }
 
 function Get-MetraAttentionItemStatusRank {
@@ -818,21 +1656,24 @@ function Get-MetraAttentionItemStatusRank {
     param($Item)
 
     if ([string]$Item.kind -ne 'ticket') { return 0 }
-    $explicit = Get-MetraProp -Object $Item -Name 'statusRank' -Default $null
-    if ($null -ne $explicit -and "$explicit" -ne '') {
-        try { return [int]$explicit } catch { }
-    }
     $status = [string](Get-MetraProp -Object $Item -Name 'ticketStatus' -Default '')
     if (-not $status) {
         $detail = [string](Get-MetraProp -Object $Item -Name 'detail' -Default '')
-        if ($detail -match '(?i)^(Waiting on Customer|Open|In Progress|Pending|On Hold)') {
+        if ($detail -match '(?i)^(Update from (?:Representative|Customer)|Waiting on Customer|Open|Reopened|In Progress|Pending|On Hold)') {
             $status = $Matches[1]
         }
         elseif ([string]$Item.evidenceSignature -match '(?i)\|status:([^|]+)') {
             $status = $Matches[1].Trim()
         }
     }
-    return (Get-MetraTicketAttentionStatusRank -Status $status)
+    if ($status) {
+        return (Get-MetraTicketAttentionStatusRank -Status $status)
+    }
+    $explicit = Get-MetraProp -Object $Item -Name 'statusRank' -Default $null
+    if ($null -ne $explicit -and "$explicit" -ne '') {
+        try { return [int]$explicit } catch { }
+    }
+    return (Get-MetraTicketAttentionStatusRank -Status '')
 }
 
 function ConvertTo-MetraTicketAttentionQueueItem {
@@ -914,13 +1755,15 @@ function Update-MetraTicketAttentionDisplayFields {
 
     $detail = [string](Get-MetraProp -Object $MemItem -Name 'detail' -Default '')
     $hasSubject = $content -match '(?i)^Ticket\s+\d+\s*:'
+    # Thin rows need TT fill. Subject+detail rows already carry status for sort
+    # (ticketStatus, detail prefix, or evidenceSignature |status:).
     if ($hasSubject -and $detail) { return $MemItem }
 
-    $tt = Get-MetraTicketTrackerProject
+    $tt = Resolve-MetraTicketTrackerModule
     if (-not $tt) { return $MemItem }
 
     try {
-        Import-Module $tt.ModulePath -Force
+        $null = Import-MetraTicketTrackerModule -ModulePath $tt.ModulePath
         $getTickets = Get-Command Get-TrackedTickets -ErrorAction Stop
         $ticket = @(& $getTickets -Id $id | Select-Object -First 1)
         if ($ticket.Count -eq 0) { return $MemItem }
@@ -957,7 +1800,7 @@ function Get-MetraTicketWatchCandidates {
         [string]$Scope = 'mine'
     )
 
-    Import-Module $ModulePath -Force
+    $null = Import-MetraTicketTrackerModule -ModulePath $ModulePath
     $synced = $false
     $syncError = ''
     $scopeWarning = ''
@@ -1133,7 +1976,7 @@ function Invoke-MetraTicketWatchScan {
         iSupportWrites       = $false
     }
 
-    $tt = Get-MetraTicketTrackerProject
+    $tt = Resolve-MetraTicketTrackerModule
     if (-not $tt) {
         $result.warning = 'TicketTracker project or module not present; ticket watch skipped.'
         if (-not $Quiet) {
@@ -1246,7 +2089,7 @@ function Invoke-MetraTicketWatchScan {
         }
     )
     if ($analyzeIds.Count -gt 0) {
-        Import-Module $tt.ModulePath -Force
+        $null = Import-MetraTicketTrackerModule -ModulePath $tt.ModulePath
         foreach ($id in $analyzeIds) {
             try {
                 $analysis = New-TicketDraftAnalysis -Id $id
@@ -1286,7 +2129,10 @@ function Invoke-MetraTicketWatchScan {
                             -InstitutionalExhausted:$true
                         $suggestion = Get-MetraTicketWatchEvidenceSuggestion -Signals $signals
                         $noteBody = Format-MetraTicketWatchEvidenceNextNote -Suggestion $suggestion
-                        $null = Add-TrackedTicketNote -Id $id -Text $noteBody -Tags 'evidence-next'
+                        $priorEvidence = Get-MetraTicketWatchLatestNoteText -TicketId $id -Tag 'evidence-next'
+                        if ($noteBody.Trim() -ne ([string]$priorEvidence).Trim()) {
+                            $null = Add-TrackedTicketNote -Id $id -Text $noteBody -Tags 'evidence-next'
+                        }
                         $result.evidenceSuggestions++
                         if ([string]$suggestion.draftState -eq 'recommendable') {
                             $result.evidenceRecommendable++

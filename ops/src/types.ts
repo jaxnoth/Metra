@@ -258,6 +258,9 @@ export type ProductUpdateItem = {
 export type ProductUpdates = {
   checkedAt: string
   anyUpdate: boolean
+  lastUpdatedAt?: string | null
+  lastMetraVersion?: string | null
+  lastOllamaVersion?: string | null
   metra: ProductUpdateItem
   ollama: ProductUpdateItem
 }
@@ -267,6 +270,7 @@ export type ProductUpdateResult = {
   target: string
   status: string
   message?: string | null
+  restartRequired?: boolean
   updates?: ProductUpdates
 }
 
@@ -278,6 +282,16 @@ export type ProfileSyncFile = {
   hash: string
 }
 
+export type ProfileSyncSatellite = {
+  machineName: string
+  lastAppliedHash?: string
+  lastSeenUtc?: string
+  metraVersion?: string
+  role?: string
+  state: 'Current' | 'Behind' | 'Stale' | string
+  stale?: boolean
+}
+
 export type ProfileSyncStatus = {
   ok: boolean
   profilePackVersion: number
@@ -285,6 +299,7 @@ export type ProfileSyncStatus = {
   maxWriteUtc?: string | null
   fileCount: number
   files: ProfileSyncFile[]
+  satellites?: ProfileSyncSatellite[]
 }
 
 export type ProfileSyncTokenIssue = {

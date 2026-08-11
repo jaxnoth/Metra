@@ -1,5 +1,7 @@
 # Mark-of-the-web / ZIP-install helpers. Private except Show-MetraUnblockCli (CLI export).
 # Also owns durable setup / installer troubleshooting logs under docs/*.local.log.
+# Setup/installer logs use UTF-8 via Add-Content/Set-Content -Encoding utf8 (BOM behavior
+# follows the host PowerShell version; prefer PowerShell 7+ for no-BOM UTF-8).
 
 function Get-MetraSetupLogPath {
     <#
@@ -23,12 +25,32 @@ function Get-MetraInstallerLogPath {
     return (Join-Path $MetraRoot 'docs\installer.local.log')
 }
 
+function Get-MetraInstallStatus {
+    <#
+    .SYNOPSIS
+        Lightweight installer / setup log health summary for troubleshooting.
+    #>
+    [CmdletBinding()]
+    param([string]$MetraRoot = (Get-MetraRoot))
+
+    $setupLog = Get-MetraSetupLogPath -MetraRoot $MetraRoot
+    $installerLog = Get-MetraInstallerLogPath -MetraRoot $MetraRoot
+
+    return [PSCustomObject]@{
+        SetupLogExists     = [bool](Test-Path -LiteralPath $setupLog -PathType Leaf)
+        InstallerLogExists = [bool](Test-Path -LiteralPath $installerLog -PathType Leaf)
+        SetupLogPath       = $setupLog
+        InstallerLogPath   = $installerLog
+    }
+}
+
 function Initialize-MetraSetupLogFolder {
     param([string]$MetraRoot = (Get-MetraRoot))
 
     $docs = Join-Path $MetraRoot 'docs'
     if (-not (Test-Path -LiteralPath $docs)) {
-        New-Item -ItemType Directory -Path $docs -Force | Out-Null
+        # Directory.CreateDirectory is literal-path safe; New-Item -LiteralPath is not on all hosts.
+        [void][System.IO.Directory]::CreateDirectory($docs)
     }
     return $docs
 }
@@ -48,7 +70,8 @@ function Write-MetraSetupLogLine {
     try {
         $null = Initialize-MetraSetupLogFolder -MetraRoot $MetraRoot
         $path = Get-MetraSetupLogPath -MetraRoot $MetraRoot
-        $line = '[{0:yyyy-MM-dd HH:mm:ssK}] {1}' -f (Get-Date), $Message
+        $clean = ($Message -replace '\r?\n', ' ' -replace '\t', ' ' -replace '\s+', ' ').Trim()
+        $line = '[{0:yyyy-MM-dd HH:mm:ssK}] {1}' -f (Get-Date), $clean
         Add-Content -LiteralPath $path -Value $line -Encoding utf8
     }
     catch {
@@ -62,6 +85,7 @@ function Copy-MetraInnoInstallerLog {
         Best-effort: copy the newest Inno "Setup Log *.txt" from %TEMP% into docs/installer.local.log.
     .DESCRIPTION
         Inno SetupLogging=yes writes under TEMP. Operators need a stable path under the product tree.
+        Only copies a log whose header mentions Metra - never falls back to an unrelated installer log.
     #>
     [CmdletBinding()]
     param(
@@ -77,7 +101,7 @@ function Copy-MetraInnoInstallerLog {
         $candidates = @(
             Get-ChildItem -LiteralPath $temp -Filter 'Setup Log *.txt' -File -ErrorAction SilentlyContinue |
                 Where-Object { $_.LastWriteTime -ge $cutoff } |
-                Sort-Object LastWriteTime -Descending
+                Sort-Object @{ Expression = { $_.LastWriteTime }; Descending = $true }
         )
         $picked = $null
         foreach ($c in $candidates) {
@@ -91,17 +115,18 @@ function Copy-MetraInnoInstallerLog {
                 break
             }
         }
-        if (-not $picked -and $candidates.Count -gt 0) {
-            $picked = $candidates[0]
-        }
         if (-not $picked) {
             return [PSCustomObject]@{
                 Copied = $false
                 Source = $null
                 Path   = $dest
+                Reason = 'No Metra installer log detected'
             }
         }
         Copy-Item -LiteralPath $picked.FullName -Destination $dest -Force
+        if (-not (Test-Path -LiteralPath $dest -PathType Leaf)) {
+            throw 'Installer log copy verification failed.'
+        }
         Write-MetraSetupLogLine -MetraRoot $MetraRoot -Message ("Copied Inno installer log from {0}" -f $picked.FullName)
         return [PSCustomObject]@{
             Copied = $true
@@ -137,7 +162,14 @@ function Start-MetraSetupTranscript {
     try {
         $psd1 = Join-Path $MetraRoot 'scripts\Metra.psd1'
         if (Test-Path -LiteralPath $psd1) {
-            $manifest = Import-PowerShellDataFile -Path $psd1
+            $importParams = @{ ErrorAction = 'Stop' }
+            if ((Get-Command Import-PowerShellDataFile).Parameters.ContainsKey('LiteralPath')) {
+                $importParams.LiteralPath = $psd1
+            }
+            else {
+                $importParams.Path = $psd1
+            }
+            $manifest = Import-PowerShellDataFile @importParams
             $version = [string]$manifest.ModuleVersion
         }
     }
@@ -145,7 +177,7 @@ function Start-MetraSetupTranscript {
 
     # Header before transcript - transcript locks the file on some hosts.
     Write-MetraSetupLogLine -MetraRoot $MetraRoot -Message ("==== Metra {0} start source={1} host={2} user={3} ps={4} ====" -f `
-        $(if ($version) { $version } else { '?' }),
+            $(if ($version) { $version } else { '?' }),
         $Source,
         $env:COMPUTERNAME,
         $env:USERNAME,
@@ -225,7 +257,7 @@ function Unblock-MetraCheckout {
     .SYNOPSIS
         Clears mark-of-the-web from Metra checkout script files. Supports -Preview.
     .OUTPUTS
-        PSCustomObject with BlockedDetected, FilesUnblocked, AlreadyClean, Failed.
+        PSCustomObject with BlockedDetected, FilesUnblocked, AlreadyClean, Failed, FailedFiles.
     #>
     [CmdletBinding()]
     param(
@@ -245,6 +277,7 @@ function Unblock-MetraCheckout {
     $filesUnblocked = 0
     $alreadyClean = 0
     $failed = 0
+    $failedFiles = New-Object System.Collections.Generic.List[string]
 
     foreach ($file in $files) {
         $isBlocked = Test-MetraBlockedFile -Path $file.FullName
@@ -262,6 +295,9 @@ function Unblock-MetraCheckout {
             Unblock-File -LiteralPath $file.FullName -ErrorAction Stop
             if (Test-MetraBlockedFile -Path $file.FullName) {
                 $failed++
+                if ($failedFiles.Count -lt 10) {
+                    [void]$failedFiles.Add([string]$file.FullName)
+                }
             }
             else {
                 $filesUnblocked++
@@ -269,17 +305,21 @@ function Unblock-MetraCheckout {
         }
         catch {
             $failed++
+            if ($failedFiles.Count -lt 10) {
+                [void]$failedFiles.Add([string]$file.FullName)
+            }
         }
     }
 
     return [PSCustomObject]@{
-        Path             = (Resolve-Path -LiteralPath $Path).Path
-        Preview          = [bool]$Preview
-        ScannedCount     = $files.Count
-        BlockedDetected  = $blockedDetected
-        FilesUnblocked   = $filesUnblocked
-        AlreadyClean     = $alreadyClean
-        Failed           = $failed
+        Path            = (Resolve-Path -LiteralPath $Path).Path
+        Preview         = [bool]$Preview
+        ScannedCount    = $files.Count
+        BlockedDetected = $blockedDetected
+        FilesUnblocked  = $filesUnblocked
+        AlreadyClean    = $alreadyClean
+        Failed          = $failed
+        FailedFiles     = @($failedFiles.ToArray())
     }
 }
 
@@ -316,6 +356,9 @@ function Write-MetraUnblockResult {
     Write-Host ("  Failed:           {0}" -f $Result.Failed)
     if ($Result.Failed -gt 0) {
         Write-Host '  Some files could not be unblocked. Retry as the file owner, or unblock the ZIP before extracting.' -ForegroundColor Yellow
+        foreach ($f in @($Result.FailedFiles | Select-Object -First 5)) {
+            Write-Host ("    - {0}" -f $f) -ForegroundColor DarkYellow
+        }
     }
     elseif ($Result.Preview -and $Result.BlockedDetected -gt 0) {
         Write-Host '  Hint: .\metra.ps1 unblock' -ForegroundColor Yellow

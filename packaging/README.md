@@ -39,3 +39,9 @@ Or set `METRA_ISCC` to the full path of `ISCC.exe`.
 - Optional Persona Add-ons stay `import-profile` / `setup -Profile` after install.
 
 Unsigned builds may show SmartScreen: More info -> Run anyway.
+
+## 0.1.10 operator notes
+
+- After upgrading HQ Ops, confirm `Invoke-RestMethod <OpsUrl>/api/meta` shows version **0.1.10** (or newer), not a stale host.
+- If a profile sync token was pasted in chat or a shared terminal, **rotate** it on HQ (Ops Settings -> Rotate sync token) and re-run `.\metra.ps1 profile sync -SyncToken '<new>'` on satellites.
+- Satellites: `.\metra.ps1 profile status` shows Current / Behind / Unknown. HQ Settings lists satellites that have checked in after status or sync.

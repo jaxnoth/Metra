@@ -74,6 +74,7 @@ Describe 'Metra Profile Sync' {
             $manifest = Get-Content -LiteralPath $manifestPath -Raw | ConvertFrom-Json
             $manifest.profilePackVersion | Should -Be 1
             $manifest.contentHash | Should -Match '^sha256:'
+            $manifest.source | Should -Be ([System.Environment]::MachineName)
             @($manifest.files).Count | Should -BeGreaterThan 0
             $first = @($manifest.files)[0]
             $first.relativePath | Should -Not -BeNullOrEmpty
@@ -83,6 +84,24 @@ Describe 'Metra Profile Sync' {
             if (Test-Path -LiteralPath $zip) { Remove-Item -LiteralPath $zip -Force }
             Get-ChildItem -LiteralPath $env:TEMP -Filter 'metra-profile-sync-unpack-*' -Directory -ErrorAction SilentlyContinue |
                 Remove-Item -Recurse -Force -ErrorAction SilentlyContinue
+        }
+    }
+
+    It 'Export-MetraProfile refuses non-empty folder without -Force' {
+        $dir = Join-Path $env:TEMP ("metra-profile-export-dir-" + [guid]::NewGuid().ToString('N'))
+        $null = New-Item -ItemType Directory -Path $dir -Force
+        'landmine' | Set-Content -LiteralPath (Join-Path $dir 'stale.txt') -Encoding utf8
+        try {
+            { Export-MetraProfile -Path $dir } | Should -Throw -ExpectedMessage '*not empty*'
+            Test-Path -LiteralPath (Join-Path $dir 'stale.txt') | Should -BeTrue
+            $null = Export-MetraProfile -Path $dir -Force
+            Test-Path -LiteralPath (Join-Path $dir 'stale.txt') | Should -BeFalse
+            Test-Path -LiteralPath (Join-Path $dir 'metra-profile.json') | Should -BeTrue
+        }
+        finally {
+            if (Test-Path -LiteralPath $dir) {
+                Remove-Item -LiteralPath $dir -Recurse -Force -ErrorAction SilentlyContinue
+            }
         }
     }
 

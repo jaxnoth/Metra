@@ -1,6 +1,6 @@
 @{
     RootModule        = 'Metra.psm1'
-    ModuleVersion     = '0.1.9'
+    ModuleVersion     = '0.1.10'
     GUID              = 'afe44c63-0346-4acf-b723-164fb28c585d'
     Author            = 'Metra contributors'
     CompanyName       = 'Community'
@@ -27,6 +27,7 @@
         'Export-MetraProfile'
         'Import-MetraProfile'
         'Sync-MetraProfile'
+        'Get-MetraProfileSyncClientStatus'
         'Test-MetraInstallation'
         'Get-MetraRoot'
         'Get-MetraConfig'
@@ -89,6 +90,7 @@
         'Add-MetraPlaceMemoryItem',
         'Save-MetraPlaceUpload',
         'Get-MetraPlaceUploadMeta',
+        'Remove-MetraPlaceExpiredUploads',
         'Enable-MetraOpsTailscaleServe',
         'Get-MetraOpsTailscaleServeStatus',
         'Get-MetraOpsTailscaleBinding',
@@ -109,6 +111,7 @@
         'Get-MetraOpsFallbackPort',
         'Get-MetraSetupLogPath',
         'Get-MetraInstallerLogPath',
+        'Get-MetraInstallStatus',
         'Start-MetraSetupTranscript',
         'Stop-MetraSetupTranscript',
         'Copy-MetraInnoInstallerLog',

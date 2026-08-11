@@ -79,26 +79,72 @@ function Get-MetraAskAgentsExcerpt {
 }
 
 function Get-MetraAskCliSurfacesFromAgents {
-    param([string]$AgentsText)
+    <#
+    .SYNOPSIS
+        Extract a small number of CLI surfaces from AGENTS.md for Ask evidence.
+    .NOTES
+        Cap is 2 so AGENTS cmdlets do not fill the entire 6-item evidence budget
+        before ticket/brief/document/decision items can land.
+    #>
+    param(
+        [string]$AgentsText,
+        [int]$Max = 2
+    )
 
     if ([string]::IsNullOrWhiteSpace($AgentsText)) { return @() }
+    if ($Max -lt 1) { $Max = 1 }
     $hits = [System.Collections.Generic.List[string]]::new()
     foreach ($m in [regex]::Matches($AgentsText, '(?m)^\s{0,3}(?:-\s+)?`([^`\r\n]{3,80})`')) {
         $cmd = [string]$m.Groups[1].Value.Trim()
         if ($cmd -match '(?i)^(Import-Module|Get-|Set-|Start-|Stop-|Invoke-|Test-|Find-|Clear-|.\w+\.ps1|python |cd )') {
             if (-not $hits.Contains($cmd)) { $hits.Add($cmd) }
         }
-        if ($hits.Count -ge 4) { break }
+        if ($hits.Count -ge $Max) { break }
     }
     return @($hits)
 }
 
 function Test-MetraAskLiveSystemIntent {
+    <#
+    .SYNOPSIS
+        True when the prompt asks about live / current system health status.
+    .NOTES
+        Phrase match first, then a scored token heuristic (health, down, outage, alert, ...).
+        Documentation routes must not satisfy live-status asks without tool-bound evidence.
+    #>
     param([Parameter(Mandatory)][AllowEmptyString()][string]$Prompt)
 
     $q = $Prompt.Trim()
     if ([string]::IsNullOrWhiteSpace($q)) { return $false }
-    return [bool]($q -match '(?i)\b(right now|currently|is .+ (down|up|outage|broken|working)|showing an outage|live status|are .+ (healthy|failing))\b')
+
+    # Strong multi-word / template phrases (ops desk)
+    if ($q -match '(?i)\b(right now|currently|live status|showing an outage|status of|check health|are we seeing failures|are services healthy)\b') {
+        return $true
+    }
+    if ($q -match '(?i)\b(is|are)\s+.+\s+(down|up|outage|broken|working|healthy|failing|alerting)\b') {
+        return $true
+    }
+
+    # Scored signals - single vague tokens (status, up) alone are not enough.
+    $signals = @(
+        'health', 'healthy', 'down', 'outage', 'alert', 'alerting',
+        'failing', 'failure', 'failures', 'incident', 'degraded', 'unreachable',
+        'currently', 'right now'
+    )
+    $score = 0
+    foreach ($s in $signals) {
+        if ($q -match ("(?i)\b{0}\b" -f [regex]::Escape($s))) { $score++ }
+    }
+    # "status" / "up" are weak alone - count only with another signal or a question shape.
+    $weakStatus = [bool]($q -match '(?i)\bstatus\b')
+    $weakUp = [bool]($q -match '(?i)\bup\b')
+    $questionShape = [bool]($q -match '(?i)\b(is|are|check|seeing|any|how)\b')
+    if ($score -ge 2) { return $true }
+    if ($score -ge 1 -and $questionShape) { return $true }
+    # Weak "status" / "up" need a question shape plus a relation word (status of X).
+    if ($weakStatus -and $questionShape -and ($q -match '(?i)\b(of|for|on)\b')) { return $true }
+    if ($weakUp -and $questionShape -and $score -ge 1) { return $true }
+    return $false
 }
 
 function Find-MetraAskTicketIdInPrompt {
@@ -126,11 +172,16 @@ function Get-MetraAskEvidenceQuality {
     $home = Get-MetraHomeDestinationName
     $hasRoute = -not [string]::IsNullOrWhiteSpace($where)
 
+    # Ticket ids alone are not factual - only ticket/brief items with factualSupport count.
+    # file/project/cmdlet may qualify by kind; journal/image/route never do.
     $factual = @(
         $Items | Where-Object {
             $k = [string](Get-MetraProp -Object $_ -Name 'kind' -Default '')
             $fs = [bool](Get-MetraProp -Object $_ -Name 'factualSupport' -Default $false)
-            ($k -ne 'journal') -and ($fs -or $k -in @('file', 'project', 'cmdlet', 'ticket', 'brief'))
+            if ($k -in @('journal', 'image', 'route')) { return $false }
+            if ($k -in @('ticket', 'brief')) { return $fs }
+            if ($fs) { return $true }
+            return ($k -in @('file', 'project', 'cmdlet'))
         }
     )
     $nonJournal = @($Items | Where-Object { [string](Get-MetraProp -Object $_ -Name 'kind' -Default '') -ne 'journal' })
@@ -146,7 +197,8 @@ function Get-MetraAskEvidenceQuality {
             $factual | Where-Object {
                 $k = [string](Get-MetraProp -Object $_ -Name 'kind' -Default '')
                 $c = [string](Get-MetraProp -Object $_ -Name 'confidence' -Default '')
-                $k -in @('file', 'project', 'ticket', 'brief') -or $c -eq 'high'
+                $fs = [bool](Get-MetraProp -Object $_ -Name 'factualSupport' -Default $false)
+                $k -in @('file', 'project', 'brief') -or ($k -eq 'ticket' -and $fs) -or $c -eq 'high'
             }
         )
         if ($strong.Count -gt 0) { return 'adequate' }
@@ -223,12 +275,12 @@ function New-MetraAskEvidencePack {
         }
     }
 
-    # 4) Ticket id only - bounded label, never full brief body
+    # 4) Ticket id only - identifier cue, not factual content (brief/summary would set factualSupport).
     $ticketId = Find-MetraAskTicketIdInPrompt -Prompt $Prompt
     if ($ticketId) {
         $items.Add((New-MetraAskEvidenceItem -Kind 'ticket' -Label "Ticket id $ticketId" `
                 -Source 'prompt' -Excerpt "Ticket id $ticketId detected in Ask prompt. Use TicketTracker brief $ticketId for details - Ask does not embed full brief bodies." `
-                -Confidence 'medium' -FactualSupport))
+                -Confidence 'medium'))
     }
 
     # 5) Journal continuity (not factual support)

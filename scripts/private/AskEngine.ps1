@@ -11,6 +11,13 @@ function Get-MetraAskModelPinTable {
 }
 
 function Get-MetraAskConfigPath {
+    <#
+    .SYNOPSIS
+        Resolves metra.config.json (or legacy meta.config.json) for Ask read/write.
+    .NOTES
+        Same preferred/legacy order as Get-MetraConfig / Get-MetraConfigFilePath.
+        Returns the preferred path when neither file exists (Save throws separately).
+    #>
     param([string]$MetraRoot = (Get-MetraRoot))
     $preferred = Join-Path $MetraRoot 'metra.config.json'
     $legacy = Join-Path $MetraRoot 'meta.config.json'
@@ -23,12 +30,22 @@ function Get-MetraAskSettings {
     <#
     .SYNOPSIS
         Reads ask.* settings from metra.config.json (multi-engine).
+    .NOTES
+        Loads via Get-MetraAskConfigPath under MetraRoot so Save-MetraAskConfigPatch
+        and settings share preferred/legacy path rules. Default MetraRoot uses Get-MetraConfig cache.
     #>
     [CmdletBinding()]
     param([string]$MetraRoot = (Get-MetraRoot))
 
     $cfg = $null
-    try { $cfg = Get-MetraConfig } catch { $cfg = $null }
+    $configPath = Get-MetraAskConfigPath -MetraRoot $MetraRoot
+    $moduleRoot = Get-MetraRoot
+    if ($MetraRoot -eq $moduleRoot) {
+        try { $cfg = Get-MetraConfig } catch { $cfg = $null }
+    }
+    if ($null -eq $cfg -and (Test-Path -LiteralPath $configPath)) {
+        try { $cfg = Get-Content -Raw -LiteralPath $configPath | ConvertFrom-Json } catch { $cfg = $null }
+    }
     $ask = Get-MetraProp -Object $cfg -Name 'ask' -Default $null
 
     $enabled = $true
@@ -93,11 +110,14 @@ function Get-MetraAskSettings {
     $entBase = ''
     $entModel = ''
     $entApiKeyEnv = 'METRA_ASK_ENTERPRISE_KEY'
+    $entRequireApiKey = $false
     if ($null -ne $enterprise) {
         $entBase = [string](Get-MetraProp -Object $enterprise -Name 'baseUrl' -Default '').Trim().TrimEnd('/')
         $entModel = [string](Get-MetraProp -Object $enterprise -Name 'model' -Default '').Trim()
         $ek = [string](Get-MetraProp -Object $enterprise -Name 'apiKeyEnv' -Default 'METRA_ASK_ENTERPRISE_KEY')
         if (-not [string]::IsNullOrWhiteSpace($ek)) { $entApiKeyEnv = $ek.Trim() }
+        # apiKeyEnv is optional for internal unauthenticated endpoints unless requireApiKey is true.
+        $entRequireApiKey = [bool](Get-MetraProp -Object $enterprise -Name 'requireApiKey' -Default $false)
     }
 
     $llamacpp = Get-MetraProp -Object $ask -Name 'llamacpp' -Default $null
@@ -133,6 +153,7 @@ function Get-MetraAskSettings {
         enterpriseBaseUrl  = $entBase
         enterpriseModel    = $entModel
         enterpriseApiKeyEnv = $entApiKeyEnv
+        enterpriseRequireApiKey = $entRequireApiKey
         enterpriseConfigured = (-not [string]::IsNullOrWhiteSpace($entBase) -and -not [string]::IsNullOrWhiteSpace($entModel))
         llamacppBaseUrl    = $llamaBase
         llamacppModel      = $llamaModel
@@ -144,7 +165,11 @@ function Get-MetraAskSettings {
 function Save-MetraAskConfigPatch {
     <#
     .SYNOPSIS
-        Merges a hashtable into ask.* in metra.config.json and clears config cache.
+        Shallow-merges a hashtable into ask.* in metra.config.json and clears config cache.
+    .DESCRIPTION
+        Performs a shallow merge into ask.* only. Top-level keys in Patch replace ask.<key>
+        wholesale. Nested engine settings (ask.ollama, ask.cursor, ask.enterprise, ask.llamacpp)
+        must be passed as complete objects - this function does not deep-merge nested hashtables.
     #>
     [CmdletBinding()]
     param(
@@ -163,6 +188,7 @@ function Save-MetraAskConfigPatch {
         $ask = [PSCustomObject]@{}
         $cfg | Add-Member -NotePropertyName ask -NotePropertyValue $ask -Force
     }
+    # Shallow merge only - nested objects replace, they do not deep-merge.
     foreach ($key in $Patch.Keys) {
         $val = $Patch[$key]
         if ($null -eq $ask.PSObject.Properties[$key]) {
@@ -260,6 +286,10 @@ function Test-MetraAskEngineHealth {
     <#
     .SYNOPSIS
         True when the selected Ask engine is reachable for completions.
+    .NOTES
+        enterprise / llamacpp use Get-MetraAskOpenAICompatHealthResult (GET /v1/models, /health).
+        Only HTTP 2xx is healthy; 401/403/404 are distinct reachable-but-not-ready states.
+        Endpoints that only expose chat completions may still look unhealthy here.
     #>
     [CmdletBinding()]
     param(
@@ -335,6 +365,7 @@ function Get-MetraAskCapability {
         runtimeReady     = $false
         modelPresent     = $false
         enterpriseConfigured = [bool]$settings.enterpriseConfigured
+        enterpriseKeyPresent = $false
         sizeBand         = $settings.ollamaSizeBand
     }
 
@@ -456,17 +487,67 @@ Metra can still classify work and show routing.
 "@.Trim()
                 return $base
             }
-            $runtime = Test-MetraAskOpenAICompatHealth -BaseUrl $settings.enterpriseBaseUrl -Kind openai -TimeoutSec 3
-            $base.runtimeReady = $runtime
-            $base.modelPresent = $runtime
-            if (-not $runtime) {
-                $base.reason = 'enterprise_unreachable'
+            $entKey = Get-MetraAskEnterpriseApiKey -Settings $settings
+            $base.enterpriseKeyPresent = -not [string]::IsNullOrWhiteSpace($entKey)
+            # apiKeyEnv is optional for internal endpoints; requireApiKey makes missing cred a distinct reason.
+            if ([bool]$settings.enterpriseRequireApiKey -and -not $base.enterpriseKeyPresent) {
+                $base.reason = 'enterprise_key_missing'
                 $base.message = @"
+Ask engine unavailable.
+
+Enterprise Ask requires an API key in env '$($settings.enterpriseApiKeyEnv)' (ask.enterprise.requireApiKey).
+Metra can still classify work and show routing.
+"@.Trim()
+                return $base
+            }
+            $healthHeaders = @{}
+            if ($base.enterpriseKeyPresent) {
+                $healthHeaders['Authorization'] = "Bearer $entKey"
+            }
+            $health = Get-MetraAskOpenAICompatHealthResult -BaseUrl $settings.enterpriseBaseUrl -Kind openai `
+                -TimeoutSec 3 -Headers $healthHeaders
+            # Reachable diagnostics (401/403/404) still mean the host answered.
+            $base.runtimeReady = [string]$health.status -in @('ok', 'auth_required', 'forbidden', 'not_found')
+            $base.modelPresent = [bool]$health.ok
+            if (-not $health.ok) {
+                switch ([string]$health.status) {
+                    'auth_required' {
+                        $base.reason = 'enterprise_key_missing'
+                        $base.message = @"
+Ask engine unavailable.
+
+Enterprise endpoint responded unauthorized - set env '$($settings.enterpriseApiKeyEnv)' or fix the API key.
+Metra can still classify work and show routing.
+"@.Trim()
+                    }
+                    'forbidden' {
+                        $base.reason = 'enterprise_forbidden'
+                        $base.message = @"
+Ask engine unavailable.
+
+Enterprise endpoint refused the health probe (forbidden).
+Metra can still classify work and show routing.
+"@.Trim()
+                    }
+                    'not_found' {
+                        $base.reason = 'enterprise_api_missing'
+                        $base.message = @"
+Ask engine unavailable.
+
+Enterprise OpenAI-compatible API path was not found (check baseUrl /v1/models).
+Metra can still classify work and show routing.
+"@.Trim()
+                    }
+                    default {
+                        $base.reason = 'enterprise_unreachable'
+                        $base.message = @"
 Ask engine unavailable.
 
 Enterprise endpoint is configured but not reachable.
 Metra can still classify work and show routing.
 "@.Trim()
+                    }
+                }
                 return $base
             }
             $base.engineHealthy = $true
@@ -518,7 +599,7 @@ function Get-MetraAskRouteCwd {
     }
 
     $projects = @(Get-MetraProjects -IncludeNonGit -ErrorAction SilentlyContinue)
-    $match = $projects | Where-Object { $_.Name -eq $Where } | Select-Object -First 1
+    $match = $projects | Where-Object { [string]$_.Name -ieq $Where } | Select-Object -First 1
     if ($match -and $match.Path -and (Test-Path -LiteralPath $match.Path)) {
         return [string]$match.Path
     }
@@ -701,16 +782,57 @@ function Convert-MetraAskCursorResponse {
     }
 }
 
+function ConvertTo-MetraAskEngineSafeError {
+    <#
+    .SYNOPSIS
+        Maps raw engine exceptions to operator-safe error codes / messages.
+    .NOTES
+        Stable reason codes pass through with generic operator messages.
+        Raw HTTP / host / auth exception text becomes engine_request_failed.
+    #>
+    [CmdletBinding()]
+    param([string]$ErrorMessage)
+
+    $raw = [string]$ErrorMessage
+    if ($raw -match '^(engine_unsupported:|image_vision_unsupported$|secrets_refuse$)') {
+        return [PSCustomObject]@{
+            Code    = $raw
+            Message = ''
+        }
+    }
+    $known = @{
+        enterprise_request_failed = 'Enterprise Ask request failed.'
+        enterprise_auth_failed    = 'Enterprise Ask authentication failed.'
+        ollama_unreachable        = 'Ollama Ask request failed.'
+        llamacpp_unreachable      = 'llama.cpp Ask request failed.'
+        engine_request_failed     = 'Ask engine request failed.'
+    }
+    if ($known.ContainsKey($raw)) {
+        return [PSCustomObject]@{
+            Code    = $raw
+            Message = [string]$known[$raw]
+        }
+    }
+    if (-not [string]::IsNullOrWhiteSpace($raw)) {
+        Write-Verbose "Ask engine error detail: $raw"
+    }
+    return [PSCustomObject]@{
+        Code    = 'engine_request_failed'
+        Message = 'Ask engine request failed.'
+    }
+}
+
 function New-MetraAskEngineErrorResult {
     param($Settings, [string]$SessionId, [string]$ErrorMessage, $PromptScrub, $CtxScrub)
+    $safe = ConvertTo-MetraAskEngineSafeError -ErrorMessage $ErrorMessage
     return [PSCustomObject]@{
         ok              = $false
-        message         = ''
+        message         = [string]$safe.Message
         engine          = $Settings.engine
         model           = $Settings.model
         sessionId       = $SessionId
         status          = 'error'
-        error           = $ErrorMessage
+        error           = [string]$safe.Code
         secretsRefuse   = $false
         secretsReason   = $null
         secretsNotice   = $(if ($PromptScrub.Matched -or $CtxScrub.Matched) {
@@ -720,6 +842,32 @@ function New-MetraAskEngineErrorResult {
         secretsKinds    = @($PromptScrub.Kinds) + @($CtxScrub.Kinds)
         scrubbedPrompt  = [string]$PromptScrub.Text
     }
+}
+
+function Test-MetraAskCursorSidecarProcessId {
+    <#
+    .SYNOPSIS
+        True when a PID looks like the Metra Cursor Ask node sidecar (stale PID reuse guard).
+    #>
+    [CmdletBinding()]
+    param([Parameter(Mandatory)][int]$ProcessId)
+
+    if ($ProcessId -le 0 -or $ProcessId -eq $PID) { return $false }
+    $p = Get-Process -Id $ProcessId -ErrorAction SilentlyContinue
+    if (-not $p) { return $false }
+    if ([string]$p.ProcessName -notmatch '^(?i)node(\.exe)?$') { return $false }
+
+    try {
+        $cim = Get-CimInstance -ClassName Win32_Process -Filter "ProcessId=$ProcessId" -ErrorAction SilentlyContinue
+        $cmd = if ($cim) { [string]$cim.CommandLine } else { '' }
+        if (-not [string]::IsNullOrWhiteSpace($cmd)) {
+            return [bool]($cmd -match '(?i)(engines[\\/]+cursor|server\.mjs)')
+        }
+    }
+    catch { }
+
+    # No command line available - process name node is best-effort allow.
+    return $true
 }
 
 function Start-MetraAskEngine {
@@ -751,7 +899,10 @@ function Start-MetraAskEngine {
     }
 
     $pidFile = Get-MetraAskEnginePidFile -Port $settings.cursorPort
+    $proc = $null
     try {
+        # Temporary process environment: Windows PowerShell Start-Process lacks per-child -Environment.
+        # PowerShell 7+ could use Start-Process -Environment; restore immediately after launch either way.
         $previous = $env:CURSOR_API_KEY
         $env:CURSOR_API_KEY = $key
         $env:METRA_ASK_PORT = "$($settings.cursorPort)"
@@ -774,9 +925,16 @@ function Start-MetraAskEngine {
         Set-Content -LiteralPath $pidFile -Value $proc.Id -Encoding ASCII
 
         $deadline = [datetime]::UtcNow.AddSeconds(20)
+        $healthy = $false
         while ([datetime]::UtcNow -lt $deadline) {
-            if (Test-MetraAskEngineHealth -MetraRoot $MetraRoot -TimeoutSec 1) { break }
+            if (Test-MetraAskEngineHealth -MetraRoot $MetraRoot -TimeoutSec 1) {
+                $healthy = $true
+                break
+            }
             Start-Sleep -Milliseconds 400
+        }
+        if (-not $healthy -and $proc -and -not $proc.HasExited) {
+            Write-Warning ("Ask Cursor sidecar started (PID {0}) but health is still false on port {1}. Port may be held by another process - not killing automatically." -f $proc.Id, $settings.cursorPort)
         }
     }
     catch {
@@ -801,8 +959,11 @@ function Stop-MetraAskEngine {
     if (Test-Path -LiteralPath $pidFile) {
         $recorded = 0
         if ([int]::TryParse((Get-Content -LiteralPath $pidFile -Raw).Trim(), [ref]$recorded)) {
-            if ($recorded -ne $PID -and (Get-Process -Id $recorded -ErrorAction SilentlyContinue)) {
+            if ($recorded -ne $PID -and (Test-MetraAskCursorSidecarProcessId -ProcessId $recorded)) {
                 $target = $recorded
+            }
+            elseif ($recorded -ne $PID -and (Get-Process -Id $recorded -ErrorAction SilentlyContinue)) {
+                Write-Warning "Ask engine PID file $recorded is not a Metra Cursor sidecar node process; not stopping it."
             }
         }
         Remove-Item -LiteralPath $pidFile -Force -ErrorAction SilentlyContinue
@@ -824,13 +985,13 @@ function Set-MetraCursorApiKey {
     .SYNOPSIS
         Sets CURSOR_API_KEY in User environment (never prints the value).
     #>
-    [CmdletBinding()]
+    [CmdletBinding(DefaultParameterSetName = 'Set')]
     param(
-        [Parameter(Mandatory)][string]$ApiKey,
-        [switch]$Clear
+        [Parameter(Mandatory, ParameterSetName = 'Set')][string]$ApiKey,
+        [Parameter(Mandatory, ParameterSetName = 'Clear')][switch]$Clear
     )
 
-    if ($Clear) {
+    if ($PSCmdlet.ParameterSetName -eq 'Clear') {
         [Environment]::SetEnvironmentVariable('CURSOR_API_KEY', $null, 'User')
         Remove-Item Env:CURSOR_API_KEY -ErrorAction SilentlyContinue
         return [PSCustomObject]@{ status = 'cleared' }

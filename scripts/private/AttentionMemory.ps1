@@ -697,6 +697,7 @@ function Get-MetraAttentionActiveItems {
             Sort-Object `
             @{ Expression = { Get-MetraAttentionKindPriority -Kind $_.kind } }, `
             @{ Expression = { Get-MetraAttentionItemStatusRank -Item $_ } }, `
+            @{ Expression = { Get-MetraAttentionItemUpdatedUtcTicks -Item $_ }; Descending = $true }, `
             @{ Expression = { Get-MetraAttentionConfidenceRank -Confidence $_.confidence } }, `
             @{ Expression = { [string]$_.content } }
     )
@@ -958,9 +959,9 @@ function Write-MetraTicketAttentionLocalNote {
     elseif ($content -match '(?i)\b(\d{6,8})\b') { $id = $Matches[1] }
     if (-not $id) { return }
 
-    $tt = Get-MetraTicketTrackerProject
+    $tt = Resolve-MetraTicketTrackerModule
     if (-not $tt) { return }
-    Import-Module $tt.ModulePath -Force
+    $null = Import-MetraTicketTrackerModule -ModulePath $tt.ModulePath
     $body = @"
 [attention-feedback]
 $Text

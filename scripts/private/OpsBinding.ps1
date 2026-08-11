@@ -1,4 +1,6 @@
 # Ops desk URL binding: prefer http://metra/ on port 80 when free; else 127.0.0.1:7380.
+# When Tailscale binding is enabled, BrowserUrl prefers Tailscale reachability even if friendly
+# host reservations exist (friendly prefixes may still be added as listeners).
 
 $script:MetraOpsFallbackPort = 7380
 $script:MetraOpsFriendlyHost = 'metra'
@@ -6,6 +8,30 @@ $script:MetraOpsFriendlyPort = 80
 
 function Get-MetraOpsFallbackPort {
     return [int]$script:MetraOpsFallbackPort
+}
+
+function Test-MetraFriendlyHostName {
+    <#
+    .SYNOPSIS
+        True when Name is a safe single-label hostname for hosts / URL ACL use.
+    #>
+    [CmdletBinding()]
+    param([string]$Name)
+
+    if ([string]::IsNullOrWhiteSpace($Name)) { return $false }
+    $n = $Name.Trim()
+    return ($n -match '^[a-zA-Z0-9-]+$' -and $n.Length -le 63)
+}
+
+function Assert-MetraOpsBindPort {
+    param(
+        [Parameter(Mandatory)][int]$Port,
+        [string]$Label = 'port'
+    )
+
+    if ($Port -lt 1 -or $Port -gt 65535) {
+        throw "Invalid ${Label}: $Port"
+    }
 }
 
 function Get-MetraOpsTailscaleIPv4 {
@@ -59,7 +85,12 @@ function Get-MetraOpsTailscaleDnsName {
     try {
         $raw = & tailscale status --json 2>$null | Out-String
         if ([string]::IsNullOrWhiteSpace($raw)) { return $null }
-        $status = $raw | ConvertFrom-Json
+        try {
+            $status = $raw | ConvertFrom-Json
+        }
+        catch {
+            return $null
+        }
         $dns = [string](Get-MetraProp -Object $status.Self -Name 'DNSName' -Default '')
         $dns = $dns.Trim().TrimEnd('.')
         if ($dns -match '^[a-zA-Z0-9]([a-zA-Z0-9.-]*[a-zA-Z0-9])?$' -and $dns -match '\.') {
@@ -214,9 +245,11 @@ function Test-MetraHostsEntry {
         [string]$Address = '127.0.0.1'
     )
 
+    if (-not (Test-MetraFriendlyHostName -Name $HostName)) { return $false }
+
     $path = Get-MetraOpsHostsFilePath
     if (-not (Test-Path -LiteralPath $path)) { return $false }
-    $pattern = "^\s*$([regex]::Escape($Address))\s+$([regex]::Escape($HostName))(\s|$)"
+    $pattern = "^\s*$([regex]::Escape($Address))\s+$([regex]::Escape($HostName.Trim()))(\s|$)"
     foreach ($line in Get-Content -LiteralPath $path -ErrorAction SilentlyContinue) {
         if ($line -match '^\s*#') { continue }
         if ($line -match $pattern) { return $true }
@@ -234,6 +267,11 @@ function Add-MetraHostsEntry {
         [Parameter(Mandatory)][string]$HostName,
         [string]$Address = '127.0.0.1'
     )
+
+    if (-not (Test-MetraFriendlyHostName -Name $HostName)) {
+        return [PSCustomObject]@{ Ok = $false; Changed = $false; Error = "Invalid hostname: $HostName" }
+    }
+    $HostName = $HostName.Trim()
 
     if (Test-MetraHostsEntry -HostName $HostName -Address $Address) {
         return [PSCustomObject]@{ Ok = $true; Changed = $false; Error = $null }
@@ -310,15 +348,17 @@ function Add-MetraHttpUrlAcl {
 function Get-MetraOpsLoopbackBinding {
     param([int]$Port = $(Get-MetraOpsFallbackPort))
 
+    Assert-MetraOpsBindPort -Port $Port -Label 'loopback Ops port'
     $prefixes = @("http://127.0.0.1:$Port/")
     $browserUrl = if ($Port -eq 80) { 'http://127.0.0.1/' } else { "http://127.0.0.1:$Port/" }
     return [PSCustomObject]@{
-        Port           = $Port
-        BrowserHost    = '127.0.0.1'
-        BrowserUrl     = $browserUrl
+        Port             = $Port
+        BrowserHost      = '127.0.0.1'
+        BrowserUrl       = $browserUrl
+        ShareUrl         = $browserUrl
         ListenerPrefixes = $prefixes
-        Friendly       = $false
-        Reason         = 'loopback-fallback'
+        Friendly         = $false
+        Reason           = 'loopback-fallback'
     }
 }
 
@@ -327,6 +367,12 @@ function Get-MetraOpsFriendlyBinding {
         [string]$HostName = $script:MetraOpsFriendlyHost,
         [int]$Port = $script:MetraOpsFriendlyPort
     )
+
+    if (-not (Test-MetraFriendlyHostName -Name $HostName)) {
+        throw "Invalid hostname: $HostName"
+    }
+    Assert-MetraOpsBindPort -Port $Port -Label 'friendly Ops port'
+    $HostName = $HostName.Trim()
 
     $prefixes = @(
         "http://127.0.0.1:$Port/"
@@ -337,6 +383,7 @@ function Get-MetraOpsFriendlyBinding {
         Port             = $Port
         BrowserHost      = $HostName
         BrowserUrl       = $browserUrl
+        ShareUrl         = $browserUrl
         ListenerPrefixes = $prefixes
         Friendly         = $true
         Reason           = 'friendly-hostname'
@@ -366,12 +413,19 @@ function Install-MetraOpsFriendlyUrlReservation {
         One-shot elevated hosts + URL ACL for http://metra/ (port 80).
     .DESCRIPTION
         Prompts UAC. Safe to re-run. Does not start the desk.
+        HostName and Port are validated before the elevated helper is generated.
     #>
     [CmdletBinding()]
     param(
         [string]$HostName = 'metra',
         [int]$Port = 80
     )
+
+    if (-not (Test-MetraFriendlyHostName -Name $HostName)) {
+        throw "Invalid hostname: $HostName"
+    }
+    Assert-MetraOpsBindPort -Port $Port -Label 'port'
+    $HostName = $HostName.Trim()
 
     $helper = Join-Path $env:TEMP ("metra-friendly-url-" + [guid]::NewGuid().ToString('n') + '.ps1')
     $okFile = Join-Path $env:TEMP ("metra-friendly-url-ok-" + [guid]::NewGuid().ToString('n') + '.txt')
@@ -421,6 +475,22 @@ function Enable-MetraOpsFriendlyBinding {
         [int]$Port = $script:MetraOpsFriendlyPort,
         [switch]$AllowElevation
     )
+
+    if (-not (Test-MetraFriendlyHostName -Name $HostName)) {
+        return [PSCustomObject]@{
+            Ok      = $false
+            Binding = (Get-MetraOpsLoopbackBinding -Port (Get-MetraOpsFallbackPort))
+            Error   = "Invalid hostname: $HostName"
+        }
+    }
+    if ($Port -lt 1 -or $Port -gt 65535) {
+        return [PSCustomObject]@{
+            Ok      = $false
+            Binding = (Get-MetraOpsLoopbackBinding -Port (Get-MetraOpsFallbackPort))
+            Error   = "Invalid port: $Port"
+        }
+    }
+    $HostName = $HostName.Trim()
 
     if (-not (Test-MetraTcpPortFree -Port $Port)) {
         return [PSCustomObject]@{
@@ -495,7 +565,9 @@ function Resolve-MetraOpsDeskBinding {
     .DESCRIPTION
         Does not mutate the system. Use Initialize-MetraOpsDeskBinding to choose and persist.
         Explicit CLI -Port overrides by callers before using this result.
-        When bindTailscale is set, returns dual loopback+Tailscale prefixes when an IP is available.
+        When bindTailscale is set and a Tailscale IP is available, BrowserUrl prefers Tailscale
+        reachability even if friendly host reservations exist. Friendly http://metra/ listening
+        is restored separately via Get-MetraOpsDeskBindingForPort when those ACLs are present.
     #>
     [CmdletBinding()]
     param([string]$MetraRoot = (Get-MetraRoot))
@@ -556,6 +628,8 @@ function Get-MetraOpsDeskBindingForPort {
     .DESCRIPTION
         Callers that already know the port (supervised child, -Port on the CLI) must not fall back to
         loopback-only prefixes, or a reserved non-loopback prefix answers 503 with no listener behind it.
+        Tailscale reach wins for BrowserUrl / ShareUrl; when friendly host ACLs are already reserved,
+        that prefix is still added to ListenerPrefixes so http://metra/ keeps answering.
     #>
     [CmdletBinding()]
     param(
@@ -878,6 +952,10 @@ function Initialize-MetraOpsDeskBinding {
     .SYNOPSIS
         Setup / operator choice for Ops desk URL: http://metra/ when port 80 is free, else 7380.
         Optional -BindTailscale for non-loopback reach (view/ask). Propose/request-apply still need local session.
+    .DESCRIPTION
+        When -BindTailscale is chosen (or already preferred), Tailscale reach takes precedence for
+        BrowserUrl over the friendly-host path even if port 80 is free. Friendly-only setup runs
+        only when Tailscale bind is off.
     #>
     [CmdletBinding()]
     param(

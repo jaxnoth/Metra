@@ -34,6 +34,18 @@ function Get-MetraCaptureLedger {
         elseif ($raw -is [System.Array]) {
             $items = @($raw)
         }
+        # Newest first by timestamp - do not rely on file write order alone.
+        $items = @(
+            $items | Sort-Object {
+                $at = [string](Get-MetraProp -Object $_ -Name 'at' -Default '')
+                try {
+                    [datetime]::Parse($at, $null, [System.Globalization.DateTimeStyles]::RoundtripKind)
+                }
+                catch {
+                    [datetime]::MinValue
+                }
+            } -Descending
+        )
         if ($Status -ne 'all') {
             $items = @($items | Where-Object { [string](Get-MetraProp -Object $_ -Name 'status' -Default '') -eq $Status })
         }
@@ -60,7 +72,29 @@ function Save-MetraCaptureLedger {
         schemaVersion = Get-MetraCaptureSchemaVersion
         items         = @($Items | Select-Object -First 80)
     }
-    [System.IO.File]::WriteAllText($path, (($payload | ConvertTo-Json -Depth 10) + "`r`n"))
+    $tmp = "$path.tmp"
+    [System.IO.File]::WriteAllText($tmp, (($payload | ConvertTo-Json -Depth 10) + "`r`n"))
+    Move-Item -LiteralPath $tmp -Destination $path -Force
+}
+
+function Format-MetraCaptureMarkdownSummary {
+    <#
+    .SYNOPSIS
+        Flatten multiline capture summaries for Markdown stubs (single line, length-capped).
+    #>
+    [CmdletBinding()]
+    param(
+        [AllowNull()]
+        [AllowEmptyString()]
+        [string]$Summary,
+        [int]$MaxLength = 160
+    )
+
+    $safe = ([string]$Summary -replace '[\r\n]+', ' ').Trim()
+    if ($MaxLength -gt 0 -and $safe.Length -gt $MaxLength) {
+        $safe = $safe.Substring(0, $MaxLength).TrimEnd() + '...'
+    }
+    return $safe
 }
 
 function New-MetraCaptureDerivedFrom {
@@ -117,11 +151,11 @@ function Test-MetraCaptureRegisteredProject {
     if ([string]::IsNullOrWhiteSpace($Name)) { return $null }
     $home = Get-MetraHomeDestinationName
     foreach ($p in @(Get-MetraProjects)) {
-        if ([string]$p.Name -eq $Name) { return $p }
+        if ([string]$p.Name -ieq $Name) { return $p }
     }
     try {
         $reg = Get-MetraProjectRegistry
-        $row = @($reg.projects | Where-Object { [string]$_.name -eq $Name } | Select-Object -First 1)
+        $row = @($reg.projects | Where-Object { [string]$_.name -ieq $Name } | Select-Object -First 1)
         if ($row) {
             # Registry-only (not on disk) - still refuse invent but cannot write TODO without path
             return [PSCustomObject]@{
@@ -132,7 +166,7 @@ function Test-MetraCaptureRegisteredProject {
         }
     }
     catch { }
-    if ($Name -eq $home) {
+    if ($Name -ieq $home) {
         return [PSCustomObject]@{ Name = $home; Path = $MetraRoot; Root = 'metra' }
     }
     return $null
@@ -146,19 +180,18 @@ function Get-MetraCaptureCrossRootFlags {
     )
 
     $homeName = Get-MetraHomeDestinationName
-    $metraProj = @(Get-MetraProjects | Where-Object { [string]$_.Name -eq $homeName } | Select-Object -First 1)
+    $metraProj = @(Get-MetraProjects | Where-Object { [string]$_.Name -ieq $homeName } | Select-Object -First 1)
     $metraRootLabel = if ($metraProj) { [string]$metraProj.Root } else { 'work' }
     $projRoot = [string](Get-MetraProp -Object $ProjectInfo -Name 'Root' -Default '')
     $requiresCrossRoot = $false
-    if ($projRoot -and $metraRootLabel -and ($projRoot -ne $metraRootLabel)) {
+    if ($projRoot -and $metraRootLabel -and ($projRoot -ine $metraRootLabel)) {
         $requiresCrossRoot = $true
     }
     elseif ($ProjectInfo.Path -and $MetraRoot) {
-        $projFull = [System.IO.Path]::GetFullPath([string]$ProjectInfo.Path)
-        $metaFull = [System.IO.Path]::GetFullPath($MetraRoot)
-        if ($projFull -and $metaFull -and -not $projFull.StartsWith($metaFull, [StringComparison]::OrdinalIgnoreCase)) {
-            # Different folder tree under portfolio - treat as cross-root when roots differ OR path not under Metra
-            if ($projRoot -and $metraRootLabel -and ($projRoot -eq $metraRootLabel)) {
+        # Path-boundary containment (not StartsWith) - avoids C:\Projects\_meta2 matching \_meta.
+        $underMetra = Test-MetraPathWithinRoot -Path ([string]$ProjectInfo.Path) -Root $MetraRoot
+        if (-not $underMetra) {
+            if ($projRoot -and $metraRootLabel -and ($projRoot -ieq $metraRootLabel)) {
                 $requiresCrossRoot = $false
             }
             else {
@@ -220,7 +253,7 @@ function Resolve-MetraCaptureSuggestedTarget {
         return New-MetraCaptureSuggestedTargetObject -Home 'DecisionRegistry' -Project $homeName -Confidence 'high' -Reason 'decision-registry-regex'
     }
     if ($blobLower -match '\b(future development|future-dev)\b' -or
-        ($whereText -eq $homeName -and $blobLower -match '\b(metadata audit|should (add|build|ship))\b')) {
+        ($whereText -ieq $homeName -and $blobLower -match '\b(metadata audit|should (add|build|ship))\b')) {
         return New-MetraCaptureSuggestedTargetObject -Home 'FutureDevelopment' -Project $homeName -Confidence 'high' -Reason 'future-dev-regex'
     }
 
@@ -234,7 +267,7 @@ function Resolve-MetraCaptureSuggestedTarget {
 
     $topNonTt = $null
     foreach ($s in $scored) {
-        if ([string]$s.Name -ne 'TicketTracker') { $topNonTt = $s; break }
+        if ([string]$s.Name -ine 'TicketTracker') { $topNonTt = $s; break }
     }
     $whereProj = $null
     if ($whereText) {
@@ -254,10 +287,10 @@ function Resolve-MetraCaptureSuggestedTarget {
     # 4) Registered non-Metra project
     $pick = $null
     $pickScorePath = $null
-    if ($whereProj -and [string]$whereProj.Name -ne $homeName -and [string]$whereProj.Name -ne 'TicketTracker') {
+    if ($whereProj -and [string]$whereProj.Name -ine $homeName -and [string]$whereProj.Name -ine 'TicketTracker') {
         $pick = $whereProj
     }
-    elseif ($topNonTt -and [string]$topNonTt.Name -ne $homeName) {
+    elseif ($topNonTt -and [string]$topNonTt.Name -ine $homeName) {
         $pick = Test-MetraCaptureRegisteredProject -Name ([string]$topNonTt.Name) -MetraRoot $MetraRoot
         if (-not $pick) {
             $pick = [PSCustomObject]@{
@@ -269,7 +302,7 @@ function Resolve-MetraCaptureSuggestedTarget {
         $pickScorePath = $topNonTt
     }
 
-    if ($pick -and [string]$pick.Name -and [string]$pick.Name -ne $homeName) {
+    if ($pick -and [string]$pick.Name -and [string]$pick.Name -ine $homeName) {
         if (-not $pick.Path -and $pickScorePath) {
             $pick = [PSCustomObject]@{
                 Name = [string]$pick.Name
@@ -340,7 +373,7 @@ function Add-MetraCaptureItem {
     )
 
     $existing = @(Get-MetraCaptureLedger -MetraRoot $MetraRoot -Limit 80 -Status all)
-    $guess = Resolve-MetraCaptureSuggestedHome -Text $Summary -Where $SuggestedProject -HomeId $SuggestedHome
+    $guess = Resolve-MetraCaptureSuggestedHome -Text $Summary -Where $SuggestedProject -HomeId $SuggestedHome -MetraRoot $MetraRoot
     $home = if (-not [string]::IsNullOrWhiteSpace($SuggestedHome)) { $SuggestedHome } else { [string]$guess.suggestedHome }
     $project = if (-not [string]::IsNullOrWhiteSpace($SuggestedProject)) { $SuggestedProject } else { [string]$guess.suggestedProject }
 
@@ -454,7 +487,7 @@ function Add-MetraCaptureFromAskTurn {
         [string](Get-MetraProp -Object $turn -Name 'sessionId' -Default '')
     }
     $derived = New-MetraCaptureDerivedFrom -Type askTurn -SessionId $sess -TurnId $TurnId
-    $guess = Resolve-MetraCaptureSuggestedHome -Text $sum -Where $where
+    $guess = Resolve-MetraCaptureSuggestedHome -Text $sum -Where $where -MetraRoot $MetraRoot
     return Add-MetraCaptureItem `
         -Summary $sum `
         -Body $Body `
@@ -629,7 +662,8 @@ function Add-MetraCaptureFromAskSplit {
         if ([string]::IsNullOrWhiteSpace($summary)) { continue }
         $home = [string](Get-MetraProp -Object $raw -Name 'suggestedHome' -Default '')
         $project = [string](Get-MetraProp -Object $raw -Name 'suggestedProject' -Default '')
-        if ($project -and $project -notin @('Metra', 'TicketTracker', (Get-MetraHomeDestinationName))) {
+        $homeDest = Get-MetraHomeDestinationName
+        if ($project -and $project -ine 'Metra' -and $project -ine 'TicketTracker' -and $project -ine $homeDest) {
             $reg = Test-MetraCaptureRegisteredProject -Name $project -MetraRoot $MetraRoot
             if (-not $reg) {
                 throw "suggestedProject '$project' is not a registered project. Refuse invent."
@@ -674,8 +708,9 @@ function Add-MetraProjectBacklogCaptureStub {
 
     $todo = Join-Path $ProjectPath 'TODO.md'
     $stamp = (Get-Date).ToString('yyyy-MM-dd')
+    $safeSummary = Format-MetraCaptureMarkdownSummary -Summary $Summary -MaxLength 160
     $block = @"
-- [ ] $stamp Capture: $Summary
+- [ ] $stamp Capture: $safeSummary
   - Source: $Lineage
   - Home: ProjectBacklog
   - CaptureId: $CaptureId
@@ -801,19 +836,25 @@ function Add-MetraFutureDevelopmentCaptureStub {
 
     $path = Join-Path $MetraRoot 'docs\Future-Development.local.md'
     $stamp = (Get-Date).ToString('yyyy-MM-dd')
-    $title = ($Summary -replace '[\r\n]+', ' ').Trim()
-    if ($title.Length -gt 80) { $title = $title.Substring(0, 80) }
+    $title = Format-MetraCaptureMarkdownSummary -Summary $Summary -MaxLength 80
+    $safeSummary = Format-MetraCaptureMarkdownSummary -Summary $Summary -MaxLength 160
+    $safeBody = if ([string]::IsNullOrWhiteSpace($Body)) {
+        $null
+    }
+    else {
+        Format-MetraCaptureMarkdownSummary -Summary $Body -MaxLength 400
+    }
     $block = @"
 
 ## $stamp - Capture: $title
 
 **Parked via Capture Inbox (recommend-only until activated).**
 
-- Summary: $Summary
-$(if ($Body) { "- Note: $Body" } else { '' })
+- Summary: $safeSummary
+$(if ($safeBody) { "- Note: $safeBody" } else { '' })
 - Lineage: $Lineage
 - Capture id: $CaptureId
-- Verify when activated: You (+ Bing plan). Do not auto-implement from Capture.
+- Verify when activated: operator review required. Do not auto-implement from Capture.
 
 "@.TrimEnd() + "`r`n"
 

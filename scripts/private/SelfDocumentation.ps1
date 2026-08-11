@@ -1,4 +1,4 @@
-# SelfDocumentation.ps1 - regenerate Metra self-doc canvas + Overview route examples from the registry
+# SelfDocumentation.ps1 - regenerate Metra self-doc from live routing behavior (present projects)
 
 function Get-MetraSelfDocCanvasPath {
     <#
@@ -24,10 +24,121 @@ function ConvertTo-MetraSelfDocRouteId {
     return $id
 }
 
+function Get-MetraSelfDocFeaturedNames {
+    <#
+    .SYNOPSIS
+        Ordered featured project names from registry (routing.featuredProjects + featured:true rows).
+    #>
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory)]$Registry
+    )
+
+    $routing = Get-MetraProp -Object $Registry -Name 'routing' -Default $null
+    $fromRouting = @(Get-MetraProp -Object $routing -Name 'featuredProjects' -Default @()) |
+        ForEach-Object { [string]$_ } |
+        Where-Object { -not [string]::IsNullOrWhiteSpace($_) }
+
+    $ordered = [System.Collections.Generic.List[string]]::new()
+    $seen = @{}
+    foreach ($name in $fromRouting) {
+        $key = $name.ToLowerInvariant()
+        if ($seen.ContainsKey($key)) { continue }
+        $seen[$key] = $true
+        [void]$ordered.Add($name)
+    }
+
+    foreach ($p in @($Registry.projects)) {
+        $name = [string](Get-MetraProp -Object $p -Name 'name' -Default '')
+        if ([string]::IsNullOrWhiteSpace($name)) { continue }
+        $featured = [bool](Get-MetraProp -Object $p -Name 'featured' -Default $false)
+        if (-not $featured) { continue }
+        $key = $name.ToLowerInvariant()
+        if ($seen.ContainsKey($key)) { continue }
+        $seen[$key] = $true
+        [void]$ordered.Add($name)
+    }
+
+    return @($ordered.ToArray())
+}
+
+function Get-MetraSelfDocRouteReason {
+    <#
+    .SYNOPSIS
+        Compact reason label from a Get-MetraRoutingAmbiguity result.
+    #>
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory)]$Ambiguity,
+        [string]$Query = ''
+    )
+
+    if (-not $Ambiguity -or -not $Ambiguity.Primary) { return 'unknown' }
+
+    $matched = @($Ambiguity.Primary.MatchedTokens | ForEach-Object { [string]$_ })
+    if ($matched -contains 'ticket-id') { return 'ticket-id' }
+    if ($matched -contains 'ticket-vocab') { return 'ticket-vocab' }
+    if ($matched -contains 'solutions-keyword') { return 'solutions-keyword' }
+    if (@($matched | Where-Object { $_ -like 'phrase:*' }).Count -gt 0) { return 'trigger-phrase' }
+
+    $isHome = [bool](Get-MetraProp -Object $Ambiguity.Primary -Name 'IsHomeDefault' -Default $false)
+    $score = [int](Get-MetraProp -Object $Ambiguity.Primary -Name 'Score' -Default 0)
+    if ($isHome -or $score -lt 2) { return 'home-default' }
+    if ($matched.Count -gt 0) { return 'registry-score' }
+    if (-not [string]::IsNullOrWhiteSpace($Query) -and (Test-MetraTicketShapedQuery -Query $Query)) {
+        return 'ticket-id'
+    }
+    return 'registry-score'
+}
+
+function Resolve-MetraSelfDocVerifiedAsk {
+    <#
+    .SYNOPSIS
+        Finds a sample ask that the live router sends to ExpectedName (or null).
+    #>
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory)][string]$ExpectedName,
+        [string[]]$CandidateAsks
+    )
+
+    $homeName = Get-MetraHomeDestinationName
+    foreach ($ask in @($CandidateAsks | Where-Object { -not [string]::IsNullOrWhiteSpace([string]$_) })) {
+        $query = [string]$ask
+        try {
+            $amb = Get-MetraRoutingAmbiguity -Query $query
+        }
+        catch {
+            continue
+        }
+        if (-not $amb -or -not $amb.Primary) { continue }
+        $primary = [string]$amb.Primary.Name
+        if ($primary -ne $ExpectedName) { continue }
+
+        $reason = Get-MetraSelfDocRouteReason -Ambiguity $amb -Query $query
+        # Home rows may win only as weak/home-default; other projects need a real win.
+        if ($ExpectedName -ne $homeName -and $reason -eq 'home-default') { continue }
+
+        return [PSCustomObject]@{
+            sampleAsk = $query
+            reason    = $reason
+            score     = [int](Get-MetraProp -Object $amb.Primary -Name 'Score' -Default 0)
+            matched   = [string[]]@(
+                @($amb.Primary.MatchedTokens | ForEach-Object { [string]$_ } | Select-Object -First 8)
+            )
+        }
+    }
+    return $null
+}
+
 function Get-MetraSelfDocRouteExamples {
     <#
     .SYNOPSIS
-        Builds standing route examples for self-documentation from the merged registry.
+        Builds standing route examples verified by Get-MetraRoutingAmbiguity (present projects only).
+    .DESCRIPTION
+        Featured order comes from registry routing.featuredProjects and/or project featured:true.
+        Each sampleAsk is confirmed against the live routing engine so docs match ticket precedence,
+        home fallback, and scoring - not raw trigger[0] guesswork.
     #>
     [CmdletBinding()]
     param(
@@ -36,47 +147,76 @@ function Get-MetraSelfDocRouteExamples {
     )
 
     $registry = Get-MetraProjectRegistry
-    $projects = @($registry.projects)
-    $byName = @{}
-    foreach ($p in $projects) {
+    $table = @(Get-MetraRoutingTable)
+    $presentByName = @{}
+    foreach ($row in $table) {
+        if (-not $row.Present) { continue }
+        $presentByName[[string]$row.Name] = $row
+    }
+
+    $regByName = @{}
+    foreach ($p in @($registry.projects)) {
         $n = [string](Get-MetraProp -Object $p -Name 'name' -Default '')
-        if ($n) { $byName[$n] = $p }
+        if ($n) { $regByName[$n] = $p }
     }
 
-    $preferred = @(
-        'TicketTracker', 'Solarwinds', 'Trivia', 'Colleague',
-        'IWUDATA-Automation', 'Reporting', 'Jitterbit', 'Metra'
-    )
-
-    $ordered = [System.Collections.Generic.List[object]]::new()
-    foreach ($name in $preferred) {
-        if ($byName.ContainsKey($name)) {
-            $ordered.Add($byName[$name])
-            $byName.Remove($name)
-        }
+    $featuredNames = @(Get-MetraSelfDocFeaturedNames -Registry $registry)
+    $orderedNames = [System.Collections.Generic.List[string]]::new()
+    $seen = @{}
+    foreach ($name in $featuredNames) {
+        if (-not $presentByName.ContainsKey($name)) { continue }
+        $key = $name.ToLowerInvariant()
+        if ($seen.ContainsKey($key)) { continue }
+        $seen[$key] = $true
+        [void]$orderedNames.Add($name)
     }
-    foreach ($name in ($byName.Keys | Sort-Object)) {
-        $ordered.Add($byName[$name])
+    foreach ($name in @($presentByName.Keys | Sort-Object)) {
+        $key = $name.ToLowerInvariant()
+        if ($seen.ContainsKey($key)) { continue }
+        $seen[$key] = $true
+        [void]$orderedNames.Add($name)
     }
 
+    $homeName = Get-MetraHomeDestinationName
     $rows = @()
-    foreach ($reg in $ordered) {
+    foreach ($name in $orderedNames) {
         if ($rows.Count -ge $TableLimit) { break }
-        $name = [string](Get-MetraProp -Object $reg -Name 'name' -Default '')
-        if ([string]::IsNullOrWhiteSpace($name)) { continue }
-        if ($name -eq 'Metra' -and $rows.Count -gt 0) { continue }
+        if ($name -eq $homeName -and $rows.Count -gt 0) { continue }
 
-        $triggers = @(Get-MetraProp -Object $reg -Name 'triggers' -Default @()) | Where-Object { $_ }
-        $purpose = [string](Get-MetraProp -Object $reg -Name 'purpose' -Default '')
-        $sampleAsk = if ($triggers.Count -gt 0) { [string]$triggers[0] } else { "help with $name" }
-        $id = ConvertTo-MetraSelfDocRouteId -Name $name
+        $reg = $regByName[$name]
+        $triggers = @()
+        $purpose = ''
+        if ($reg) {
+            $triggers = @(Get-MetraProp -Object $reg -Name 'triggers' -Default @()) | Where-Object { $_ }
+            $purpose = [string](Get-MetraProp -Object $reg -Name 'purpose' -Default '')
+        }
+        else {
+            $purpose = [string](Get-MetraProp -Object $presentByName[$name] -Name 'Advice' -Default '')
+        }
 
-        $rows += [ordered]@{
-            id        = $id
+        $candidates = [System.Collections.Generic.List[string]]::new()
+        foreach ($t in $triggers) { [void]$candidates.Add([string]$t) }
+        [void]$candidates.Add($name)
+        if ($name -eq $homeName) {
+            [void]$candidates.Add('help me organize my portfolio')
+            [void]$candidates.Add('zzqx-noroute-xyzzy-qwerty')
+        }
+
+        $verified = Resolve-MetraSelfDocVerifiedAsk -ExpectedName $name -CandidateAsks @($candidates.ToArray())
+        if (-not $verified) {
+            # Skip unverified rows so Overview never claims a route the engine will not take.
+            continue
+        }
+
+        $rows += [PSCustomObject]@{
+            id        = (ConvertTo-MetraSelfDocRouteId -Name $name)
             name      = $name
-            sampleAsk = $sampleAsk
+            sampleAsk = [string]$verified.sampleAsk
             purpose   = $purpose
             triggers  = @($triggers | Select-Object -First 5)
+            reason    = [string]$verified.reason
+            score     = [int]$verified.score
+            present   = $true
         }
     }
 
@@ -84,11 +224,111 @@ function Get-MetraSelfDocRouteExamples {
     $chosen = $diagram | Where-Object { $_.name -eq 'TicketTracker' } | Select-Object -First 1
     if (-not $chosen -and $diagram.Count -gt 0) { $chosen = $diagram[0] }
 
-    return [ordered]@{
+    return [PSCustomObject]@{
         generatedAt = (Get-Date).ToString('o')
+        source      = 'routing-engine'
         chosenId    = if ($chosen) { [string]$chosen.id } else { '' }
         diagram     = @($diagram)
         routes      = @($rows)
+        precedence  = @(
+            'ticket-id',
+            'ticket-vocab',
+            'solutions-keyword',
+            'registry-score',
+            'home-default'
+        )
+    }
+}
+
+function Get-MetraSelfDocBehaviorExamples {
+    <#
+    .SYNOPSIS
+        Living routing validation suite: fixed probes + verified standing asks.
+    .DESCRIPTION
+        Writes machine-readable examples of how Metra thinks (ticket precedence, home fallback,
+        trigger phrases). Suitable for smoke diffs and adoption desks.
+    #>
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory)]$RoutePayload
+    )
+
+    $examples = New-Object System.Collections.Generic.List[object]
+    $seenQuery = @{}
+
+    $add = {
+        param([string]$Query, [string]$ExpectedPrimary = '')
+        if ([string]::IsNullOrWhiteSpace($Query)) { return }
+        $key = $Query.ToLowerInvariant()
+        if ($seenQuery.ContainsKey($key)) { return }
+        $seenQuery[$key] = $true
+        try {
+            $amb = Get-MetraRoutingAmbiguity -Query $Query
+        }
+        catch {
+            [void]$examples.Add([PSCustomObject]@{
+                    query    = $Query
+                    primary  = ''
+                    reason   = 'error'
+                    score    = 0
+                    matched  = [string[]]@()
+                    expected = $ExpectedPrimary
+                    ok       = $false
+                    detail   = [string]$_.Exception.Message
+                })
+            return
+        }
+        $primary = if ($amb -and $amb.Primary) { [string]$amb.Primary.Name } else { '' }
+        $reason = Get-MetraSelfDocRouteReason -Ambiguity $amb -Query $Query
+        $score = if ($amb -and $amb.Primary) {
+            [int](Get-MetraProp -Object $amb.Primary -Name 'Score' -Default 0)
+        }
+        else { 0 }
+        $matched = if ($amb -and $amb.Primary) {
+            [string[]]@(@($amb.Primary.MatchedTokens | ForEach-Object { [string]$_ } | Select-Object -First 8))
+        }
+        else { [string[]]@() }
+        $ok = if ([string]::IsNullOrWhiteSpace($ExpectedPrimary)) {
+            -not [string]::IsNullOrWhiteSpace($primary)
+        }
+        else {
+            $primary -eq $ExpectedPrimary
+        }
+        [void]$examples.Add([PSCustomObject]@{
+                query    = $Query
+                primary  = $primary
+                reason   = $reason
+                score    = $score
+                matched  = $matched
+                expected = $ExpectedPrimary
+                ok       = [bool]$ok
+            })
+    }
+
+    $homeName = Get-MetraHomeDestinationName
+    $ttPresent = $null -ne (Get-MetraTicketTrackerProject)
+
+    # Fixed adoption probes (how Metra thinks - not only what projects exist).
+    if ($ttPresent) {
+        & $add '1035666' 'TicketTracker'
+        & $add 'Look at 1035666' 'TicketTracker'
+        & $add 'ticket disk alert' 'TicketTracker'
+    }
+    & $add 'solarwinds alerts' 'Solarwinds'
+    & $add 'help me organize my portfolio' $homeName
+    & $add 'zzqx-noroute-xyzzy-qwerty' $homeName
+
+    foreach ($r in @($RoutePayload.routes)) {
+        & $add ([string]$r.sampleAsk) ([string]$r.name)
+    }
+
+    $failCount = @($examples | Where-Object { -not $_.ok }).Count
+    return [PSCustomObject]@{
+        generatedAt = [string]$RoutePayload.generatedAt
+        source      = 'routing-engine'
+        precedence  = @($RoutePayload.precedence)
+        failCount   = $failCount
+        examples    = @($examples.ToArray())
     }
 }
 
@@ -112,7 +352,7 @@ function Install-MetraSelfDocCanvas {
             return $false
         }
         if ($canvasDir -and -not (Test-Path -LiteralPath $canvasDir)) {
-            New-Item -ItemType Directory -Path $canvasDir -Force | Out-Null
+            [void][System.IO.Directory]::CreateDirectory($canvasDir)
         }
         Copy-Item -LiteralPath $templatePath -Destination $CanvasPath -Force
         Write-Host ("Installed Metra self-doc canvas from template: {0}" -f $CanvasPath) -ForegroundColor Green
@@ -158,13 +398,13 @@ function Update-MetraSelfDocCanvasEmbed {
         [Parameter(Mandatory)]$Payload
     )
 
-    $json = ($Payload | ConvertTo-Json -Depth 6 -Compress)
+    $json = ($Payload | ConvertTo-Json -Depth 8 -Compress)
     $begin = '// <metra-selfdoc-routes>'
     $end = '// </metra-selfdoc-routes>'
     $embed = @"
 $begin
-type SelfDocRoute = { id: string; name: string; sampleAsk: string; purpose: string; triggers: string[] };
-type SelfDocRoutesPayload = { generatedAt: string; chosenId: string; diagram: SelfDocRoute[]; routes: SelfDocRoute[] };
+type SelfDocRoute = { id: string; name: string; sampleAsk: string; purpose: string; triggers: string[]; reason?: string; score?: number; present?: boolean };
+type SelfDocRoutesPayload = { generatedAt: string; source?: string; chosenId: string; diagram: SelfDocRoute[]; routes: SelfDocRoute[]; precedence?: string[] };
 const SELFDOC_ROUTES: SelfDocRoutesPayload = $json;
 $end
 "@
@@ -174,6 +414,11 @@ $end
     $ei = $canvas.IndexOf($end)
     if ($bi -ge 0 -and $ei -gt $bi) {
         $updated = $canvas.Substring(0, $bi) + $embed + $canvas.Substring($ei + $end.Length)
+        # Caption outside markers: behavior docs, not registry dump.
+        $updated = $updated.Replace(
+            'Registry-driven diagram. Refresh with',
+            'Live routing diagram (verified asks). Refresh with'
+        )
         [System.IO.File]::WriteAllText($CanvasPath, $updated)
         Write-Host ("Updated self-doc canvas route embed: {0}" -f $CanvasPath) -ForegroundColor Green
         return $true
@@ -197,15 +442,21 @@ function Update-MetraSelfDocOverview {
     $lines = [System.Collections.Generic.List[string]]::new()
     $lines.Add('<!-- metra-selfdoc-routes-begin -->')
     $lines.Add('')
-    $lines.Add('| Project | Sample ask / trigger | Purpose |')
-    $lines.Add('|---------|----------------------|---------|')
+    $lines.Add('| Project | Verified ask | Why | Purpose |')
+    $lines.Add('|---------|--------------|-----|---------|')
     foreach ($r in @($Payload.routes)) {
         $purpose = ([string]$r.purpose) -replace '\|', '/'
         $ask = ([string]$r.sampleAsk) -replace '\|', '/'
-        $lines.Add(("| {0} | {1} | {2} |" -f $r.name, $ask, $purpose))
+        $why = ([string]$r.reason) -replace '\|', '/'
+        $lines.Add(("| {0} | {1} | {2} | {3} |" -f $r.name, $ask, $why, $purpose))
     }
     $lines.Add('')
-    $lines.Add(('Generated {0} by `.\metra.ps1 selfdoc` from the merged registry.' -f $Payload.generatedAt))
+    $lines.Add('Precedence (live engine): ticket id > helpdesk vocabulary > solutions keywords > registry score; weak signals stay at Metra.')
+    if ($null -ne (Get-MetraTicketTrackerProject)) {
+        $lines.Add('Example: ask `1035666` -> TicketTracker (ticket-id), even when no project name appears in the ask.')
+    }
+    $lines.Add('')
+    $lines.Add(('Generated {0} by `.\metra.ps1 selfdoc` from live `Get-MetraRoutingAmbiguity` (present projects only).' -f $Payload.generatedAt))
     $lines.Add('<!-- metra-selfdoc-routes-end -->')
     $block = ($lines -join "`r`n")
 
@@ -241,9 +492,11 @@ function Update-MetraSelfDocOverview {
 function Update-MetraSelfDocumentation {
     <#
     .SYNOPSIS
-        Regenerates self-documentation route examples from the registry into the canvas, Overview.md, and JSON sidecar.
+        Regenerates self-documentation from live routing into canvas, Overview.md, and JSON sidecars.
     .DESCRIPTION
         Repeatable operation after registry / trigger / route changes. Also invoked from Export-MetraSnapshot.
+        Standing examples are verified with Get-MetraRoutingAmbiguity so docs track ticket precedence and
+        home fallback. Writes docs/selfdoc-routing-examples.json as a living validation suite.
     #>
     [CmdletBinding()]
     param(
@@ -253,14 +506,20 @@ function Update-MetraSelfDocumentation {
 
     $metraRoot = Get-MetraRoot
     $payload = Get-MetraSelfDocRouteExamples -DiagramLimit $DiagramLimit -TableLimit $TableLimit
+    $behavior = Get-MetraSelfDocBehaviorExamples -RoutePayload $payload
 
-    $jsonPath = Join-Path $metraRoot 'docs\selfdoc-routes.json'
-    $jsonDir = Split-Path -Parent $jsonPath
-    if (-not (Test-Path -LiteralPath $jsonDir)) {
-        New-Item -ItemType Directory -Path $jsonDir -Force | Out-Null
+    $docsDir = Join-Path $metraRoot 'docs'
+    if (-not (Test-Path -LiteralPath $docsDir)) {
+        [void][System.IO.Directory]::CreateDirectory($docsDir)
     }
-    [System.IO.File]::WriteAllText($jsonPath, (($payload | ConvertTo-Json -Depth 6) + "`r`n"))
+
+    $jsonPath = Join-Path $docsDir 'selfdoc-routes.json'
+    [System.IO.File]::WriteAllText($jsonPath, (($payload | ConvertTo-Json -Depth 8) + "`r`n"))
     Write-Host ("Wrote self-doc routes: {0}" -f $jsonPath) -ForegroundColor Green
+
+    $behaviorPath = Join-Path $docsDir 'selfdoc-routing-examples.json'
+    [System.IO.File]::WriteAllText($behaviorPath, (($behavior | ConvertTo-Json -Depth 8) + "`r`n"))
+    Write-Host ("Wrote self-doc routing examples: {0} (failCount={1})" -f $behaviorPath, $behavior.failCount) -ForegroundColor Green
 
     $canvasPath = Get-MetraSelfDocCanvasPath
     $canvasReady = Install-MetraSelfDocCanvas -CanvasPath $canvasPath
@@ -279,12 +538,15 @@ function Update-MetraSelfDocumentation {
     }
 
     return [PSCustomObject]@{
-        JsonPath       = $jsonPath
-        CanvasPath     = $canvasPath
-        CanvasReady    = [bool]$canvasReady
-        EmbedUpdated   = [bool]$embedOk
-        OverviewUpdated = [bool]$overviewOk
-        RouteCount     = @($payload.routes).Count
-        GeneratedAt    = [string]$payload.generatedAt
+        JsonPath              = $jsonPath
+        BehaviorJsonPath      = $behaviorPath
+        BehaviorFailCount     = [int]$behavior.failCount
+        CanvasPath            = $canvasPath
+        CanvasReady           = [bool]$canvasReady
+        EmbedUpdated          = [bool]$embedOk
+        OverviewUpdated       = [bool]$overviewOk
+        RouteCount            = @($payload.routes).Count
+        GeneratedAt           = [string]$payload.generatedAt
+        Source                = [string]$payload.source
     }
 }
