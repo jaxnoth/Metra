@@ -18,6 +18,12 @@ Entry shape:
 
 ---
 
+## 2026-08-11 - Bing file code review required for Metra changes
+
+- Decision: Future Metra code changes are not done until Bing has reviewed the touched files for hardening (validation, ShouldProcess honesty, path safety, contracts, fail-closed edges). Plan review alone is not enough - paste the changed files (or a focused diff) after implementation, fold accepted fixes, then park residuals under Future-Development Bing follow-ups when they are polish-only. Exceptions: pure docs/parking-lot edits with no executable surface, and urgent incident/hotfix when the operator explicitly waives the gate (record the waiver in chat).
+- Why: Pre-ship Bing file reviews caught release blockers that plan review missed; keep that gate for ongoing Metra work.
+- See: `docs/Future-Development.local.md` (Verify who / Plan + file review loop), Bing module hardening follow-ups
+
 ## 2026-08-11 - Public Export-MetraContext re-review: no blockers
 
 - Decision: Leave `Export-MetraContext` as the prior hardened contract (Limit, AsString/Path '-', path parent/directory checks, optional Query). Re-review found no release blockers; only normalize whitespace Path to null before invoke and splat Quiet when true. No ValidateNotNullOrEmpty on Query; overwrite policy stays in `Export-MetraContextPack`.
