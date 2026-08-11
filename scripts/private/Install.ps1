@@ -1,4 +1,189 @@
 # Mark-of-the-web / ZIP-install helpers. Private except Show-MetraUnblockCli (CLI export).
+# Also owns durable setup / installer troubleshooting logs under docs/*.local.log.
+
+function Get-MetraSetupLogPath {
+    <#
+    .SYNOPSIS
+        Path to the durable first-run / setup transcript (gitignored).
+    #>
+    [CmdletBinding()]
+    param([string]$MetraRoot = (Get-MetraRoot))
+
+    return (Join-Path $MetraRoot 'docs\setup.local.log')
+}
+
+function Get-MetraInstallerLogPath {
+    <#
+    .SYNOPSIS
+        Path to the last copied Inno Setup log (gitignored).
+    #>
+    [CmdletBinding()]
+    param([string]$MetraRoot = (Get-MetraRoot))
+
+    return (Join-Path $MetraRoot 'docs\installer.local.log')
+}
+
+function Initialize-MetraSetupLogFolder {
+    param([string]$MetraRoot = (Get-MetraRoot))
+
+    $docs = Join-Path $MetraRoot 'docs'
+    if (-not (Test-Path -LiteralPath $docs)) {
+        New-Item -ItemType Directory -Path $docs -Force | Out-Null
+    }
+    return $docs
+}
+
+function Write-MetraSetupLogLine {
+    <#
+    .SYNOPSIS
+        Appends one timestamped line to docs/setup.local.log (safe without a transcript).
+    #>
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory)]
+        [string]$Message,
+        [string]$MetraRoot = (Get-MetraRoot)
+    )
+
+    try {
+        $null = Initialize-MetraSetupLogFolder -MetraRoot $MetraRoot
+        $path = Get-MetraSetupLogPath -MetraRoot $MetraRoot
+        $line = '[{0:yyyy-MM-dd HH:mm:ssK}] {1}' -f (Get-Date), $Message
+        Add-Content -LiteralPath $path -Value $line -Encoding utf8
+    }
+    catch {
+        # Logging must never fail setup.
+    }
+}
+
+function Copy-MetraInnoInstallerLog {
+    <#
+    .SYNOPSIS
+        Best-effort: copy the newest Inno "Setup Log *.txt" from %TEMP% into docs/installer.local.log.
+    .DESCRIPTION
+        Inno SetupLogging=yes writes under TEMP. Operators need a stable path under the product tree.
+    #>
+    [CmdletBinding()]
+    param(
+        [string]$MetraRoot = (Get-MetraRoot),
+        [int]$MaxAgeHours = 12
+    )
+
+    $dest = Get-MetraInstallerLogPath -MetraRoot $MetraRoot
+    try {
+        $null = Initialize-MetraSetupLogFolder -MetraRoot $MetraRoot
+        $temp = [System.IO.Path]::GetTempPath()
+        $cutoff = (Get-Date).AddHours(-1 * [Math]::Abs($MaxAgeHours))
+        $candidates = @(
+            Get-ChildItem -LiteralPath $temp -Filter 'Setup Log *.txt' -File -ErrorAction SilentlyContinue |
+                Where-Object { $_.LastWriteTime -ge $cutoff } |
+                Sort-Object LastWriteTime -Descending
+        )
+        $picked = $null
+        foreach ($c in $candidates) {
+            $head = ''
+            try {
+                $head = Get-Content -LiteralPath $c.FullName -TotalCount 40 -ErrorAction Stop | Out-String
+            }
+            catch { continue }
+            if ($head -match '(?i)\bMetra\b') {
+                $picked = $c
+                break
+            }
+        }
+        if (-not $picked -and $candidates.Count -gt 0) {
+            $picked = $candidates[0]
+        }
+        if (-not $picked) {
+            return [PSCustomObject]@{
+                Copied = $false
+                Source = $null
+                Path   = $dest
+            }
+        }
+        Copy-Item -LiteralPath $picked.FullName -Destination $dest -Force
+        Write-MetraSetupLogLine -MetraRoot $MetraRoot -Message ("Copied Inno installer log from {0}" -f $picked.FullName)
+        return [PSCustomObject]@{
+            Copied = $true
+            Source = $picked.FullName
+            Path   = $dest
+        }
+    }
+    catch {
+        return [PSCustomObject]@{
+            Copied = $false
+            Source = $null
+            Path   = $dest
+            Error  = $_.Exception.Message
+        }
+    }
+}
+
+function Start-MetraSetupTranscript {
+    <#
+    .SYNOPSIS
+        Starts an append transcript to docs/setup.local.log when one is not already active.
+    #>
+    [CmdletBinding()]
+    param(
+        [string]$MetraRoot = (Get-MetraRoot),
+        [string]$Source = 'setup'
+    )
+
+    $null = Initialize-MetraSetupLogFolder -MetraRoot $MetraRoot
+    $path = Get-MetraSetupLogPath -MetraRoot $MetraRoot
+
+    $version = ''
+    try {
+        $psd1 = Join-Path $MetraRoot 'scripts\Metra.psd1'
+        if (Test-Path -LiteralPath $psd1) {
+            $manifest = Import-PowerShellDataFile -Path $psd1
+            $version = [string]$manifest.ModuleVersion
+        }
+    }
+    catch { }
+
+    # Header before transcript - transcript locks the file on some hosts.
+    Write-MetraSetupLogLine -MetraRoot $MetraRoot -Message ("==== Metra {0} start source={1} host={2} user={3} ps={4} ====" -f `
+        $(if ($version) { $version } else { '?' }),
+        $Source,
+        $env:COMPUTERNAME,
+        $env:USERNAME,
+        $PSVersionTable.PSVersion)
+
+    $started = $false
+    try {
+        Start-Transcript -Path $path -Append -ErrorAction Stop | Out-Null
+        $started = $true
+    }
+    catch {
+        $started = $false
+    }
+
+    return [PSCustomObject]@{
+        Path    = $path
+        Started = $started
+        Source  = $Source
+    }
+}
+
+function Stop-MetraSetupTranscript {
+    <#
+    .SYNOPSIS
+        Stops a transcript started by Start-MetraSetupTranscript (ignores if not ours / already stopped).
+    #>
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory)]
+        $Session,
+        [string]$MetraRoot = (Get-MetraRoot)
+    )
+
+    if ($Session -and [bool]$Session.Started) {
+        try { Stop-Transcript -ErrorAction Stop | Out-Null } catch { }
+    }
+    Write-MetraSetupLogLine -MetraRoot $MetraRoot -Message ("==== Metra setup end source={0} ====" -f $(if ($Session.Source) { $Session.Source } else { 'setup' }))
+}
 
 function Test-MetraBlockedFile {
     <#
