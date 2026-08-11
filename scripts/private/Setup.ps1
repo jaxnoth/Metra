@@ -16,6 +16,9 @@ function Invoke-MetraSetup {
         [switch]$Preview,
         [int]$Months,
         [int]$ScanDepth,
+        [ValidateSet('Hq', 'Satellite', 'Standalone')]
+        [string]$Role,
+        [switch]$Advanced,
         [switch]$Quiet
     )
 
@@ -74,6 +77,9 @@ function Invoke-MetraSetup {
                 $null = Initialize-MetraOpsDeskBinding -MetraRoot $metraRoot -Preview -Quiet:$Quiet
             }
             catch { }
+            if ($Role -or $Advanced) {
+                Write-Host ("  Would apply machine role setup Role={0} Advanced={1}" -f $(if ($Role) { $Role } else { '(prompt)' }), [bool]$Advanced)
+            }
         }
         if ($configPresent) {
             try {
@@ -202,12 +208,20 @@ function Invoke-MetraSetup {
     }
 
     $deskBinding = $null
+    $machineRoleSetup = $null
     try {
-        $deskBinding = Initialize-MetraOpsDeskBinding -MetraRoot $metraRoot -Interactive:(-not $Quiet) -Quiet:$Quiet
+        $machineRoleSetup = Invoke-MetraMachineRoleSetup -MetraRoot $metraRoot `
+            -Role $Role `
+            -Advanced:$Advanced `
+            -Interactive:(-not $Quiet) `
+            -Quiet:$Quiet
+        if ($machineRoleSetup -and $machineRoleSetup.DeskBinding) {
+            $deskBinding = $machineRoleSetup.DeskBinding
+        }
     }
     catch {
         if (-not $Quiet) {
-            Write-Warning "Ops desk URL setup skipped: $($_.Exception.Message)"
+            Write-Warning "Machine role / Ops desk URL setup skipped: $($_.Exception.Message)"
         }
     }
 
@@ -249,6 +263,15 @@ function Invoke-MetraSetup {
         Write-Host '  - If using Cursor: set operator display name in .cursor/rules/metra-persona.local.mdc'
         Write-Host '  - Ask: .\metra.ps1 ask accept   (Ollama recommended) or Advanced Cursor via ask engine set cursor'
         Write-Host '  - Front door: Start Menu Metra Ops (or .\metra.ps1 host)'
+        if ($machineRoleSetup -and $machineRoleSetup.MachineRole) {
+            Write-Host ("  - Machine role: {0}" -f $machineRoleSetup.MachineRole)
+        }
+        if ($machineRoleSetup -and $machineRoleSetup.MachineRole -eq 'Satellite') {
+            Write-Host '  - Satellite: do not start local Ops as HQ; use profile sync / ask against OpsBaseUrl'
+            if ($machineRoleSetup.OpsBaseUrl) {
+                Write-Host ("  - OpsBaseUrl: {0}" -f $machineRoleSetup.OpsBaseUrl)
+            }
+        }
         if ($deskBinding -and $deskBinding.Binding) {
             Write-Host ("  - Ops desk URL: {0}" -f $deskBinding.Binding.BrowserUrl)
         }
@@ -266,6 +289,7 @@ function Invoke-MetraSetup {
         ContextPack     = $ctxResult
         StartMenu       = $startMenu
         DeskBinding     = $deskBinding
+        MachineRole     = $(if ($machineRoleSetup) { $machineRoleSetup.MachineRole } else { $null })
         AskAccept       = $askAccept
     }
 }

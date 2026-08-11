@@ -216,21 +216,47 @@ function Get-MetraSettingsPortfolio {
         }
     )
 
+    $prefs = Get-MetraDeskPreferences -MetraRoot $MetraRoot
+    $opsBaseUrl = Get-MetraProfileOpsBaseUrlOrNull -MetraRoot $MetraRoot
+    $bindingSummary = 'loopback'
+    try {
+        $binding = Resolve-MetraOpsDeskBinding -MetraRoot $MetraRoot
+        if ($binding -and $binding.BrowserUrl) {
+            if ([bool]$prefs.bindTailscale) {
+                $bindingSummary = "Tailscale reach ($($binding.BrowserUrl))"
+            }
+            elseif ([bool]$prefs.preferFriendlyUrl -or ($binding.BrowserHost -eq 'metra')) {
+                $bindingSummary = "Friendly URL ($($binding.BrowserUrl))"
+            }
+            else {
+                $bindingSummary = "Loopback ($($binding.BrowserUrl))"
+            }
+        }
+    }
+    catch {
+        $bindingSummary = 'unknown'
+    }
+
     return [PSCustomObject]@{
-        metraRoot    = $MetraRoot
-        primaryPath  = $(if ($primary) { [string]$primary.Path } else { '' })
+        metraRoot       = $MetraRoot
+        primaryPath     = $(if ($primary) { [string]$primary.Path } else { '' })
         # Compat: first optional / personal-named root path (older Settings UI).
-        personalPath = $(
+        personalPath    = $(
             $p = @($roots | Where-Object {
                     $_.Optional -or ($_.Name -and $_.Name.ToLowerInvariant() -eq 'personal')
                 }) | Select-Object -First 1
             if ($p) { [string]$p.Path } else { '' }
         )
-        hint         = 'Each folder is a parent that contains project folders. Give each a label (Work, Personal, Lab). Mark one as primary; optional folders may be offline.'
-        roots        = $rootRows
-        ask          = [PSCustomObject]@{
+        hint            = 'Each folder is a parent that contains project folders. Give each a label (Work, Personal, Lab). Mark one as primary; optional folders may be offline.'
+        roots           = $rootRows
+        ask             = [PSCustomObject]@{
             apiKeyPresent = [bool]$apiKeyPresent
         }
+        machineRole     = $prefs.machineRole
+        opsBaseUrl      = $opsBaseUrl
+        bindingSummary  = $bindingSummary
+        preferFriendlyUrl = $prefs.preferFriendlyUrl
+        bindTailscale   = [bool]$prefs.bindTailscale
     }
 }
 
@@ -259,6 +285,10 @@ function Save-MetraSettingsPortfolio {
         [switch]$ClearPersonal,
         [string]$CursorApiKey,
         [switch]$ClearCursorApiKey,
+        [ValidateSet('Hq', 'Satellite', 'Standalone')]
+        [string]$MachineRole,
+        [string]$OpsBaseUrl,
+        [switch]$ClearOpsBaseUrl,
         [string]$MetraRoot = (Get-MetraRoot)
     )
 
@@ -453,6 +483,16 @@ function Save-MetraSettingsPortfolio {
     }
     elseif (-not [string]::IsNullOrWhiteSpace($CursorApiKey)) {
         $null = Set-MetraCursorApiKey -ApiKey $CursorApiKey
+    }
+
+    if ($PSBoundParameters.ContainsKey('MachineRole') -and $MachineRole) {
+        $null = Set-MetraDeskPreferences -MetraRoot $MetraRoot -MachineRole $MachineRole
+    }
+    if ($ClearOpsBaseUrl) {
+        $null = Set-MetraConfiguredOpsBaseUrl -OpsBaseUrl '' -MetraRoot $MetraRoot
+    }
+    elseif ($PSBoundParameters.ContainsKey('OpsBaseUrl')) {
+        $null = Set-MetraConfiguredOpsBaseUrl -OpsBaseUrl $OpsBaseUrl -MetraRoot $MetraRoot
     }
 
     $portfolio = Get-MetraSettingsPortfolio -MetraRoot $MetraRoot

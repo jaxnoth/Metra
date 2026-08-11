@@ -1040,6 +1040,8 @@ export default function App() {
   const [profileSyncTokenShown, setProfileSyncTokenShown] = useState<string | null>(null)
   const [rootsDraft, setRootsDraft] = useState<RootDraft[]>(() => portfolioRootsToDrafts(null))
   const [cursorKeyDraft, setCursorKeyDraft] = useState('')
+  const [machineRoleDraft, setMachineRoleDraft] = useState<'Hq' | 'Satellite' | 'Standalone'>('Standalone')
+  const [opsBaseUrlDraft, setOpsBaseUrlDraft] = useState('')
   const [settingsStatus, setSettingsStatus] = useState<string | null>(null)
   const [resolveStatus, setResolveStatus] = useState<string | null>(null)
   const [ticketWatchStatus, setTicketWatchStatus] = useState<string | null>(null)
@@ -1250,8 +1252,38 @@ export default function App() {
       const portfolio = await fetchSettings()
       setSettingsPortfolio(portfolio)
       setRootsDraft(portfolioRootsToDrafts(portfolio))
+      const role = portfolio.machineRole
+      setMachineRoleDraft(role === 'Hq' || role === 'Satellite' || role === 'Standalone' ? role : 'Standalone')
+      setOpsBaseUrlDraft(portfolio.opsBaseUrl ?? '')
     } catch {
       setSettingsPortfolio(null)
+    }
+  }
+
+  async function onSaveMachineRole() {
+    setBusy(true)
+    setError(null)
+    setSettingsStatus(null)
+    try {
+      const body: Parameters<typeof putSettings>[0] = {
+        machineRole: machineRoleDraft,
+      }
+      if (opsBaseUrlDraft.trim()) {
+        body.opsBaseUrl = opsBaseUrlDraft.trim()
+      } else {
+        body.clearOpsBaseUrl = true
+      }
+      const result = await putSettings(body)
+      setSettingsPortfolio(result.portfolio)
+      const role = result.portfolio.machineRole
+      setMachineRoleDraft(role === 'Hq' || role === 'Satellite' || role === 'Standalone' ? role : machineRoleDraft)
+      setOpsBaseUrlDraft(result.portfolio.opsBaseUrl ?? '')
+      setSettingsStatus('Machine role saved.')
+      await load()
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e))
+    } finally {
+      setBusy(false)
     }
   }
 
@@ -2773,6 +2805,45 @@ export default function App() {
                   Token (copy now): <code>{profileSyncTokenShown}</code>
                 </p>
               ) : null}
+            </div>
+          </div>
+          <div className="settings-row">
+            <div>
+              <strong>Machine role</strong>
+              <p className="muted">
+                HQ hosts Ops. Satellite uses another machine Ops URL. Standalone stays local.
+              </p>
+              <label className="settings-field">
+                <span className="muted">Role</span>
+                <select
+                  disabled={busy}
+                  value={machineRoleDraft}
+                  onChange={(e) =>
+                    setMachineRoleDraft(e.target.value as 'Hq' | 'Satellite' | 'Standalone')
+                  }
+                >
+                  <option value="Hq">HQ - this PC hosts Ops</option>
+                  <option value="Satellite">Satellite - use HQ Ops URL</option>
+                  <option value="Standalone">Standalone - local only</option>
+                </select>
+              </label>
+              <label className="settings-field">
+                <span className="muted">OpsBaseUrl</span>
+                <input
+                  type="text"
+                  disabled={busy}
+                  value={opsBaseUrlDraft}
+                  onChange={(e) => setOpsBaseUrlDraft(e.target.value)}
+                  placeholder="https://metra.example.ts.net (Satellite)"
+                  spellCheck={false}
+                />
+              </label>
+              <p className="muted" style={{ marginTop: '0.35rem' }}>
+                Binding: {settingsPortfolio?.bindingSummary ?? 'unknown'}
+              </p>
+              <button type="button" disabled={busy} onClick={() => void onSaveMachineRole()}>
+                Save machine role
+              </button>
             </div>
           </div>
           <div className="settings-row">

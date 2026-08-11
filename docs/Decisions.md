@@ -18,6 +18,18 @@ Entry shape:
 
 ---
 
+## 2026-08-10 - Installer selected folder is the product root
+
+- Decision: Inno Setup uses `AppendDefaultDirName=no`. The folder chosen on the Dir page is `{app}` (e.g. `C:\Projects\_metra` or Documents\Metra). Do not choose the portfolio parent (`C:\Projects`). The wizard refuses paths that look like a portfolio root (child TicketTracker or Solarwinds) unless `metra.ps1` is present or the leaf is Metra / `_metra` / `_meta` / `metra`.
+- Why: With AppendDefaultDirName=yes, choosing `_metra` produced `_metra\Metra`, so seeded `"path": ".."` resolved to `_metra` instead of the portfolio parent.
+- See: `packaging/inno/Metra.iss`; `packaging/inno/dir-readme.txt`; `packaging/README.md`
+
+## 2026-08-10 - First-run begins with machineRole
+
+- Decision: Setup persists `machineRole` (`Hq` | `Satellite` | `Standalone`) in `docs/ops-preferences.local.json` before networking knobs. Defaults apply role prefs (HQ: friendly when port 80 free, optional Tailscale offer; Satellite: loopback + OpsBaseUrl prompt, no Tailscale; Standalone: friendly when free else 7380, no Tailscale). Advanced (`setup -Advanced`) keeps per-knob prompts. Ops Settings shows a Machine role card. Runtime Desk Modes remain Standalone / HqClient / ForceLocal consumers of OpsBaseUrl.
+- Why: Raw friendly-URL / Tailscale quizzes without role context confused satellite installs; HQ / Satellite / Standalone describe the machine on the network.
+- See: `Invoke-MetraMachineRoleSetup`; `.\metra.ps1 setup -Role`; `docs/Cross-Device.local.md`
+
 ## 2026-08-10 - One authoritative Ask journal host (Desk Mode B)
 
 - Decision: Metra maintains one authoritative Ask journal host. Satellite devices query the journal remotely and do not host Ask services unless explicitly started with `-ForceLocal`.

@@ -1,6 +1,6 @@
 @{
     RootModule        = 'Metra.psm1'
-    ModuleVersion     = '0.1.1'
+    ModuleVersion     = '0.1.2'
     GUID              = 'afe44c63-0346-4acf-b723-164fb28c585d'
     Author            = 'Metra contributors'
     CompanyName       = 'Community'
@@ -106,6 +106,10 @@
         'Stop-MetraAskEngine',
         'Get-MetraDeskPreferences',
         'Set-MetraDeskPreferences',
+        'Get-MetraOpsFallbackPort',
+        'ConvertTo-MetraMachineRole',
+        'Invoke-MetraMachineRoleSetup',
+        'Set-MetraConfiguredOpsBaseUrl',
         'Invoke-MetraCaptureCommand',
         'Invoke-MetraAskLogCommand',
         'Invoke-MetraAskJournalRemote',

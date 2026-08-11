@@ -27,8 +27,10 @@ Or set `METRA_ISCC` to the full path of `ISCC.exe`.
 ## Architecture
 
 - Installer replaces **product** files; never stages user state (`metra.config.json`, local registries, `*.local.mdc`, generated packs).
+- Destination: the folder you select **is** `{app}` (`AppendDefaultDirName=no`). Choose the Metra product folder (e.g. `C:\Projects\_metra` or Documents\Metra), not the portfolio parent (`C:\Projects`).
+- The wizard refuses paths that look like a portfolio root (child `TicketTracker` or `Solarwinds`) unless `metra.ps1` is already present or the leaf is `Metra` / `_metra` / `_meta` / `metra`.
 - Upgrades reuse the prior install directory (`UsePreviousAppDir`) under a stable AppId.
-- Post-install task (checked by default) runs `Metra-Setup.cmd -NoPause` -> setup.
+- Post-install task (checked by default) runs `Metra-Setup.cmd -NoPause` -> setup (machine role HQ / Satellite / Standalone).
 - Start Menu **Metra Setup** launches `Metra-Setup.cmd` (no pack chooser in the wizard).
 - Optional Persona Add-ons stay `import-profile` / `setup -Profile` after install.
 

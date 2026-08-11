@@ -613,6 +613,180 @@ function Get-MetraOpsDeskBindingForPort {
     return $binding
 }
 
+function ConvertTo-MetraMachineRole {
+    <#
+    .SYNOPSIS
+        Normalizes HQ / Satellite / Standalone machine role labels.
+    #>
+    [CmdletBinding()]
+    param([string]$Role)
+
+    if ([string]::IsNullOrWhiteSpace($Role)) { return $null }
+    switch -Regex ($Role.Trim()) {
+        '^(?i)hq$' { return 'Hq' }
+        '^(?i)satellite$' { return 'Satellite' }
+        '^(?i)standalone$' { return 'Standalone' }
+        default { return $null }
+    }
+}
+
+function Invoke-MetraMachineRoleSetup {
+    <#
+    .SYNOPSIS
+        First-run machine role (Hq / Satellite / Standalone) with Defaults or Advanced networking.
+    #>
+    [CmdletBinding()]
+    param(
+        [string]$MetraRoot = (Get-MetraRoot),
+        [string]$Role,
+        [switch]$Advanced,
+        [switch]$Interactive,
+        [switch]$Preview,
+        [switch]$Quiet
+    )
+
+    $prefs = Get-MetraDeskPreferences -MetraRoot $MetraRoot
+    $resolved = ConvertTo-MetraMachineRole -Role $Role
+    if (-not $resolved -and $prefs.machineRole) {
+        $resolved = ConvertTo-MetraMachineRole -Role ([string]$prefs.machineRole)
+    }
+
+    $useAdvanced = [bool]$Advanced
+    if ($Interactive -and -not $resolved) {
+        if (-not $Quiet) {
+            Write-Host ''
+            Write-Host 'What kind of machine is this?' -ForegroundColor Cyan
+            Write-Host '  [1] HQ         - This PC hosts Ops (main desk / jumpbox)'
+            Write-Host '  [2] Satellite  - Use another machine Ops URL (laptop)'
+            Write-Host '  [3] Standalone - Local only; no remote Ops'
+            Write-Host '  Then Defaults apply networking for that role, or choose Advanced for each knob.'
+        }
+        $pick = ''
+        try { $pick = Read-Host 'Choice [1/2/3]' } catch { $pick = '3' }
+        switch -Regex ($pick.Trim()) {
+            '^1$' { $resolved = 'Hq' }
+            '^2$' { $resolved = 'Satellite' }
+            '^3$' { $resolved = 'Standalone' }
+            '^(?i)hq$' { $resolved = 'Hq' }
+            '^(?i)sat' { $resolved = 'Satellite' }
+            default { $resolved = 'Standalone' }
+        }
+        if (-not $Quiet) {
+            Write-Host ("  Selected: {0}" -f $resolved) -ForegroundColor Green
+        }
+        $advPick = ''
+        try { $advPick = Read-Host 'Use Defaults for this role, or Advanced networking prompts? [D]efaults / [A]dvanced' } catch { $advPick = 'D' }
+        if ($advPick -match '^[aA]') { $useAdvanced = $true }
+    }
+
+    if (-not $resolved) {
+        $resolved = 'Standalone'
+    }
+
+    if (-not $Preview) {
+        $null = Set-MetraDeskPreferences -MetraRoot $MetraRoot -MachineRole $resolved
+    }
+
+    $opsUrlWritten = $null
+    if ($resolved -eq 'Satellite' -and -not $Preview) {
+        $existing = Get-MetraProfileOpsBaseUrlOrNull -MetraRoot $MetraRoot
+        $url = $existing
+        if ($Interactive -and [string]::IsNullOrWhiteSpace($url)) {
+            if (-not $Quiet) {
+                Write-Host ''
+                Write-Host 'Satellite OpsBaseUrl:' -ForegroundColor Cyan
+                Write-Host '  Enter the HQ Ops URL (Tailscale Serve / MagicDNS), e.g. https://metra.example.ts.net'
+            }
+            try { $url = Read-Host 'HQ OpsBaseUrl' } catch { $url = '' }
+        }
+        if (-not [string]::IsNullOrWhiteSpace($url)) {
+            $opsUrlWritten = Set-MetraConfiguredOpsBaseUrl -OpsBaseUrl $url -MetraRoot $MetraRoot
+        }
+        elseif ($Interactive -and -not $Quiet) {
+            Write-Host '  No OpsBaseUrl yet. Set later in Settings or: edit metra.config.json opsBaseUrl' -ForegroundColor Yellow
+        }
+    }
+    elseif ($resolved -ne 'Satellite' -and -not $Preview) {
+        # HQ / Standalone: clear a leftover remote OpsBaseUrl so Desk Mode stays local.
+        $existing = Get-MetraProfileOpsBaseUrlOrNull -MetraRoot $MetraRoot
+        if ($existing -and -not (Test-MetraOpsBaseUrlIsLocal -OpsBaseUrl $existing)) {
+            if ($Interactive) {
+                if (-not $Quiet) {
+                    Write-Host ("  Clearing remote OpsBaseUrl ({0}) for {1} role." -f $existing, $resolved) -ForegroundColor DarkGray
+                }
+                $null = Set-MetraConfiguredOpsBaseUrl -OpsBaseUrl '' -MetraRoot $MetraRoot
+            }
+        }
+    }
+
+    $deskBinding = $null
+    $port80Free = Test-MetraTcpPortFree -Port 80
+    if ($useAdvanced) {
+        $deskBinding = Initialize-MetraOpsDeskBinding -MetraRoot $MetraRoot -Interactive:$Interactive -Preview:$Preview -Quiet:$Quiet
+    }
+    elseif ($resolved -eq 'Satellite') {
+        $loop = Get-MetraOpsLoopbackBinding -Port (Get-MetraOpsFallbackPort)
+        if (-not $Preview) {
+            $null = Set-MetraDeskPreferences -MetraRoot $MetraRoot `
+                -MachineRole Satellite `
+                -OpsPort $loop.Port `
+                -BrowserHost '127.0.0.1' `
+                -PreferFriendlyUrl $false `
+                -BindTailscale $false
+        }
+        $deskBinding = [PSCustomObject]@{
+            Preview     = [bool]$Preview
+            Changed     = -not $Preview
+            Binding     = $loop
+            Port80Free  = $port80Free
+            MachineRole = 'Satellite'
+            Error       = $null
+        }
+        if (-not $Quiet) {
+            Write-Host ''
+            Write-Host 'Satellite defaults: no local friendly URL / Tailscale bind. Use HQ via OpsBaseUrl.' -ForegroundColor Cyan
+        }
+    }
+    else {
+        # HQ / Standalone defaults: prefer friendly when free; no Tailscale quiz except optional HQ offer.
+        if ($port80Free) {
+            $deskBinding = Initialize-MetraOpsDeskBinding -MetraRoot $MetraRoot -PreferFriendly -Interactive:$Interactive -Preview:$Preview -Quiet:$Quiet
+        }
+        else {
+            $deskBinding = Initialize-MetraOpsDeskBinding -MetraRoot $MetraRoot -Interactive:$false -Preview:$Preview -Quiet:$Quiet
+        }
+        if (-not $Preview) {
+            $null = Set-MetraDeskPreferences -MetraRoot $MetraRoot -MachineRole $resolved
+        }
+        $tsIp = Get-MetraOpsTailscaleIPv4
+        if ($resolved -eq 'Hq' -and $Interactive -and -not $Preview -and -not [string]::IsNullOrWhiteSpace($tsIp)) {
+            $prefsAfter = Get-MetraDeskPreferences -MetraRoot $MetraRoot
+            if (-not [bool]$prefsAfter.bindTailscale) {
+                if (-not $Quiet) {
+                    Write-Host ''
+                    Write-Host 'Tailscale Ops reach (optional for HQ):' -ForegroundColor Cyan
+                    Write-Host "  Detected Tailscale IP $tsIp. Let phone/coworkers open this desk over Tailscale?" -ForegroundColor Yellow
+                    Write-Host '  [y] Yes - share this HQ desk on Tailscale' -ForegroundColor DarkGray
+                    Write-Host '  [N] No  - this PC only (recommended unless you need phone reach)' -ForegroundColor DarkGray
+                }
+                $tsAnswer = 'N'
+                try { $tsAnswer = Read-Host 'Choice [y/N]' } catch { $tsAnswer = 'N' }
+                if ($tsAnswer -match '^[yY]') {
+                    $deskBinding = Initialize-MetraOpsDeskBinding -MetraRoot $MetraRoot -BindTailscale -Quiet:$Quiet
+                    $null = Set-MetraDeskPreferences -MetraRoot $MetraRoot -MachineRole Hq
+                }
+            }
+        }
+    }
+
+    return [PSCustomObject]@{
+        MachineRole   = $resolved
+        Advanced      = $useAdvanced
+        OpsBaseUrl    = $(if ($opsUrlWritten) { $opsUrlWritten.OpsBaseUrl } else { Get-MetraProfileOpsBaseUrlOrNull -MetraRoot $MetraRoot })
+        DeskBinding   = $deskBinding
+    }
+}
+
 function Initialize-MetraOpsDeskBinding {
     <#
     .SYNOPSIS

@@ -569,6 +569,23 @@ function Invoke-MetraOpsApi {
                         $setArgs['CursorApiKey'] = [string]$cursorKey
                     }
                 }
+                $machineRole = Get-MetraProp -Object $parsed -Name 'machineRole' -Default $null
+                if ($null -ne $machineRole -and -not [string]::IsNullOrWhiteSpace([string]$machineRole)) {
+                    $roleNorm = ConvertTo-MetraMachineRole -Role ([string]$machineRole)
+                    if (-not $roleNorm) {
+                        Write-MetraOpsJsonResponse -Response $Response -StatusCode 400 -Object ([PSCustomObject]@{
+                                error = 'machineRole must be Hq, Satellite, or Standalone'
+                            })
+                        return
+                    }
+                    $setArgs['MachineRole'] = $roleNorm
+                }
+                if ([bool](Get-MetraProp -Object $parsed -Name 'clearOpsBaseUrl' -Default $false)) {
+                    $setArgs['ClearOpsBaseUrl'] = $true
+                }
+                elseif ($null -ne (Get-MetraProp -Object $parsed -Name 'opsBaseUrl' -Default $null)) {
+                    $setArgs['OpsBaseUrl'] = [string](Get-MetraProp -Object $parsed -Name 'opsBaseUrl' -Default '')
+                }
                 $result = Save-MetraSettingsPortfolio @setArgs
                 Write-MetraOpsJsonResponse -Response $Response -Object $result -Depth 8
             }

@@ -85,6 +85,9 @@ param(
     [int]$Port = 0,
     [string]$OpsBaseUrl,
     [string]$SyncToken,
+    [ValidateSet('Hq', 'Satellite', 'Standalone')]
+    [string]$Role,
+    [switch]$Advanced,
     [switch]$WhatIf
 )
 
@@ -124,7 +127,8 @@ Usage:
   .\metra.ps1 export-profile -Path <dir-or-zip>
   .\metra.ps1 import-profile -Path <dir-or-zip> [-Preview] [-Force]
   .\metra.ps1 ctx [-Query 'terms'] [-Path <file|->] [-Format markdown|json] [-Limit 25]
-  .\metra.ps1 setup [-Profile <dir-or-zip>] [-Force] [-Preview] [-Months 6] [-ScanDepth 2]
+  .\metra.ps1 setup [-Profile <dir-or-zip>] [-Force] [-Preview] [-Role Hq|Satellite|Standalone] [-Advanced] [-Months 6] [-ScanDepth 2]
+      First-run / refresh. Role picks HQ, Satellite, or Standalone defaults; -Advanced asks networking knobs.
       One-shot onboarding: seed config if missing, optional profile, roots, workspace, routing, ctx.
   .\metra.ps1 unblock [-Preview]
       Clear mark-of-the-web from checkout script files (ZIP / OneDrive / email). Supports -Preview.
@@ -433,14 +437,15 @@ switch ($Command) {
         if (-not $profilePath -and $Path) { $profilePath = $Path }
         if (-not $profilePath -and $Rest -and $Rest.Count -gt 0) { $profilePath = $Rest[0] }
         $params = @{
-            Preview = [bool]$Preview
-            Force   = [bool]$Force
+            Preview  = [bool]$Preview
+            Force    = [bool]$Force
+            Advanced = [bool]$Advanced
         }
         if ($profilePath) { $params.Profile = $profilePath }
+        if ($Role) { $params.Role = $Role }
         if ($Months -ge 0) { $params.Months = $Months }
         if ($ScanDepth -ge 0) { $params.ScanDepth = $ScanDepth }
-        Initialize-Metra @params | Format-List Preview, WouldSeedConfig, SeededConfig, Profile
-    }
+        Initialize-Metra @params | Format-List Preview, WouldSeedConfig, SeededConfig, Profile, MachineRole
 
     'verify' {
         $report = Test-MetraInstallation -Detailed

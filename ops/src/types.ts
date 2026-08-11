@@ -228,6 +228,11 @@ export type SettingsPortfolio = {
   hint?: string
   roots: SettingsRoot[]
   ask: { apiKeyPresent: boolean }
+  machineRole?: 'Hq' | 'Satellite' | 'Standalone' | null
+  opsBaseUrl?: string | null
+  bindingSummary?: string | null
+  preferFriendlyUrl?: boolean | null
+  bindTailscale?: boolean
 }
 
 export type SettingsSaveResult = {

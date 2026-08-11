@@ -1246,6 +1246,7 @@ function Get-MetraDeskPreferences {
     $path = Get-MetraDeskPreferencesPath -MetraRoot $MetraRoot
     $defaults = [ordered]@{
         deskMode               = 'general'
+        machineRole            = $null
         opsPort                = $null
         browserHost            = $null
         preferFriendlyUrl      = $null
@@ -1262,6 +1263,10 @@ function Get-MetraDeskPreferences {
         $raw = Get-Content -LiteralPath $path -Raw -ErrorAction Stop | ConvertFrom-Json
         $mode = [string](Get-MetraProp -Object $raw -Name 'deskMode' -Default 'general')
         if ($mode -notin @('general', 'advanced')) { $mode = 'general' }
+        $machineRole = [string](Get-MetraProp -Object $raw -Name 'machineRole' -Default '')
+        if ($machineRole -notin @('Hq', 'Satellite', 'Standalone')) {
+            $machineRole = $null
+        }
         $opsPort = Get-MetraProp -Object $raw -Name 'opsPort' -Default $null
         if ($null -ne $opsPort -and "$opsPort" -match '^\d+$') {
             $opsPort = [int]$opsPort
@@ -1292,6 +1297,7 @@ function Get-MetraDeskPreferences {
         else { $ticketWatchEnabled = [bool]$ticketWatchEnabled }
         return [PSCustomObject]@{
             deskMode               = $mode
+            machineRole            = $machineRole
             opsPort                = $opsPort
             browserHost            = (Get-MetraProp -Object $raw -Name 'browserHost' -Default $null)
             preferFriendlyUrl      = $prefer
@@ -1316,6 +1322,8 @@ function Set-MetraDeskPreferences {
     param(
         [ValidateSet('general', 'advanced')]
         [string]$DeskMode,
+        [ValidateSet('Hq', 'Satellite', 'Standalone')]
+        [string]$MachineRole,
         [int]$OpsPort,
         [string]$BrowserHost,
         [bool]$PreferFriendlyUrl,
@@ -1329,6 +1337,9 @@ function Set-MetraDeskPreferences {
     $current = Get-MetraDeskPreferences -MetraRoot $MetraRoot
     if ($PSBoundParameters.ContainsKey('DeskMode')) {
         $current.deskMode = $DeskMode
+    }
+    if ($PSBoundParameters.ContainsKey('MachineRole')) {
+        $current.machineRole = $MachineRole
     }
     if ($PSBoundParameters.ContainsKey('OpsPort')) {
         $current.opsPort = $OpsPort
