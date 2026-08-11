@@ -38,7 +38,15 @@ function Invoke-MetraSetup {
     $machineRoleSetup = $null
     $askAccept = $null
     $startMenu = $null
+    $logSession = $null
+    if (-not $Preview) {
+        $logSession = Start-MetraSetupTranscript -MetraRoot $metraRoot -Source 'setup'
+        if (-not $Quiet) {
+            Write-Host ("Setup log: {0}" -f (Get-MetraSetupLogPath -MetraRoot $metraRoot)) -ForegroundColor DarkGray
+        }
+    }
 
+    try {
     if (-not $Quiet) {
         $blockedScripts = @(
             Get-MetraCheckoutScriptFiles -Path $metraRoot |
@@ -250,6 +258,7 @@ function Invoke-MetraSetup {
         if ($roleName) {
             Write-Host ("  - Machine role: {0}" -f $roleName)
         }
+        Write-Host ("  - Setup log: {0}" -f (Get-MetraSetupLogPath -MetraRoot $metraRoot))
     }
 
     return [PSCustomObject]@{
@@ -266,5 +275,12 @@ function Invoke-MetraSetup {
         DeskBinding     = $deskBinding
         MachineRole     = $(if ($machineRoleSetup) { $machineRoleSetup.MachineRole } else { $null })
         AskAccept       = $askAccept
+        SetupLogPath    = (Get-MetraSetupLogPath -MetraRoot $metraRoot)
+    }
+    }
+    finally {
+        if ($null -ne $logSession) {
+            Stop-MetraSetupTranscript -Session $logSession -MetraRoot $metraRoot
+        }
     }
 }

@@ -5,6 +5,7 @@
     Intended to be launched via Metra-Setup.cmd with process-scoped -ExecutionPolicy Bypass.
     Does not change the machine ExecutionPolicy. Prefer this over explaining ADS streams.
     Use -NoPause for installer post-install tasks (no interactive Read-Host).
+    Writes a durable transcript to docs/setup.local.log and copies Inno logs when found.
 #>
 [CmdletBinding()]
 param(
@@ -25,43 +26,60 @@ function Wait-MetraBootstrapPause {
     $null = Read-Host
 }
 
-Write-Host ''
-Write-Host 'Metra first-run bootstrap' -ForegroundColor Cyan
-Write-Host ("  Root: {0}" -f $metraRoot)
-
 Import-Module (Join-Path $metraRoot 'scripts\Metra.psd1') -Force
-$unblock = Show-MetraUnblockCli -Path $metraRoot -Preview:$Preview -Quiet
-if ($unblock.Failed -gt 0) {
-    Write-Host ''
-    Write-Host 'Unblock reported failures. Fix those files, then re-run Metra-Setup.cmd.' -ForegroundColor Yellow
-    Wait-MetraBootstrapPause
-    exit 1
-}
 
-if ($SkipSetup -or $Preview) {
-    Write-Host ''
-    Write-Host 'Skipping setup (-SkipSetup or -Preview).' -ForegroundColor Yellow
-    Wait-MetraBootstrapPause
-    exit 0
-}
-
-Write-Host ''
-Write-Host 'Running setup...' -ForegroundColor Cyan
-$global:LASTEXITCODE = 0
+$logSession = $null
 try {
-    & (Join-Path $metraRoot 'metra.ps1') setup
+    $null = Copy-MetraInnoInstallerLog -MetraRoot $metraRoot
+    $logSession = Start-MetraSetupTranscript -MetraRoot $metraRoot -Source 'bootstrap'
+
+    Write-Host ''
+    Write-Host 'Metra first-run bootstrap' -ForegroundColor Cyan
+    Write-Host ("  Root: {0}" -f $metraRoot)
+    Write-Host ("  Log:  {0}" -f (Get-MetraSetupLogPath -MetraRoot $metraRoot)) -ForegroundColor DarkGray
+
+    $unblock = Show-MetraUnblockCli -Path $metraRoot -Preview:$Preview -Quiet
+    if ($unblock.Failed -gt 0) {
+        Write-Host ''
+        Write-Host 'Unblock reported failures. Fix those files, then re-run Metra-Setup.cmd.' -ForegroundColor Yellow
+        Write-Host ("Setup log: {0}" -f (Get-MetraSetupLogPath -MetraRoot $metraRoot)) -ForegroundColor Yellow
+        Wait-MetraBootstrapPause
+        exit 1
+    }
+
+    if ($SkipSetup -or $Preview) {
+        Write-Host ''
+        Write-Host 'Skipping setup (-SkipSetup or -Preview).' -ForegroundColor Yellow
+        Wait-MetraBootstrapPause
+        exit 0
+    }
+
+    Write-Host ''
+    Write-Host 'Running setup...' -ForegroundColor Cyan
+    $global:LASTEXITCODE = 0
     $setupExit = 0
-    if ($null -ne $LASTEXITCODE -and $LASTEXITCODE -ne 0) {
-        $setupExit = [int]$LASTEXITCODE
+    try {
+        & (Join-Path $metraRoot 'metra.ps1') setup
+        if ($null -ne $LASTEXITCODE -and $LASTEXITCODE -ne 0) {
+            $setupExit = [int]$LASTEXITCODE
+        }
+    }
+    catch {
+        Write-Host ("Setup failed: {0}" -f $_.Exception.Message) -ForegroundColor Yellow
+        Write-Host ("Setup log: {0}" -f (Get-MetraSetupLogPath -MetraRoot $metraRoot)) -ForegroundColor Yellow
+        Wait-MetraBootstrapPause
+        exit 1
+    }
+
+    Write-Host ''
+    Write-Host 'Done.' -ForegroundColor Green
+    Write-Host ("Setup log: {0}" -f (Get-MetraSetupLogPath -MetraRoot $metraRoot)) -ForegroundColor DarkGray
+    Write-Host 'Press Enter to close (or use Start Menu: Metra Ops).' -ForegroundColor Green
+    Wait-MetraBootstrapPause
+    exit $(if ($null -ne $setupExit -and $setupExit -ne 0) { $setupExit } else { 0 })
+}
+finally {
+    if ($null -ne $logSession) {
+        Stop-MetraSetupTranscript -Session $logSession -MetraRoot $metraRoot
     }
 }
-catch {
-    Write-Host ("Setup failed: {0}" -f $_.Exception.Message) -ForegroundColor Yellow
-    Wait-MetraBootstrapPause
-    exit 1
-}
-
-Write-Host ''
-Write-Host 'Done. Press Enter to close (or use Start Menu: Metra Ops).' -ForegroundColor Green
-Wait-MetraBootstrapPause
-exit $(if ($null -ne $setupExit -and $setupExit -ne 0) { $setupExit } else { 0 })

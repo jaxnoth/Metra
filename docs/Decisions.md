@@ -18,6 +18,12 @@ Entry shape:
 
 ---
 
+## 2026-08-11 - Durable setup / installer logs under docs/*.local.log
+
+- Decision: First-run bootstrap and `metra setup` append a transcript to `docs/setup.local.log`. When an Inno Setup log is found in `%TEMP%`, copy it to `docs/installer.local.log`. Both are gitignored and excluded from the installer stage. Setup prints the setup log path.
+- Why: Laptop install failures (parse errors, nested paths, role prompts) left no durable transcript to share for troubleshooting; Inno `SetupLogging=yes` alone lands under TEMP with opaque names.
+- See: `Start-MetraSetupTranscript`; `Copy-MetraInnoInstallerLog`; `packaging/README.md`
+
 ## 2026-08-10 - First-run setup stays short and role-first
 
 - Decision: Interactive setup asks machine role before portfolio refresh. Human output is short summaries (roots lines, workspace count, routing present/missing counts) - not full routing tables or whenMissing walls. Satellite never gets local Ops host / Tailscale / Ask-accept prompts; Advanced networking is HQ/Standalone only. Satellite Next tips point at OpsBaseUrl and profile sync.

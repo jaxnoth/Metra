@@ -81,6 +81,8 @@ $excludeRelativeExact = [System.Collections.Generic.HashSet[string]]::new([Strin
     'docs/ops-preferences.local.json',
     'docs/ops-ask-log.local.json',
     'docs/ops-capture.local.json',
+    'docs/setup.local.log',
+    'docs/installer.local.log',
     '.cursor/mcp.json'
 ) | ForEach-Object { [void]$excludeRelativeExact.Add(($_ -replace '/', '\')) }
 
@@ -110,6 +112,9 @@ function Test-MetraStageExcluded {
     if ($Item -is [System.IO.FileInfo]) {
         $name = $Item.Name
         if ($name -like '*.local.md' -and $rel.StartsWith('docs\', [StringComparison]::OrdinalIgnoreCase)) {
+            return $true
+        }
+        if ($name -like '*.local.log' -and $rel.StartsWith('docs\', [StringComparison]::OrdinalIgnoreCase)) {
             return $true
         }
         if ($name -like '*.local.mdc' -and $rel.StartsWith('.cursor\rules\', [StringComparison]::OrdinalIgnoreCase)) {

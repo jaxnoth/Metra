@@ -32,6 +32,9 @@ Or set `METRA_ISCC` to the full path of `ISCC.exe`.
 - Upgrades reuse the prior install directory (`UsePreviousAppDir`) under a stable AppId.
 - Post-install task (checked by default) runs `Metra-Setup.cmd -NoPause` -> setup (machine role HQ / Satellite / Standalone).
 - Start Menu **Metra Setup** launches `Metra-Setup.cmd` (no pack chooser in the wizard).
+- Troubleshooting logs (machine-local, not staged):
+  - `docs/setup.local.log` - bootstrap + `metra setup` transcript
+  - `docs/installer.local.log` - best-effort copy of the newest Inno `Setup Log *.txt` from `%TEMP%`
 - Optional Persona Add-ons stay `import-profile` / `setup -Profile` after install.
 
 Unsigned builds may show SmartScreen: More info -> Run anyway.
