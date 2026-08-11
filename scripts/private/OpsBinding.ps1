@@ -639,7 +639,11 @@ function Invoke-MetraMachineRoleSetup {
     param(
         [string]$MetraRoot = (Get-MetraRoot),
         [string]$Role,
+        [string]$OpsBaseUrl,
         [switch]$Advanced,
+        [switch]$PreferFriendly,
+        [switch]$NoPreferFriendly,
+        [switch]$BindTailscale,
         [switch]$Interactive,
         [switch]$Preview,
         [switch]$Quiet
@@ -699,10 +703,12 @@ function Invoke-MetraMachineRoleSetup {
     if ($resolved -eq 'Satellite' -and -not $Preview) {
         $existing = Get-MetraProfileOpsBaseUrlOrNull -MetraRoot $MetraRoot
         $url = $existing
-        $shouldAskUrl = $Interactive -and (
-            [string]::IsNullOrWhiteSpace($url) -or $useAdvanced -or [bool]$Advanced
-        )
-        if ($shouldAskUrl) {
+        if (-not [string]::IsNullOrWhiteSpace($OpsBaseUrl)) {
+            $url = $OpsBaseUrl.Trim().TrimEnd('/')
+        }
+        elseif ($Interactive -and (
+                [string]::IsNullOrWhiteSpace($url) -or $useAdvanced -or [bool]$Advanced
+            )) {
             if (-not $Quiet) {
                 Write-Host ''
                 Write-Host 'HQ Ops URL (required for Satellite):' -ForegroundColor Cyan
@@ -775,42 +781,78 @@ function Invoke-MetraMachineRoleSetup {
         }
     }
     else {
-        # HQ / Standalone defaults: prefer friendly when free; optional HQ Tailscale offer.
-        if ($port80Free) {
-            $deskBinding = Initialize-MetraOpsDeskBinding -MetraRoot $MetraRoot -PreferFriendly -Interactive:$Interactive -Preview:$Preview -Quiet:$Quiet
+        # HQ / Standalone defaults, or installer-supplied PreferFriendly / NoPreferFriendly / BindTailscale.
+        $wantFriendly = $false
+        if ([bool]$PreferFriendly) {
+            $wantFriendly = $true
+        }
+        elseif ([bool]$NoPreferFriendly) {
+            $wantFriendly = $false
         }
         else {
-            $deskBinding = Initialize-MetraOpsDeskBinding -MetraRoot $MetraRoot -Interactive:$false -Preview:$Preview -Quiet:$Quiet
+            $wantFriendly = $port80Free
+        }
+        if ($wantFriendly -and $port80Free) {
+            $deskBinding = Initialize-MetraOpsDeskBinding -MetraRoot $MetraRoot -PreferFriendly -Interactive:$false -Preview:$Preview -Quiet:$Quiet
+        }
+        elseif ($wantFriendly -and -not $port80Free) {
+            if (-not $Quiet) {
+                Write-Host '  Port 80 is busy; using http://127.0.0.1 fallback.' -ForegroundColor Yellow
+            }
+            $deskBinding = Initialize-MetraOpsDeskBinding -MetraRoot $MetraRoot `
+                -NoPreferFriendly `
+                -Interactive:$false `
+                -Preview:$Preview `
+                -Quiet:$Quiet
+        }
+        else {
+            $deskBinding = Initialize-MetraOpsDeskBinding -MetraRoot $MetraRoot `
+                -NoPreferFriendly `
+                -Interactive:$false `
+                -Preview:$Preview `
+                -Quiet:$Quiet
         }
         if (-not $Preview) {
             $null = Set-MetraDeskPreferences -MetraRoot $MetraRoot -MachineRole $resolved
         }
-        $tsIp = Get-MetraOpsTailscaleIPv4
-        if ($resolved -eq 'Hq' -and $Interactive -and -not $Preview -and -not [string]::IsNullOrWhiteSpace($tsIp)) {
-            $prefsAfter = Get-MetraDeskPreferences -MetraRoot $MetraRoot
-            if (-not [bool]$prefsAfter.bindTailscale) {
-                if (-not $Quiet) {
-                    Write-Host ''
-                    Write-Host 'Tailscale Ops reach (optional for HQ):' -ForegroundColor Cyan
-                    Write-Host "  Detected Tailscale IP $tsIp. Let phone/coworkers open this desk over Tailscale?" -ForegroundColor Yellow
-                    Write-Host '  [y] Yes - share this HQ desk on Tailscale' -ForegroundColor DarkGray
-                    Write-Host '  [N] No  - this PC only (recommended unless you need phone reach)' -ForegroundColor DarkGray
+        $applyTailscale = $false
+        if ($resolved -eq 'Hq' -and -not $Preview) {
+            if ([bool]$BindTailscale) {
+                $applyTailscale = $true
+            }
+            elseif ($Interactive -and -not $Quiet) {
+                $tsIp = Get-MetraOpsTailscaleIPv4
+                if (-not [string]::IsNullOrWhiteSpace($tsIp)) {
+                    $prefsAfter = Get-MetraDeskPreferences -MetraRoot $MetraRoot
+                    if (-not [bool]$prefsAfter.bindTailscale) {
+                        Write-Host ''
+                        Write-Host 'Tailscale Ops reach (optional for HQ):' -ForegroundColor Cyan
+                        Write-Host "  Detected Tailscale IP $tsIp. Let phone/coworkers open this desk over Tailscale?" -ForegroundColor Yellow
+                        Write-Host '  [y] Yes - share this HQ desk on Tailscale' -ForegroundColor DarkGray
+                        Write-Host '  [N] No  - this PC only (recommended unless you need phone reach)' -ForegroundColor DarkGray
+                        $tsAnswer = 'N'
+                        try { $tsAnswer = Read-Host 'Choice [y/N]' } catch { $tsAnswer = 'N' }
+                        if ($tsAnswer -match '^[yY]') { $applyTailscale = $true }
+                    }
                 }
-                $tsAnswer = 'N'
-                try { $tsAnswer = Read-Host 'Choice [y/N]' } catch { $tsAnswer = 'N' }
-                if ($tsAnswer -match '^[yY]') {
-                    $deskBinding = Initialize-MetraOpsDeskBinding -MetraRoot $MetraRoot -BindTailscale -Quiet:$Quiet
-                    $null = Set-MetraDeskPreferences -MetraRoot $MetraRoot -MachineRole Hq
-                }
+            }
+        }
+        if ($applyTailscale) {
+            $deskBinding = Initialize-MetraOpsDeskBinding -MetraRoot $MetraRoot -BindTailscale -Quiet:$Quiet
+            if (-not $Preview) {
+                $null = Set-MetraDeskPreferences -MetraRoot $MetraRoot -MachineRole Hq
             }
         }
     }
 
     return [PSCustomObject]@{
-        MachineRole   = $resolved
-        Advanced      = $useAdvanced
-        OpsBaseUrl    = $(if ($opsUrlWritten) { $opsUrlWritten.OpsBaseUrl } else { Get-MetraProfileOpsBaseUrlOrNull -MetraRoot $MetraRoot })
-        DeskBinding   = $deskBinding
+        MachineRole     = $resolved
+        Advanced        = $useAdvanced
+        PreferFriendly  = [bool]$PreferFriendly
+        NoPreferFriendly = [bool]$NoPreferFriendly
+        BindTailscale   = [bool]$BindTailscale
+        OpsBaseUrl      = $(if ($opsUrlWritten) { $opsUrlWritten.OpsBaseUrl } else { Get-MetraProfileOpsBaseUrlOrNull -MetraRoot $MetraRoot })
+        DeskBinding     = $deskBinding
     }
 }
 
@@ -825,6 +867,7 @@ function Initialize-MetraOpsDeskBinding {
         [string]$MetraRoot = (Get-MetraRoot),
         [switch]$Interactive,
         [switch]$PreferFriendly,
+        [switch]$NoPreferFriendly,
         [switch]$BindTailscale,
         [switch]$Preview,
         [switch]$Quiet
@@ -836,7 +879,10 @@ function Initialize-MetraOpsDeskBinding {
     $alreadyChosen = ($null -ne $prefs.opsPort -and [int]$prefs.opsPort -gt 0)
 
     $wantFriendly = [bool]$PreferFriendly
-    if ($Interactive -and -not $PreferFriendly -and -not $alreadyChosen) {
+    if ([bool]$NoPreferFriendly) {
+        $wantFriendly = $false
+    }
+    elseif ($Interactive -and -not $PreferFriendly -and -not $alreadyChosen) {
         if ($port80Free) {
             if (-not $Quiet) {
                 Write-Host ''

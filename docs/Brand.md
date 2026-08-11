@@ -155,8 +155,10 @@ Below that:
 | Surface | Rule |
 |---------|------|
 | Cursor Canvas | Map brand intent to `useHostTheme()` tokens (`accent`, `fill`, `text`, `stroke`). No hardcoded hex in `.canvas.tsx`. |
-| PowerShell CLI | Restrained Cyan headings; Yellow/Red for warning/error. Product name **Metra** in help text. |
+| PowerShell CLI | Restrained Cyan headings; Yellow/Red for warning/error. Product name **Metra** in help text. Prefer Brand vocabulary in new operator-facing strings; terminal Ask/setup wording may lag until the Operator Vocabulary Pass. |
 | Markdown docs / `ctx` packs | Neutral prose; product name **Metra** in titles. No teal wallpaper. |
+| Installer (Inno) | Temporary first glimpse; Brand vocabulary + light first-person Welcome; Signal Teal / Mist / route mark; at most one dry beat on Welcome. Role = intent (including Files only). |
+| Metra Ops Settings | Same role / Main Metra address vocabulary as the glossary below; factual, not humorous. |
 
 ## Naming boundary
 
@@ -166,8 +168,41 @@ Below that:
 | Workspace file `Metra.code-workspace` | CLI `metra.ps1`, module `Metra.psm1`, config `metra.config.json` |
 | Orchestration folder label **Metra** | Internal PowerShell `*-Metra*` function names |
 | Canvas **Metra Ops** / `metra-ops-board` | Cursor path-derived state slug (e.g. `c-Projects-meta` for a `_meta` checkout) |
+| Primary UI **Metra Ops** (HTML desk) | `ops/`, binding prefs, profile `opsBaseUrl` |
 
 Legacy silent shims (one release; not taught): `meta.ps1` forwards to `metra.ps1`; loaders accept `meta.config.json` / `meta-profile.json` / `metaFolder*` keys; old `*-Meta*` function aliases remain exported.
+
+## Operator vocabulary
+
+Canonical **operator-facing** words. Brand owns this glossary; installer, Metra Ops Settings, and future onboarding consume it. Implementation names are not UI copy.
+
+| Say (operator UI) | Avoid in UI | Technical / internal |
+|-------------------|-------------|----------------------|
+| **Metra** (product) | Setup Wizard chrome-as-brand | checkout `_metra` / `_meta` |
+| **Metra Ops** (desk UI; name after first handoff) | Ops desk, Ops host, jumpbox | HTML `ops/`, `opsBaseUrl` key |
+| **desk** / **work in Metra** | Ops desk (until Metra Ops is named) | - |
+| **How should I show up on this PC?** | Run Metra setup now? | `Invoke-MetraSetup` |
+| **HQ (Main Metra machine)** - Home base. Other devices come here to work in Metra | HQ hosts Ops / jumpbox | `machineRole: Hq` |
+| **Satellite** - connects to your main Metra machine | use HQ Ops URL | `machineRole: Satellite` |
+| **Standalone** - everything stays on this PC | local only; no remote Ops | `machineRole: Standalone` |
+| **Files only** - Install Metra now. Choose a role later. (installer only) | Skip setup / uncheck Run setup | no postinstall setup |
+| **Main Metra address** | OpsBaseUrl, HQ Ops URL | profile `opsBaseUrl` |
+| **Ask assistant** | Ask engine (operator labels) | engine APIs / Ollama under the hood |
+| **Here's where we're landing** | Setup Summary | - |
+
+**Product vs primary UI:** Product = **Metra**. Primary UI = **Metra Ops**. Introduce Metra Ops on installer Finished (and Start Menu); earlier installer pages stay Metra / desk / work in Metra.
+
+**Review standard:** Is this operator text? Check this glossary. New operator surfaces must use it.
+
+### Operator voice / dry humor
+
+Calm, direct, competent, slightly personal. Role = intent. Wayfinding motif - no mascot.
+
+Dry desk humor may appear on chat and light temporary operator UIs (installer Welcome at most one beat). Never a joke quota. Coworker-at-the-next-desk, not salesy or cute.
+
+**Off:** tickets, commits, ADRs, redistribution (professional sink); refuse dialogs; incident / outage tone. Settings stay factual.
+
+Humor **dials and palette** live in [`.cursor/rules/metra-persona.mdc`](../.cursor/rules/metra-persona.mdc) and optional humor-desk add-on - do not duplicate that table here. Brand owns the **boundary**; persona owns the **dial**.
 
 ## Professional sink
 

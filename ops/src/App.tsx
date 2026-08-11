@@ -1278,7 +1278,7 @@ export default function App() {
       const role = result.portfolio.machineRole
       setMachineRoleDraft(role === 'Hq' || role === 'Satellite' || role === 'Standalone' ? role : machineRoleDraft)
       setOpsBaseUrlDraft(result.portfolio.opsBaseUrl ?? '')
-      setSettingsStatus('Machine role saved.')
+      setSettingsStatus('Role saved.')
       await load()
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e))
@@ -2809,9 +2809,11 @@ export default function App() {
           </div>
           <div className="settings-row">
             <div>
-              <strong>Machine role</strong>
+              <strong>How I show up on this PC</strong>
               <p className="muted">
-                HQ hosts Ops. Satellite uses another machine Ops URL. Standalone stays local.
+                Choose how this machine fits into your Metra setup. HQ is home base - other
+                devices come here to work in Metra. Satellite connects to your main Metra
+                machine. Standalone keeps everything on this PC.
               </p>
               <label className="settings-field">
                 <span className="muted">Role</span>
@@ -2822,19 +2824,19 @@ export default function App() {
                     setMachineRoleDraft(e.target.value as 'Hq' | 'Satellite' | 'Standalone')
                   }
                 >
-                  <option value="Hq">HQ - this PC hosts Ops</option>
-                  <option value="Satellite">Satellite - use HQ Ops URL</option>
-                  <option value="Standalone">Standalone - local only</option>
+                  <option value="Hq">HQ (Main Metra machine)</option>
+                  <option value="Satellite">Satellite - connects to your main Metra machine</option>
+                  <option value="Standalone">Standalone - everything stays on this PC</option>
                 </select>
               </label>
               <label className="settings-field">
-                <span className="muted">OpsBaseUrl</span>
+                <span className="muted">Main Metra address</span>
                 <input
                   type="text"
                   disabled={busy}
                   value={opsBaseUrlDraft}
                   onChange={(e) => setOpsBaseUrlDraft(e.target.value)}
-                  placeholder="https://metra.example.ts.net (Satellite)"
+                  placeholder="https://metra.example.ts.net"
                   spellCheck={false}
                 />
               </label>
@@ -2842,7 +2844,7 @@ export default function App() {
                 Binding: {settingsPortfolio?.bindingSummary ?? 'unknown'}
               </p>
               <button type="button" disabled={busy} onClick={() => void onSaveMachineRole()}>
-                Save machine role
+                Save role
               </button>
             </div>
           </div>

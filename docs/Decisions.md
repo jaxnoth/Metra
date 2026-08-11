@@ -18,6 +18,24 @@ Entry shape:
 
 ---
 
+## 2026-08-11 - Brand owns operator vocabulary
+
+- Decision: Operator-facing terminology is defined in `docs/Brand.md` (Operator vocabulary + voice/humor boundary). New operator surfaces (installer, Metra Ops Settings, onboarding) must use that glossary. Implementation names (`machineRole`, `opsBaseUrl`, Ask engine, etc.) are not operator-facing copy. Review standard: is this operator text? Check Brand.md. Product = Metra; primary UI = Metra Ops (introduced after install). Installer role = intent (HQ / Satellite / Standalone / Files only); no Run-setup checkbox. Dry humor boundary is in Brand; dials stay in persona / humor-desk.
+- Why: Glossary drift (Main Metra machine vs HQ Ops vs jumpbox vs OpsBaseUrl) makes a simple architecture feel hard; Brand as single mouth keeps installer and Settings aligned after ship.
+- See: `docs/Brand.md`; `packaging/inno/Metra.iss`; `ops/src/App.tsx` Settings machine-role row
+
+## 2026-08-11 - Installer collects all first-run setup choices
+
+- Decision: Inno wizard pages collect machine role, Satellite OpsBaseUrl, and for HQ/Standalone: PreferFriendly / NoPreferFriendly, HQ BindTailscale, and AcceptAsk. Post-install runs `Metra-Setup.cmd -NoPause -Quiet` with those switches hidden. No terminal quiz on first install. Start Menu Metra Setup remains interactive.
+- Why: Operators already answered every former Read-Host question in the wizard; silencing without collecting left HQ choices unspoken.
+- See: `packaging/inno/Metra.iss`; `scripts/bootstrap/Start-MetraSetup.ps1`; `metra.ps1 setup -Quiet -PreferFriendly|-NoPreferFriendly -BindTailscale -AcceptAsk`
+
+## 2026-08-11 - Installer collects role; post-install setup is quiet
+
+- Decision: Inno wizard pages collect `machineRole` (and Satellite `OpsBaseUrl`). The post-install task runs `Metra-Setup.cmd -NoPause -Quiet -Role ... [-OpsBaseUrl ...]` hidden (`runhidden waituntilterminated`). No terminal Read-Host quiz on first install. Start Menu Metra Setup remains interactive. Transcript stays in `docs/setup.local.log`.
+- Why: Operators already answered in the wizard; a second console quiz feels broken.
+- See: `packaging/inno/Metra.iss`; `scripts/bootstrap/Start-MetraSetup.ps1`; `metra.ps1 setup -Quiet`
+
 ## 2026-08-11 - Durable setup / installer logs under docs/*.local.log
 
 - Decision: First-run bootstrap and `metra setup` append a transcript to `docs/setup.local.log`. When an Inno Setup log is found in `%TEMP%`, copy it to `docs/installer.local.log`. Both are gitignored and excluded from the installer stage. Setup prints the setup log path.

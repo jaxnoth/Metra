@@ -32,6 +32,61 @@ Describe 'Metra machine role setup' {
         }
     }
 
+    It 'Satellite -Quiet -OpsBaseUrl writes without prompt' {
+        $temp = Join-Path $env:TEMP ("metra-role-url-" + [guid]::NewGuid().ToString('n'))
+        New-Item -ItemType Directory -Path (Join-Path $temp 'docs') -Force | Out-Null
+        Copy-Item -LiteralPath (Join-Path $script:MetraRepoRoot 'metra.config.example.json') -Destination (Join-Path $temp 'metra.config.json')
+        try {
+            $result = Invoke-MetraMachineRoleSetup -MetraRoot $temp -Role Satellite `
+                -OpsBaseUrl 'https://hq.example.ts.net/' -Quiet
+            $result.MachineRole | Should -Be 'Satellite'
+            $result.OpsBaseUrl | Should -Be 'https://hq.example.ts.net'
+            Get-MetraProfileOpsBaseUrlOrNull -MetraRoot $temp | Should -Be 'https://hq.example.ts.net'
+        }
+        finally {
+            Remove-Item -LiteralPath $temp -Recurse -Force -ErrorAction SilentlyContinue
+        }
+    }
+
+    It 'Standalone -Quiet -NoPreferFriendly forces loopback prefs' {
+        $temp = Join-Path $env:TEMP ("metra-role-loop-" + [guid]::NewGuid().ToString('n'))
+        New-Item -ItemType Directory -Path (Join-Path $temp 'docs') -Force | Out-Null
+        Copy-Item -LiteralPath (Join-Path $script:MetraRepoRoot 'metra.config.example.json') -Destination (Join-Path $temp 'metra.config.json')
+        try {
+            $result = Invoke-MetraMachineRoleSetup -MetraRoot $temp -Role Standalone -NoPreferFriendly -Quiet
+            $result.MachineRole | Should -Be 'Standalone'
+            $prefs = Get-MetraDeskPreferences -MetraRoot $temp
+            $prefs.preferFriendlyUrl | Should -BeFalse
+            $prefs.bindTailscale | Should -BeFalse
+        }
+        finally {
+            Remove-Item -LiteralPath $temp -Recurse -Force -ErrorAction SilentlyContinue
+        }
+    }
+
+    It 'Hq -Quiet -BindTailscale sets bindTailscale preference' {
+        $temp = Join-Path $env:TEMP ("metra-role-ts-" + [guid]::NewGuid().ToString('n'))
+        New-Item -ItemType Directory -Path (Join-Path $temp 'docs') -Force | Out-Null
+        Copy-Item -LiteralPath (Join-Path $script:MetraRepoRoot 'metra.config.example.json') -Destination (Join-Path $temp 'metra.config.json')
+        Mock -CommandName Get-MetraOpsTailscaleIPv4 -ModuleName Metra -MockWith { '100.64.0.1' }
+        Mock -CommandName Initialize-MetraOpsDeskBinding -ModuleName Metra -MockWith {
+            param($MetraRoot, $PreferFriendly, $BindTailscale, $Interactive, $Preview, $Quiet)
+            if ($BindTailscale) {
+                $null = Set-MetraDeskPreferences -MetraRoot $MetraRoot -BindTailscale $true -MachineRole Hq
+            }
+            return [PSCustomObject]@{ Changed = $true; Binding = $null }
+        }
+        try {
+            $result = Invoke-MetraMachineRoleSetup -MetraRoot $temp -Role Hq -NoPreferFriendly -BindTailscale -Quiet
+            $result.MachineRole | Should -Be 'Hq'
+            $prefs = Get-MetraDeskPreferences -MetraRoot $temp
+            $prefs.bindTailscale | Should -BeTrue
+        }
+        finally {
+            Remove-Item -LiteralPath $temp -Recurse -Force -ErrorAction SilentlyContinue
+        }
+    }
+
     It 'Satellite -Advanced still skips local Ops host prompts' {
         $temp = Join-Path $env:TEMP ("metra-role-" + [guid]::NewGuid().ToString('n'))
         New-Item -ItemType Directory -Path (Join-Path $temp 'docs') -Force | Out-Null

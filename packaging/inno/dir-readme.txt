@@ -1,3 +1,5 @@
+First stop: pick where I live on this PC.
+
 Metra install destination
 
 Select the Metra product folder - the directory where metra.ps1 will live.
