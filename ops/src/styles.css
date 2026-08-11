@@ -51,6 +51,12 @@ input {
   margin-bottom: 1.75rem;
 }
 
+.topbar:not(:has(.brand)) {
+  justify-content: flex-end;
+  min-height: 2.4rem;
+  margin-bottom: 0.35rem;
+}
+
 .brand {
   display: flex;
   flex-direction: column;
@@ -74,15 +80,21 @@ input {
 .metra-presence__wordmark {
   fill: var(--teal-deep);
   font-family: var(--font);
-  font-size: 54px;
+  font-size: 56px;
   font-weight: 750;
-  letter-spacing: -1.5px;
+  letter-spacing: -1.6px;
 }
 
 .metra-presence__route {
   fill: none;
   stroke: currentColor;
   stroke-width: 3;
+  transition: stroke-width 0.2s ease, opacity 0.2s ease;
+}
+
+.metra-presence__line,
+.metra-presence__stem {
+  transition: stroke-width 0.2s ease, opacity 0.2s ease;
 }
 
 .metra-presence__terminal {
@@ -92,6 +104,12 @@ input {
 
 .metra-presence__interchange {
   fill: var(--bg);
+}
+
+.metra-presence[data-attention="busy"] .metra-presence__line,
+.metra-presence[data-attention="busy"] .metra-presence__stem {
+  stroke-width: 4;
+  opacity: 0.92;
 }
 
 .metra-presence[data-voice-state="listening"] .metra-presence__interchange {
@@ -121,6 +139,16 @@ input {
   .metra-presence[data-voice-state] .metra-presence__interchange,
   .metra-presence[data-voice-state] .metra-presence__line {
     animation: none;
+  }
+
+  .metra-presence__route,
+  .metra-presence__line,
+  .metra-presence__stem {
+    transition: none;
+  }
+
+  .metra-presence[data-voice-state="listening"] .metra-presence__interchange {
+    opacity: 0.85;
   }
 }
 
@@ -154,7 +182,22 @@ input {
   gap: 0;
 }
 
-.desk-stack .panel-ask {
+.desk-presence-stack {
+  display: flex;
+  flex-direction: column;
+  gap: 0.85rem;
+  margin-bottom: 0.35rem;
+}
+
+.desk-presence-stack .brand {
+  margin-bottom: 0;
+}
+
+.desk-presence-stack .panel-ask {
+  margin-bottom: 0.65rem;
+}
+
+.desk-stack .desk-presence-stack {
   order: 1;
 }
 
@@ -164,6 +207,60 @@ input {
 
 .desk-stack .panel-motion {
   order: 3;
+}
+
+.attention-list-region {
+  display: flex;
+  flex-direction: column;
+  gap: 0.35rem;
+}
+
+.attention-summary-row {
+  display: block;
+  width: 100%;
+  border: 1px solid var(--line);
+  border-radius: 0.55rem;
+  background: rgba(255, 255, 255, 0.85);
+  color: inherit;
+  text-align: left;
+  padding: 0.55rem 0.7rem;
+  cursor: pointer;
+  font: inherit;
+}
+
+.attention-summary-row:hover {
+  border-color: rgba(15, 118, 110, 0.45);
+}
+
+.attention-summary-row.is-selected {
+  border-color: var(--teal);
+  background: var(--mist);
+}
+
+.attention-summary-label {
+  display: block;
+  font-size: 0.92rem;
+  line-height: 1.35;
+}
+
+.attention-overflow-actions {
+  margin: 0.15rem 0 0.35rem;
+}
+
+.panel-attention.attention-expanded .attention-list-region {
+  max-height: min(42vh, 28rem);
+  overflow: auto;
+}
+
+@media (max-width: 42rem) {
+  .desk-presence-stack {
+    position: sticky;
+    top: 0;
+    z-index: 20;
+    background: var(--bg);
+    padding-bottom: 0.35rem;
+    box-shadow: 0 8px 12px -10px rgba(31, 41, 55, 0.35);
+  }
 }
 
 .bridge-actions {

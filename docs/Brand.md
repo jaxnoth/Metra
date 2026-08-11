@@ -104,9 +104,20 @@ The mark should read as **connection and flow** before anyone reads that sentenc
 
 The HTML Ops desk uses a larger wordmark-first treatment than the compact public mark: **Metra** text is the primary signal; the route line, stem, terminals, and open interchange sit beneath as motif. Do not trap the desk wordmark in a small pill.
 
-The desk implementation keeps the mark in a dedicated presence component with `idle`, `listening`, and `speaking` visual states. Voice remains optional. While Ask (or Classify) is in flight, the HTML desk sets `listening` so the interchange node pulses, and the subtitle under the mark reads Working... `speaking` is reserved for spoken reply (TTS) when the parked iOS voice + listen path (or a later desk mic path) is active - see Future-Development Metra iOS and Decisions 2026-08-06 Voice Ask scar. Motion belongs to the route and interchange geometry, never a face, mascot, or separate avatar. The idle state does not move, and all active motion must honor `prefers-reduced-motion`.
+The desk mark is a wayfinding device, not a sensor legend. Voice/work and Attention pressure stay orthogonal attributes: `data-voice-state="idle|listening|speaking"` and `data-attention="quiet|busy"`. Do not collapse them into one state model.
 
-The presence mark is an **awareness companion**, not a health dashboard or sensor legend. Presence-first Ops puts one truthful first-person Metra observation directly below the mark, then the shared Ask / Put somewhere composer. Updated time stays quiet; waiting / held counts live on the compact expandable Attention surface below the composer. Workload truth supports the relationship - it does not replace Metra with a scoreboard. See Decisions 2026-08-06 Ops presence-first correction and Ops desk three-layer model. Do not invent node meanings for terminals/interchange in the SVG until a Future-Development volume-v2 bite defines them.
+| Node / state | Meaning |
+|--------------|---------|
+| Terminals | Endpoints of a route. Geometry remains unchanged and uses the same teal family. |
+| Open interchange | Classification and wayfinding center. |
+| `listening` | Ask/work in flight. The interchange may pulse unless reduced motion is preferred. |
+| `speaking` | Reserved for spoken reply (TTS) - parked iOS voice + listen or a later desk mic path. |
+| `data-attention="quiet"` | Default route posture. |
+| `data-attention="busy"` | Subtle route-line weight or opacity when Attention is waiting. Not a count badge and must not recolor terminal nodes. |
+
+Voice remains optional. While Ask (or Classify) is in flight, the desk may set `listening`, and the subtitle under the mark may read Working... Motion belongs to the route and interchange geometry, never a face, mascot, or separate avatar. The idle state does not move, and all active motion must honor `prefers-reduced-motion`.
+
+The presence mark is an **awareness companion**, not a health dashboard. Presence-first Ops puts one truthful first-person Metra observation directly below the mark, then the shared Ask / Put somewhere composer. Updated time stays quiet; waiting / held counts live on the compact expandable Attention surface below the composer. Attention may present multiple compact summaries, but actions remain on a single focused detail card. Workload truth supports the relationship - it does not replace Metra with a scoreboard. See Decisions 2026-08-06 Ops presence-first correction, Ops desk three-layer model, and Attention volume handling.
 
 ### Visual vocabulary
 

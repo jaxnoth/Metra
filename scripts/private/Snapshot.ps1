@@ -1260,6 +1260,92 @@ function Resolve-MetraAskOrigin {
     return 'remote'
 }
 
+function Normalize-MetraAttentionVisibleCount {
+    <#
+    .SYNOPSIS
+        Fail-closed Attention list density (1..10). Twin of ops/src/attentionVisibleCount.ts.
+    #>
+    [CmdletBinding()]
+    param([object]$Value)
+
+    if ($null -eq $Value -or "$Value" -eq '') { return 1 }
+    $n = $null
+    try {
+        $n = [double]$Value
+    }
+    catch {
+        return 1
+    }
+    if ([double]::IsNaN($n) -or [double]::IsInfinity($n)) { return 1 }
+    $vis = [int][Math]::Truncate($n)
+    if ($vis -lt 1) { return 1 }
+    if ($vis -gt 10) { return 10 }
+    return $vis
+}
+
+function Get-MetraAttentionVolumeView {
+    <#
+    .SYNOPSIS
+        Pure Attention volume UI model (mirrors ops App.tsx waiting-list contract).
+    #>
+    [CmdletBinding()]
+    param(
+        [string[]]$Active = @(),
+        [string[]]$Held = @(),
+        [object]$AttentionVisibleCount = 1,
+        [string]$SelectedKey,
+        [switch]$ShowAll,
+        [object]$WaitingCount,
+        [object]$HeldCount
+    )
+
+    $vis = Normalize-MetraAttentionVisibleCount -Value $AttentionVisibleCount
+    $activeList = [string[]]@($Active | Where-Object { -not [string]::IsNullOrWhiteSpace($_) })
+    $heldList = [string[]]@($Held | Where-Object { -not [string]::IsNullOrWhiteSpace($_) })
+    $waiting = if ($null -ne $WaitingCount -and "$WaitingCount" -ne '') {
+        try { [int]$WaitingCount } catch { $activeList.Length }
+    }
+    else { $activeList.Length }
+    $heldN = if ($null -ne $HeldCount -and "$HeldCount" -ne '') {
+        try { [int]$HeldCount } catch { $heldList.Length }
+    }
+    else { $heldList.Length }
+    if ($waiting -lt 0) { $waiting = 0 }
+    if ($heldN -lt 0) { $heldN = 0 }
+
+    # Keep array under if/else - a single-element @() unwraps to a scalar string in PowerShell.
+    $visibleRows = [string[]]@(
+        if ($ShowAll) { $activeList }
+        else { $activeList | Select-Object -First $vis }
+    )
+    # Collapsed overflow amount (stable under ShowAll). UI labels use overflowAvailable + overflowExpanded.
+    $overflowCount = [Math]::Max(0, $activeList.Length - $vis)
+
+    $focused = $null
+    if (-not [string]::IsNullOrWhiteSpace($SelectedKey) -and ($activeList -contains $SelectedKey)) {
+        $focused = $SelectedKey
+    }
+    elseif ($visibleRows.Length -gt 0) {
+        $focused = $visibleRows[0]
+    }
+    elseif ($activeList.Length -gt 0) {
+        $focused = $activeList[0]
+    }
+
+    return [PSCustomObject]@{
+        visibleCount      = $vis
+        waitingCount      = $waiting
+        heldCount         = $heldN
+        summaryKeys       = $visibleRows
+        summaryCount      = $visibleRows.Length
+        overflowCount     = $overflowCount
+        overflowAvailable = ($activeList.Length -gt $vis)
+        overflowExpanded  = [bool]$ShowAll
+        focusedKey        = $focused
+        detailCardCount   = $(if ($focused) { 1 } else { 0 })
+    }
+}
+
 function Get-MetraDeskPreferences {
     <#
     .SYNOPSIS
@@ -1311,10 +1397,7 @@ function Get-MetraDeskPreferences {
         else {
             $bindTs = $false
         }
-        $vis = Get-MetraProp -Object $raw -Name 'attentionVisibleCount' -Default 1
-        try { $vis = [int]$vis } catch { $vis = 1 }
-        if ($vis -lt 1) { $vis = 1 }
-        if ($vis -gt 10) { $vis = 10 }
+        $vis = Normalize-MetraAttentionVisibleCount -Value (Get-MetraProp -Object $raw -Name 'attentionVisibleCount' -Default 1)
         $editorCommand = [string](Get-MetraProp -Object $raw -Name 'editorCommand' -Default 'auto')
         if ([string]::IsNullOrWhiteSpace($editorCommand)) { $editorCommand = 'auto' }
         $ticketWatchEnabled = Get-MetraProp -Object $raw -Name 'ticketWatchEnabled' -Default $true
@@ -1353,7 +1436,7 @@ function Set-MetraDeskPreferences {
         [string]$BrowserHost,
         [bool]$PreferFriendlyUrl,
         [bool]$BindTailscale,
-        [int]$AttentionVisibleCount,
+        [object]$AttentionVisibleCount,
         [string]$EditorCommand,
         [bool]$TicketWatchEnabled,
         [string]$MetraRoot = (Get-MetraRoot)
@@ -1379,10 +1462,7 @@ function Set-MetraDeskPreferences {
         $current.bindTailscale = $BindTailscale
     }
     if ($PSBoundParameters.ContainsKey('AttentionVisibleCount')) {
-        $vis = $AttentionVisibleCount
-        if ($vis -lt 1) { $vis = 1 }
-        if ($vis -gt 10) { $vis = 10 }
-        $current.attentionVisibleCount = $vis
+        $current.attentionVisibleCount = (Normalize-MetraAttentionVisibleCount -Value $AttentionVisibleCount)
     }
     if ($PSBoundParameters.ContainsKey('EditorCommand')) {
         $ed = $EditorCommand
@@ -2636,10 +2716,9 @@ function ConvertTo-MetraDeskPayload {
         -MetraRoot $MetraRoot
 
     $prefs = Get-MetraDeskPreferences -MetraRoot $MetraRoot
-    $visibleCount = 1
-    try { $visibleCount = [int]$prefs.attentionVisibleCount } catch { $visibleCount = 1 }
-    if ($visibleCount -lt 1) { $visibleCount = 1 }
-    if ($visibleCount -gt 10) { $visibleCount = 10 }
+    $visibleCount = Normalize-MetraAttentionVisibleCount -Value (
+        Get-MetraProp -Object $prefs -Name 'attentionVisibleCount' -Default 1
+    )
 
     $ranked = @(Get-MetraAttentionActiveItems -Memory $memory)
     $held = @(

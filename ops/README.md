@@ -42,7 +42,16 @@ One desk, three layers (see Decisions **Ops desk three-layer model**). Separate 
 |-------|-----|
 | **Awareness** | Metra presence + one truthful observation; updated time stays quiet, waiting / held counts live on expandable Attention |
 | **Work surface** | One shared composer with explicit **Ask** and **Put somewhere** destinations; **Attention** remains a separate expandable reality-claim surface |
-| **Motion** | Quiet bridges: Discuss, Capture (Save for portfolio), Put somewhere, Keep in view - move context without merging ledgers |
+| **Motion** | Quiet bridges that move context without merging ledgers |
+
+| Motion | Success condition | Ledger |
+|--------|-------------------|--------|
+| Discuss | Operator has enough context to decide next move | Ask / conversation only |
+| Save for portfolio | Captured as durable project memory or artifact | Capture |
+| Put somewhere | Routed to a deliberate destination | Place / Put |
+| Keep in view | Remains visible for operator attention without becoming a task | Attention |
+
+Motion handoffs do not merge ledgers. Attention, Ask, and Place remain separate surfaces with explicit operator intent between them.
 
 | Mode | Surface |
 |------|---------|
@@ -105,7 +114,7 @@ The panel is **continuity**, not a task list. Metra remembers observations acros
 | Keep in view | Operator intention - temporary parking (not TicketTracker); same as Hold under the hood |
 | Full re-scan | Only path that auto-closes missing covered observations |
 
-Settings: **Attention visible count** (1-10) controls how many active items show before expanding. Keeping in view shows a quiet routing nudge toward a ticket or saved decision.
+Settings: **Attention visible count** (1-10) controls how many waiting **summary rows** show before **Show all**. Overflow stays in a capped scroll region of compact rows; the desk always renders **exactly one** focused detail card. Preference values fail closed (default 1; clamp 1-10). Keeping in view stays the existing one-card picker and shows a quiet routing nudge toward a ticket or saved decision. On compact viewports the presence shell (mark + observation + Ask/Put composer) stays sticky above Attention so denser waiting lists do not bury Ask.
 
 **Attention actions:** **Portfolio refresh** (non-ticket `coveredKinds` only - git/drift/verify/decision/contract) and **Scan tickets** (ticket only via `POST /api/watch/tickets`). **Ticket Watch** toggle gates Scan tickets. Portfolio never covers tickets. Optional M2: set `autoAnalyze: true` in `docs/ticket-watch.local.json` so Scan tickets / `watch tickets` runs TicketTracker `analyze` (local draft) for Added/Refreshed; `-Draft` forces analyze; Unchanged never re-analyzes. Desk shows **Draft available** - not a recommendation. Optional E1: set `evidenceRouter: true` to append **Next evidence** (or **Ready for recommendation** / Evidence appears sufficient) after analyze - never a likely solution, never auto iSupport recommend. **M3:** ticket Attention detail offers **Preview recommendation** (local `recommend-draft`) and **Write recommendation** (Affirm A TT recommend; supersedes). CLI: `.\metra.ps1 watch recommend <id> -Preview|-Confirm [-Force]`. `autoStoreRecommend` stays false. Affirm B (resolve/close) stays out of TicketWatch. Requires TicketTracker `meFilter` (empty filter fails closed). CLI `.\metra.ps1 watch tickets` is independent of the desk preference.
 
