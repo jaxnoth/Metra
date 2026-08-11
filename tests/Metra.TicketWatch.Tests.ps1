@@ -106,25 +106,93 @@ Describe 'Ticket watch Attention helpers' {
         }
     }
 
-    It 'defaults to no cap and no iSupport sync during desk snapshots' {
+    It 'defaults to mine scope and no iSupport sync during desk snapshots' {
         InModuleScope Metra {
             $root = Join-Path ([IO.Path]::GetTempPath()) ("metra-ticketcfg-" + [guid]::NewGuid().ToString('n'))
             New-Item -ItemType Directory -Path (Join-Path $root 'docs') -Force | Out-Null
             try {
                 $cfg = Get-MetraTicketWatchConfig -MetraRoot $root
                 $cfg.top | Should -Be 0
+                $cfg.scope | Should -Be 'mine'
+                $cfg.autoAnalyze | Should -BeFalse
+                $cfg.evidenceRouter | Should -BeFalse
+                $cfg.autoStoreRecommend | Should -BeFalse
                 $cfg.syncOnScan | Should -BeTrue
                 $cfg.syncOnSnapshot | Should -BeFalse
 
-                @{ syncOnSnapshot = $true; top = 25 } | ConvertTo-Json |
+                @{ syncOnSnapshot = $true; top = 25; scope = 'team'; autoAnalyze = $true; evidenceRouter = $true; autoStoreRecommend = $true } | ConvertTo-Json |
                     Set-Content -LiteralPath (Join-Path $root 'docs\ticket-watch.local.json')
                 $cfg2 = Get-MetraTicketWatchConfig -MetraRoot $root
                 $cfg2.syncOnSnapshot | Should -BeTrue
                 $cfg2.top | Should -Be 25
+                $cfg2.autoAnalyze | Should -BeTrue
+                $cfg2.evidenceRouter | Should -BeTrue
+                $cfg2.autoStoreRecommend | Should -BeTrue
+                # Unknown scope fails closed to mine (M1).
+                $cfg2.scope | Should -Be 'mine'
             }
             finally {
                 Remove-Item -LiteralPath $root -Recurse -Force -ErrorAction SilentlyContinue
             }
+        }
+    }
+
+    It 'keeps meFilter matches and drops Unassigned under scope mine' {
+        InModuleScope Metra {
+            $mine = [PSCustomObject]@{
+                Id = '100001'; Status = 'Open'; Assignee = 'Swan, Stephen'; Customer = 'A'
+            }
+            $unassigned = [PSCustomObject]@{
+                Id = '100002'; Status = 'Open'; Assignee = 'Support Center Unassigned'; Customer = 'B'
+            }
+            $watchedOther = [PSCustomObject]@{
+                Id = '100003'; Status = 'Open'; Assignee = 'Other, Person'; Customer = 'C'
+            }
+            Test-MetraTicketAttentionEligible -Ticket $mine -Scope mine -MeFilter '*Swan*' |
+                Should -BeTrue
+            Test-MetraTicketAttentionEligible -Ticket $unassigned -Scope mine -MeFilter '*Swan*' |
+                Should -BeFalse
+            Test-MetraTicketAttentionEligible -Ticket $watchedOther -Scope mine -MeFilter '*Swan*' |
+                Should -BeFalse
+        }
+    }
+
+    It 'fails closed when scope is mine and person filters are empty' {
+        InModuleScope Metra {
+            $t = [PSCustomObject]@{ Id = '1'; Status = 'Open'; Assignee = 'Anyone' }
+            Test-MetraTicketAttentionEligible -Ticket $t -Scope mine -MeFilter '' -AssigneeFilter '' |
+                Should -BeFalse
+        }
+    }
+
+    It 'builds the same Attention key from sensor-shaped and legacy cache objects' {
+        InModuleScope Metra {
+            $legacy = [PSCustomObject]@{
+                Id       = '1034794'
+                Subject  = 'Brightspace grades not syncing'
+                Status   = 'Open'
+                Priority = 'High'
+                Customer = 'Jane Doe'
+                Assignee = 'Stephen'
+                Updated  = '2026-08-10T12:00:00Z'
+            }
+            $sensor = [PSCustomObject]@{
+                id         = '1034794'
+                number     = 'R8AB999999'
+                subject    = 'Brightspace grades not syncing'
+                status     = 'Open'
+                assignee   = 'Stephen'
+                updatedUtc = '2026-08-10T12:00:00Z'
+                customer   = 'Jane Doe'
+                priority   = 'High'
+            }
+            $q1 = ConvertTo-MetraTicketAttentionQueueItem -Ticket $legacy
+            $q2 = ConvertTo-MetraTicketAttentionQueueItem -Ticket $sensor
+            $q1.id | Should -Be $q2.id
+            $q1.id | Should -Be 'ticket:1034794'
+            $q1.ticketStatus | Should -Be 'Open'
+            $q2.ticketStatus | Should -Be 'Open'
+            $q1.evidenceSignature | Should -Be $q2.evidenceSignature
         }
     }
 
@@ -301,6 +369,231 @@ Describe 'Ticket watch Attention helpers' {
             $git = Get-MetraAttentionPlainSummary -Project 'TicketTracker' -Kind 'git' -Content 'TicketTracker - git dirty 1'
             $git | Should -Match '^Git:'
             $git | Should -Match 'TicketTracker'
+        }
+    }
+
+    It 'M2 trigger: ForceDraft always analyzes; autoAnalyze skips Unchanged' {
+        InModuleScope Metra {
+            Test-MetraTicketWatchShouldAnalyze -ChangeKind unchanged -ForceDraft:$true -AutoAnalyze:$false |
+                Should -BeTrue
+            Test-MetraTicketWatchShouldAnalyze -ChangeKind added -ForceDraft:$false -AutoAnalyze:$false |
+                Should -BeFalse
+            Test-MetraTicketWatchShouldAnalyze -ChangeKind added -ForceDraft:$false -AutoAnalyze:$true |
+                Should -BeTrue
+            Test-MetraTicketWatchShouldAnalyze -ChangeKind refreshed -ForceDraft:$false -AutoAnalyze:$true |
+                Should -BeTrue
+            Test-MetraTicketWatchShouldAnalyze -ChangeKind unchanged -ForceDraft:$false -AutoAnalyze:$true |
+                Should -BeFalse
+        }
+    }
+
+    It 'E1: product cue prefers solutionsKb; thin alone does not ask operator' {
+        InModuleScope Metra {
+            $thin = Get-MetraTicketWatchEvidenceSignals -Subject 'Printer broken' -Description '' -InstitutionalExhausted:$false
+            $thin.ThinBody | Should -BeTrue
+            $thin.ProductCue | Should -BeFalse
+            $s1 = Get-MetraTicketWatchEvidenceSuggestion -Signals $thin
+            $s1.action | Should -Be 'solutionsKb'
+            $s1.draftState | Should -Be 'needsEvidence'
+
+            $cue = Get-MetraTicketWatchEvidenceSignals `
+                -Subject 'How do you install a printer in Colleague?' `
+                -InstitutionalExhausted:$false
+            $cue.ProductCue | Should -BeTrue
+            $s2 = Get-MetraTicketWatchEvidenceSuggestion -Signals $cue
+            $s2.action | Should -Be 'solutionsKb'
+            $s2.deskLabel | Should -Match 'solutions KB'
+        }
+    }
+
+    It 'E1: recommendable when solutions or strong similar; askOperator only when blocked' {
+        InModuleScope Metra {
+            $rich = Get-MetraTicketWatchEvidenceSignals `
+                -Subject 'PlanSource SFTP failure' `
+                -SolutionsCount 2 `
+                -SimilarCount 1 `
+                -InstitutionalExhausted:$true
+            $r = Get-MetraTicketWatchEvidenceSuggestion -Signals $rich
+            $r.draftState | Should -Be 'recommendable'
+            $r.action | Should -Be 'none'
+            $r.deskLabel | Should -Match 'sufficient'
+
+            $blocked = Get-MetraTicketWatchEvidenceSignals `
+                -Subject 'help' `
+                -SimilarCount 0 `
+                -SolutionsCount 0 `
+                -InstitutionalExhausted:$true
+            $b = Get-MetraTicketWatchEvidenceSuggestion -Signals $blocked
+            $b.action | Should -Be 'askOperator'
+            $b.draftState | Should -Be 'needsEvidence'
+
+            $web = Get-MetraTicketWatchEvidenceSignals `
+                -Subject 'Colleague printer install steps' `
+                -SolutionsCount 0 `
+                -SimilarCount 0 `
+                -InstitutionalExhausted:$true
+            $w = Get-MetraTicketWatchEvidenceSuggestion -Signals $web
+            $w.action | Should -Be 'boundedWeb'
+            $w.suggestedQuery | Should -Match 'Colleague'
+        }
+    }
+
+    It 'E1: note formatter never emits likely solution language' {
+        InModuleScope Metra {
+            $sig = Get-MetraTicketWatchEvidenceSignals -Subject 'Jitterbit SFTP' -InstitutionalExhausted:$false
+            $sug = Get-MetraTicketWatchEvidenceSuggestion -Signals $sig
+            $note = Format-MetraTicketWatchEvidenceNextNote -Suggestion $sug
+            $note | Should -Match '\[evidence-next\]'
+            $note | Should -Not -Match '(?i)Likely solution:'
+            $note | Should -Match 'not a recommendation'
+        }
+    }
+
+    It 'M3: recommend body has Findings / Suggested investigation / Gaps; no Metra AI heading' {
+        InModuleScope Metra {
+            $basis = New-MetraTicketWatchRecommendBasis -SimilarCount 2 -SolutionsCount 1 -MailEvidence:$false -WebSuggested:$false
+            $body = New-MetraTicketWatchRecommendBody `
+                -Subject 'PlanSource SFTP failure' `
+                -SimilarLines @('- 1034001 PlanSource transfer') `
+                -SolutionLines @('- plansource.md - SFTP') `
+                -EvidenceHint 'none' `
+                -Basis $basis
+            $body | Should -Match 'Findings:'
+            $body | Should -Match 'Suggested investigation:'
+            $body | Should -Match 'Gaps:'
+            $body | Should -Match 'Basis \(authoring only'
+            $body | Should -Not -Match 'Metra AI Recommendation'
+            $body | Should -Not -Match '(?i)completed Live'
+            $draft = Format-MetraTicketWatchRecommendDraftNote -Body $body
+            $draft | Should -Match '\[recommend-draft\]'
+            $draft | Should -Match 'local only'
+        }
+    }
+
+    It 'M3: recommendable gate and Force override; Preview never calls Set-ISupport' {
+        InModuleScope Metra {
+            Test-MetraTicketWatchNoteIsRecommendable -NoteText "Draft state: recommendable`n" | Should -BeTrue
+            Test-MetraTicketWatchNoteIsRecommendable -NoteText "Draft state: needsEvidence`n" | Should -BeFalse
+
+            # Stub TT commands so Pester can Mock them without importing TicketTracker.
+            foreach ($n in @(
+                    'Get-TrackedTickets', 'Get-TicketTrackerSettings', 'Add-TrackedTicketNote',
+                    'Set-ISupportAiRecommendation', 'Get-TrackedTicketNotes',
+                    'Resolve-ISupportWorkItem', 'Set-ISupportWorkItemResolution'
+                )) {
+                if (-not (Get-Command -Name $n -ErrorAction SilentlyContinue)) {
+                    Set-Item -Path "Function:$n" -Value { }
+                }
+            }
+
+            Mock Get-MetraTicketTrackerProject {
+                [PSCustomObject]@{ Name = 'TicketTracker'; Path = 'C:\fake-tt'; ModulePath = 'C:\fake-tt\x.psm1' }
+            }
+            Mock Import-Module { }
+            Mock Get-TrackedTickets {
+                [PSCustomObject]@{
+                    Id = '1036001'; Subject = 'PlanSource SFTP'; Status = 'Open'
+                    Assignee = 'Swan, Stephen'; Customer = 'A'
+                }
+            }
+            Mock Get-TicketTrackerSettings {
+                [PSCustomObject]@{ meFilter = '*Swan*'; assigneeFilter = '' }
+            }
+            Mock Test-MetraTicketAttentionEligible { $true }
+            Mock Get-MetraTicketWatchLatestNoteText {
+                param($TicketId, $Tag)
+                if ($Tag -eq 'evidence-next') {
+                    return "Draft state: needsEvidence`nAction: solutionsKb"
+                }
+                if ($Tag -eq 'analyze-draft') {
+                    return @"
+Similar (local cache):
+- (none in cache)
+Solutions index hits:
+- (no solutions keyword hits)
+"@
+                }
+                return ''
+            }
+            Mock Add-TrackedTicketNote { [PSCustomObject]@{ Id = 'note-preview' } }
+            Mock Set-ISupportAiRecommendation { throw 'Set-ISupportAiRecommendation must not run on Preview' }
+            Mock Resolve-ISupportWorkItem { throw 'resolve must never run' }
+
+            $blocked = Invoke-MetraTicketWatchStoreRecommend -Id '1036001' -Preview -Quiet
+            $blocked.ok | Should -BeFalse
+            $blocked.warning | Should -Match 'recommendable'
+
+            $forced = Invoke-MetraTicketWatchStoreRecommend -Id '1036001' -Preview -Force -Quiet
+            $forced.ok | Should -BeTrue
+            $forced.preview | Should -BeTrue
+            $forced.iSupportWrite | Should -BeFalse
+            $forced.recommendationWritten | Should -BeFalse
+            $forced.noteId | Should -Be 'note-preview'
+            $forced.body | Should -Match 'Findings:'
+        }
+    }
+
+    It 'M3: Confirm calls Set-ISupportAiRecommendation; never resolve; Mine fail-closed' {
+        InModuleScope Metra {
+            foreach ($n in @(
+                    'Get-TrackedTickets', 'Get-TicketTrackerSettings', 'Add-TrackedTicketNote',
+                    'Set-ISupportAiRecommendation', 'Get-TrackedTicketNotes',
+                    'Resolve-ISupportWorkItem', 'Set-ISupportWorkItemResolution'
+                )) {
+                if (-not (Get-Command -Name $n -ErrorAction SilentlyContinue)) {
+                    Set-Item -Path "Function:$n" -Value { }
+                }
+            }
+
+            Mock Get-MetraTicketTrackerProject {
+                [PSCustomObject]@{ Name = 'TicketTracker'; Path = 'C:\fake-tt'; ModulePath = 'C:\fake-tt\x.psm1' }
+            }
+            Mock Import-Module { }
+            Mock Get-TrackedTickets {
+                [PSCustomObject]@{
+                    Id = '1036002'; Subject = 'Colleague WAGC' ; Status = 'Open'
+                    Assignee = 'Swan, Stephen'; Customer = 'A'
+                }
+            }
+            Mock Get-TicketTrackerSettings {
+                [PSCustomObject]@{ meFilter = '*Swan*'; assigneeFilter = '' }
+            }
+            Mock Test-MetraTicketAttentionEligible { $true }
+            Mock Get-MetraTicketWatchLatestNoteText {
+                param($TicketId, $Tag)
+                if ($Tag -eq 'evidence-next') {
+                    return "Draft state: recommendable`nAction: none"
+                }
+                if ($Tag -eq 'analyze-draft') {
+                    return @"
+Similar (local cache):
+- 1035000 WAGC stuck
+Solutions index hits:
+- colleague-wagc.md
+"@
+                }
+                return ''
+            }
+            Mock Set-ISupportAiRecommendation {
+                param($Id, $Recommendation, $TimeWorkedMinutes)
+                [PSCustomObject]@{ Id = $Id; Ok = $true; Minutes = $TimeWorkedMinutes }
+            }
+            Mock Add-TrackedTicketNote { throw 'Preview note should not write on Confirm' }
+            Mock Resolve-ISupportWorkItem { throw 'resolve must never run from TicketWatch M3' }
+            Mock Set-ISupportWorkItemResolution { throw 'resolve must never run from TicketWatch M3' }
+
+            $stored = Invoke-MetraTicketWatchStoreRecommend -Id '1036002' -Confirm -Quiet
+            $stored.ok | Should -BeTrue
+            $stored.confirm | Should -BeTrue
+            $stored.iSupportWrite | Should -BeTrue
+            $stored.recommendationWritten | Should -BeTrue
+            $stored.body | Should -Match 'Suggested investigation:'
+
+            Mock Test-MetraTicketAttentionEligible { $false }
+            $notMine = Invoke-MetraTicketWatchStoreRecommend -Id '1036002' -Confirm -Quiet
+            $notMine.ok | Should -BeFalse
+            $notMine.mineEligible | Should -BeFalse
+            $notMine.warning | Should -Match 'Mine'
         }
     }
 }

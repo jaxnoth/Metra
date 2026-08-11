@@ -18,6 +18,66 @@ Entry shape:
 
 ---
 
+## 2026-08-10 - One authoritative Ask journal host (Desk Mode B)
+
+- Decision: Metra maintains one authoritative Ask journal host. Satellite devices query the journal remotely and do not host Ask services unless explicitly started with `-ForceLocal`.
+- Why: Avoid journal divergence, session-id collisions, and continuity ownership ambiguity across laptop/jumpbox/phone. Profile stays a replicated pull; Ask journal stays a centralized query.
+- See: `docs/Cross-Device.local.md` (Desk Modes); `Get-MetraDeskMode`; `Invoke-MetraAskLogCommand`; `Assert-MetraOpsMayStartLocally`
+
+## 2026-08-10 - Desk Mode B: one OpsBaseUrl for profile pull and Ask query
+
+- Decision: Desk Mode B (HQ Client) means one configured OpsBaseUrl: profile sync pulls from HQ; Ask journal CLI queries HQ; local Ops hosting is refused unless `-ForceLocal`.
+- Why: Shared control plane prevents profile-sync vs ask-client drift. `Get-MetraDeskMode -ForceLocal` owns the mode decision; callers only switch.
+- See: `docs/Cross-Device.local.md`; next bite remains remote `POST /api/ask` (not this scar)
+
+## 2026-08-10 - TicketWatch M3: recommend-draft before store-as-review; autoStore off on Mine
+
+- Decision: M3 separates recommendation authorship from Affirm A storage. Preview writes a local `recommend-draft` note only. Confirm / Write recommendation calls TicketTracker `recommend` and must supersede the single `Metra AI Recommendation:` section (never accumulate versions). E1 `recommendable` gates willingness to draft; `-Force` overrides. `autoStoreRecommend` stays false through the Mine quality loop; reconsider only after M4. Affirm B (implement/resolve) remains out of TicketWatch. Ephemeral Basis summary may ground authoring; no confidence ledger.
+- Why: Store-as-review is durable enough to preview; Mine tuning needs generate/read/improve/regenerate without short-circuiting via auto-store; E1 already owns evidence sufficiency.
+- See: plan `ticket_watch_mine-first_89e19166` M3; F3.x; Bing M3 refine 2026-08-10
+
+---
+
+## 2026-08-10 - TicketWatch E1: next source not solution; quality not confidence; recommendable handoff
+
+- Decision: E1 suggests the most promising **next evidence source**, not the most likely **solution**. E1 optimizes recommendation **quality**, not recommendation **confidence** (no scores, confidence ledgers, or ranking theater). Draft state is binary and ephemeral: `needsEvidence` (one source suggestion) or `recommendable` (`action: none` + desk cue Evidence appears sufficient / Ready for recommendation). Recommendable when any of: strong similar-ticket match, matching solutions/KB, product cue maps to established guidance, or operator supplied the sought fact - not a confidence percentage. E1 must not generate or write recommendations; M3 is the author. Conceptual ladder collapses duplicate KB steps to "institutional knowledge exhausted?" then M365, askOperator (blocked only), boundedWeb, none.
+- Why: Keeps detective vs author split; answers when enough information exists without turning E1 into half of M3 or a second Attention/confidence system.
+- See: plan `ticket_watch_mine-first_89e19166`; Bing E1 approve 2026-08-10; F3.x
+
+---
+
+## 2026-08-10 - TicketWatch E1: do not presume missing facts; subject/person likelihood first
+
+- Decision: E1 Next-evidence routing must not treat thin ticket descriptions as automatic `askOperator`. Most tickets lack complete facts. Prefer ephemeral likelihood from **given information** (subject, product cue, mnemonic) and from probable prior tickets for **this subject** and/or **this person** (requester), then institutional KB / solutions, then org evidence, then askOperator only when the next step is blocked without a human fact, then bounded web. Do not persist probability scores, confidence ledgers, or evidence-accumulation memory - heuristics are in-memory for the single suggestion only.
+- Why: Defaulting to ask-operator on incompleteness would spam the Mine review loop and skip the institutional memory TicketWatch exists to surface.
+- See: plan `ticket_watch_mine-first_89e19166` E1 ladder; F3.x; Bing E1 tighten (no evidence ledger) same day
+
+---
+
+## 2026-08-10 - Ask: KB first, then explicit web-search offer
+
+- Decision: Ops Ask evidence order for how-to / product questions is: check institutional KB (TicketTracker solutions index and related local knowledge) before concluding "unknown." On a KB miss, Ask may **offer an explicit prompt** to search the web (operator/coworker affirms). Do not unsupervised web-search on every Ask turn. Do not invent answers from the technical project alone when a KB check was skipped. TicketWatch E1 stays suggest-only for `boundedWeb` (query string); Ask may perform the fetch **after** an explicit yes on that offer. Channels stay separate (Ask != TicketWatch) but share the same knowledge ladder.
+- Why: Morning 2026-08-10 phone Ask ("install a printer in Colleague") fail-closed on the Colleague module without a solutions KB pass - same knowledge gap TicketWatch must not repeat. Explicit web offer keeps honesty without stranding the user when the org KB is empty.
+- See: Ask Journal session `agent-ca38d156-c44a-48f1-8ecd-798e24b42563`; F3.x / plan `ticket_watch_mine-first_89e19166` Next-evidence ladder; Decisions TicketWatch Affirm A/B same day
+
+---
+
+## 2026-08-10 - Metra TicketWatch: Observe -> Draft -> Review -> Apply; Mine Affirm A = store-as-review
+
+- Decision: TicketWatch authority ladder is Observe -> Draft -> Review (Affirm A) -> Apply (Affirm B). Affirm A stores a durable `Metra AI Recommendation` for review; Affirm B is implement/resolve/Live change. On Mine scope, Affirm A is **store-as-review**: writing the recommendation to iSupport is the review surface (re-run/rewrite expected). A recommend write does not imply confidence, approval, implementation, or correctness. Tighten Affirm A (preview/confirm) only when Attention scope widens beyond Mine. E1 Next-evidence suggestions are non-binding, suggest-only (signal -> one source), and do not require a later recommend. M3 is the first bite that may drive store-as-review. E1 must not create evidence accumulation memory (scores/history/confidence ledger) or a second Ask product.
+- Why: First-line triage needs a durable review artifact without collapsing recommend into Apply; Mine-only rollout keeps weak recommends off the team floor while quality is tuned.
+- See: plan `ticket_watch_mine-first_89e19166`, `docs/Future-Development.local.md` F3.x
+
+---
+
+## 2026-08-10 - Metra TicketWatch: cache != Attention; mine-first gate
+
+- Decision: TicketTracker sync cache is not Attention eligibility. Metra TicketWatch applies an Attention eligibility contract before upsert. Under `ticketWatch.scope=mine` (default), candidates must be active, match TicketTracker `meFilter` or `assigneeFilter` via `Test-TicketMatchesPersonFilter`, and normalize through `ConvertTo-TicketSensorObject`. Empty person filters fail closed (zero candidates). Explicitly not eligible: queueInclude-only, Unassigned that fails person filter, pull-only not-mine, watched-but-not-mine. Widen only via an explicit later scope bite (e.g. `mine+unassigned`). TT may still sync broadly.
+- Why: Without a Metra gate, queueInclude / pull / future team cache membership becomes accidental Attention and turns troubleshooting into an implicit subscription.
+- See: `scripts/private/TicketWatch.ps1`, `docs/Future-Development.local.md` F3.x, plan `ticket_watch_mine-first_89e19166`
+
+---
+
 ## 2026-08-09 - Ask desk renders Metra replies as sanitized Markdown
 
 - Decision: Ops Ask renders **Metra reply** bubbles as sanitized Markdown (`react-markdown` + `rehype-sanitize`). Session Journal / transport / Capture keep **raw Markdown text** - rendering is presentation only. Operator ("You") turns stay plain `pre-wrap` text. Links allow `http:` / `https:` only; intentionally deny `javascript:`, `data:`, `file:`, and other schemes (Metra replies must not create executable or local-file links). Explicit `code` / `pre` components distinguish inline vs fenced blocks with horizontal overflow on fences - no syntax highlighter. Do not use raw `dangerouslySetInnerHTML` for engine output.
@@ -41,71 +101,71 @@ Entry shape:
 
 - Decision: Ladder **3** Ask image intake (vision-read evidence) is **closed**. Shipped: Place quarantine resolve for png/jpeg/gif/webp (max 3), `POST /api/ask` `imageIds`, evidence kind `image` without FactualSupport for live status, Cursor sidecar path-based vision + attribution prompt contract, consumer Ollama/enterprise image degrade before call, Session Journal `images: [{ id, fileName }]` only, Ops attach/paste with Ask for image ids and Put somewhere for other types. L2 Classify and grounded-answer invariants remain authoritative - screenshots alone cannot ground live Orion/iSupport claims.
 - Why: Layer A Pester `Ask image intake - Ladder 3` (5/5) including screenshot-only Orion, and smoke `tests/smoke-ask-image-intake.ps1` passed 2026-08-08.
-- See: `docs/Future-Development.local.md` (ladder 3 done), `scripts/private/AskImage.ps1`, `scripts/private/AskEngine.ps1`, `engines/cursor/server.mjs`, `ops/src/App.tsx`, plan `ask_image_intake_4d17fccb`
+- See: `docs/Shipped.local.md` (Ask image intake), `scripts/private/AskImage.ps1`, `scripts/private/AskEngine.ps1`, `engines/cursor/server.mjs`, `ops/src/App.tsx`, plan `ask_image_intake_4d17fccb`
 - Explicit non-goals unchanged: no OCR subsystem; no PDF/video; no Route OCR-only; no Ollama vision catalog; no auto-Capture from images; no journal path/mime/base64; no Host apply from image
 
 ## 2026-08-08 - Ladder 3 Active: Ask image intake (vision-read evidence)
 
 - Decision: Ladder **3** is **Active** as **Ask image intake (vision-read evidence)** (not OCR). Images enter Ask via Place quarantine under `%LOCALAPPDATA%\Metra\` only (permanent security rule - never Metra git checkout). Cursor sidecar is the only MVP vision path; consumer Ollama/enterprise with images always degrade before call. Media: png/jpeg/gif/webp, 8 MB, max 3 per turn. Journal stores `images: [{ id, fileName }]` only - no path, mime, binary, or base64. Vision may provide observations about visible content; it is not authoritative system state. L2 Classify and evidence invariants remain authoritative - attaching an image does not auto-ground live Orion/iSupport claims. Image-derived statements must be attributable ("The screenshot appears to show..."). Composer sends image-typed quarantine ids to Ask; non-image Place types stay Put somewhere. No auto-Capture from images; answer-only ceiling; no Host apply from image.
 - Why: Ask was text-only while Place already staged screenshots; Bing second-pass locked Place quarantine as source of truth, Cursor-only vision, and honest Ollama degrade so pixels cannot override routing.
-- See: `docs/Future-Development.local.md` (ladder 3 Active), plan `ask_image_intake_4d17fccb`, `SECURITY.md` (Ask image staging / ask-log pointers)
+- See: `docs/Shipped.local.md` (Ask image intake; closed), plan `ask_image_intake_4d17fccb`, `SECURITY.md` (Ask image staging / ask-log pointers)
 - Explicit non-goals: PDF/video OCR; Route OCR-only; iOS camera; live webcam; Ollama vision catalog / pin swap; Capture auto-create from image text; silent image drop; auto engine switch; inventing live system status from screenshots alone
 
 ## 2026-08-08 - Ladder 2b Done: Cross-product Ask Capture Host MVP
 
 - Decision: Ladder **2b** Capture Inbox v2 Host MVP is **closed**. Shipped: registry-aware `Resolve-MetraCaptureSuggestedTarget` (soft ticket vs strong ticket), `Propose-MetraCaptureSplit` / `Add-MetraCaptureFromAskSplit` (accepted-only), `ProjectBacklog` TODO.md promote with `Test-MetraLocalAuthority` + cross-root confirm, ProjectAgents/TicketTracker fail closed, CLI `propose-from-ask` + promote `-Home`/`-Project`/`-CrossRootConfirm`, Ops `/api/capture/propose` + accepted create + promote fields, Ops compact Save sheet + Capture inbox selectors. Schema remains `schemaVersion: 1`.
 - Why: Layer A Pester `Capture Inbox v2 - Ladder 2b` (6/6) and mixed-session smoke `tests/smoke-capture-inbox-v2.ps1` passed 2026-08-08.
-- See: `docs/Future-Development.local.md` (ladder 2b done), `scripts/private/Capture.ps1`, `scripts/private/OpsServer.ps1`, `ops/src/App.tsx`, plan `capture_inbox_v2_d3ef2d89`
+- See: `docs/Shipped.local.md` (Capture Inbox v2), `scripts/private/Capture.ps1`, `scripts/private/OpsServer.ps1`, `ops/src/App.tsx`, plan `capture_inbox_v2_d3ef2d89`
 - Explicit non-goals unchanged: no auto-promote; no silent cross-root; no invented projects; no Capture-to-AGENTS; no iSupport writes; no LLM auto-split required path
 
 ## 2026-08-08 - Ladder 2b Active: Cross-product Ask Capture Host MVP
 
 - Decision: Unpark Ladder **2b** as a Host MVP implementation bite for Capture Inbox v2. Ask Save or CLI may propose up to five Capture candidate rows from one Ask turn or session window using registry-backed `suggestedProject` values. Capture ledger writes happen only after operator affirmation. `ProjectBacklog` promotes append to the registered project `TODO.md` and require Host/CLI/local-session authority. `ProjectAgents` and `TicketTracker` are suggest-only in MVP (promote fails closed with a next check). Cross-root writes require explicit confirmation. Schema remains `schemaVersion: 1`; proposal DTO is API-only.
 - Why: Mixed Ask sessions (Metra product scars + personal-root ideas) were dumping into Metra Future Development; Capture v1 could not split or write registered project parking lots without Cursor hand-placement.
-- See: `docs/Future-Development.local.md` (ladder 2b), `scripts/private/Capture.ps1`, plan `capture_inbox_v2_d3ef2d89`, prior Ask ideas may cross products Decision
+- See: `docs/Shipped.local.md` (Capture Inbox v2), `scripts/private/Capture.ps1`, plan `capture_inbox_v2_d3ef2d89`, prior Ask ideas may cross products Decision
 - Explicit non-goals: no auto-promote; no silent cross-root; no invented projects; no remote rewrite of tracked AGENTS/`Decisions.md`; no Capture-to-AGENTS write in MVP; no iSupport writes from Capture; no LLM auto-segmentation as the required path
 
 ## 2026-08-08 - Ladder 2 Ask evidence contract closed
 
 - Decision: Ladder **2** Ask evidence contract and grounded-answer semantics is **closed**. Shipped: `AskEvidence.ps1` (`New-MetraAskEvidenceItem` / `New-MetraAskEvidencePack` / `Get-MetraAskEvidenceQuality` / answer semantics), structured context with flat aliases, limits 6/400/2400, honesty short-circuits before pack/engine, engine-path `answered=true` only when `answerType=grounded`, none skips engine, dual scrub, Ops `/api/ask` forwards `answerType` / `evidenceQuality` / `nextStep`, Cursor `buildPrompt` + Ollama OpenAI-compat evidence ceilings. Deven freeze/send, Ollama pin swap, image intake, iOS, and cross-product Capture remain parked.
 - Why: Required Layer A Pester (`L2 *`) and operator smoke (Metra purpose grounded/adequate; Orion live provisional/thin without inventing alert counts; ticket id bounded, no full brief dump) passed 2026-08-08.
-- See: `docs/Future-Development.local.md` (ladder 2 done-when), `scripts/private/AskEvidence.ps1`, `scripts/private/Snapshot.ps1`, plan `ask_evidence_polish_269fe289`
+- See: `docs/Shipped.local.md` (Ask evidence contract), `scripts/private/AskEvidence.ps1`, `scripts/private/Snapshot.ps1`, plan `ask_evidence_polish_269fe289`
 
 ## 2026-08-08 - Ladder 2 Ask evidence contract unparked (active)
 
 - Decision: Ladder **2** is **Active** as **Ask evidence contract and grounded-answer semantics** (code harness): structured context (`route` / `evidence` / `continuity` / `capability`), mechanical `Get-MetraAskEvidenceQuality`, `answerType` invariants, dual scrub on the evidence pack, Cursor/Ollama prompt parity. **Honesty carve-out:** short-circuits (`greeting` / `observation` / `park`) stay before pack/engine and may keep `answered=true`. **Engine-path invariant:** `answered=true` only when `answerType=grounded`; `thin`/`none` never grounded. Deven freeze/send, Ollama pin swap, image intake, iOS, and cross-product Capture remain parked. Done-when requires Layer A Pester and operator smoke before Future-Dev Done.
 - Why: Honesty (ladder 1) closed 2026-08-08; the remaining Ask weakness is thin context and missing mechanical quality gates - not model shopping.
-- See: plan `ask_evidence_polish_269fe289`, prior Phase 0 Decision 2026-08-06, `docs/Future-Development.local.md`
+- See: plan `ask_evidence_polish_269fe289`, prior Phase 0 Decision 2026-08-06, `docs/Shipped.local.md` (evidence polish)
 
 ## 2026-08-08 - Ask desk honesty S05-S08 closed (circuit breakers)
 
 - Decision: Ladder **1** Ask desk honesty hotfixes (S05-S08) are **closed**. Fixes live in `Get-MetraDeskAskResult` short-circuits (greeting / observation / park) before `Invoke-MetraAskEngine`, plus UTF-8 body+journal chain, residual `Repair-MetraAskWritePromise`, Ops UI non-route kinds, and thin prompt parity. Do **not** implement `Get-MetraAskEvidenceQuality` / answerType here - that remains ladder **2** (parked). No Ollama pin swap for honesty.
 - Why: Operator smoke 2026-08-08 (CLI + Pester) passed S05-S08; the lies were born in fall-through + sticky route rewrite, not model quality.
-- See: `docs/Future-Development.local.md` (honesty done-when), `scripts/private/Snapshot.ps1`, plan `ask_desk_honesty_d2a6c5ff`
+- See: `docs/Shipped.local.md` (Ask honesty S05-S08), `scripts/private/Snapshot.ps1`, plan `ask_desk_honesty_d2a6c5ff`
 
 ## 2026-08-08 - Ask ladder split: honesty before full polish; Deven outside polish
 
 - Decision: After consumer Ask activation shipped, the human ladder **splits** former "ladder 2 polish" into (1) **Ask desk honesty hotfixes** (S05-S08 - greeting theater, invented continuity, promised-write, encoding) as the **active** next bite, and (2) **Ask evidence-gated polish** (full context contract / evidence.quality / answerType) as a parked XL bite that waits on honesty. **Deven / non-coder retest is outside polish** (Arc B) - gated on honesty being good enough, not on full evidence-gated harness. Do not model-shop to fix S05-S08.
 - Why: Operator closeout 2026-08-08 - engine works; major desk honesty failures block useful Ask and family retest; bundling them into XL polish delays the fixes that matter.
-- See: `docs/Future-Development.local.md` (ladder 1 honesty; ladder 2 polish; Outside polish Deven), `docs/Ask-Eval-Set.local.md` S05-S08, prior Consumer Ask ladder 1 closed Decision
+- See: `docs/Shipped.local.md` (honesty + evidence); `docs/Future-Development.local.md` (Outside polish Deven), `docs/Ask-Eval-Set.local.md` S05-S08, prior Consumer Ask ladder 1 closed Decision
 
 ## 2026-08-08 - Consumer Ask ladder 1 closed
 
 - Decision: Ladder **1** (consumer-ready Ask activation) is **closed**. Recommended path remains Ollama with frozen pins `qwen2.5:3b` / `qwen2.5:7b` / `qwen2.5:14b` (Modest/Balanced/large). Accept Recommended + Settings engine switch ship as product. Residual installer packaging (private `runtimes/node` not always staged in every checkout) and any remaining Accept/UX gaps are **bugs**, not open ladder-1 product work. Do not expand the engine menu. Resume evidence-gated Ask polish as ladder **2**.
 - Why: Operator closeout 2026-08-08 - `ask engine show` healthy on Ollama `qwen2.5:7b`, Accept path available, prior desk smoke proved completions. Engine work is onboarding friction only.
-- See: `docs/Future-Development.local.md` (Consumer-ready Ask activation), `Get-MetraAskModelPinTable`, plan `ask_activation_closeout_1f6a514c`, prior Consumer Ask multi-engine Decision 2026-08-07
+- See: `docs/Shipped.local.md` (Consumer-ready Ask activation), `Get-MetraAskModelPinTable`, plan `ask_activation_closeout_1f6a514c`, prior Consumer Ask multi-engine Decision 2026-08-07
 
 ## 2026-08-08 - Ask ideas may cross products and roots
 
 - Decision: A single Ask session may produce ideas that belong in **different** durable homes (Metra Future Development, another work project, a personal-root project such as BibleQuiz, OCC, Decision Registry). Capture Inbox must support **multi-home split**: recommend one or more `suggestedProject` / `suggestedHome` values per idea, keep immutable journal lineage per candidate, and promote on affirm into the **respective** Portfolio Operations home - not only Metra `Future-Development.local.md`. Cross-root promotes require explicit operator affirm (same isolation rule as chat). Host/CLI owns disk writes; Ask remains answer-only. Do not invent unregistered projects; do not auto-promote; do not dump every idea into Metra because promote only knows Metra homes.
 - Why: Phone Ask on 2026-08-08 mixed Metra product scars and BibleQuiz feature ideas in one continuity window. Hand-split worked once; operators will do this often. Capture v1 (Journal + Inbox) is correct architecture but incomplete product: home classifier prefers TicketTracker on ticket vocabulary, and `capture promote` only auto-writes Future Development / Decision Registry / OCC candidates.
-- See: Ask Session Journal + Capture Inbox Decision 2026-08-05, Route something Decision 2026-08-05, Portfolio Operations Principles, `scripts/private/Capture.ps1`, `docs/Future-Development.local.md` (Cross-product Ask Capture)
+- See: Ask Session Journal + Capture Inbox Decision 2026-08-05, Route something Decision 2026-08-05, Portfolio Operations Principles, `scripts/private/Capture.ps1`, `docs/Shipped.local.md` (Cross-product Ask Capture)
 
 ## 2026-08-07 - Engine work is onboarding friction only (not a launcher)
 
 - Decision: Engine packaging (Ollama / Cursor / enterprise OpenAI-compat / llama.cpp, health, pins, updates) ships **only** when it removes consumer onboarding friction toward `engineHealthy` + ask test. Metra is a portfolio **guide** (routing, context, decisions, memory discipline, portability across agents) - not an AI runtime installer, model catalog, or Ollama/Cursor wrapper product. After ladder 1 Accept Recommended succeeds, do not expand engine surface for elegance; resume evidence-gated Ask polish and image intake instead.
 - Why: Bing Future-Development review 2026-08-07: the customer problem is "I don't know where to start," not "I wish I had a nicer model manager." Competing on model hosting drifts Metra off its moat (the portfolio map).
-- See: Consumer Ask multi-engine Decision above, `docs/Future-Development.local.md` (Consumer-ready Ask activation; Bing review scars), Ask engine Decision 2026-08-01
+- See: Consumer Ask multi-engine Decision above, `docs/Shipped.local.md` (Consumer-ready Ask activation; Bing review scars), Ask engine Decision 2026-08-01
 
 ## 2026-08-07 - Settings projects folders: labeled multi-root list
 
@@ -135,13 +195,13 @@ Entry shape:
 
 - Decision: Ladder **1** (consumer-ready Ask) ships a **simplified engine menu**: recommended path **Ollama** (Modest/Balanced = model pin size, not separate runtimes), premium **Cursor** (Advanced; bundled private Node + prebundled sidecar when chosen - no "install Node yourself"), IT **enterprise** OpenAI-compat endpoint (hidden unless configured), Advanced escape hatch **llama.cpp** (never auto-recommended). **GPT4All** is watch/docs only - not first-class. Implementers: PowerShell-native `openai_compat` for ollama/enterprise/llamacpp; Cursor keeps `@cursor/sdk` sidecar. Recommend-first UX (Accept recommended); overrides under Advanced. Consumer success = `engineHealthy` + ask test (install runtime 1a, then pull model 1b) - not config-written alone. No silent mid-Ask engine swap; Classify stays PowerShell. Ship order: adapter + recommend + health first; Cursor packaging second; exact pin tags after smoke. ZIP/Documents folder-lose stays out of this bite. Evidence-gated polish (former ladder-1 Phase 0 Decision 2026-08-06) remains parked as human ladder **2** until consumer Ask is available.
 - Why: Bing plan review (R1 8.5/10 + R2 follow-ups) favored one recommended path, one premium, one IT, one power hatch over more engines. Local Ask must not require Node; Cursor Ask must be turnkey when selected.
-- See: Cursor plan `ask_multi-engine_activation_a7644e08`, `docs/Future-Development.local.md` (Consumer-ready Ask activation), Ask engine Decision 2026-08-01, `scripts/private/AskEngine.ps1`
+- See: Cursor plan `ask_multi-engine_activation_a7644e08`, `docs/Shipped.local.md` (Consumer-ready Ask activation), Ask engine Decision 2026-08-01, `scripts/private/AskEngine.ps1`
 
 ## 2026-08-06 - Ask evidence-gated polish (ladder 1 Phase 0)
 
 - Decision: Activate ladder **1** as **Ask engine polish: evidence-gated grounded answers** (not prompt polish, not model shopping). Bing plan review approved with edits 2026-08-06. Before Phase 2 code: freeze a Deven-class Ask eval set; ship a boring context contract (`route` / `evidence` / `continuity` / `capability`); compute `evidence.quality` in code via `Get-MetraAskEvidenceQuality` (`adequate|thin|none`, plus capability `degraded` path); enforce response invariants (`answered=true` only when `answerType=grounded`; thin/none never grounded; provisional may guide but not claim completion); dual scrub (pre-engine pack and pre-journal); Classify remains authoritative (Ask may enrich, must not silently override primary stop). Journal continuity is not factual evidence unless marked. Live system claims require bound route/tool evidence. Ollama, installer Node (1b), Ask image intake (1c), iOS voice (1d), Host apply from Ask, G3/G5 full fixtures, and cross-agent storytelling stay deferred. No material scars rejected this bite.
 - Why: Ask already routes and degrades; the thin context bag is the bottleneck. Harness quality and measurable gen-verify beat model swaps (aligns with Ollama/SLM scar and Karpathy gen-verify crosswalk).
-- See: Cursor plan `ask_engine_polish_b9dd3dc1`, `docs/Future-Development.local.md` (ladder 1, F2 Ask evidence-gated polish), Ollama/SLM scar above, Ask engine Decision 2026-08-01, Ask Ops secrets scrub, [Agentic-Maturity.md](Agentic-Maturity.md) (Metra Ops Ask)
+- See: Cursor plan `ask_engine_polish_b9dd3dc1`, `docs/Shipped.local.md` (Ask honesty + evidence-gated polish), Ollama/SLM scar above, Ask engine Decision 2026-08-01, Ask Ops secrets scrub, [Agentic-Maturity.md](Agentic-Maturity.md) (Metra Ops Ask)
 
 ## 2026-08-06 - Ask Ops secrets scrub (defense in depth)
 

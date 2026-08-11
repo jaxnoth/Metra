@@ -26,6 +26,7 @@
         'Export-MetraContext'
         'Export-MetraProfile'
         'Import-MetraProfile'
+        'Sync-MetraProfile'
         'Test-MetraInstallation'
         'Get-MetraRoot'
         'Get-MetraConfig'
@@ -55,6 +56,9 @@
         'Get-MetraProjectChats'
         'Get-MetraCursorTranscriptRoots'
         'Get-MetraProfileFileMap'
+        'Get-MetraProfileStatus'
+        'Initialize-MetraProfileSyncToken'
+        'Test-MetraProfileSyncToken'
         'Invoke-MetraSetup'
         'Invoke-MetraOperatorContractCommand',
         'Invoke-MetraDecisionRegistryCommand',
@@ -104,6 +108,11 @@
         'Set-MetraDeskPreferences',
         'Invoke-MetraCaptureCommand',
         'Invoke-MetraAskLogCommand',
+        'Invoke-MetraAskJournalRemote',
+        'Get-MetraDeskMode',
+        'Get-MetraProfileOpsBaseUrlOrNull',
+        'Test-MetraOpsBaseUrlIsLocal',
+        'Assert-MetraOpsMayStartLocally',
         'Get-MetraCaptureLedger',
         'Add-MetraCaptureFromAskTurn',
         'Invoke-MetraCapturePromote',
@@ -113,7 +122,10 @@
         'Search-MetraDeskAskJournal',
         'Get-MetraAskContinuityContext',
         'Add-MetraDeskAskEntry',
-        'Invoke-MetraTicketWatchScan'
+        'Invoke-MetraTicketWatchScan',
+        'Invoke-MetraTicketWatchStoreRecommend',
+        'New-MetraTicketWatchRecommendBody',
+        'New-MetraTicketWatchRecommendBasis'
     )
     CmdletsToExport   = @()
     VariablesToExport = @()

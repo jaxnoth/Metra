@@ -1,0 +1,10 @@
+{
+  "writeLocalDraft": false,
+  "autoAnalyze": false,
+  "evidenceRouter": false,
+  "autoStoreRecommend": false,
+  "top": 0,
+  "syncOnScan": true,
+  "syncOnSnapshot": false,
+  "scope": "mine"
+}

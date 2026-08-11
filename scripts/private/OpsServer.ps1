@@ -186,12 +186,19 @@ function Write-MetraOpsTextResponse {
 function Write-MetraOpsFileResponse {
     param(
         [Parameter(Mandatory)]$Response,
-        [Parameter(Mandatory)][string]$FilePath
+        [Parameter(Mandatory)][string]$FilePath,
+        [string]$ContentType,
+        [string]$DownloadFileName
     )
 
     $bytes = [System.IO.File]::ReadAllBytes($FilePath)
     $Response.StatusCode = 200
-    $Response.ContentType = Get-MetraOpsContentType -Path $FilePath
+    $Response.ContentType = if ($ContentType) { $ContentType } else { Get-MetraOpsContentType -Path $FilePath }
+    if (-not [string]::IsNullOrWhiteSpace($DownloadFileName)) {
+        $safe = ($DownloadFileName -replace '[\r\n"]', '')
+        $Response.Headers['Content-Disposition'] = "attachment; filename=`"$safe`""
+    }
+    $Response.Headers['Cache-Control'] = 'no-store'
     $Response.ContentLength64 = $bytes.Length
     $Response.OutputStream.Write($bytes, 0, $bytes.Length)
     $Response.OutputStream.Close()
@@ -249,6 +256,135 @@ function Invoke-MetraOpsApi {
             return
         }
 
+        # M3: Preview local recommend-draft or Confirm Affirm A TT recommend (Mine-only).
+        if ($method -eq 'POST' -and $path -eq '/api/watch/recommend') {
+            $body = Read-MetraOpsRequestBody -Request $Request
+            $ticketId = ''
+            $doPreview = $true
+            $doConfirm = $false
+            $doForce = $false
+            $minutes = 15
+            if ($body) {
+                try {
+                    $parsed = $body | ConvertFrom-Json
+                    $ticketId = [string](Get-MetraProp -Object $parsed -Name 'id' -Default '')
+                    if (-not $ticketId) {
+                        $ticketId = [string](Get-MetraProp -Object $parsed -Name 'ticketId' -Default '')
+                    }
+                    $doConfirm = [bool](Get-MetraProp -Object $parsed -Name 'confirm' -Default $false)
+                    $doPreview = [bool](Get-MetraProp -Object $parsed -Name 'preview' -Default (-not $doConfirm))
+                    $doForce = [bool](Get-MetraProp -Object $parsed -Name 'force' -Default $false)
+                    $minutesRaw = Get-MetraProp -Object $parsed -Name 'minutes' -Default 15
+                    if ($null -ne $minutesRaw) { $minutes = [int]$minutesRaw }
+                }
+                catch { }
+            }
+            if (-not $ticketId) {
+                Write-MetraOpsJsonResponse -Response $Response -StatusCode 400 -Object ([PSCustomObject]@{
+                        error = 'id (ticket id) is required.'
+                        ok    = $false
+                    })
+                return
+            }
+            if ($doConfirm) { $doPreview = $false }
+            try {
+                $store = Invoke-MetraTicketWatchStoreRecommend `
+                    -Id $ticketId `
+                    -Preview:$doPreview `
+                    -Confirm:$doConfirm `
+                    -Force:$doForce `
+                    -Minutes $minutes `
+                    -Quiet `
+                    -MetraRoot $MetraRoot
+                $payload = Get-MetraDeskPayload -MetraRoot $MetraRoot
+                Write-MetraOpsJsonResponse -Response $Response -Object ([PSCustomObject]@{
+                        ok     = [bool]$store.ok
+                        store  = $store
+                        desk   = $payload
+                        error  = $(if (-not $store.ok -and $store.warning) { [string]$store.warning } else { $null })
+                    }) -Depth 12
+            }
+            catch {
+                Write-MetraOpsJsonResponse -Response $Response -StatusCode 500 -Object ([PSCustomObject]@{
+                        error = $_.Exception.Message
+                    })
+            }
+            return
+        }
+
+        # TicketWatch mine-scope scan -> Attention. No iSupport writes. Desk-only intake.
+        if ($method -eq 'POST' -and $path -eq '/api/watch/tickets') {
+            $prefs = Get-MetraDeskPreferences -MetraRoot $MetraRoot
+            $enabled = [bool](Get-MetraProp -Object $prefs -Name 'ticketWatchEnabled' -Default $true)
+            if (-not $enabled) {
+                $payload = Get-MetraDeskPayload -MetraRoot $MetraRoot
+                Write-MetraOpsJsonResponse -Response $Response -StatusCode 409 -Object ([PSCustomObject]@{
+                        error = 'Ticket watch is turned off in desk preferences.'
+                        ok    = $false
+                        watch = [PSCustomObject]@{
+                            ok             = $false
+                            available      = $false
+                            scope          = 'mine'
+                            synced         = $false
+                            warning        = 'ticketWatchEnabled is off'
+                            scanned        = 0
+                            added          = 0
+                            refreshed      = 0
+                            unchanged      = 0
+                            draftsWritten  = 0
+                            draftAvailable = $false
+                            evidenceSuggestions = 0
+                            nextEvidenceAvailable = $false
+                            readyForRecommendation = $false
+                            iSupportWrites = $false
+                        }
+                        desk  = $payload
+                    }) -Depth 12
+                return
+            }
+            $draft = $false
+            $body = Read-MetraOpsRequestBody -Request $Request
+            if ($body) {
+                try {
+                    $parsed = $body | ConvertFrom-Json
+                    $draft = [bool](Get-MetraProp -Object $parsed -Name 'draft' -Default $false)
+                }
+                catch { }
+            }
+            try {
+                $scan = Invoke-MetraTicketWatchScan -Quiet -MetraRoot $MetraRoot -Draft:$draft
+                $payload = Get-MetraDeskPayload -MetraRoot $MetraRoot
+                Write-MetraOpsJsonResponse -Response $Response -Object ([PSCustomObject]@{
+                        ok    = [bool]$scan.ok
+                        watch = [PSCustomObject]@{
+                            ok             = [bool]$scan.ok
+                            available      = [bool]$scan.available
+                            scope          = [string](Get-MetraProp -Object $scan -Name 'scope' -Default 'mine')
+                            synced         = [bool]$scan.synced
+                            syncError      = [string]$scan.syncError
+                            warning        = [string]$scan.warning
+                            scanned        = [int]$scan.scanned
+                            added          = [int]$scan.added
+                            refreshed      = [int]$scan.refreshed
+                            unchanged      = [int]$scan.unchanged
+                            draftsWritten  = [int]$scan.draftsWritten
+                            draftAvailable = [bool](Get-MetraProp -Object $scan -Name 'draftAvailable' -Default ($scan.draftsWritten -gt 0))
+                            evidenceSuggestions = [int](Get-MetraProp -Object $scan -Name 'evidenceSuggestions' -Default 0)
+                            nextEvidenceAvailable = [bool](Get-MetraProp -Object $scan -Name 'nextEvidenceAvailable' -Default $false)
+                            readyForRecommendation = [bool](Get-MetraProp -Object $scan -Name 'readyForRecommendation' -Default $false)
+                            iSupportWrites = [bool]$scan.iSupportWrites
+                        }
+                        desk  = $payload
+                    }) -Depth 12
+            }
+            catch {
+                Write-MetraOpsJsonResponse -Response $Response -StatusCode 500 -Object ([PSCustomObject]@{
+                        error = $_.Exception.Message
+                    })
+            }
+            return
+        }
+
         if ($method -eq 'GET' -and $path -eq '/api/preferences') {
             Write-MetraOpsJsonResponse -Response $Response -Object (Get-MetraDeskPreferences -MetraRoot $MetraRoot)
             return
@@ -256,6 +392,90 @@ function Invoke-MetraOpsApi {
 
         if ($method -eq 'GET' -and $path -eq '/api/settings') {
             Write-MetraOpsJsonResponse -Response $Response -Object (Get-MetraSettingsPortfolio -MetraRoot $MetraRoot) -Depth 8
+            return
+        }
+
+        if ($method -eq 'GET' -and $path -eq '/api/profile/status') {
+            if (-not (Test-MetraOpsProfileSyncAuthorized -Request $Request)) {
+                Write-MetraOpsJsonResponse -Response $Response -StatusCode 403 -Object ([PSCustomObject]@{
+                        error      = 'Profile status requires operator machine, local session, or X-Metra-Profile-Sync bearer.'
+                        reasonCode = 'profileSyncUnauthorized'
+                    })
+                return
+            }
+            try {
+                $status = Get-MetraProfileStatus -MetraRoot $MetraRoot
+                Write-MetraOpsJsonResponse -Response $Response -Object $status -Depth 8
+            }
+            catch {
+                Write-MetraOpsJsonResponse -Response $Response -StatusCode 500 -Object ([PSCustomObject]@{
+                        error = $_.Exception.Message
+                    })
+            }
+            return
+        }
+
+        if ($method -eq 'GET' -and $path -eq '/api/profile/export') {
+            if (-not (Test-MetraOpsProfileSyncAuthorized -Request $Request)) {
+                Write-MetraOpsJsonResponse -Response $Response -StatusCode 403 -Object ([PSCustomObject]@{
+                        error      = 'Profile export requires operator machine, local session, or X-Metra-Profile-Sync bearer.'
+                        reasonCode = 'profileSyncUnauthorized'
+                    })
+                return
+            }
+            $zipPath = $null
+            try {
+                $status = Get-MetraProfileStatus -MetraRoot $MetraRoot
+                $cacheDir = Join-Path $env:LOCALAPPDATA 'Metra\profile-export-cache'
+                if (-not (Test-Path -LiteralPath $cacheDir)) {
+                    $null = New-Item -ItemType Directory -Path $cacheDir -Force
+                }
+                $hashKey = ($status.contentHash -replace '[^a-fA-F0-9]', '')
+                if ([string]::IsNullOrWhiteSpace($hashKey)) { $hashKey = 'empty' }
+                $cached = Join-Path $cacheDir ("metra-profile-$hashKey.zip")
+                if (-not (Test-Path -LiteralPath $cached)) {
+                    $null = Export-MetraProfile -Path $cached
+                }
+                $zipPath = $cached
+                Write-MetraOpsFileResponse -Response $Response -FilePath $zipPath -ContentType 'application/zip' -DownloadFileName 'metra-profile.zip'
+            }
+            catch {
+                Write-MetraOpsJsonResponse -Response $Response -StatusCode 500 -Object ([PSCustomObject]@{
+                        error = $_.Exception.Message
+                    })
+            }
+            return
+        }
+
+        if ($method -eq 'POST' -and $path -eq '/api/profile/issue-sync-token') {
+            $isLocalCaller = Test-MetraOpsRequestIsSameMachine -Request $Request
+            $sessionToken = ''
+            try { $sessionToken = [string]$Request.Headers['X-Metra-Local-Session'] } catch { }
+            if (-not $isLocalCaller -and -not (Test-MetraOpsLocalSessionToken -SessionToken $sessionToken)) {
+                Write-MetraOpsJsonResponse -Response $Response -StatusCode 403 -Object ([PSCustomObject]@{
+                        error      = 'Issuing a profile sync token requires the operator machine (loopback or local session).'
+                        reasonCode = 'profileSyncTokenLocalOnly'
+                    })
+                return
+            }
+            $rotate = $false
+            try {
+                $body = Read-MetraOpsRequestBody -Request $Request
+                if ($body) {
+                    $parsed = $body | ConvertFrom-Json
+                    $rotate = [bool](Get-MetraProp -Object $parsed -Name 'rotate' -Default $false)
+                }
+            }
+            catch { }
+            $issued = Initialize-MetraProfileSyncToken -Rotate:$rotate
+            Write-MetraOpsJsonResponse -Response $Response -Object ([PSCustomObject]@{
+                    ok        = $true
+                    created   = [bool]$issued.Created
+                    hasToken  = [bool]$issued.HasToken
+                    token     = $issued.Token
+                    header    = 'X-Metra-Profile-Sync'
+                    message   = [string]$issued.Message
+                }) -Depth 6
             return
         }
 
@@ -403,8 +623,11 @@ function Invoke-MetraOpsApi {
             if ($null -ne (Get-MetraProp -Object $parsed -Name 'editorCommand' -Default $null)) {
                 $setArgs['EditorCommand'] = [string](Get-MetraProp -Object $parsed -Name 'editorCommand' -Default 'auto')
             }
+            if ($null -ne (Get-MetraProp -Object $parsed -Name 'ticketWatchEnabled' -Default $null)) {
+                $setArgs['TicketWatchEnabled'] = [bool](Get-MetraProp -Object $parsed -Name 'ticketWatchEnabled' -Default $true)
+            }
             if ($setArgs.Keys.Count -le 1) {
-                Write-MetraOpsJsonResponse -Response $Response -StatusCode 400 -Object ([PSCustomObject]@{ error = 'deskMode, attentionVisibleCount, or editorCommand required' })
+                Write-MetraOpsJsonResponse -Response $Response -StatusCode 400 -Object ([PSCustomObject]@{ error = 'deskMode, attentionVisibleCount, editorCommand, or ticketWatchEnabled required' })
                 return
             }
             $prefs = Set-MetraDeskPreferences @setArgs
@@ -1130,8 +1353,12 @@ function Start-MetraOpsServer {
         [switch]$Full,
         [switch]$NoBrowser,
         [switch]$NoRefresh,
+        [switch]$ForceLocal,
+        [string]$OpsBaseUrl,
         [string]$MetraRoot = (Get-MetraRoot)
     )
+
+    Assert-MetraOpsMayStartLocally -ForceLocal:$ForceLocal -OpsBaseUrl $OpsBaseUrl -MetraRoot $MetraRoot
 
     $binding = $null
     if ($Port -le 0) {

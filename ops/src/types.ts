@@ -159,6 +159,8 @@ export type Preferences = {
   attentionVisibleCount?: number
   /** auto | cursor | code | system | full executable path */
   editorCommand?: string
+  /** When false, Scan tickets is disabled. Portfolio refresh never covers tickets. */
+  ticketWatchEnabled?: boolean
   updatedAt?: string | null
 }
 
@@ -261,6 +263,32 @@ export type ProductUpdateResult = {
   status: string
   message?: string | null
   updates?: ProductUpdates
+}
+
+export type ProfileSyncFile = {
+  logicalName: string
+  relativePath: string
+  writeUtc?: string
+  sizeBytes?: number
+  hash: string
+}
+
+export type ProfileSyncStatus = {
+  ok: boolean
+  profilePackVersion: number
+  contentHash: string
+  maxWriteUtc?: string | null
+  fileCount: number
+  files: ProfileSyncFile[]
+}
+
+export type ProfileSyncTokenIssue = {
+  ok: boolean
+  created: boolean
+  hasToken: boolean
+  token: string | null
+  header: string
+  message: string
 }
 
 export type DeskPayload = {

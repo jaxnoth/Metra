@@ -77,9 +77,15 @@ param(
     [switch]$NoRefresh,
     [switch]$Full,
     [switch]$Stop,
+    [switch]$ForceLocal,
+    [switch]$Local,
     [switch]$Draft,
     [switch]$SkipSync,
-    [int]$Port = 0
+    [switch]$Confirm,
+    [int]$Port = 0,
+    [string]$OpsBaseUrl,
+    [string]$SyncToken,
+    [switch]$WhatIf
 )
 
 $ErrorActionPreference = 'Stop'
@@ -103,11 +109,12 @@ Usage:
       -MetadataOnly: route registry metadata advisories only (skips recursive tree scan; never fails as drift).
   .\metra.ps1 snapshot [-ScanDepth 2] [-Quick]
   .\metra.ps1 selfdoc
-  .\metra.ps1 ops [-Quick] [-Full] [-Port 7380] [-NoBrowser] [-NoRefresh] [-Stop]
+  .\metra.ps1 ops [-Quick] [-Full] [-Port 7380] [-NoBrowser] [-NoRefresh] [-Stop] [-ForceLocal]
       Console Ops desk (operator/debug). -Stop frees the port when a desk outlived its console.
-  .\metra.ps1 host [-Port 7380] [-NoBrowser] [-NoRefresh] [-Quick] [-Stop]
+      Mode B (remote OpsBaseUrl) refuses local Ops unless -ForceLocal.
+  .\metra.ps1 host [-Port 7380] [-NoBrowser] [-NoRefresh] [-Quick] [-Stop] [-ForceLocal]
       User-session tray host so Metra stays alive without a console. Host starts Ops only (Ops owns Ask).
-      Second launch opens the browser when the desk is already up.
+      Second launch opens the browser when the desk is already up. Mode B refuses unless -ForceLocal.
   .\metra.ps1 chats [-Name ProjA,ProjB] [-Query 'terms'] [-Ticket 12345] [-Days 90] [-Limit 10] [-IncludeMetra]
   .\metra.ps1 roots
   .\metra.ps1 routing [-Name ProjA] [-Query 'terms'] [-SharedOnly] [-MissingOnly]
@@ -122,10 +129,14 @@ Usage:
   .\metra.ps1 unblock [-Preview]
       Clear mark-of-the-web from checkout script files (ZIP / OneDrive / email). Supports -Preview.
   .\metra.ps1 profile show|note|promote|forget|render|gc
+  .\metra.ps1 profile sync [-WhatIf] [-Force] [-OpsBaseUrl https://...] [-SyncToken ...]
+  .\metra.ps1 profile issue-sync-token [-Force]
+      Profile Sync v1 (HQ-published, satellite-pulled). issue-sync-token on HQ; sync on laptop/Mac.
       Operator Communication Contract (candidates -> promote -> soft guidelines).
   .\metra.ps1 decisions show|note|promote|forget|search|get|supersede|gc|review|harvest|seed
       Decision Registry / Operational Why Memory (candidates -> promote; review = hygiene visibility).
-  .\metra.ps1 ask log|sessions|get|recall
+  .\metra.ps1 ask log|sessions|get|recall [-Local] [-OpsBaseUrl https://...]
+      Session Journal. Mode B (remote OpsBaseUrl) queries HQ; -Local reads the local journal file.
       Session Journal (recent Ask conversations - continuity window, not permanent memory).
       get <sessionId> resumes/reads one session; recall "<query>" searches prompts/answers.
   .\metra.ps1 ask engine show|set|recommend|menu
@@ -186,7 +197,9 @@ Examples:
   .\metra.ps1 setup
   .\metra.ps1 watch tickets [-Draft] [-SkipSync]
       Ticket-first watch intake: sync/list open+watched -> Attention observations.
-      Default: Attention only (no iSupport writes). -Draft writes local TicketTracker notes.
+      Default: Attention only (no iSupport writes). -Draft forces TT analyze (local draft). Opt-in autoAnalyze in docs/ticket-watch.local.json analyzes Added/Refreshed only. Opt-in evidenceRouter appends Next evidence (or Ready for recommendation) after analyze - never iSupport recommend.
+  .\metra.ps1 watch recommend <id> [-Preview] [-Confirm] [-Force]
+      M3: Preview writes local recommend-draft. Confirm writes Affirm A store-as-review via TT recommend (supersedes Metra AI Recommendation). Gates on E1 recommendable unless -Force. Never resolve/close. autoStoreRecommend stays false.
   .\metra.ps1 setup -Profile .\profiles\sample -Force
   .\metra.ps1 setup -Preview
   .\metra.ps1 unblock
@@ -319,12 +332,14 @@ switch ($Command) {
             return
         }
         $params = @{
-            Port      = $Port
-            Quick     = [bool]$Quick
-            Full      = [bool]$Full
-            NoBrowser = [bool]$NoBrowser
-            NoRefresh = [bool]$NoRefresh
+            Port       = $Port
+            Quick      = [bool]$Quick
+            Full       = [bool]$Full
+            NoBrowser  = [bool]$NoBrowser
+            NoRefresh  = [bool]$NoRefresh
+            ForceLocal = [bool]$ForceLocal
         }
+        if ($OpsBaseUrl) { $params.OpsBaseUrl = $OpsBaseUrl }
         Start-MetraOpsServer @params
     }
 
@@ -337,11 +352,13 @@ switch ($Command) {
             return
         }
         $params = @{
-            Port      = $Port
-            NoBrowser = [bool]$NoBrowser
-            NoRefresh = [bool]$NoRefresh
-            Quick     = [bool]$Quick
+            Port       = $Port
+            NoBrowser  = [bool]$NoBrowser
+            NoRefresh  = [bool]$NoRefresh
+            Quick      = [bool]$Quick
+            ForceLocal = [bool]$ForceLocal
         }
+        if ($OpsBaseUrl) { $params.OpsBaseUrl = $OpsBaseUrl }
         Start-MetraOpsHost @params
     }
 
@@ -443,34 +460,65 @@ switch ($Command) {
 
     'profile' {
         if (-not $Rest -or $Rest.Count -eq 0) {
-            throw "profile requires a subcommand. Example: .\metra.ps1 profile show"
+            throw "profile requires a subcommand. Example: .\metra.ps1 profile show | profile sync | profile issue-sync-token"
         }
         $sub = $Rest[0]
         $subArgs = @()
         if ($Rest.Count -gt 1) {
             $subArgs = @($Rest[1..($Rest.Count - 1)])
         }
-        $result = Invoke-MetraOperatorContractCommand -Subcommand $sub -ArgsRest $subArgs
         switch ($sub.ToLowerInvariant()) {
-            'show' {
-                Write-Host ("Ledger:  {0} (exists={1})" -f $result.LedgerPath, $result.LedgerExists)
-                Write-Host ("Learned: {0} (exists={1})" -f $result.LearnedPath, $result.LearnedExists)
-                Write-Host ("Confirmed {0}/{1}" -f $result.ConfirmedCount, $result.MaxConfirmed)
-                if ($result.ConfirmedCount -gt 0) {
+            'sync' {
+                $syncParams = @{
+                    WhatIf = [bool]$WhatIf
+                    Force  = [bool]$Force
+                }
+                if ($OpsBaseUrl) { $syncParams.OpsBaseUrl = $OpsBaseUrl }
+                if ($SyncToken) { $syncParams.SyncToken = $SyncToken }
+                # Allow trailing positional OpsBaseUrl for convenience.
+                if (-not $OpsBaseUrl -and $subArgs.Count -gt 0 -and $subArgs[0] -notlike '-*') {
+                    $syncParams.OpsBaseUrl = $subArgs[0]
+                }
+                Sync-MetraProfile @syncParams | Format-List
+            }
+            'issue-sync-token' {
+                $issued = Initialize-MetraProfileSyncToken -Rotate:$Force
+                if ($issued.Token) {
+                    Write-Host 'Profile sync token (copy to satellite docs/profile-sync.local.json as syncToken):' -ForegroundColor Yellow
+                    Write-Host $issued.Token
                     Write-Host ''
-                    Write-Host 'Confirmed guidelines:'
-                    foreach ($g in @($result.ConfirmedGuidelines)) {
-                        Write-Host ("  [{0}] {1}" -f $g.id, $g.text)
-                    }
+                    Write-Host $issued.Message
                 }
-                Write-Host ''
-                Write-Host ("Candidates: {0}" -f $result.CandidateCount)
-                foreach ($c in @($result.Candidates)) {
-                    Write-Host ("  [{0}] (count={1}) {2}" -f $c.id, $c.count, $c.text)
+                else {
+                    Write-Host $issued.Message
+                    Write-Host 'Re-run with -Force to rotate and show a new plaintext token.'
                 }
+                $issued | Select-Object Created, HasToken, Header, Path, Message | Format-List
             }
             default {
-                $result | Format-List
+                $result = Invoke-MetraOperatorContractCommand -Subcommand $sub -ArgsRest $subArgs
+                switch ($sub.ToLowerInvariant()) {
+                    'show' {
+                        Write-Host ("Ledger:  {0} (exists={1})" -f $result.LedgerPath, $result.LedgerExists)
+                        Write-Host ("Learned: {0} (exists={1})" -f $result.LearnedPath, $result.LearnedExists)
+                        Write-Host ("Confirmed {0}/{1}" -f $result.ConfirmedCount, $result.MaxConfirmed)
+                        if ($result.ConfirmedCount -gt 0) {
+                            Write-Host ''
+                            Write-Host 'Confirmed guidelines:'
+                            foreach ($g in @($result.ConfirmedGuidelines)) {
+                                Write-Host ("  [{0}] {1}" -f $g.id, $g.text)
+                            }
+                        }
+                        Write-Host ''
+                        Write-Host ("Candidates: {0}" -f $result.CandidateCount)
+                        foreach ($c in @($result.Candidates)) {
+                            Write-Host ("  [{0}] (count={1}) {2}" -f $c.id, $c.count, $c.text)
+                        }
+                    }
+                    default {
+                        $result | Format-List
+                    }
+                }
             }
         }
     }
@@ -549,7 +597,13 @@ switch ($Command) {
             }
         }
         else {
-            $result = Invoke-MetraAskLogCommand -Subcommand $sub -ArgsRest $subArgs
+            $askParams = @{
+                Subcommand = $sub
+                ArgsRest   = $subArgs
+                Local      = [bool]$Local
+            }
+            if ($OpsBaseUrl) { $askParams.OpsBaseUrl = $OpsBaseUrl }
+            $result = Invoke-MetraAskLogCommand @askParams
             if ($sub -match '^(?i)(get|resume)$') {
                 $result | Format-List
             }
@@ -575,10 +629,26 @@ switch ($Command) {
     'watch' {
         $target = 'tickets'
         if ($Rest -and $Rest.Count -gt 0) { $target = [string]$Rest[0] }
-        if ($target -ne 'tickets') {
-            throw "watch supports 'tickets' only in v1. Example: .\metra.ps1 watch tickets"
+        switch ($target.ToLowerInvariant()) {
+            'tickets' {
+                Invoke-MetraTicketWatchScan -Draft:$Draft -SkipSync:$SkipSync | Out-Null
+            }
+            'recommend' {
+                if (-not $Rest -or $Rest.Count -lt 2 -or -not $Rest[1]) {
+                    throw "watch recommend requires a ticket id. Example: .\metra.ps1 watch recommend 1035020 -Preview"
+                }
+                $recId = [string]$Rest[1]
+                if (-not $Preview -and -not $Confirm) { $Preview = $true }
+                $store = Invoke-MetraTicketWatchStoreRecommend -Id $recId -Preview:$Preview -Confirm:$Confirm -Force:$Force
+                if (-not $store.ok -and $store.warning) {
+                    Write-Warning $store.warning
+                }
+                $store | Format-List ok, id, preview, confirm, force, mineEligible, recommendable, noteId, recommendationWritten, iSupportWrite, warning
+            }
+            default {
+                throw "watch supports 'tickets' or 'recommend'. Examples: .\metra.ps1 watch tickets | .\metra.ps1 watch recommend <id> -Preview"
+            }
         }
-        Invoke-MetraTicketWatchScan -Draft:$Draft -SkipSync:$SkipSync | Out-Null
     }
 }
 
