@@ -8,6 +8,7 @@
     Use -Quiet -Role [-OpsBaseUrl] [-SyncToken] [-PreferFriendly|-NoPreferFriendly] [-BindTailscale] [-AcceptAsk]
     when the installer already collected choices (no terminal quiz).
     Writes a durable transcript to docs/setup.local.log and copies Inno logs when found.
+    Quiet Satellite installs require -OpsBaseUrl.
 #>
 [CmdletBinding()]
 param(
@@ -17,7 +18,9 @@ param(
     [switch]$Quiet,
     [ValidateSet('Hq', 'Satellite', 'Standalone')]
     [string]$Role,
+    [ValidateNotNullOrEmpty()]
     [string]$OpsBaseUrl,
+    [ValidateNotNullOrEmpty()]
     [string]$SyncToken,
     [switch]$PreferFriendly,
     [switch]$NoPreferFriendly,
@@ -26,6 +29,32 @@ param(
 )
 
 $ErrorActionPreference = 'Stop'
+
+if ($PreferFriendly -and $NoPreferFriendly) {
+    throw '-PreferFriendly and -NoPreferFriendly cannot both be specified.'
+}
+
+if ($Quiet -and $Role -eq 'Satellite' -and [string]::IsNullOrWhiteSpace($OpsBaseUrl)) {
+    throw '-OpsBaseUrl is required when using -Quiet -Role Satellite.'
+}
+
+if (-not [string]::IsNullOrWhiteSpace($OpsBaseUrl)) {
+    try {
+        $opsUri = [uri]$OpsBaseUrl.Trim()
+    }
+    catch {
+        throw ("Invalid OpsBaseUrl: {0}" -f $OpsBaseUrl)
+    }
+    if (-not $opsUri.IsAbsoluteUri -or $opsUri.Scheme -notin @('http', 'https')) {
+        throw ("OpsBaseUrl must be an absolute http:// or https:// URL: {0}" -f $OpsBaseUrl)
+    }
+    $OpsBaseUrl = $opsUri.AbsoluteUri.TrimEnd('/')
+}
+
+if ($Quiet -and $Role -eq 'Satellite' -and [string]::IsNullOrWhiteSpace($SyncToken)) {
+    Write-Warning 'No SyncToken supplied. Profile sync will not be configured during quiet Satellite setup.'
+}
+
 $metraRoot = (Resolve-Path -LiteralPath (Join-Path $PSScriptRoot '..\..')).Path
 Set-Location -LiteralPath $metraRoot
 
@@ -41,12 +70,29 @@ function Wait-MetraBootstrapPause {
     $null = Read-Host
 }
 
-Import-Module (Join-Path $metraRoot 'scripts\Metra.psd1') -Force
+$modulePath = Join-Path $metraRoot 'scripts\Metra.psd1'
+if (-not (Test-Path -LiteralPath $modulePath -PathType Leaf)) {
+    throw "Metra module not found: $modulePath"
+}
+
+Import-Module $modulePath -Force
 
 $logSession = $null
 try {
-    $null = Copy-MetraInnoInstallerLog -MetraRoot $metraRoot
-    $logSession = Start-MetraSetupTranscript -MetraRoot $metraRoot -Source 'bootstrap'
+    # Transcript first so later steps are captured; failures are non-fatal for installer UX.
+    try {
+        $logSession = Start-MetraSetupTranscript -MetraRoot $metraRoot -Source 'bootstrap'
+    }
+    catch {
+        Write-Warning ("Unable to start setup transcript: {0}" -f $_.Exception.Message)
+    }
+
+    try {
+        $null = Copy-MetraInnoInstallerLog -MetraRoot $metraRoot
+    }
+    catch {
+        Write-Warning ("Unable to copy installer log: {0}" -f $_.Exception.Message)
+    }
 
     Write-Host ''
     Write-Host 'Metra first-run bootstrap' -ForegroundColor Cyan
@@ -77,20 +123,23 @@ try {
     $global:LASTEXITCODE = 0
     $setupExit = 0
     try {
-        $setupArgs = @('setup')
-        if ($Quiet) { $setupArgs += '-Quiet' }
-        if ($Role) { $setupArgs += @('-Role', $Role) }
+        # Call Initialize-Metra directly with a hashtable splat.
+        # Array-splatting through metra.ps1 puts switches in $Rest on Windows PowerShell 5.1,
+        # and setup treats $Rest[0] as a profile path (e.g. "-Quiet").
+        $setupParams = @{}
+        if ($Quiet) { $setupParams.Quiet = $true }
+        if ($PreferFriendly) { $setupParams.PreferFriendly = $true }
+        if ($NoPreferFriendly) { $setupParams.NoPreferFriendly = $true }
+        if ($BindTailscale) { $setupParams.BindTailscale = $true }
+        if ($AcceptAsk) { $setupParams.AcceptAsk = $true }
+        if ($Role) { $setupParams.Role = $Role }
         if (-not [string]::IsNullOrWhiteSpace($OpsBaseUrl)) {
-            $setupArgs += @('-OpsBaseUrl', $OpsBaseUrl.Trim())
+            $setupParams.OpsBaseUrl = $OpsBaseUrl
         }
         if (-not [string]::IsNullOrWhiteSpace($SyncToken)) {
-            $setupArgs += @('-SyncToken', $SyncToken.Trim())
+            $setupParams.SyncToken = $SyncToken.Trim()
         }
-        if ($PreferFriendly) { $setupArgs += '-PreferFriendly' }
-        if ($NoPreferFriendly) { $setupArgs += '-NoPreferFriendly' }
-        if ($BindTailscale) { $setupArgs += '-BindTailscale' }
-        if ($AcceptAsk) { $setupArgs += '-AcceptAsk' }
-        & (Join-Path $metraRoot 'metra.ps1') @setupArgs
+        $null = Initialize-Metra @setupParams
         if ($null -ne $LASTEXITCODE -and $LASTEXITCODE -ne 0) {
             $setupExit = [int]$LASTEXITCODE
         }

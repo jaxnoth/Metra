@@ -1,5 +1,104 @@
 # Generated from the original Metra.psm1 domain split. Edit this file directly.
 
+$script:MetraProjectActivityExcludeDirNames = @(
+    '.git', 'node_modules', 'bin', 'obj', 'dist', 'out', '.venv', 'venv',
+    '__pycache__', 'packages', 'vendor', '.turbo', '.next', 'coverage'
+)
+
+function ConvertFrom-MetraCommandLine {
+    <#
+    .SYNOPSIS
+        Splits a simple command line into executable + arguments (no Invoke-Expression).
+    .DESCRIPTION
+        Supports whitespace-separated tokens and double/single-quoted segments.
+        Rejects shell metacharacters that would require a shell ($ `|;&<>).
+    #>
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory)][string]$CommandLine
+    )
+
+    $raw = $CommandLine.Trim()
+    if ([string]::IsNullOrWhiteSpace($raw)) {
+        throw 'Command line is empty.'
+    }
+    if ($raw -match '[\r\n`$|;<>&]') {
+        throw 'Command line contains unsupported shell metacharacters. Use -Executable/-ArgumentList or -ScriptBlock instead.'
+    }
+
+    $tokens = [System.Collections.Generic.List[string]]::new()
+    $sb = [System.Text.StringBuilder]::new()
+    $quote = $null
+    for ($i = 0; $i -lt $raw.Length; $i++) {
+        $ch = $raw[$i]
+        if ($null -ne $quote) {
+            if ($ch -eq $quote) {
+                $quote = $null
+            }
+            else {
+                [void]$sb.Append($ch)
+            }
+            continue
+        }
+        if ($ch -eq '"' -or $ch -eq "'") {
+            $quote = $ch
+            continue
+        }
+        if ([char]::IsWhiteSpace($ch)) {
+            if ($sb.Length -gt 0) {
+                $tokens.Add($sb.ToString())
+                [void]$sb.Clear()
+            }
+            continue
+        }
+        [void]$sb.Append($ch)
+    }
+    if ($null -ne $quote) {
+        throw 'Command line has an unclosed quote.'
+    }
+    if ($sb.Length -gt 0) {
+        $tokens.Add($sb.ToString())
+    }
+    if ($tokens.Count -eq 0) {
+        throw 'Command line produced no tokens.'
+    }
+
+    return [PSCustomObject]@{
+        Executable   = $tokens[0]
+        ArgumentList = @($tokens | Select-Object -Skip 1)
+    }
+}
+
+function Test-MetraProjectActivityPathExcluded {
+    <#
+    .SYNOPSIS
+        True when a file path sits under a noisy generated/dependency directory.
+    #>
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory)][string]$FullName,
+        [Parameter(Mandatory)][string]$ProjectRoot
+    )
+
+    $rootFull = [System.IO.Path]::GetFullPath($ProjectRoot).TrimEnd('\', '/')
+    $full = [System.IO.Path]::GetFullPath($FullName)
+    if (-not $full.StartsWith($rootFull + [System.IO.Path]::DirectorySeparatorChar, [StringComparison]::OrdinalIgnoreCase) -and
+        -not $full.Equals($rootFull, [StringComparison]::OrdinalIgnoreCase)) {
+        return $true
+    }
+    $rel = $full.Substring($rootFull.Length).TrimStart('\', '/')
+    if ([string]::IsNullOrWhiteSpace($rel)) { return $false }
+    foreach ($seg in ($rel -split '[\\/]')) {
+        if ([string]::IsNullOrWhiteSpace($seg)) { continue }
+        foreach ($noise in $script:MetraProjectActivityExcludeDirNames) {
+            if ($seg.Equals($noise, [StringComparison]::OrdinalIgnoreCase)) {
+                return $true
+            }
+        }
+    }
+    return $false
+}
+
 function Get-MetraOrchestrationProject {
     <#
     .SYNOPSIS
@@ -23,6 +122,8 @@ function Get-MetraOrchestrationProject {
         Root          = $rootName
         Primary       = $true
         Shadowed      = $false
+        PrimaryRoot   = $rootName
+        ShadowedRoot  = $null
         Orchestration = $true
     }
 }
@@ -67,13 +168,13 @@ function Get-MetraProjects {
     $seen = @{}
 
     $items = foreach ($projectRoot in $roots) {
-        Get-ChildItem -Path $projectRoot.Path -Directory -Force -ErrorAction SilentlyContinue |
+        Get-ChildItem -LiteralPath $projectRoot.Path -Directory -Force -ErrorAction SilentlyContinue |
             Where-Object {
                 -not (Test-ExcludedProjectName -Name $_.Name -Config $cfg -Root $projectRoot) -and
                 ($_.Name -like $Filter)
             } |
             ForEach-Object {
-                $isGit = Test-Path (Join-Path $_.FullName '.git')
+                $isGit = Test-Path -LiteralPath (Join-Path $_.FullName '.git')
                 if ($GitOnly -and -not $isGit) { return }
 
                 $key = $_.Name.ToLowerInvariant()
@@ -85,12 +186,14 @@ function Get-MetraProjects {
                 }
 
                 [PSCustomObject]@{
-                    Name     = $_.Name
-                    Path     = $_.FullName
-                    IsGit    = $isGit
-                    Root     = $projectRoot.Name
-                    Primary  = $projectRoot.Primary
-                    Shadowed = $shadowed
+                    Name          = $_.Name
+                    Path          = $_.FullName
+                    IsGit         = $isGit
+                    Root          = $projectRoot.Name
+                    Primary       = $projectRoot.Primary
+                    Shadowed      = $shadowed
+                    PrimaryRoot   = $(if ($shadowed) { [string]$seen[$key] } else { $projectRoot.Name })
+                    ShadowedRoot  = $(if ($shadowed) { $projectRoot.Name } else { $null })
                 }
             }
     }
@@ -130,10 +233,21 @@ function Resolve-MetraProjectSet {
 function Invoke-AcrossProjects {
     <#
     .SYNOPSIS
-        Runs a script block or shell command in each matching project directory.
+        Runs a script block or external program in each matching project directory.
+    .DESCRIPTION
+        Prefer -Executable/-ArgumentList (or -ScriptBlock). -Command is accepted for
+        simple whitespace-separated lines only and never uses Invoke-Expression.
+        Supports -WhatIf / -Confirm (per project).
     #>
-    [CmdletBinding(DefaultParameterSetName = 'Command')]
+    [CmdletBinding(DefaultParameterSetName = 'Executable', SupportsShouldProcess)]
+    [OutputType([PSCustomObject])]
     param(
+        [Parameter(ParameterSetName = 'Executable', Mandatory)]
+        [string]$Executable,
+
+        [Parameter(ParameterSetName = 'Executable')]
+        [string[]]$ArgumentList = @(),
+
         [Parameter(ParameterSetName = 'Command', Mandatory, Position = 0)]
         [string]$Command,
 
@@ -148,6 +262,24 @@ function Invoke-AcrossProjects {
         [switch]$Quiet
     )
 
+    $exe = $null
+    $argList = @()
+    $targetLabel = 'run command'
+    if ($PSCmdlet.ParameterSetName -eq 'Command') {
+        $parsed = ConvertFrom-MetraCommandLine -CommandLine $Command
+        $exe = [string]$parsed.Executable
+        $argList = @($parsed.ArgumentList)
+        $targetLabel = "run $Command"
+    }
+    elseif ($PSCmdlet.ParameterSetName -eq 'Executable') {
+        $exe = $Executable
+        $argList = @($ArgumentList)
+        $targetLabel = ("run {0} {1}" -f $exe, ($argList -join ' ')).Trim()
+    }
+    else {
+        $targetLabel = 'invoke script block'
+    }
+
     $projects = Resolve-MetraProjectSet -Filter $Filter -Name $Name -Root $Root -GitOnly:$GitOnly
     if ($projects.Count -eq 0) {
         Write-Warning 'No matching projects.'
@@ -155,12 +287,16 @@ function Invoke-AcrossProjects {
     }
 
     $results = foreach ($project in $projects) {
+        if (-not $PSCmdlet.ShouldProcess($project.Path, $targetLabel)) {
+            continue
+        }
+
         if (-not $Quiet) {
             Write-Host ""
             Write-Host ("==== {0} ====" -f $project.Name) -ForegroundColor Cyan
         }
 
-        Push-Location $project.Path
+        Push-Location -LiteralPath $project.Path
         try {
             if ($PSCmdlet.ParameterSetName -eq 'Script') {
                 $output = & $ScriptBlock
@@ -168,7 +304,7 @@ function Invoke-AcrossProjects {
                 if ($null -eq $exit) { $exit = 0 }
             }
             else {
-                $output = Invoke-Expression $Command 2>&1
+                $output = & $exe @argList 2>&1
                 $exit = $LASTEXITCODE
                 if ($null -eq $exit) { $exit = 0 }
             }
@@ -178,12 +314,12 @@ function Invoke-AcrossProjects {
             }
 
             [PSCustomObject]@{
-                Name       = $project.Name
-                Path       = $project.Path
-                Root       = $project.Root
-                ExitCode   = $exit
-                Success    = ($exit -eq 0)
-                Output     = $output
+                Name     = $project.Name
+                Path     = $project.Path
+                Root     = $project.Root
+                ExitCode = $exit
+                Success  = ($exit -eq 0)
+                Output   = $output
             }
         }
         catch {
@@ -192,12 +328,12 @@ function Invoke-AcrossProjects {
             }
             if (-not $ContinueOnError) { throw }
             [PSCustomObject]@{
-                Name       = $project.Name
-                Path       = $project.Path
-                Root       = $project.Root
-                ExitCode   = 1
-                Success    = $false
-                Output     = $_.Exception.Message
+                Name     = $project.Name
+                Path     = $project.Path
+                Root     = $project.Root
+                ExitCode = 1
+                Success  = $false
+                Output   = $_.Exception.Message
             }
         }
         finally {
@@ -220,7 +356,7 @@ function Get-MetraStatus {
         [string[]]$Root
     )
 
-    Invoke-AcrossProjects -Command 'git status -sb' -Filter $Filter -Name $Name -Root $Root -GitOnly -ContinueOnError
+    Invoke-AcrossProjects -Executable git -ArgumentList @('status', '-sb') -Filter $Filter -Name $Name -Root $Root -GitOnly -ContinueOnError
 }
 
 function Update-MetraProjects {
@@ -228,7 +364,8 @@ function Update-MetraProjects {
     .SYNOPSIS
         Runs git pull --ff-only (or fetch) across git projects.
     #>
-    [CmdletBinding()]
+    [CmdletBinding(SupportsShouldProcess)]
+    [OutputType([PSCustomObject])]
     param(
         [string]$Filter = '*',
         [string[]]$Name,
@@ -236,8 +373,19 @@ function Update-MetraProjects {
         [switch]$FetchOnly
     )
 
-    $cmd = if ($FetchOnly) { 'git fetch --all --prune' } else { 'git pull --ff-only' }
-    Invoke-AcrossProjects -Command $cmd -Filter $Filter -Name $Name -Root $Root -GitOnly -ContinueOnError
+    $gitArgs = if ($FetchOnly) { @('fetch', '--all', '--prune') } else { @('pull', '--ff-only') }
+    $invoke = @{
+        Executable      = 'git'
+        ArgumentList    = $gitArgs
+        Filter          = $Filter
+        GitOnly         = $true
+        ContinueOnError = $true
+        WhatIf          = [bool]$WhatIfPreference
+    }
+    if ($Name) { $invoke.Name = $Name }
+    if ($Root) { $invoke.Root = $Root }
+    if ($PSBoundParameters.ContainsKey('Confirm')) { $invoke.Confirm = $Confirm }
+    Invoke-AcrossProjects @invoke
 }
 
 function Copy-AcrossProjects {
@@ -247,7 +395,10 @@ function Copy-AcrossProjects {
     #>
     [CmdletBinding(SupportsShouldProcess)]
     param(
-        [Parameter(Mandatory)][string]$Source,
+        [Parameter(Mandatory)]
+        [ValidateNotNullOrEmpty()]
+        [string]$Source,
+
         [string]$RelativePath,
         [string]$Filter = '*',
         [string[]]$Name,
@@ -255,20 +406,39 @@ function Copy-AcrossProjects {
         [switch]$Force
     )
 
-    $sourcePath = (Resolve-Path $Source).Path
-    if (-not $RelativePath) {
+    if (-not (Test-Path -LiteralPath $Source -PathType Leaf)) {
+        throw ("Source file not found: {0}" -f $Source)
+    }
+
+    $sourcePath = (Resolve-Path -LiteralPath $Source).Path
+    if ([string]::IsNullOrWhiteSpace($RelativePath)) {
         $RelativePath = Split-Path -Leaf $sourcePath
+    }
+    else {
+        if ([System.IO.Path]::IsPathRooted($RelativePath)) {
+            throw "RelativePath must be relative, not rooted: $RelativePath"
+        }
+        if (($RelativePath -split '[\\/]') -contains '..') {
+            throw "RelativePath cannot contain '..': $RelativePath"
+        }
+        if ($RelativePath -match '[\x00-\x1F]') {
+            throw 'RelativePath contains invalid control characters.'
+        }
     }
 
     $projects = Resolve-MetraProjectSet -Filter $Filter -Name $Name -Root $Root
     foreach ($project in $projects) {
         $dest = Join-Path $project.Path $RelativePath
+        if (-not (Test-MetraPathWithinRoot -Path $dest -Root $project.Path)) {
+            throw ("Destination escapes project root '{0}': {1}" -f $project.Name, $dest)
+        }
         $destDir = Split-Path -Parent $dest
         if ($PSCmdlet.ShouldProcess($dest, "Copy $sourcePath")) {
-            if (-not (Test-Path $destDir)) {
-                New-Item -ItemType Directory -Path $destDir -Force | Out-Null
+            if ($destDir -and -not (Test-Path -LiteralPath $destDir)) {
+                # Directory.CreateDirectory is literal-path safe; New-Item -LiteralPath is not on all hosts.
+                [void][System.IO.Directory]::CreateDirectory($destDir)
             }
-            Copy-Item -Path $sourcePath -Destination $dest -Force:$Force
+            Copy-Item -LiteralPath $sourcePath -Destination $dest -Force:$Force
             Write-Host ("Copied -> {0}" -f $dest) -ForegroundColor Green
         }
     }
@@ -298,7 +468,7 @@ function Get-ProjectLastActivity {
 
     if ($ScanDepth -ge 0) {
         Get-ChildItem -LiteralPath $Path -Recurse -File -Force -Depth $ScanDepth -ErrorAction SilentlyContinue |
-            Where-Object { $_.FullName -notmatch '[\\/]\.git([\\/]|$)' } |
+            Where-Object { -not (Test-MetraProjectActivityPathExcluded -FullName $_.FullName -ProjectRoot $Path) } |
             ForEach-Object { $timestamps.Add($_.LastWriteTime) }
     }
 

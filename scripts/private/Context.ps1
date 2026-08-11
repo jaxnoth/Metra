@@ -1,5 +1,74 @@
 # Generated from the original Metra.psm1 domain split. Edit this file directly.
 
+function ConvertTo-MetraDisplayPath {
+    <#
+    .SYNOPSIS
+        Returns a context-pack-safe display path.
+    .DESCRIPTION
+        Prefers RawPath (often env-style). Scrubs expanded profile paths so packs do not
+        leak usernames under C:\Users\...
+    #>
+    [CmdletBinding()]
+    param(
+        [string]$Path,
+        [string]$RawPath
+    )
+
+    $display = $RawPath
+    if ([string]::IsNullOrWhiteSpace($display)) {
+        $display = $Path
+    }
+
+    if ([string]::IsNullOrWhiteSpace($display)) {
+        return ''
+    }
+
+    if ($display -match '(?i)[\\/]Users[\\/][^\\/]+[\\/]') {
+        if (-not [string]::IsNullOrWhiteSpace($RawPath)) {
+            return $RawPath
+        }
+        return '%USERPROFILE%\...'
+    }
+
+    return $display
+}
+
+function Format-MetraContextText {
+    <#
+    .SYNOPSIS
+        Collapses whitespace and bounds free-text for context-pack Markdown.
+    #>
+    param(
+        [AllowNull()][string]$Text,
+        [int]$MaxChars = 500
+    )
+
+    if ([string]::IsNullOrWhiteSpace($Text)) { return '' }
+
+    $clean = ($Text -replace '\r?\n', ' ' -replace '\t', ' ' -replace '\s+', ' ').Trim()
+    if ($clean.Length -gt $MaxChars) {
+        return $clean.Substring(0, $MaxChars - 3) + '...'
+    }
+    return $clean
+}
+
+function Test-MetraOrderedKey {
+    <#
+    .SYNOPSIS
+        True when an ordered/hashtable pack has the given key.
+    .DESCRIPTION
+        OrderedDictionary exposes Contains(key), not ContainsKey. Prefer this over either
+        method name so StrictMode and dictionary type stay aligned.
+    #>
+    param(
+        [Parameter(Mandatory)]$Pack,
+        [Parameter(Mandatory)][string]$Key
+    )
+
+    if ($null -eq $Pack) { return $false }
+    return @($Pack.Keys) -contains $Key
+}
+
 function Export-MetraContextPack {
     <#
     .SYNOPSIS
@@ -7,6 +76,7 @@ function Export-MetraContextPack {
     .DESCRIPTION
         Token-safe map for humans and agents. Does not dump canvas-snapshot inventory.
         Prefer relative or env-style personal roots when echoing paths.
+        Project field "root" is a configured root name (work, personal, ...), not a filesystem path.
     #>
     [CmdletBinding()]
     param(
@@ -14,31 +84,22 @@ function Export-MetraContextPack {
         [string]$Path,
         [ValidateSet('markdown', 'json')]
         [string]$Format = 'markdown',
+        [ValidateRange(1, 100)]
         [int]$Limit = 25,
         [switch]$Quiet
     )
 
     $metraRoot = Get-MetraRoot
-    if ($Limit -lt 1) { $Limit = 25 }
 
     $roots = @(Get-MetraRoots -IncludeMissing | ForEach-Object {
-        $displayPath = [string]$_.RawPath
-        if ([string]::IsNullOrWhiteSpace($displayPath)) { $displayPath = $_.Path }
-        # Avoid leaking expanded username paths into packs when RawPath used env vars.
-        if ($displayPath -match '(?i)[\\/]Users[\\/][^\\/]+[\\/]') {
-            $displayPath = $_.RawPath
-            if ([string]::IsNullOrWhiteSpace($displayPath)) {
-                $displayPath = '%USERPROFILE%\...'
+            [PSCustomObject]@{
+                name     = $_.Name
+                primary  = [bool]$_.Primary
+                exists   = [bool]$_.Exists
+                optional = [bool]$_.Optional
+                path     = ConvertTo-MetraDisplayPath -Path $_.Path -RawPath $_.RawPath
             }
-        }
-        [PSCustomObject]@{
-            name     = $_.Name
-            primary  = [bool]$_.Primary
-            exists   = [bool]$_.Exists
-            optional = [bool]$_.Optional
-            path     = $displayPath
-        }
-    })
+        })
 
     $registry = Get-MetraProjectRegistry
     $disk = @{}
@@ -49,13 +110,15 @@ function Export-MetraContextPack {
     $tokens = @()
     if (-not [string]::IsNullOrWhiteSpace($Query)) {
         $tokens = @(
-            ($Query.ToLowerInvariant() -split '\W+') |
-                Where-Object { $_ -and $_.Length -gt 1 }
+            ($Query.ToLowerInvariant() -split '[^a-z0-9_+]+') |
+                Where-Object { $_ -and $_.Length -gt 1 } |
+                Select-Object -Unique
         )
     }
 
     $scored = New-Object System.Collections.Generic.List[object]
-    foreach ($reg in @($registry.projects)) {
+    $registryProjects = @(Get-MetraProp -Object $registry -Name 'projects' -Default @())
+    foreach ($reg in $registryProjects) {
         $regName = [string]$reg.name
         $onDisk = $disk[$regName.ToLowerInvariant()]
         if (-not $onDisk) { continue }
@@ -80,17 +143,17 @@ function Export-MetraContextPack {
         $relatedRows = @(Get-MetraRelatedProjects -Name $regName -SourceRoot ([string]$onDisk.Root) -Registry $registry -DiskByName $disk)
 
         [void]$scored.Add([PSCustomObject]@{
-            name         = $regName
-            root         = [string]$onDisk.Root
-            purpose      = $purpose
-            triggers     = @($triggers)
-            capabilities = @(Get-MetraProp -Object $reg -Name 'capabilities' -Default @())
-            serves       = @(Get-MetraProp -Object $reg -Name 'serves' -Default @())
-            whenPresent  = $whenPresent
-            related      = @($relatedRows)
-            entry        = [string](Get-MetraProp -Object $reg -Name 'entry' -Default 'AGENTS.md')
-            score        = $score
-        })
+                name         = $regName
+                root         = [string]$onDisk.Root
+                purpose      = $purpose
+                triggers     = @($triggers)
+                capabilities = @(Get-MetraProp -Object $reg -Name 'capabilities' -Default @())
+                serves       = @(Get-MetraProp -Object $reg -Name 'serves' -Default @())
+                whenPresent  = $whenPresent
+                related      = @($relatedRows)
+                entry        = [string](Get-MetraProp -Object $reg -Name 'entry' -Default 'AGENTS.md')
+                score        = $score
+            })
     }
 
     # Also include present disk projects with no registry row (bounded).
@@ -102,23 +165,23 @@ function Export-MetraContextPack {
             }
             if ($exists) { continue }
             [void]$scored.Add([PSCustomObject]@{
-                name         = $p.Name
-                root         = [string]$p.Root
-                purpose      = ''
-                triggers     = @()
-                capabilities = @()
-                serves       = @()
-                whenPresent  = ''
-                related      = @()
-                entry        = 'AGENTS.md'
-                score        = 0
-            })
+                    name         = $p.Name
+                    root         = [string]$p.Root
+                    purpose      = ''
+                    triggers     = @()
+                    capabilities = @()
+                    serves       = @()
+                    whenPresent  = ''
+                    related      = @()
+                    entry        = 'AGENTS.md'
+                    score        = 0
+                })
         }
     }
 
     $projects = @(
         $scored |
-            Sort-Object @{ Expression = 'score'; Descending = $true }, name |
+            Sort-Object @{ Expression = { $_.score }; Descending = $true }, @{ Expression = { $_.name } } |
             Select-Object -First $Limit
     )
 
@@ -135,30 +198,30 @@ function Export-MetraContextPack {
     )
 
     $pack = [ordered]@{
-        version     = 1
-        product     = 'Metra'
+        version      = 1
+        product      = 'Metra'
         generatedUtc = [DateTime]::UtcNow.ToString('o')
-        query       = if ($Query) { $Query } else { $null }
-        reminders   = @(
-            'Route to one primary project; load that project AGENTS.md before broad search.',
-            'Ticket/helpdesk: TicketTracker first when present, then one technical project.',
-            'Keep work and personal roots isolated unless the user names a cross-root handoff.',
-            'Related projects in ctx are topology only - open them only when evidence requires it.',
+        query        = if ($Query) { $Query } else { $null }
+        reminders    = @(
+            'Route to one primary project; load that project AGENTS.md before broad search.'
+            'Ticket/helpdesk: TicketTracker first when present, then one technical project.'
+            'Keep work and personal roots isolated unless the user names a cross-root handoff.'
+            'Related projects in ctx are topology only - open them only when evidence requires it.'
             'CLI: .\metra.ps1 routing | audit | chats | ctx'
         )
-        roots       = @($roots)
-        projects    = @($projects | ForEach-Object {
-            [ordered]@{
-                name         = $_.name
-                root         = $_.root
-                purpose      = $_.purpose
-                triggers     = @($_.triggers)
-                capabilities = @($_.capabilities)
-                serves       = @($_.serves)
-                related      = @($_.related | ForEach-Object { [string]$_.Name })
-                entry        = $_.entry
-            }
-        })
+        roots           = @($roots)
+        projects        = @($projects | ForEach-Object {
+                [ordered]@{
+                    name         = $_.name
+                    root         = $_.root
+                    purpose      = $_.purpose
+                    triggers     = @($_.triggers)
+                    capabilities = @($_.capabilities)
+                    serves       = @($_.serves)
+                    related      = @($_.related | ForEach-Object { [string]$_.Name })
+                    entry        = $_.entry
+                }
+            })
         missingOptional = @($missingOptional)
     }
 
@@ -222,30 +285,37 @@ function Export-MetraContextPack {
         }
     }
 
-    $defaultMd = Join-Path $metraRoot 'docs\context-pack.md'
-    $defaultJson = Join-Path $metraRoot 'docs\context-pack.json'
+    $docsDir = Join-Path $metraRoot 'docs'
+    if (-not (Test-Path -LiteralPath $docsDir)) {
+        # New-Item has no -LiteralPath on all hosts; path is already constructed, not user-globbed.
+        New-Item -ItemType Directory -Path $docsDir -Force | Out-Null
+    }
+
+    $defaultMd = Join-Path $docsDir 'context-pack.md'
+    $defaultJson = Join-Path $docsDir 'context-pack.json'
     $outPath = $Path
     $stdoutOnly = $false
-    if ([string]::IsNullOrWhiteSpace($outPath)) {
+    $writingDefault = [string]::IsNullOrWhiteSpace($Path)
+    if ($writingDefault) {
         $outPath = if ($Format -eq 'json') { $defaultJson } else { $defaultMd }
     }
     elseif ($outPath.Trim() -eq '-') {
         $stdoutOnly = $true
     }
 
-    $jsonText = ($pack | ConvertTo-Json -Depth 8)
+    $jsonText = $pack | ConvertTo-Json -Depth 12
     $md = New-Object System.Text.StringBuilder
     [void]$md.AppendLine('# Metra context pack')
     [void]$md.AppendLine('')
-    [void]$md.AppendLine(("Generated: {0}" -f $pack.generatedUtc))
+    [void]$md.AppendLine(('Generated: {0}' -f $pack.generatedUtc))
     if ($Query) {
-        [void]$md.AppendLine(("Query: {0}" -f $Query))
+        [void]$md.AppendLine(('Query: {0}' -f $Query))
     }
     [void]$md.AppendLine('')
     [void]$md.AppendLine('## Reminders')
     [void]$md.AppendLine('')
     foreach ($r in $pack.reminders) {
-        [void]$md.AppendLine(("- {0}" -f $r))
+        [void]$md.AppendLine(('- {0}' -f $r))
     }
     [void]$md.AppendLine('')
     [void]$md.AppendLine('## Roots')
@@ -262,7 +332,13 @@ function Export-MetraContextPack {
     [void]$md.AppendLine('')
     foreach ($proj in $projects) {
         $trig = if ($proj.triggers.Count -gt 0) { ($proj.triggers -join ', ') } else { '(none)' }
-        $purp = if ($proj.purpose) { $proj.purpose } else { '(no registry purpose)' }
+        $purp = if ($proj.purpose) {
+            Format-MetraContextText -Text $proj.purpose -MaxChars 240
+        }
+        else {
+            '(no registry purpose)'
+        }
+        # root is configured root name (work/personal/...), not a filesystem path
         [void]$md.AppendLine(('- **{0}** [{1}] - {2}' -f $proj.name, $proj.root, $purp))
         [void]$md.AppendLine(('  - triggers: {0}' -f $trig))
         $servesList = @($proj.serves | Where-Object { -not [string]::IsNullOrWhiteSpace([string]$_) })
@@ -280,7 +356,8 @@ function Export-MetraContextPack {
         [void]$md.AppendLine('## Missing optional stubs')
         [void]$md.AppendLine('')
         foreach ($m in $missingOptional) {
-            [void]$md.AppendLine(('- **{0}**: {1}' -f $m.name, $m.advice))
+            $advice = Format-MetraContextText -Text $m.advice -MaxChars 240
+            [void]$md.AppendLine(('- **{0}**: {1}' -f $m.name, $advice))
         }
     }
     if ($tokens.Count -gt 0 -and $projects.Count -gt 0) {
@@ -294,12 +371,17 @@ function Export-MetraContextPack {
             }
         }
 
-        if ($pack.Contains('projectStory')) {
+        if (Test-MetraOrderedKey -Pack $pack -Key 'projectStory') {
             $story = $pack.projectStory
             [void]$md.AppendLine('')
             [void]$md.AppendLine(('## Project story {0}' -f $pack.projectStoryFor))
             [void]$md.AppendLine('')
-            $storyPurp = if ($story.purpose) { [string]$story.purpose } else { '(no registry purpose)' }
+            $storyPurp = if ($story.purpose) {
+                Format-MetraContextText -Text ([string]$story.purpose) -MaxChars 240
+            }
+            else {
+                '(no registry purpose)'
+            }
             [void]$md.AppendLine(('- purpose: {0}' -f $storyPurp))
             $storyTrig = if (@($story.triggers).Count -gt 0) { (@($story.triggers) -join ', ') } else { '(none)' }
             [void]$md.AppendLine(('- triggers: {0}' -f $storyTrig))
@@ -317,42 +399,44 @@ function Export-MetraContextPack {
             if ($storyRelatedParts.Count -gt 0) {
                 [void]$md.AppendLine(('- related: {0}' -f ($storyRelatedParts -join ', ')))
             }
-            if ($story.Contains('whenPresent') -and -not [string]::IsNullOrWhiteSpace([string]$story.whenPresent)) {
-                [void]$md.AppendLine(('- whenPresent: {0}' -f $story.whenPresent))
+            if ((Test-MetraOrderedKey -Pack $story -Key 'whenPresent') -and -not [string]::IsNullOrWhiteSpace([string]$story.whenPresent)) {
+                [void]$md.AppendLine(('- whenPresent: {0}' -f (Format-MetraContextText -Text $story.whenPresent -MaxChars 240)))
             }
         }
     }
-    if ($pack.Contains('relatedDecisions') -and @($pack.relatedDecisions).Count -gt 0) {
+    if ((Test-MetraOrderedKey -Pack $pack -Key 'relatedDecisions') -and @($pack.relatedDecisions).Count -gt 0) {
         [void]$md.AppendLine('')
-        $whyFor = if ($pack.Contains('whyHereFor')) { [string]$pack.whyHereFor } else { '' }
+        $whyFor = if (Test-MetraOrderedKey -Pack $pack -Key 'whyHereFor') { [string]$pack.whyHereFor } else { '' }
         [void]$md.AppendLine(('## Why here?{0}' -f $(if ($whyFor) { ' ' + $whyFor } else { '' })))
         [void]$md.AppendLine('')
         foreach ($d in @($pack.relatedDecisions)) {
             $conf = [string]$d.confidence
             $confPart = if ($conf -and $conf.ToLowerInvariant() -ne 'high') { ' (' + $conf + ')' } else { '' }
             [void]$md.AppendLine(('- **{0}**{1} [{2}]' -f $d.title, $confPart, $d.id))
-            [void]$md.AppendLine(('  - decision: {0}' -f $d.decision))
-            [void]$md.AppendLine(('  - why: {0}' -f $d.why))
+            [void]$md.AppendLine(('  - decision: {0}' -f (Format-MetraContextText -Text $d.decision -MaxChars 300)))
+            [void]$md.AppendLine(('  - why: {0}' -f (Format-MetraContextText -Text $d.why -MaxChars 300)))
         }
     }
-    if ($pack.Contains('whyNotFor')) {
+    if (Test-MetraOrderedKey -Pack $pack -Key 'whyNotFor') {
         [void]$md.AppendLine('')
         [void]$md.AppendLine(('## Why not? {0}' -f $pack.whyNotFor))
         [void]$md.AppendLine('')
-        if ($pack.Contains('favoredTokens') -and @($pack.favoredTokens).Count -gt 0) {
+        if ((Test-MetraOrderedKey -Pack $pack -Key 'favoredTokens') -and @($pack.favoredTokens).Count -gt 0) {
             [void]$md.AppendLine(('- Query tokens favored the primary for: {0}' -f ($pack.favoredTokens -join ', ')))
         }
         foreach ($d in @($pack.runnerUpDecisions)) {
             $conf = [string]$d.confidence
             $confPart = if ($conf -and $conf.ToLowerInvariant() -ne 'high') { ' (' + $conf + ')' } else { '' }
             [void]$md.AppendLine(('- **{0}**{1} [{2}]' -f $d.title, $confPart, $d.id))
-            [void]$md.AppendLine(('  - decision: {0}' -f $d.decision))
-            [void]$md.AppendLine(('  - why: {0}' -f $d.why))
+            [void]$md.AppendLine(('  - decision: {0}' -f (Format-MetraContextText -Text $d.decision -MaxChars 300)))
+            [void]$md.AppendLine(('  - why: {0}' -f (Format-MetraContextText -Text $d.why -MaxChars 300)))
         }
     }
     $mdText = $md.ToString()
 
     $body = if ($Format -eq 'json') { $jsonText } else { $mdText }
+
+    $writtenPath = if ($stdoutOnly) { '-' } else { $null }
 
     if ($stdoutOnly) {
         if (-not $Quiet) {
@@ -369,23 +453,23 @@ function Export-MetraContextPack {
         if ($destDir -and -not (Test-Path -LiteralPath $destDir)) {
             New-Item -ItemType Directory -Path $destDir -Force | Out-Null
         }
-        Set-Content -Path $destFull -Value $body -Encoding utf8
+        Set-Content -LiteralPath $destFull -Value $body -Encoding utf8
+        $writtenPath = $destFull
         if (-not $Quiet) {
             Write-Host ("Context pack written: {0} ({1} project(s))" -f $destFull, $projects.Count) -ForegroundColor Cyan
         }
     }
 
-    # Always refresh default companion formats under docs/ when writing the default path
-    if (-not $stdoutOnly -and ($outPath -eq $defaultMd -or $outPath -eq $defaultJson -or [string]::IsNullOrWhiteSpace($Path))) {
-        Set-Content -Path $defaultMd -Value $mdText -Encoding utf8
-        Set-Content -Path $defaultJson -Value $jsonText -Encoding utf8
+    # Refresh default companion formats under docs/ only when writing the default path.
+    if (-not $stdoutOnly -and $writingDefault) {
+        Set-Content -LiteralPath $defaultMd -Value $mdText -Encoding utf8
+        Set-Content -LiteralPath $defaultJson -Value $jsonText -Encoding utf8
     }
 
     return [PSCustomObject]@{
-        Path         = if ($stdoutOnly) { '-' } else { $outPath }
+        Path         = $writtenPath
         Format       = $Format
         ProjectCount = $projects.Count
         Query        = $Query
     }
 }
-

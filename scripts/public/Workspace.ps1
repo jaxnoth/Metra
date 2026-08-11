@@ -9,25 +9,40 @@ function Update-MetraWorkspace {
         drops names listed in workspace.exclude, and writes each workspace output configured
         in metra.config.json. Outputs whose metraFolderPath does not resolve on disk are
         skipped with a warning; if every output is skipped the command throws.
+
+        Prefer native -WhatIf for dry runs. -WhatIfPreview (alias -Preview) remains for
+        metra.ps1 workspace -Preview compatibility and will be treated as legacy.
     .PARAMETER Months
-        Number of months of project activity to include. Uses workspace.months when omitted.
+        Number of months of project activity to include (1-120). Uses workspace.months when omitted.
     .PARAMETER ScanDepth
-        Maximum depth used when finding recent file activity. Uses workspace.scanDepth when omitted.
+        Maximum depth used when finding recent file activity (1-100). Uses workspace.scanDepth when omitted.
     .PARAMETER WhatIfPreview
-        Displays intended workspace writes without writing files. This is the native equivalent
-        of the metra.ps1 workspace -Preview option.
+        Legacy preview switch (alias Preview). Prefer -WhatIf. Displays intended workspace
+        writes without writing files (same planning intent as metra.ps1 workspace -Preview).
+    .PARAMETER Quiet
+        Suppresses host-formatted lookback and write messages.
     .EXAMPLE
         Update-MetraWorkspace
     .EXAMPLE
-        Update-MetraWorkspace -Months 3 -WhatIfPreview
+        Update-MetraWorkspace -Months 3 -WhatIf
+    .EXAMPLE
+        Update-MetraWorkspace -WhatIfPreview
     .OUTPUTS
-        PSCustomObject containing the lookback, included projects, written files, and skipped outputs.
+        PSCustomObject containing the lookback, scan depth, preview flag, included projects,
+        written files, and skipped outputs.
     #>
-    [CmdletBinding(SupportsShouldProcess)]
+    [CmdletBinding(SupportsShouldProcess = $true, ConfirmImpact = 'Low')]
+    [OutputType([PSCustomObject])]
     param(
-        [int]$Months,
-        [int]$ScanDepth,
+        [ValidateRange(1, 120)]
+        [Nullable[int]]$Months,
+
+        [ValidateRange(1, 100)]
+        [Nullable[int]]$ScanDepth,
+
+        [Alias('Preview')]
         [switch]$WhatIfPreview,
+
         [switch]$Quiet
     )
 
@@ -38,13 +53,27 @@ function Update-MetraWorkspace {
         throw 'metra.config.json is missing a workspace section.'
     }
 
-    if (-not $PSBoundParameters.ContainsKey('Months')) {
-        $Months = [int]$ws.months
+    if (-not $PSBoundParameters.ContainsKey('Months') -or $null -eq $Months) {
+        $Months = [int](Get-MetraProp -Object $ws -Name 'months' -Default 6)
     }
-    if (-not $PSBoundParameters.ContainsKey('ScanDepth')) {
-        $ScanDepth = [int]$ws.scanDepth
+    else {
+        $Months = [int]$Months
+    }
+    if (-not $PSBoundParameters.ContainsKey('ScanDepth') -or $null -eq $ScanDepth) {
+        $ScanDepth = [int](Get-MetraProp -Object $ws -Name 'scanDepth' -Default 2)
+    }
+    else {
+        $ScanDepth = [int]$ScanDepth
     }
 
+    if ($Months -lt 1 -or $Months -gt 120) {
+        throw ("Months must be between 1 and 120 (got {0})." -f $Months)
+    }
+    if ($ScanDepth -lt 1 -or $ScanDepth -gt 100) {
+        throw ("ScanDepth must be between 1 and 100 (got {0})." -f $ScanDepth)
+    }
+
+    $isPreview = [bool]$WhatIfPreview -or $WhatIfPreference
     $recent = Get-RecentMetraProjects -Months $Months -ScanDepth $ScanDepth
 
     # Registered projects can stay routable while staying out of the mounted workspace,
@@ -73,6 +102,7 @@ function Update-MetraWorkspace {
         }
     }
 
+    $utf8NoBom = [System.Text.UTF8Encoding]::new($false)
     $written = @()
     $skipped = @()
     foreach ($out in $outputs) {
@@ -106,15 +136,21 @@ function Update-MetraWorkspace {
             }
         )
         foreach ($project in $recent) {
+            $projName = [string]$project.Name
+            if ($projName -match '[\\/:*?"<>|]') {
+                Write-Warning ("Skipping project with invalid folder name: {0}" -f $projName)
+                continue
+            }
+
             # Projects outside the primary root cannot be reached by the relative prefix.
             $folderPath = if ($project.Root -eq $primaryRootName) {
-                $prefix + $project.Name
+                $prefix + $projName
             }
             else {
                 $project.Path
             }
             $folders += [ordered]@{
-                name = $project.Name
+                name = $projName
                 path = $folderPath
             }
         }
@@ -126,19 +162,19 @@ function Update-MetraWorkspace {
         }
 
         $json = $doc | ConvertTo-Json -Depth 8
-        # ConvertTo-Json can emit awkward escaping; normalize to UTF8 workspace JSON
+        # WhatIfPreview keeps CLI Preview; native -WhatIf uses ShouldProcess (no write).
         if ($WhatIfPreview -or $PSCmdlet.ShouldProcess($outPath, 'Write workspace')) {
-            if ($WhatIfPreview) {
+            if ($isPreview) {
                 if (-not $Quiet) {
                     Write-Host ("Would write: {0}" -f $outPath) -ForegroundColor Yellow
                 }
             }
             else {
                 $dir = Split-Path -Parent $outPath
-                if ($dir -and -not (Test-Path $dir)) {
-                    New-Item -ItemType Directory -Path $dir -Force | Out-Null
+                if ($dir -and -not (Test-Path -LiteralPath $dir)) {
+                    [void][System.IO.Directory]::CreateDirectory($dir)
                 }
-                [System.IO.File]::WriteAllText($outPath, $json + "`r`n")
+                [System.IO.File]::WriteAllText($outPath, $json + "`r`n", $utf8NoBom)
                 if (-not $Quiet) {
                     Write-Host ("Wrote {0}" -f $outPath) -ForegroundColor Green
                 }
@@ -153,10 +189,11 @@ function Update-MetraWorkspace {
 
     return [PSCustomObject]@{
         Months       = $Months
+        ScanDepth    = $ScanDepth
+        Preview      = $isPreview
         ProjectCount = $recent.Count
         Projects     = @(foreach ($project in $recent) { $project.Name })
         Files        = $written
         Skipped      = $skipped
     }
 }
-

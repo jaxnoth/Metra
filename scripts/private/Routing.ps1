@@ -7,23 +7,76 @@ function Read-MetraRegistryFile {
     )
 
     if (-not (Test-Path -LiteralPath $Path)) { return $null }
-    $doc = Get-Content -Raw -Path $Path | ConvertFrom-Json
+    $doc = Get-Content -LiteralPath $Path -Raw | ConvertFrom-Json
     foreach ($p in @(Get-MetraProp -Object $doc -Name 'projects' -Default @())) {
         $p | Add-Member -NotePropertyName 'source' -NotePropertyValue $Source -Force
     }
     return $doc
 }
 
+function Get-MetraRegistryFileStampPart {
+    <#
+    .SYNOPSIS
+        Stable path|ticks fragment for registry cache invalidation.
+    #>
+    param([Parameter(Mandatory)][string]$Path)
+
+    if ([string]::IsNullOrWhiteSpace($Path) -or -not (Test-Path -LiteralPath $Path)) {
+        return ('{0}|0' -f $Path)
+    }
+    $ticks = (Get-Item -LiteralPath $Path).LastWriteTimeUtc.Ticks
+    return ('{0}|{1}' -f $Path, $ticks)
+}
+
+function Get-MetraRegistrySourceStamp {
+    <#
+    .SYNOPSIS
+        Fingerprint of registry files that feed Get-MetraProjectRegistry.
+    .DESCRIPTION
+        Shared projects.json, each configured root registryFile, and projects.local.json
+        (unless -SharedOnly). Any LastWriteTimeUtc change invalidates the in-memory cache.
+    #>
+    [CmdletBinding()]
+    param(
+        [switch]$SharedOnly
+    )
+
+    $metraRoot = Get-MetraRoot
+    $parts = New-Object System.Collections.Generic.List[string]
+    [void]$parts.Add((Get-MetraRegistryFileStampPart -Path (Join-Path $metraRoot 'projects.json')))
+
+    if (-not $SharedOnly) {
+        foreach ($projectRoot in @(Get-MetraRoots)) {
+            if (-not $projectRoot.RegistryFile) { continue }
+            $rootRegistryPath = [System.Environment]::ExpandEnvironmentVariables([string]$projectRoot.RegistryFile)
+            if (-not [System.IO.Path]::IsPathRooted($rootRegistryPath)) {
+                $rootRegistryPath = Join-Path $projectRoot.Path $rootRegistryPath
+            }
+            [void]$parts.Add((Get-MetraRegistryFileStampPart -Path $rootRegistryPath))
+        }
+        [void]$parts.Add((Get-MetraRegistryFileStampPart -Path (Join-Path $metraRoot 'projects.local.json')))
+    }
+
+    return ($parts -join ';')
+}
+
 function Get-MetraProjectRegistry {
     <#
     .SYNOPSIS
-        Loads the agent routing registry: shared projects.json plus optional projects.local.json.
+        Loads the agent routing registry: shared projects.json plus optional overlays.
     .DESCRIPTION
-        projects.json is the git-tracked, shareable subset. projects.local.json is machine or
-        person specific (personal folders, private work entries) and is not committed. Local
-        entries with the same name replace the shared entry, so a coworker clone never sees
-        them. Use -SharedOnly to inspect exactly what ships to others.
-        Merged and shared-only results are cached briefly (see Clear-MetraRoutingCache).
+        Merge precedence (later replaces earlier by project name):
+        1. shared registry (projects.json)
+        2. each configured root registryFile (in Get-MetraRoots order)
+        3. projects.local.json (machine-private; not committed)
+
+        projects.json is the git-tracked, shareable subset. Root registries travel with a
+        root folder (for example a cloud-synced personal root). Local entries with the same
+        name replace earlier layers, so a coworker clone never sees them. Use -SharedOnly to
+        inspect exactly what ships to others.
+
+        Results are cached until any contributing registry file LastWriteTimeUtc changes
+        (or Clear-MetraRoutingCache / TTL expiry).
     #>
     [CmdletBinding()]
     param(
@@ -31,9 +84,11 @@ function Get-MetraProjectRegistry {
     )
 
     $cacheKey = if ($SharedOnly) { 'shared' } else { 'merged' }
+    $sourceStamp = Get-MetraRegistrySourceStamp -SharedOnly:$SharedOnly
     $cached = $script:MetraCache.RegistryByKey[$cacheKey]
     if (
         $null -ne $cached -and
+        [string]$cached.Stamp -eq $sourceStamp -and
         (Test-MetraCacheEntryFresh -CachedUtc $cached.Utc)
     ) {
         return $cached.Value
@@ -122,8 +177,11 @@ function Get-MetraProjectRegistry {
         localLoaded  = $localLoaded
         rootRegistry = @($extraSources)
     }
+    # Re-stamp after load so the fingerprint matches the files just read.
+    $sourceStamp = Get-MetraRegistrySourceStamp -SharedOnly:$SharedOnly
     $script:MetraCache.RegistryByKey[$cacheKey] = @{
         Value = $result
+        Stamp = $sourceStamp
         Utc   = [datetime]::UtcNow
     }
     return $result
@@ -140,9 +198,13 @@ function Get-MetraRoutingTable {
         describe capabilities a coworker may or may not have installed.
     #>
     [CmdletBinding()]
+    [OutputType([PSCustomObject])]
     param(
+        [ValidateNotNullOrEmpty()]
         [string[]]$Name,
+
         [switch]$SharedOnly,
+
         [switch]$MissingOnly
     )
 
@@ -273,8 +335,10 @@ function Get-MetraQueryTokens {
     param([string]$Query)
     if ([string]::IsNullOrWhiteSpace($Query)) { return @() }
     $stop = Get-MetraRoutingStopWords
+    # Normalize hyphens/underscores so Power-BI / Power_BI tokenize like "power bi".
+    $normalized = $Query.ToLowerInvariant() -replace '[-_]+', ' '
     return @(
-        ($Query.ToLowerInvariant() -split '\W+') |
+        ($normalized -split '\W+') |
             Where-Object { $_ -and $_.Length -gt 1 -and -not $stop.Contains($_) }
     )
 }
@@ -306,12 +370,31 @@ function Test-MetraTicketHelpdeskVocabulary {
 function Get-MetraTicketTrackerProject {
     <#
     .SYNOPSIS
-        Returns the on-disk TicketTracker project row when present.
+        Resolves TicketTracker on disk for routing and TicketWatch (Path, Root, ModulePath).
+    .DESCRIPTION
+        Canonical helper - do not redefine in TicketWatch.ps1 (later private files overwrite).
+        TicketWatch callers should use Resolve-MetraTicketTrackerModule + Import-MetraTicketTrackerModule.
+        Requires src\TicketTracker.psm1 so TicketWatch can Import-Module; Root supports scoring.
     #>
     [CmdletBinding()]
     param()
 
-    return @(Get-MetraProjects | Where-Object { $_.Name -eq 'TicketTracker' } | Select-Object -First 1)
+    $onDisk = Get-MetraProjects | Where-Object { $_.Name -eq 'TicketTracker' } | Select-Object -First 1
+    if (-not $onDisk) { return $null }
+
+    $path = [string](Get-MetraProp -Object $onDisk -Name 'Path' -Default '')
+    if ([string]::IsNullOrWhiteSpace($path) -or -not (Test-Path -LiteralPath $path)) { return $null }
+
+    $module = Join-Path $path 'src\TicketTracker.psm1'
+    if (-not (Test-Path -LiteralPath $module)) { return $null }
+
+    return [PSCustomObject]@{
+        Name       = 'TicketTracker'
+        Path       = $path
+        Root       = [string](Get-MetraProp -Object $onDisk -Name 'Root' -Default '')
+        ModulePath = $module
+        IsGit      = [bool](Get-MetraProp -Object $onDisk -Name 'IsGit' -Default $false)
+    }
 }
 
 function Get-MetraTicketTrackerSolutionsKeywords {
@@ -367,6 +450,31 @@ function Get-MetraTicketTrackerSolutionsKeywords {
     return $unique
 }
 
+function Test-MetraQueryContainsRoutingKeyword {
+    <#
+    .SYNOPSIS
+        True when Query contains Keyword with word boundaries (phrases use substring).
+    #>
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory)][string]$Query,
+        [Parameter(Mandatory)][string]$Keyword
+    )
+
+    $qLower = $Query.ToLowerInvariant()
+    $kLower = $Keyword.ToLowerInvariant().Trim()
+    if ([string]::IsNullOrWhiteSpace($kLower)) { return $false }
+
+    # Multi-word phrases stay substring (e.g. "thrive 360"); single tokens use boundaries
+    # so short keywords like "api" do not match inside "rapid".
+    if ($kLower -match '\s') {
+        return $qLower.Contains($kLower)
+    }
+
+    $escaped = [regex]::Escape($kLower)
+    return [regex]::IsMatch($qLower, "(?<![\p{L}\p{N}_])$escaped(?![\p{L}\p{N}_])")
+}
+
 function Test-MetraTicketTrackerSolutionsKeywordHit {
     <#
     .SYNOPSIS
@@ -375,11 +483,10 @@ function Test-MetraTicketTrackerSolutionsKeywordHit {
     [CmdletBinding()]
     param([Parameter(Mandatory)][string]$Query)
 
-    $qLower = $Query.ToLowerInvariant()
     foreach ($k in @(Get-MetraTicketTrackerSolutionsKeywords)) {
-        $kLower = ([string]$k).ToLowerInvariant()
-        if ([string]::IsNullOrWhiteSpace($kLower)) { continue }
-        if ($qLower.Contains($kLower)) { return $true }
+        if (Test-MetraQueryContainsRoutingKeyword -Query $Query -Keyword ([string]$k)) {
+            return $true
+        }
     }
     return $false
 }
@@ -417,6 +524,9 @@ function New-MetraTicketTrackerScoredProject {
     $onDisk = Get-MetraTicketTrackerProject
     if (-not $onDisk) { return $null }
 
+    $root = [string](Get-MetraProp -Object $onDisk -Name 'Root' -Default '')
+    $path = [string](Get-MetraProp -Object $onDisk -Name 'Path' -Default '')
+
     $registry = Get-MetraProjectRegistry
     $reg = @($registry.projects | Where-Object { [string]$_.name -eq 'TicketTracker' } | Select-Object -First 1)
     $purpose = if ($reg) { [string](Get-MetraProp -Object $reg -Name 'purpose' -Default '') } else { '' }
@@ -425,8 +535,8 @@ function New-MetraTicketTrackerScoredProject {
 
     return [PSCustomObject]@{
         Name          = 'TicketTracker'
-        Root          = [string]$onDisk.Root
-        Path          = [string]$onDisk.Path
+        Root          = $root
+        Path          = $path
         Purpose       = $purpose
         Triggers      = @($triggers)
         Serves        = @($serves)
