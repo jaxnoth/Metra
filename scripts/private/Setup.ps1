@@ -18,7 +18,12 @@ function Invoke-MetraSetup {
         [int]$ScanDepth,
         [ValidateSet('Hq', 'Satellite', 'Standalone')]
         [string]$Role,
+        [string]$OpsBaseUrl,
         [switch]$Advanced,
+        [switch]$PreferFriendly,
+        [switch]$NoPreferFriendly,
+        [switch]$BindTailscale,
+        [switch]$AcceptAsk,
         [switch]$Quiet
     )
 
@@ -136,7 +141,11 @@ function Invoke-MetraSetup {
     try {
         $machineRoleSetup = Invoke-MetraMachineRoleSetup -MetraRoot $metraRoot `
             -Role $Role `
+            -OpsBaseUrl $OpsBaseUrl `
             -Advanced:$Advanced `
+            -PreferFriendly:$PreferFriendly `
+            -NoPreferFriendly:$NoPreferFriendly `
+            -BindTailscale:$BindTailscale `
             -Interactive:(-not $Quiet) `
             -Quiet:$Quiet
         if ($machineRoleSetup -and $machineRoleSetup.DeskBinding) {
@@ -204,31 +213,49 @@ function Invoke-MetraSetup {
     $isSatellite = ($roleName -eq 'Satellite')
 
     # Local Ask engine install is for HQ / Standalone hosts - satellites use HQ Ask.
-    if (-not $Quiet -and -not $isSatellite) {
-        try {
-            $rec = Get-MetraAskEngineRecommendation -MetraRoot $metraRoot
-            Write-Host ''
-            Write-Host 'Ask engine (local):' -ForegroundColor Cyan
-            Write-Host ("  {0}" -f $rec.summary)
-            Write-Host '  Accept installs Ollama when needed, pulls the model, and verifies Ask.'
-            $answer = Read-Host '  Use recommended Ask settings now? [Y/n]'
-            if ([string]::IsNullOrWhiteSpace($answer) -or $answer -match '^(?i)y') {
-                Write-Host '  Accepting recommended Ask settings (may take several minutes)...' -ForegroundColor DarkGray
-                $askAccept = Invoke-MetraAskAcceptRecommended -MetraRoot $metraRoot
-                if ($askAccept.ok) {
-                    Write-Host '  Ask ready.' -ForegroundColor Green
+    # -AcceptAsk (installer) runs without prompts; interactive setup still asks unless Quiet.
+    if (-not $isSatellite -and ($AcceptAsk -or (-not $Quiet))) {
+        $shouldAcceptAsk = [bool]$AcceptAsk
+        if (-not $Quiet -and -not $AcceptAsk) {
+            try {
+                $rec = Get-MetraAskEngineRecommendation -MetraRoot $metraRoot
+                Write-Host ''
+                Write-Host 'Ask engine (local):' -ForegroundColor Cyan
+                Write-Host ("  {0}" -f $rec.summary)
+                Write-Host '  Accept installs Ollama when needed, pulls the model, and verifies Ask.'
+                $answer = Read-Host '  Use recommended Ask settings now? [Y/n]'
+                $shouldAcceptAsk = [string]::IsNullOrWhiteSpace($answer) -or ($answer -match '^(?i)y')
+                if (-not $shouldAcceptAsk) {
+                    Write-Host '  Skipped. Later: .\metra.ps1 ask recommend  then  .\metra.ps1 ask accept'
+                }
+            }
+            catch {
+                Write-Warning "Ask recommend/accept skipped: $($_.Exception.Message)"
+                $shouldAcceptAsk = $false
+            }
+        }
+        if ($shouldAcceptAsk) {
+            try {
+                if (-not $Quiet) {
+                    Write-Host '  Accepting recommended Ask settings (may take several minutes)...' -ForegroundColor DarkGray
                 }
                 else {
-                    Write-Warning ("Ask accept incomplete: {0}" -f ($(if ($askAccept.capability) { $askAccept.capability.reason } else { 'see steps' })))
+                    Write-Host 'Ask accept: installing recommended engine (may take several minutes)...' -ForegroundColor Cyan
+                }
+                $askAccept = Invoke-MetraAskAcceptRecommended -MetraRoot $metraRoot
+                if ($askAccept.ok) {
+                    if (-not $Quiet) { Write-Host '  Ask ready.' -ForegroundColor Green }
+                    else { Write-Host 'Ask accept: ready.' -ForegroundColor Green }
+                }
+                else {
+                    $reason = $(if ($askAccept.capability) { $askAccept.capability.reason } else { 'see steps' })
+                    Write-Warning ("Ask accept incomplete: {0}" -f $reason)
                     Write-Host '  Retry later: .\metra.ps1 ask accept'
                 }
             }
-            else {
-                Write-Host '  Skipped. Later: .\metra.ps1 ask recommend  then  .\metra.ps1 ask accept'
+            catch {
+                Write-Warning "Ask accept failed: $($_.Exception.Message)"
             }
-        }
-        catch {
-            Write-Warning "Ask recommend/accept skipped: $($_.Exception.Message)"
         }
     }
     elseif (-not $Quiet -and $isSatellite) {

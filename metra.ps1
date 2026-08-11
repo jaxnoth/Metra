@@ -88,6 +88,11 @@ param(
     [ValidateSet('Hq', 'Satellite', 'Standalone')]
     [string]$Role,
     [switch]$Advanced,
+    [switch]$PreferFriendly,
+    [switch]$NoPreferFriendly,
+    [switch]$BindTailscale,
+    [switch]$AcceptAsk,
+    [switch]$Quiet,
     [switch]$WhatIf
 )
 
@@ -127,9 +132,9 @@ Usage:
   .\metra.ps1 export-profile -Path <dir-or-zip>
   .\metra.ps1 import-profile -Path <dir-or-zip> [-Preview] [-Force]
   .\metra.ps1 ctx [-Query 'terms'] [-Path <file|->] [-Format markdown|json] [-Limit 25]
-  .\metra.ps1 setup [-Profile <dir-or-zip>] [-Force] [-Preview] [-Role Hq|Satellite|Standalone] [-Advanced] [-Months 6] [-ScanDepth 2]
-      First-run / refresh. Role picks HQ, Satellite, or Standalone defaults; -Advanced asks networking knobs.
-      One-shot onboarding: seed config if missing, optional profile, roots, workspace, routing, ctx.
+  .\metra.ps1 setup [-Profile <dir-or-zip>] [-Force] [-Preview] [-Quiet] [-Role Hq|Satellite|Standalone] [-OpsBaseUrl https://...] [-PreferFriendly|-NoPreferFriendly] [-BindTailscale] [-AcceptAsk] [-Advanced] [-Months 6] [-ScanDepth 2]
+      First-run / refresh. Role picks HQ, Satellite, or Standalone; -Quiet skips prompts (installer path).
+      Installer passes PreferFriendly / BindTailscale / AcceptAsk. -Advanced keeps interactive local Ops knobs.
   .\metra.ps1 unblock [-Preview]
       Clear mark-of-the-web from checkout script files (ZIP / OneDrive / email). Supports -Preview.
   .\metra.ps1 profile show|note|promote|forget|render|gc
@@ -437,16 +442,24 @@ switch ($Command) {
         if (-not $profilePath -and $Path) { $profilePath = $Path }
         if (-not $profilePath -and $Rest -and $Rest.Count -gt 0) { $profilePath = $Rest[0] }
         $params = @{
-            Preview  = [bool]$Preview
-            Force    = [bool]$Force
-            Advanced = [bool]$Advanced
+            Preview           = [bool]$Preview
+            Force             = [bool]$Force
+            Advanced          = [bool]$Advanced
+            Quiet             = [bool]$Quiet
+            PreferFriendly    = [bool]$PreferFriendly
+            NoPreferFriendly  = [bool]$NoPreferFriendly
+            BindTailscale     = [bool]$BindTailscale
+            AcceptAsk         = [bool]$AcceptAsk
         }
         if ($profilePath) { $params.Profile = $profilePath }
         if ($Role) { $params.Role = $Role }
+        if ($OpsBaseUrl) { $params.OpsBaseUrl = $OpsBaseUrl }
         if ($Months -ge 0) { $params.Months = $Months }
         if ($ScanDepth -ge 0) { $params.ScanDepth = $ScanDepth }
         $setupResult = Initialize-Metra @params
-        $setupResult | Format-List Preview, SeededConfig, MachineRole
+        if (-not $Quiet) {
+            $setupResult | Format-List Preview, SeededConfig, MachineRole, SetupLogPath
+        }
     }
 
     'verify' {

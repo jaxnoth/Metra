@@ -14,7 +14,21 @@ function Initialize-Metra {
     .PARAMETER Preview
         Reports setup and import actions without writing files.
     .PARAMETER Quiet
-        Suppresses host-formatted setup output.
+        Suppresses host-formatted setup output and skips prompts (installer path).
+    .PARAMETER Role
+        Machine role: Hq, Satellite, or Standalone.
+    .PARAMETER OpsBaseUrl
+        HQ Ops URL for Satellite (no prompt when set with -Quiet).
+    .PARAMETER PreferFriendly
+        Prefer http://metra/ when port 80 is free (HQ/Standalone).
+    .PARAMETER NoPreferFriendly
+        Force loopback Ops URL (HQ/Standalone).
+    .PARAMETER BindTailscale
+        Bind HQ Ops for Tailscale reach.
+    .PARAMETER AcceptAsk
+        Install recommended Ask engine without prompting (HQ/Standalone).
+    .PARAMETER Advanced
+        Ask local Ops networking knobs (HQ/Standalone interactive).
     .PARAMETER Months
         Overrides the workspace activity lookback.
     .PARAMETER ScanDepth
@@ -22,7 +36,9 @@ function Initialize-Metra {
     .EXAMPLE
         Initialize-Metra
     .EXAMPLE
-        Initialize-Metra -Profile .\profiles\sample -Preview
+        Initialize-Metra -Quiet -Role Satellite -OpsBaseUrl 'https://hq.example.ts.net'
+    .EXAMPLE
+        Initialize-Metra -Quiet -Role Hq -PreferFriendly -AcceptAsk
     .OUTPUTS
         PSCustomObject containing configuration, import, root, routing, workspace, and context results.
     #>
@@ -36,9 +52,13 @@ function Initialize-Metra {
         [int]$ScanDepth,
         [ValidateSet('Hq', 'Satellite', 'Standalone')]
         [string]$Role,
+        [string]$OpsBaseUrl,
+        [switch]$PreferFriendly,
+        [switch]$NoPreferFriendly,
+        [switch]$BindTailscale,
+        [switch]$AcceptAsk,
         [switch]$Advanced
     )
 
     Invoke-MetraSetup @PSBoundParameters
 }
-

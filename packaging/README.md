@@ -30,8 +30,9 @@ Or set `METRA_ISCC` to the full path of `ISCC.exe`.
 - Destination: the folder you select **is** `{app}` (`AppendDefaultDirName=no`). Choose the Metra product folder (e.g. `C:\Projects\_metra` or Documents\Metra), not the portfolio parent (`C:\Projects`).
 - The wizard refuses paths that look like a portfolio root (child `TicketTracker` or `Solarwinds`) unless `metra.ps1` is already present or the leaf is `Metra` / `_metra` / `_meta` / `metra`.
 - Upgrades reuse the prior install directory (`UsePreviousAppDir`) under a stable AppId.
-- Post-install task (checked by default) runs `Metra-Setup.cmd -NoPause` -> setup (machine role HQ / Satellite / Standalone).
-- Start Menu **Metra Setup** launches `Metra-Setup.cmd` (no pack chooser in the wizard).
+- Wizard collects **machine role** as intent (HQ / Satellite / Standalone / **Files only**). No "Run Metra setup now" checkbox. Follow-ons: Satellite **Main Metra address**; HQ open-Metra + Tailscale; Standalone open-Metra; HQ/Standalone **Ask assistant** (default No). Summary: **Here's where we're landing**. Operator copy from `docs/Brand.md`.
+- Post-install quiet setup runs for HQ / Satellite / Standalone only (Files only skips). Status: `docs\setup.local.log`.
+- Start Menu **Metra Setup** stays interactive for re-runs (no `-Quiet`). Finished introduces **Metra Ops** (or Metra Setup for Files only).
 - Troubleshooting logs (machine-local, not staged):
   - `docs/setup.local.log` - bootstrap + `metra setup` transcript
   - `docs/installer.local.log` - best-effort copy of the newest Inno `Setup Log *.txt` from `%TEMP%`
