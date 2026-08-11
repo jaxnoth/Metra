@@ -4,7 +4,45 @@ function Get-MetraRoot {
     return $script:MetraModuleRoot
 }
 
+function Initialize-MetraConfigCache {
+    <#
+    .SYNOPSIS
+        Ensures $script:MetraCache has config cache slots (StrictMode / split-module safe).
+    #>
+    if ($null -eq $script:MetraCache) {
+        if (Get-Command Initialize-MetraRoutingCacheState -ErrorAction SilentlyContinue) {
+            Initialize-MetraRoutingCacheState
+        }
+        else {
+            $script:MetraCache = @{
+                ConfigPath = $null
+                ConfigLwt  = [datetime]::MinValue
+                Config     = $null
+            }
+        }
+    }
+
+    if ($script:MetraCache -is [hashtable]) {
+        if (-not $script:MetraCache.ContainsKey('Config')) { $script:MetraCache['Config'] = $null }
+        if (-not $script:MetraCache.ContainsKey('ConfigPath')) { $script:MetraCache['ConfigPath'] = $null }
+        if (-not $script:MetraCache.ContainsKey('ConfigLwt')) { $script:MetraCache['ConfigLwt'] = [datetime]::MinValue }
+        return
+    }
+
+    if ($null -eq $script:MetraCache.PSObject.Properties['Config']) {
+        $script:MetraCache | Add-Member -NotePropertyName Config -NotePropertyValue $null -Force
+    }
+    if ($null -eq $script:MetraCache.PSObject.Properties['ConfigPath']) {
+        $script:MetraCache | Add-Member -NotePropertyName ConfigPath -NotePropertyValue $null -Force
+    }
+    if ($null -eq $script:MetraCache.PSObject.Properties['ConfigLwt']) {
+        $script:MetraCache | Add-Member -NotePropertyName ConfigLwt -NotePropertyValue $null -Force
+    }
+}
+
 function Get-MetraConfig {
+    Initialize-MetraConfigCache
+
     $root = Get-MetraRoot
     $preferred = Join-Path $root 'metra.config.json'
     $legacy = Join-Path $root 'meta.config.json'
@@ -28,7 +66,12 @@ function Get-MetraConfig {
         return $script:MetraCache.Config
     }
 
-    $cfg = Get-Content -Raw -Path $configPath | ConvertFrom-Json
+    try {
+        $cfg = Get-Content -Raw -LiteralPath $configPath | ConvertFrom-Json
+    }
+    catch {
+        throw ("Failed to read Metra config '{0}': {1}" -f $configPath, $_.Exception.Message)
+    }
     $script:MetraCache.ConfigPath = $configPath
     $script:MetraCache.ConfigLwt = $lwt
     $script:MetraCache.Config = $cfg
@@ -85,7 +128,17 @@ function Get-MetraRoots {
     $primarySeen = $false
     $results = foreach ($def in $defs) {
         $rootName = [string](Get-MetraProp -Object $def -Name 'name' -Default 'projects')
+        $rootName = $rootName.Trim()
+        if ([string]::IsNullOrWhiteSpace($rootName)) {
+            $rootName = 'projects'
+        }
+
         $rawPath = [string](Get-MetraProp -Object $def -Name 'path' -Default '..')
+        $rawPath = $rawPath.Trim()
+        if ([string]::IsNullOrWhiteSpace($rawPath)) {
+            $rawPath = '..'
+        }
+
         $expanded = [System.Environment]::ExpandEnvironmentVariables($rawPath)
         if (-not [System.IO.Path]::IsPathRooted($expanded)) {
             $expanded = Join-Path $metraRoot $expanded
@@ -123,6 +176,16 @@ function Get-MetraRoots {
     }
 
     $results = @($results)
+    $duplicateNames = @(
+        $results |
+            Group-Object Name |
+            Where-Object { $_.Count -gt 1 } |
+            Select-Object -ExpandProperty Name
+    )
+    if ($duplicateNames.Count -gt 0) {
+        throw ("Duplicate root name(s) in metra.config.json: {0}" -f ($duplicateNames -join ', '))
+    }
+
     if (-not $primarySeen -and $results.Count -gt 0) {
         $results[0].Primary = $true
     }
@@ -172,11 +235,10 @@ function Get-MetraConfigFilePath {
 }
 
 function Clear-MetraConfigCache {
-    if ($script:MetraCache) {
-        $script:MetraCache.Config = $null
-        $script:MetraCache.ConfigPath = $null
-        $script:MetraCache.ConfigLwt = $null
-    }
+    Initialize-MetraConfigCache
+    $script:MetraCache.Config = $null
+    $script:MetraCache.ConfigPath = $null
+    $script:MetraCache.ConfigLwt = $null
 }
 
 function Get-MetraSettingsPortfolio {
@@ -216,20 +278,38 @@ function Get-MetraSettingsPortfolio {
         }
     )
 
-    $prefs = Get-MetraDeskPreferences -MetraRoot $MetraRoot
-    $opsBaseUrl = Get-MetraProfileOpsBaseUrlOrNull -MetraRoot $MetraRoot
+    $prefs = if (Get-Command Get-MetraDeskPreferences -ErrorAction SilentlyContinue) {
+        Get-MetraDeskPreferences -MetraRoot $MetraRoot
+    }
+    else {
+        [PSCustomObject]@{
+            machineRole       = 'Standalone'
+            preferFriendlyUrl = $false
+            bindTailscale     = $false
+        }
+    }
+
+    $opsBaseUrl = if (Get-Command Get-MetraProfileOpsBaseUrlOrNull -ErrorAction SilentlyContinue) {
+        Get-MetraProfileOpsBaseUrlOrNull -MetraRoot $MetraRoot
+    }
+    else {
+        $null
+    }
+
     $bindingSummary = 'loopback'
     try {
-        $binding = Resolve-MetraOpsDeskBinding -MetraRoot $MetraRoot
-        if ($binding -and $binding.BrowserUrl) {
-            if ([bool]$prefs.bindTailscale) {
-                $bindingSummary = "Tailscale reach ($($binding.BrowserUrl))"
-            }
-            elseif ([bool]$prefs.preferFriendlyUrl -or ($binding.BrowserHost -eq 'metra')) {
-                $bindingSummary = "Friendly URL ($($binding.BrowserUrl))"
-            }
-            else {
-                $bindingSummary = "Loopback ($($binding.BrowserUrl))"
+        if (Get-Command Resolve-MetraOpsDeskBinding -ErrorAction SilentlyContinue) {
+            $binding = Resolve-MetraOpsDeskBinding -MetraRoot $MetraRoot
+            if ($binding -and $binding.BrowserUrl) {
+                if ([bool]$prefs.bindTailscale) {
+                    $bindingSummary = "Tailscale reach ($($binding.BrowserUrl))"
+                }
+                elseif ([bool]$prefs.preferFriendlyUrl -or ($binding.BrowserHost -eq 'metra')) {
+                    $bindingSummary = "Friendly URL ($($binding.BrowserUrl))"
+                }
+                else {
+                    $bindingSummary = "Loopback ($($binding.BrowserUrl))"
+                }
             }
         }
     }
@@ -391,9 +471,11 @@ function Save-MetraSettingsPortfolio {
             if ([string]::IsNullOrWhiteSpace($rawPath)) {
                 throw "Projects folder '$label' needs a path."
             }
-            $expanded = [System.IO.Path]::GetFullPath(
-                [System.Environment]::ExpandEnvironmentVariables($rawPath)
-            )
+            $expandedRaw = [System.Environment]::ExpandEnvironmentVariables($rawPath)
+            if (-not [System.IO.Path]::IsPathRooted($expandedRaw)) {
+                $expandedRaw = Join-Path $MetraRoot $expandedRaw
+            }
+            $expanded = [System.IO.Path]::GetFullPath($expandedRaw)
             $isPrimary = [bool](Get-MetraProp -Object $row -Name 'primary' -Default $false)
             $isOptional = [bool](Get-MetraProp -Object $row -Name 'optional' -Default $false)
             if ($isPrimary) { $primaryCount++; $isOptional = $false }
@@ -413,9 +495,11 @@ function Save-MetraSettingsPortfolio {
                     $candPath = [string](Get-MetraProp -Object $cand -Name 'path' -Default '')
                     if ([string]::IsNullOrWhiteSpace($candPath)) { continue }
                     try {
-                        $candFull = [System.IO.Path]::GetFullPath(
-                            [System.Environment]::ExpandEnvironmentVariables($candPath)
-                        )
+                        $candExpanded = [System.Environment]::ExpandEnvironmentVariables($candPath)
+                        if (-not [System.IO.Path]::IsPathRooted($candExpanded)) {
+                            $candExpanded = Join-Path $MetraRoot $candExpanded
+                        }
+                        $candFull = [System.IO.Path]::GetFullPath($candExpanded)
                         if ($candFull.Equals($expanded, [StringComparison]::OrdinalIgnoreCase)) {
                             $prev = $cand
                             break
@@ -466,20 +550,28 @@ function Save-MetraSettingsPortfolio {
         }
 
         $primaryPathOut = [string](@($built | Where-Object { $_.primary })[0].path)
-        $cfg.roots = @($built.ToArray())
+
+        if ($null -eq $cfg.PSObject.Properties['roots']) {
+            $cfg | Add-Member -NotePropertyName roots -NotePropertyValue @($built.ToArray()) -Force
+        }
+        else {
+            $cfg.roots = @($built.ToArray())
+        }
+
         if ($null -eq $cfg.PSObject.Properties['projectsRoot']) {
             $cfg | Add-Member -NotePropertyName projectsRoot -NotePropertyValue $primaryPathOut -Force
         }
         else {
             $cfg.projectsRoot = $primaryPathOut
         }
+
         $json = $cfg | ConvertTo-Json -Depth 12
         Set-Content -LiteralPath $configPath -Value $json -Encoding UTF8
         Clear-MetraConfigCache
     }
 
     if ($ClearCursorApiKey) {
-        $null = Set-MetraCursorApiKey -ApiKey 'x' -Clear
+        $null = Set-MetraCursorApiKey -Clear
     }
     elseif (-not [string]::IsNullOrWhiteSpace($CursorApiKey)) {
         $null = Set-MetraCursorApiKey -ApiKey $CursorApiKey
@@ -509,8 +601,12 @@ function Test-MetraSelfFolderName {
         True when the folder is this orchestration checkout (Metra product, _metra convention).
     #>
     param([Parameter(Mandatory)][string]$Name)
+
     $n = $Name.Trim()
-    return @('_metra', '_meta', 'meta', 'Metra', 'metra') -contains $n
+    return [string]::Equals($n, '_metra', [StringComparison]::OrdinalIgnoreCase) -or
+        [string]::Equals($n, '_meta', [StringComparison]::OrdinalIgnoreCase) -or
+        [string]::Equals($n, 'metra', [StringComparison]::OrdinalIgnoreCase) -or
+        [string]::Equals($n, 'meta', [StringComparison]::OrdinalIgnoreCase)
 }
 
 function Test-ExcludedProjectName {

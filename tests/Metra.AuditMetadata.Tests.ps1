@@ -111,6 +111,34 @@ Describe 'Route metadata audit' {
         }
     }
 
+    It 'reports stop-word trigger case-insensitively against case-sensitive stop list' {
+        InModuleScope Metra {
+            Mock Get-MetraRoutingStopWords {
+                # Ordinal (case-sensitive) set - lowercasing in Get-MetraRouteMetadataIssues must still match.
+                return [System.Collections.Generic.HashSet[string]]::new(
+                    [string[]]@('the', 'help'),
+                    [StringComparer]::Ordinal
+                )
+            }
+            Mock Get-MetraProjectRegistry {
+                return [pscustomobject]@{
+                    projects = @(
+                        [pscustomobject]@{
+                            name        = 'cased-stop'
+                            purpose     = 'Has purpose'
+                            triggers    = @('THE', 'Help')
+                            optional    = $false
+                            whenMissing = $null
+                            source      = 'synthetic'
+                        }
+                    )
+                }
+            }
+            $issues = @(Get-MetraRouteMetadataIssues)
+            @($issues | Where-Object { $_.Issue -eq 'StopWordTrigger' }).Count | Should -Be 2
+        }
+    }
+
     It 'reports single-character trigger' {
         InModuleScope Metra {
             $issues = @(Get-MetraRouteMetadataIssues)
@@ -129,17 +157,18 @@ Describe 'Route metadata audit' {
         InModuleScope Metra {
             $result = Test-MetraProjectContext -MetadataOnly -Quiet
             $result.DriftCount | Should -Be 0
+            $result.DriftFindings | Should -Be 0
+            $result.DriftProjects | Should -Be 0
             $result.MetadataOnly | Should -BeTrue
             @($result.MetadataFindings).Count | Should -BeGreaterThan 0
             $result.MetadataCount | Should -Be @($result.MetadataFindings).Count
         }
     }
 
-    It 'MetadataOnly with DriftOnly still exits success for metadata advisories' {
+    It 'rejects MetadataOnly combined with DriftOnly' {
         InModuleScope Metra {
-            $global:LASTEXITCODE = 99
-            $null = Test-MetraProjectContext -MetadataOnly -DriftOnly -Quiet
-            $global:LASTEXITCODE | Should -Be 0
+            { Test-MetraProjectContext -MetadataOnly -DriftOnly -Quiet } |
+                Should -Throw -ErrorId 'AmbiguousParameterSet,Test-MetraProjectContext'
         }
     }
 }

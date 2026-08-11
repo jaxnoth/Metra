@@ -28,6 +28,35 @@ function Get-MetraGeneratedPathHints {
     )
 }
 
+function Get-MetraAuditSuggestedTriggersFromText {
+    <#
+    .SYNOPSIS
+        Extract suggested registry triggers from README text (size-capped).
+    #>
+    [CmdletBinding()]
+    param(
+        [AllowNull()]
+        [AllowEmptyString()]
+        [string]$Text,
+        [int]$MaxChars = 200000
+    )
+
+    if ([string]::IsNullOrWhiteSpace($Text)) { return @() }
+    $slice = [string]$Text
+    if ($MaxChars -gt 0 -and $slice.Length -gt $MaxChars) {
+        $slice = $slice.Substring(0, $MaxChars)
+    }
+
+    return @(
+        [regex]::Matches($slice.ToLowerInvariant(), '[a-z][a-z0-9_-]{3,}') |
+            ForEach-Object { $_.Value } |
+            Where-Object { $_ -notin @('this', 'that', 'with', 'from', 'have', 'project', 'readme', 'table', 'contents') } |
+            Group-Object |
+            Sort-Object Count -Descending |
+            Select-Object -First 8 -ExpandProperty Name
+    )
+}
+
 function Get-MetraRouteMetadataIssues {
     <#
     .SYNOPSIS
@@ -97,7 +126,9 @@ function Get-MetraRouteMetadataIssues {
                     })
                 }
 
-                if ($stopWords.Contains($normalizedTrigger)) {
+                # Lowercase before Contains so case-sensitive stop lists still match.
+                $triggerKey = $normalizedTrigger.ToLowerInvariant()
+                if ($stopWords.Contains($triggerKey)) {
                     [void]$issues.Add([pscustomobject]@{
                         Kind     = 'RouteMetadata'
                         Severity = 'Advisory'
@@ -144,10 +175,17 @@ function Invoke-MetraProjectContextAudit {
         [switch]$DriftOnly,
         [switch]$MetadataOnly,
         [switch]$Quiet,
+        [ValidateRange(1, 2147483647)]
         [int]$LargeFileBytes = 200KB,
+        [ValidateRange(1, 100000)]
         [int]$HighCardinalityCount = 200,
+        [ValidateRange(1, 20)]
         [int]$ScanDepth = 4
     )
+
+    if ($DriftOnly -and $MetadataOnly) {
+        throw 'DriftOnly and MetadataOnly are mutually exclusive.'
+    }
 
     function Write-AuditHost {
         param(
@@ -185,7 +223,9 @@ function Invoke-MetraProjectContextAudit {
         $global:LASTEXITCODE = 0
         Write-Output ([PSCustomObject]@{
             ProjectCount     = 0
-            DriftCount       = 0
+            DriftFindings    = 0
+            DriftProjects    = 0
+            DriftCount       = 0 # alias of DriftFindings (backward compatible)
             DriftOnly        = [bool]$DriftOnly
             MetadataOnly     = $true
             MetadataFindings = $metadataFindings
@@ -198,7 +238,9 @@ function Invoke-MetraProjectContextAudit {
     $registry = Get-MetraProjectRegistry
     $projects = @(Resolve-MetraProjectSet -Filter $Filter -Name $Name -Root $Root)
     $generatedHints = Get-MetraGeneratedPathHints
-    $driftCount = 0
+    # DriftFindings = actionable finding rows; DriftProjects = distinct projects with drift.
+    $driftFindings = 0
+    $registryMissingNames = New-Object System.Collections.Generic.List[string]
     $reports = @()
 
     $rootInfo = @{}
@@ -219,7 +261,8 @@ function Invoke-MetraProjectContextAudit {
                     Write-AuditHost ("optional: {0} not installed here (advice-only routing)" -f $reg.name)
                 }
                 else {
-                    $driftCount++
+                    $driftFindings++
+                    [void]$registryMissingNames.Add($key)
                     Write-AuditHost ("DRIFT: registry project missing on disk: {0}" -f $reg.name) -ForegroundColor Yellow
                 }
             }
@@ -246,12 +289,12 @@ function Invoke-MetraProjectContextAudit {
 
         if (-not $inRegistry) {
             $findings += 'Missing from registry (projects.json or projects.local.json)'
-            $driftCount++
+            $driftFindings++
         }
         else {
             if (-not $hasAgents -and [string]$reg.entry -eq 'AGENTS.md') {
                 $findings += 'Registry entry expects AGENTS.md but file is missing'
-                $driftCount++
+                $driftFindings++
             }
             foreach ($ex in @($reg.excludePaths)) {
                 if ([string]::IsNullOrWhiteSpace([string]$ex)) { continue }
@@ -261,7 +304,7 @@ function Invoke-MetraProjectContextAudit {
                     }
                     else {
                         $findings += "excludePath '$ex' exists but .cursorignore is missing"
-                        $driftCount++
+                        $driftFindings++
                     }
                     break
                 }
@@ -278,7 +321,7 @@ function Invoke-MetraProjectContextAudit {
         if (-not $lightAudit) {
             if (-not $hasAgents) {
                 $findings += 'Missing AGENTS.md'
-                if ($inRegistry) { $driftCount++ }
+                if ($inRegistry) { $driftFindings++ }
             }
             if (-not $hasIgnore) {
                 $findings += 'Missing .cursorignore'
@@ -328,7 +371,7 @@ function Invoke-MetraProjectContextAudit {
                     }
                     else {
                         $findings += "Generated/cache path not covered by registry exclude or .cursorignore: $hint"
-                        $driftCount++
+                        $driftFindings++
                     }
                 }
             }
@@ -375,14 +418,7 @@ function Invoke-MetraProjectContextAudit {
         if ($hasReadme) {
             $readmeText = Get-Content -Raw -Path (Join-Path $project.Path 'README.md') -ErrorAction SilentlyContinue
             if ($readmeText) {
-                $suggestedTriggers = @(
-                    [regex]::Matches([string]$readmeText.ToLowerInvariant(), '[a-z][a-z0-9_-]{3,}') |
-                        ForEach-Object { $_.Value } |
-                        Where-Object { $_ -notin @('this','that','with','from','have','project','readme','table','contents') } |
-                        Group-Object |
-                        Sort-Object Count -Descending |
-                        Select-Object -First 8 -ExpandProperty Name
-                )
+                $suggestedTriggers = @(Get-MetraAuditSuggestedTriggersFromText -Text ([string]$readmeText))
             }
         }
 
@@ -452,9 +488,22 @@ function Invoke-MetraProjectContextAudit {
     Write-AuditHost ''
     Write-RouteMetadataAdvisories -Findings $metadataFindings
 
+    $driftProjectKeys = [System.Collections.Generic.HashSet[string]]::new([StringComparer]::OrdinalIgnoreCase)
+    foreach ($missingName in @($registryMissingNames)) {
+        [void]$driftProjectKeys.Add([string]$missingName)
+    }
+    foreach ($rep in @($reports)) {
+        if ($rep.Drift) {
+            [void]$driftProjectKeys.Add([string]$rep.Name)
+        }
+    }
+    $driftProjects = $driftProjectKeys.Count
+
     $summary = [PSCustomObject]@{
         ProjectCount     = @($reports).Count
-        DriftCount       = $driftCount
+        DriftFindings    = $driftFindings
+        DriftProjects    = $driftProjects
+        DriftCount       = $driftFindings # alias of DriftFindings (backward compatible)
         DriftOnly        = [bool]$DriftOnly
         MetadataOnly     = $false
         MetadataFindings = $metadataFindings
@@ -464,8 +513,8 @@ function Invoke-MetraProjectContextAudit {
 
     if ($DriftOnly) {
         Write-AuditHost ""
-        Write-AuditHost ("Drift findings: {0}" -f $driftCount) -ForegroundColor $(if ($driftCount -gt 0) { 'Yellow' } else { 'Green' })
-        if ($driftCount -gt 0) {
+        Write-AuditHost ("Drift projects: {0}; drift findings: {1}" -f $driftProjects, $driftFindings) -ForegroundColor $(if ($driftFindings -gt 0 -or $driftProjects -gt 0) { 'Yellow' } else { 'Green' })
+        if ($driftFindings -gt 0 -or $driftProjects -gt 0) {
             $global:LASTEXITCODE = 1
         }
         else {

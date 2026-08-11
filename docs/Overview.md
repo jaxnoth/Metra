@@ -35,18 +35,21 @@ AI at work usually lands in one of two bad places:
 
 <!-- metra-selfdoc-routes-begin -->
 
-| Project | Sample ask / trigger | Purpose |
-|---------|----------------------|---------|
-| TicketTracker | ticket | Local ticket assistant for iSupport and future helpdesk systems - sync, search, notes, recommendations. |
-| Solarwinds | solarwinds | Orion platform-as-code - alerts, monitors, templates, dashboards, dependencies. |
-| Trivia | trivia | Fun Committee / IT get-together printables - trivia drafts, theme sheets, and word-search generators under C:\Projects\Trivia. |
-| Colleague | colleague | PowerShell module for Ellucian Colleague admin - WAGC, WAFM, PRQM, EDQM, listeners, sessions. |
-| IWUDATA-Automation | iwudata automation | PowerShell automation that populates IWUDATA warehouse databases. |
-| Reporting | reporting | Reporting assets, SSRS/related report work, and ops scripts. |
-| Jitterbit | jitterbit | Harmony Studio exports, private agents, and IWU.Jitterbit operation-log monitoring module. |
-| AutoHotkey | autohotkey | AutoHotkey scripts and helpers. |
+| Project | Verified ask | Why | Purpose |
+|---------|--------------|-----|---------|
+| TicketTracker | ticket | trigger-phrase | Local ticket assistant for iSupport and future helpdesk systems - sync, search, notes, recommendations. |
+| Solarwinds | solarwinds | trigger-phrase | Orion platform-as-code - alerts, monitors, templates, dashboards, dependencies. |
+| Trivia | trivia | trigger-phrase | Fun Committee / IT get-together printables - trivia drafts, theme sheets, and word-search generators under C:\Projects\Trivia. |
+| Colleague | colleague | trigger-phrase | PowerShell module for Ellucian Colleague admin - WAGC, WAFM, PRQM, EDQM, listeners, sessions. |
+| IWUDATA-Automation | iwudata automation | trigger-phrase | PowerShell automation that populates IWUDATA warehouse databases. |
+| Reporting | reporting | trigger-phrase | Reporting assets, SSRS/related report work, and ops scripts. |
+| Jitterbit | jitterbit | trigger-phrase | Harmony Studio exports, private agents, and IWU.Jitterbit operation-log monitoring module. |
+| AutoHotkey | autohotkey | trigger-phrase | AutoHotkey scripts and helpers. |
 
-Generated 2026-08-10T16:55:55.0492381-04:00 by `.\metra.ps1 selfdoc` from the merged registry.
+Precedence (live engine): ticket id > helpdesk vocabulary > solutions keywords > registry score; weak signals stay at Metra.
+Example: ask `1035666` -> TicketTracker (ticket-id), even when no project name appears in the ask.
+
+Generated 2026-08-11T14:00:54.7581739-04:00 by `.\metra.ps1 selfdoc` from live `Get-MetraRoutingAmbiguity` (present projects only).
 <!-- metra-selfdoc-routes-end -->
 
 Metra picks the matching place before work starts. It does not replace judgment, Cursor, iSupport, or Orion. After routing, it keeps help useful for the person doing the work, and keeps durable writing (tickets, commits, emails to others) ordinary and professional.

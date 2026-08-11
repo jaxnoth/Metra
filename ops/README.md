@@ -55,13 +55,14 @@ Shared portfolio brain: `docs/canvas-snapshot.json` via `Get-MetraDeskPayload` (
 
 ## Ask + Capture HTTP contract (client-agnostic)
 
-HTML Ops is the first client. Future native iOS (and phone browser over Tailscale) should use the same JSON APIs - no HTML-in-API, no browser-only protocol deps.
+HTML Ops is the first client. Future native iOS (and phone browser over Tailscale) should use the same JSON APIs - no HTML-in-API, no browser-only protocol deps. Same-origin only - no wildcard CORS. **Local authority** (operator machine or `X-Metra-Local-Session`) gates mutations listed in [SECURITY.md](../SECURITY.md); **Ask-class** endpoints stay reachable over Tailscale for view/ask/capture intake.
 
 | Method | Path | Class | Notes |
 |--------|------|-------|-------|
 | GET | `/api/settings` | Settings | Portfolio roots (labeled list) + Ask key presence (never the key value). |
 | PUT | `/api/settings` | Settings | Body: `roots: [{ name?, label, path, primary, optional }]` (preferred); legacy `primaryPath` / `personalPath` / `clearPersonal`; `cursorApiKey` / `clearCursorApiKey`. Operator machine only (loopback or `X-Metra-Local-Session`). |
-| GET | `/api/profile/status` | Settings | Profile Sync v1 fingerprint (`contentHash`, `profilePackVersion`, files). Same-machine, local-session, or `X-Metra-Profile-Sync` bearer. |
+| GET | `/api/profile/status` | Settings | Profile Sync v1 fingerprint (`contentHash`, `profilePackVersion`, files). Same-machine, local-session, or `X-Metra-Profile-Sync` bearer. `satellites` roster only when caller has local authority. |
+| GET | `/api/profile/satellites` | Settings | Satellite roster (local authority only). |
 | GET | `/api/profile/export` | Settings | Profile zip via `Export-MetraProfile` (optional cache by hash). Same auth as status. |
 | POST | `/api/profile/issue-sync-token` | Settings | Body optional `{ rotate: true }`. Issues satellite bearer (plaintext once). Operator machine / local-session only. |
 | GET | `/api/updates` | Settings | Metra + Ollama update status (`?force=1` bypasses 24h cache). |
@@ -123,6 +124,6 @@ Settings: **Editor** picks what gets launched.
 | `code` | VS Code |
 | `system` | Windows default handler for the folder |
 
-A full executable path in `editorCommand` (edit `docs/ops-preferences.local.json`) also works.
+`editorCommand` may also be a custom executable path (edit `docs/ops-preferences.local.json`). That is intentional - Open in editor can launch a non-Cursor/VS Code app the operator configured. A missing custom path falls back to the Windows default handler (Explorer) so Open still means "take me there."
 
-Guardrails: only existing folders inside a configured root or the Metra home may be opened, and the request must come from the operator machine (loopback or its own address) or carry a Host-issued `X-Metra-Local-Session`. Remote peers get a clear refusal and the path instead.
+Guardrails: only existing folders inside a configured root or the Metra home may be opened. Locality prefers loopback and a validated Host-issued `X-Metra-Local-Session` over raw IP ownership; Serve-proxied requests do not inherit loopback authority. Remote peers get a clear refusal and the path instead.

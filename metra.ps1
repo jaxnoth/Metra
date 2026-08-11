@@ -73,6 +73,7 @@ param(
     [switch]$SharedOnly,
     [switch]$MissingOnly,
     [switch]$Quick,
+    [switch]$RefreshSelfDocumentation,
     [switch]$NoBrowser,
     [switch]$NoRefresh,
     [switch]$Full,
@@ -81,6 +82,8 @@ param(
     [switch]$Local,
     [switch]$Draft,
     [switch]$SkipSync,
+    [Alias('PassThru')]
+    [switch]$AsString,
     [switch]$Confirm,
     [int]$Port = 0,
     [string]$OpsBaseUrl,
@@ -115,7 +118,7 @@ Usage:
   .\metra.ps1 workspace [-Months 6] [-ScanDepth 2] [-Preview]
   .\metra.ps1 audit [-Filter '*'] [-Name ProjA,ProjB] [-Root ...] [-DriftOnly] [-MetadataOnly] [-ScanDepth 4]
       -MetadataOnly: route registry metadata advisories only (skips recursive tree scan; never fails as drift).
-  .\metra.ps1 snapshot [-ScanDepth 2] [-Quick]
+  .\metra.ps1 snapshot [-ScanDepth 2] [-Quick] [-RefreshSelfDocumentation]
   .\metra.ps1 selfdoc
   .\metra.ps1 ops [-Quick] [-Full] [-Port 7380] [-NoBrowser] [-NoRefresh] [-Stop] [-ForceLocal]
       Console Ops desk (operator/debug). -Stop frees the port when a desk outlived its console.
@@ -129,7 +132,7 @@ Usage:
       With -Query: primary stop + Why here? (and Why not? when scores are close).
       With -Name: registry row(s) + Why here? for present named projects.
       With neither: full registry table (no Why Here dump).
-  .\metra.ps1 export-profile -Path <dir-or-zip>
+  .\metra.ps1 export-profile -Path <dir-or-zip> [-Force]
   .\metra.ps1 import-profile -Path <dir-or-zip> [-Preview] [-Force]
   .\metra.ps1 ctx [-Query 'terms'] [-Path <file|->] [-Format markdown|json] [-Limit 25]
   .\metra.ps1 setup [-Profile <dir-or-zip>] [-Force] [-Preview] [-Quiet] [-Role Hq|Satellite|Standalone] [-OpsBaseUrl https://...] [-SyncToken ...] [-PreferFriendly|-NoPreferFriendly] [-BindTailscale] [-AcceptAsk] [-Advanced] [-Months 6] [-ScanDepth 2]
@@ -139,6 +142,8 @@ Usage:
       Clear mark-of-the-web from checkout script files (ZIP / OneDrive / email). Supports -Preview.
   .\metra.ps1 profile show|note|promote|forget|render|gc
   .\metra.ps1 profile sync [-WhatIf] [-Force] [-OpsBaseUrl https://...] [-SyncToken ...]
+  .\metra.ps1 profile status [-OpsBaseUrl https://...] [-SyncToken ...]
+      Satellite freshness vs HQ: Current / Behind / Unknown (no import).
   .\metra.ps1 profile issue-sync-token [-Force]
       Profile Sync v1 (HQ-published, satellite-pulled). issue-sync-token on HQ; sync on laptop/Mac.
       Operator Communication Contract (candidates -> promote -> soft guidelines).
@@ -277,10 +282,10 @@ switch ($Command) {
             Name        = $projectName
             Description = $Description
             Template    = $Template
-            NoGit       = [bool]$NoGit
-            Force       = [bool]$Force
         }
         if ($Root -and $Root.Count -gt 0) { $newParams.Root = $Root[0] }
+        if ($NoGit) { $newParams.NoGit = $true }
+        if ($Force) { $newParams.Force = $true }
         New-MetraProject @newParams | Format-List
     }
 
@@ -289,24 +294,36 @@ switch ($Command) {
             throw "apply requires a source file. Example: .\metra.ps1 apply .\shared\.editorconfig"
         }
         $source = $Rest[0]
-        Copy-MetraProjectFile -Source $source -RelativePath $RelativePath -Filter $Filter -Name $Name -Root $Root -Force:$Force
+        $applyParams = @{
+            Source = $source
+            Filter = $Filter
+        }
+        if ($RelativePath) { $applyParams.RelativePath = $RelativePath }
+        if ($Name) { $applyParams.Name = $Name }
+        if ($Root) { $applyParams.Root = $Root }
+        if ($Force) { $applyParams.Force = $true }
+        Copy-MetraProjectFile @applyParams
     }
 
     'workspace' {
-        $params = @{
-            WhatIfPreview = [bool]$Preview
-        }
-        if ($Months -ge 0) { $params.Months = $Months }
-        if ($ScanDepth -ge 0) { $params.ScanDepth = $ScanDepth }
+        $params = @{}
+        if ($Preview) { $params.WhatIfPreview = $true }
+        if ($WhatIf) { $params.WhatIf = $true }
+        if ($Months -ge 1) { $params.Months = $Months }
+        if ($ScanDepth -ge 1) { $params.ScanDepth = $ScanDepth }
         Update-MetraWorkspace @params | Format-List
     }
 
     'audit' {
-        $params = @{
-            Filter       = $Filter
-            DriftOnly    = [bool]$DriftOnly
-            MetadataOnly = [bool]$MetadataOnly
+        if ($DriftOnly -and $MetadataOnly) {
+            throw 'audit: -DriftOnly and -MetadataOnly are mutually exclusive.'
         }
+        $params = @{
+            Filter = $Filter
+        }
+        # Only splat mode switches when true - false switch keys break exclusive parameter sets.
+        if ($DriftOnly) { $params.DriftOnly = $true }
+        if ($MetadataOnly) { $params.MetadataOnly = $true }
         if ($Name) { $params.Name = $Name }
         if ($Root) { $params.Root = $Root }
         if ($ScanDepth -ge 0) { $params.ScanDepth = $ScanDepth }
@@ -316,15 +333,18 @@ switch ($Command) {
             Write-Host ("Route metadata advisories: {0} (not drift)" -f $result.MetadataCount)
         }
         else {
-            Write-Host ("Audited {0} project(s); drift signals: {1}; route metadata advisories: {2}" -f $result.ProjectCount, $result.DriftCount, $result.MetadataCount)
+            $driftProjects = if ($null -ne $result.DriftProjects) { [int]$result.DriftProjects } else { [int]$result.DriftCount }
+            $driftFindings = if ($null -ne $result.DriftFindings) { [int]$result.DriftFindings } else { [int]$result.DriftCount }
+            Write-Host ("Audited {0} project(s); drift projects: {1}; drift findings: {2}; route metadata advisories: {3}" -f $result.ProjectCount, $driftProjects, $driftFindings, $result.MetadataCount)
         }
     }
 
     'snapshot' {
-        $params = @{
-            Quick = [bool]$Quick
-        }
-        if ($ScanDepth -ge 0) { $params.ScanDepth = $ScanDepth }
+        $params = @{}
+        if ($Quick) { $params.Quick = $true }
+        if ($RefreshSelfDocumentation) { $params.RefreshSelfDocumentation = $true }
+        if ($WhatIf) { $params.WhatIf = $true }
+        if ($ScanDepth -ge 1) { $params.ScanDepth = $ScanDepth }
         Export-MetraSnapshot @params | Format-List
     }
 
@@ -333,6 +353,9 @@ switch ($Command) {
     }
 
     'ops' {
+        if ($Full -and $Quick) {
+            throw 'ops: -Full and -Quick cannot both be specified.'
+        }
         if ($Port -le 0) {
             $Port = [int](Resolve-MetraOpsDeskBinding).Port
         }
@@ -341,32 +364,36 @@ switch ($Command) {
             return
         }
         $params = @{
-            Port       = $Port
-            Quick      = [bool]$Quick
-            Full       = [bool]$Full
-            NoBrowser  = [bool]$NoBrowser
-            NoRefresh  = [bool]$NoRefresh
-            ForceLocal = [bool]$ForceLocal
+            Port = $Port
         }
+        if ($Quick) { $params.Quick = $true }
+        if ($Full) { $params.Full = $true }
+        if ($NoBrowser) { $params.NoBrowser = $true }
+        if ($NoRefresh) { $params.NoRefresh = $true }
+        if ($ForceLocal) { $params.ForceLocal = $true }
         if ($OpsBaseUrl) { $params.OpsBaseUrl = $OpsBaseUrl }
         Start-MetraOpsServer @params
     }
 
     'host' {
+        if ($Stop -and ($Quick -or $NoBrowser -or $NoRefresh -or $ForceLocal)) {
+            throw 'host: -Stop cannot be combined with startup options.'
+        }
         if ($Port -le 0) {
             $Port = [int](Resolve-MetraOpsDeskBinding).Port
+        }
+        if ($Port -lt 1 -or $Port -gt 65535) {
+            throw ("host: resolved Ops port is invalid: {0}" -f $Port)
         }
         if ($Stop) {
             Stop-MetraOpsHost -Port $Port
             return
         }
-        $params = @{
-            Port       = $Port
-            NoBrowser  = [bool]$NoBrowser
-            NoRefresh  = [bool]$NoRefresh
-            Quick      = [bool]$Quick
-            ForceLocal = [bool]$ForceLocal
-        }
+        $params = @{ Port = $Port }
+        if ($NoBrowser) { $params.NoBrowser = $true }
+        if ($NoRefresh) { $params.NoRefresh = $true }
+        if ($Quick) { $params.Quick = $true }
+        if ($ForceLocal) { $params.ForceLocal = $true }
         if ($OpsBaseUrl) { $params.OpsBaseUrl = $OpsBaseUrl }
         Start-MetraOpsHost @params
     }
@@ -377,12 +404,19 @@ switch ($Command) {
         if (-not $queryText -and $Rest -and $Rest.Count -gt 0 -and -not $Ticket) {
             $queryText = ($Rest -join ' ').Trim()
         }
-        $params = @{
-            Days         = $Days
-            Limit        = $Limit
-            IncludeMetra = [bool]$IncludeMetra
-            Cloud        = [bool]$Cloud
+        if ($queryText -and $Ticket) {
+            throw 'chats: -Query and -Ticket are mutually exclusive.'
         }
+        if (-not $Name -and -not $queryText -and -not $Ticket -and -not $IncludeMetra) {
+            throw 'chats: specify -Name, -Query, -Ticket, or -IncludeMetra.'
+        }
+        $params = @{
+            Days  = $Days
+            Limit = $Limit
+        }
+        # Only splat switches when true - false switch keys can confuse exclusive parameter sets.
+        if ($IncludeMetra) { $params.IncludeMetra = $true }
+        if ($Cloud) { $params.Cloud = $true }
         if ($Name) { $params.Name = $Name }
         if ($queryText) { $params.Query = $queryText }
         if ($Ticket) { $params.Ticket = $Ticket }
@@ -404,7 +438,7 @@ switch ($Command) {
         if (-not $exportPath) {
             throw "export-profile requires -Path <dir-or-zip>. Example: .\metra.ps1 export-profile -Path `$env:TEMP\my-metra-profile.zip"
         }
-        Export-MetraProfile -Path $exportPath | Format-List
+        Export-MetraProfile -Path $exportPath -Force:$Force | Format-List
     }
 
     'import-profile' {
@@ -421,12 +455,19 @@ switch ($Command) {
         if (-not $queryText -and $Rest -and $Rest.Count -gt 0) {
             $queryText = ($Rest -join ' ').Trim()
         }
+        if ($AsString -and $Path -and $Path -ne '-') {
+            throw "ctx: -AsString cannot be combined with a file -Path. Use -AsString alone, or -Path '-'."
+        }
         $params = @{
             Format = $Format
         }
         if ($queryText) { $params.Query = $queryText }
-        if ($Path) { $params.Path = $Path }
-        if ($Limit -gt 0 -and $Limit -ne 10) { $params.Limit = $Limit }
+        if ($AsString) {
+            $params.AsString = $true
+        }
+        elseif ($Path) {
+            $params.Path = $Path
+        }
         # Default Limit for ctx is 25; metra.ps1 default Limit is 10 for chats.
         if (-not $PSBoundParameters.ContainsKey('Limit')) {
             $params.Limit = 25
@@ -440,35 +481,42 @@ switch ($Command) {
     'setup' {
         $profilePath = $Profile
         if (-not $profilePath -and $Path) { $profilePath = $Path }
-        if (-not $profilePath -and $Rest -and $Rest.Count -gt 0) { $profilePath = $Rest[0] }
-        $params = @{
-            Preview           = [bool]$Preview
-            Force             = [bool]$Force
-            Advanced          = [bool]$Advanced
-            Quiet             = [bool]$Quiet
-            PreferFriendly    = [bool]$PreferFriendly
-            NoPreferFriendly  = [bool]$NoPreferFriendly
-            BindTailscale     = [bool]$BindTailscale
-            AcceptAsk         = [bool]$AcceptAsk
+        # Never treat leading-dash $Rest tokens as a profile path (PS 5.1 array-splat footgun).
+        if (-not $profilePath -and $Rest -and $Rest.Count -gt 0 -and $Rest[0] -notlike '-*') {
+            $profilePath = $Rest[0]
         }
+        if ($PreferFriendly -and $NoPreferFriendly) {
+            throw 'setup: -PreferFriendly and -NoPreferFriendly cannot both be specified.'
+        }
+        $params = @{}
+        if ($Preview) { $params.Preview = $true }
+        if ($Force) { $params.Force = $true }
+        if ($Advanced) { $params.Advanced = $true }
+        if ($Quiet) { $params.Quiet = $true }
+        if ($PreferFriendly) { $params.PreferFriendly = $true }
+        if ($NoPreferFriendly) { $params.NoPreferFriendly = $true }
+        if ($BindTailscale) { $params.BindTailscale = $true }
+        if ($AcceptAsk) { $params.AcceptAsk = $true }
+        if ($WhatIf) { $params.WhatIf = $true }
         if ($profilePath) { $params.Profile = $profilePath }
         if ($Role) { $params.Role = $Role }
         if ($OpsBaseUrl) { $params.OpsBaseUrl = $OpsBaseUrl }
         if ($SyncToken) { $params.SyncToken = $SyncToken }
-        if ($Months -ge 0) { $params.Months = $Months }
-        if ($ScanDepth -ge 0) { $params.ScanDepth = $ScanDepth }
+        if ($Months -ge 1) { $params.Months = $Months }
+        if ($ScanDepth -ge 1) { $params.ScanDepth = $ScanDepth }
         $setupResult = Initialize-Metra @params
         if (-not $Quiet) {
-            $setupResult | Format-List Preview, SeededConfig, MachineRole, SetupLogPath
+            $setupResult | Format-List Preview, SeededConfig, MachineRole, SetupLogPath, Success
         }
     }
 
     'verify' {
         $report = Test-MetraInstallation -Detailed
         $report.Results |
-            Select-Object Status, Name, Detail |
+            Select-Object Status, Category, Name, Detail |
             Format-Table -AutoSize
-        Write-Host ("PASS={0} WARN={1} FAIL={2}" -f $report.PassCount, $report.WarnCount, $report.FailCount)
+        $ver = if ($null -ne $report.VerifyVersion) { [int]$report.VerifyVersion } else { 0 }
+        Write-Host ("VerifyVersion={0} PASS={1} WARN={2} FAIL={3}" -f $ver, $report.PassCount, $report.WarnCount, $report.FailCount)
         if (-not $report.Ok) {
             exit 1
         }
@@ -481,7 +529,7 @@ switch ($Command) {
 
     'profile' {
         if (-not $Rest -or $Rest.Count -eq 0) {
-            throw "profile requires a subcommand. Example: .\metra.ps1 profile show | profile sync | profile issue-sync-token"
+            throw "profile requires a subcommand. Example: .\metra.ps1 profile show | profile status | profile sync | profile issue-sync-token"
         }
         $sub = $Rest[0]
         $subArgs = @()
@@ -489,11 +537,20 @@ switch ($Command) {
             $subArgs = @($Rest[1..($Rest.Count - 1)])
         }
         switch ($sub.ToLowerInvariant()) {
-            'sync' {
-                $syncParams = @{
-                    WhatIf = [bool]$WhatIf
-                    Force  = [bool]$Force
+            'status' {
+                $statusParams = @{}
+                if ($OpsBaseUrl) { $statusParams.OpsBaseUrl = $OpsBaseUrl }
+                if ($SyncToken) { $statusParams.SyncToken = $SyncToken }
+                if (-not $OpsBaseUrl -and $subArgs.Count -gt 0 -and $subArgs[0] -notlike '-*') {
+                    $statusParams.OpsBaseUrl = $subArgs[0]
                 }
+                Get-MetraProfileSyncClientStatus @statusParams | Format-List
+            }
+            'sync' {
+                $syncParams = @{}
+                # Only splat true switches - false WhatIf keys confuse SupportsShouldProcess binding.
+                if ($WhatIf) { $syncParams.WhatIf = $true }
+                if ($Force) { $syncParams.Force = $true }
                 if ($OpsBaseUrl) { $syncParams.OpsBaseUrl = $OpsBaseUrl }
                 if ($SyncToken) { $syncParams.SyncToken = $SyncToken }
                 # Allow trailing positional OpsBaseUrl for convenience.

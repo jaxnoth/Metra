@@ -22,8 +22,9 @@ function Write-MetraProposalApplyAuditEvent {
 
     $path = Get-MetraProposalApplyAuditPath -DataDir $DataDir
     $dir = Split-Path -Parent $path
-    if (-not (Test-Path -LiteralPath $dir)) {
-        $null = New-Item -ItemType Directory -Path $dir -Force
+    if ($dir -and -not (Test-Path -LiteralPath $dir)) {
+        # Directory.CreateDirectory is literal-path safe; New-Item -LiteralPath is not on all hosts.
+        [void][System.IO.Directory]::CreateDirectory($dir)
     }
 
     $payload = [ordered]@{
@@ -182,19 +183,42 @@ function Confirm-MetraProposalApply {
 }
 
 function Write-MetraProposalFileContent {
+    <#
+    .SYNOPSIS
+        Atomically write UTF-8 (no BOM) proposal content via temp file + Move-Item.
+    #>
     param(
         [Parameter(Mandatory)][string]$FullPath,
         [Parameter(Mandatory)][AllowEmptyString()][string]$ContentUtf8
     )
 
     $dir = Split-Path -Parent $FullPath
-    if (-not (Test-Path -LiteralPath $dir)) {
-        $null = New-Item -ItemType Directory -Path $dir -Force
+    if ($dir -and -not (Test-Path -LiteralPath $dir)) {
+        [void][System.IO.Directory]::CreateDirectory($dir)
     }
 
-    $encoding = New-Object System.Text.UTF8Encoding($false)
-    [System.IO.File]::WriteAllText($FullPath, $ContentUtf8, $encoding)
+    $encoding = [System.Text.UTF8Encoding]::new($false)
+    $tmpName = '.metra-apply-' + [guid]::NewGuid().ToString('N') + '.tmp'
+    $tmp = if ($dir) { Join-Path $dir $tmpName } else { $tmpName }
+    try {
+        [System.IO.File]::WriteAllText($tmp, $ContentUtf8, $encoding)
+        Move-Item -LiteralPath $tmp -Destination $FullPath -Force
+    }
+    catch {
+        try { Remove-Item -LiteralPath $tmp -Force -ErrorAction SilentlyContinue } catch { }
+        throw
+    }
+
     return (ConvertTo-MetraProposalSha256 -Text $ContentUtf8)
+}
+
+function Test-MetraProposalSkipConfirmAllowed {
+    <#
+    .SYNOPSIS
+        True when unattended apply (SkipConfirmForTest) is explicitly enabled for tests.
+    #>
+    param()
+    return ($env:METRA_ALLOW_UNATTENDED_APPLY -match '^(?i)(1|true|yes)$')
 }
 
 function Complete-MetraProposalNonce {
@@ -224,6 +248,9 @@ function Invoke-MetraProposalHostApply {
     <#
     .SYNOPSIS
         Host apply authority: confirm, revalidate, write project files, audit.
+    .PARAMETER SkipConfirmForTest
+        Test-only unattended apply. Requires METRA_ALLOW_UNATTENDED_APPLY=1|true|yes.
+        Alias: -SkipConfirm (same gate).
     #>
     [CmdletBinding()]
     param(
@@ -232,8 +259,13 @@ function Invoke-MetraProposalHostApply {
         [string]$Surface = 'browser',
         [string]$DataDir,
         [scriptblock]$ConfirmAction,
-        [switch]$SkipConfirm
+        [Alias('SkipConfirm')]
+        [switch]$SkipConfirmForTest
     )
+
+    if ($SkipConfirmForTest -and -not (Test-MetraProposalSkipConfirmAllowed)) {
+        throw 'SkipConfirmForTest is disabled outside test mode. Set METRA_ALLOW_UNATTENDED_APPLY=1 for automated tests only.'
+    }
 
     $null = Sync-MetraProposalExpiration -Id $Id -StoreRoot $StoreRoot
     $proposal = Get-MetraProposal -Id $Id -StoreRoot $StoreRoot
@@ -380,7 +412,8 @@ function Invoke-MetraProposalHostApply {
         }
     }
 
-    if (-not $SkipConfirm) {
+    if (-not $SkipConfirmForTest) {
+        Write-MetraProposalApplyAuditEvent -Event 'proposal.confirmShown' -ProposalId $Id -DataDir $DataDir -Fields $auditBase
         $choice = Confirm-MetraProposalApply -Proposal $proposal -ConfirmAction $ConfirmAction
         if ($choice -eq 'deny') {
             $msg = 'Rejected by user'
@@ -398,7 +431,8 @@ function Invoke-MetraProposalHostApply {
                 Proposal      = (Get-MetraProposal -Id $Id -StoreRoot $StoreRoot)
             }
         }
-        if ($choice -ne 'apply') {
+        if ($choice -eq 'skip' -or $choice -ne 'apply') {
+            # Later/skip keeps nonce and status - not a durable decision.
             return [pscustomobject]@{
                 Ok            = $false
                 ResultMessage = 'Skipped'
@@ -406,6 +440,7 @@ function Invoke-MetraProposalHostApply {
                 Proposal      = $proposal
             }
         }
+        Write-MetraProposalApplyAuditEvent -Event 'proposal.confirmAccepted' -ProposalId $Id -DataDir $DataDir -Fields $auditBase
     }
 
     # Re-validate after confirm (TOCTOU).
@@ -431,43 +466,57 @@ function Invoke-MetraProposalHostApply {
         }
     }
 
-    $fileResults = @()
+    Write-MetraProposalApplyAuditEvent -Event 'proposal.writeStarted' -ProposalId $Id -DataDir $DataDir -Fields ($auditBase + @{
+            fileCount = @($files).Count
+        })
+
+    $fileResults = [System.Collections.Generic.List[object]]::new()
     try {
         foreach ($file in $files) {
-            $pathRelative = [string]$file.pathRelative
-            $action = [string]$file.action
-            $content = [string]$file.contentUtf8
+            $pathRelative = [string](Get-MetraProposalEntryValue -Entry $file -Name 'pathRelative')
+            $action = [string](Get-MetraProposalEntryValue -Entry $file -Name 'action')
+            $content = [string](Get-MetraProposalEntryValue -Entry $file -Name 'contentUtf8')
             $target = Resolve-MetraProposalJailTargetPath -RootPath ([string]$proposal.Body.rootPath) -PathRelative $pathRelative
             if ([string]::IsNullOrWhiteSpace($target)) {
                 throw "Path outside project root: $pathRelative"
             }
             $previousHash = $null
-            if ($file -is [System.Collections.IDictionary] -and $file.Contains('previousHash')) {
-                $previousHash = [string]$file['previousHash']
-            }
-            elseif ($file.ContainsKey -and $file.ContainsKey('previousHash')) {
-                $previousHash = [string]$file['previousHash']
+            $prevRaw = Get-MetraProposalEntryValue -Entry $file -Name 'previousHash'
+            if ($null -ne $prevRaw -and -not [string]::IsNullOrWhiteSpace([string]$prevRaw)) {
+                $previousHash = [string]$prevRaw
             }
             $newHash = Write-MetraProposalFileContent -FullPath $target -ContentUtf8 $content
-            $fileResults += ,[pscustomobject]@{
-                pathRelative = $pathRelative
-                action       = $action
-                previousHash = $previousHash
-                newHash      = $newHash
-            }
+            $fileResults.Add([pscustomobject]@{
+                    pathRelative = $pathRelative
+                    action       = $action
+                    previousHash = $previousHash
+                    newHash      = $newHash
+                })
         }
     }
     catch {
         $msg = $_.Exception.Message
-        Write-MetraProposalApplyAuditEvent -Event 'proposal.policyDenied' -ProposalId $Id -DataDir $DataDir -Fields ($auditBase + @{
-                result  = 'writeFailed'
-                message = $msg
+        $written = @($fileResults.ToArray())
+        # Partial write consumes the proposal so retry cannot silently finish a half-applied set.
+        if ($written.Count -gt 0) {
+            $rejectMsg = "Partial write failure: $msg"
+            $null = Set-MetraProposalStatus -Id $Id -Status rejected -ResultMessage $rejectMsg -StoreRoot $StoreRoot
+            $proposal = Get-MetraProposal -Id $Id -StoreRoot $StoreRoot
+            Complete-MetraProposalNonce -Proposal $proposal -StoreRoot $StoreRoot
+            $msg = $rejectMsg
+        }
+        Write-MetraProposalApplyAuditEvent -Event 'proposal.writeFailed' -ProposalId $Id -DataDir $DataDir -Fields ($auditBase + @{
+                result       = 'writeFailed'
+                message      = $msg
+                filesWritten = $written
+                partialWrite = ($written.Count -gt 0)
             })
         return [pscustomobject]@{
             Ok            = $false
             ResultMessage = $msg
-            ReasonCode    = 'policyDenied'
-            Proposal      = $proposal
+            ReasonCode    = 'writeFailed'
+            Files         = $written
+            Proposal      = (Get-MetraProposal -Id $Id -StoreRoot $StoreRoot)
         }
     }
 
@@ -477,14 +526,14 @@ function Invoke-MetraProposalHostApply {
 
     Write-MetraProposalApplyAuditEvent -Event 'proposal.applied' -ProposalId $Id -DataDir $DataDir -Fields ($auditBase + @{
             result = 'applied'
-            files  = @($fileResults)
+            files  = @($fileResults.ToArray())
         })
 
     return [pscustomobject]@{
         Ok            = $true
         ResultMessage = 'Applied'
         ReasonCode    = 'applied'
-        Files         = $fileResults
+        Files         = @($fileResults.ToArray())
         Proposal      = (Get-MetraProposal -Id $Id -StoreRoot $StoreRoot)
     }
 }
@@ -501,7 +550,8 @@ function Sync-MetraProposalHostPending {
         [string]$DataDir,
         [int]$MaxCount = 1,
         [scriptblock]$ConfirmAction,
-        [switch]$SkipConfirm
+        [Alias('SkipConfirm')]
+        [switch]$SkipConfirmForTest
     )
 
     if ($script:MetraProposalApplyBusy) {
@@ -524,7 +574,7 @@ function Sync-MetraProposalHostPending {
                     -Surface $Surface `
                     -DataDir $DataDir `
                     -ConfirmAction $ConfirmAction `
-                    -SkipConfirm:$SkipConfirm))
+                    -SkipConfirmForTest:$SkipConfirmForTest))
             $count++
         }
         return @($results.ToArray())

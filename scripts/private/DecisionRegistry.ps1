@@ -55,7 +55,12 @@ function Get-MetraDecisionRegistry {
         return New-MetraDecisionRegistryEmpty
     }
 
-    $obj = $raw | ConvertFrom-Json
+    try {
+        $obj = $raw | ConvertFrom-Json
+    }
+    catch {
+        throw ("Failed to parse Decision Registry ledger '{0}': {1}" -f $paths.LedgerPath, $_.Exception.Message)
+    }
     $candidates = @()
     if ($null -ne $obj.candidates) { $candidates = @($obj.candidates) }
     $confirmed = @()
@@ -89,7 +94,8 @@ function Save-MetraDecisionRegistry {
     $paths = Get-MetraDecisionRegistryPaths -MetraRoot $MetraRoot
     $docsDir = Split-Path -Parent $paths.LedgerPath
     if (-not (Test-Path -LiteralPath $docsDir)) {
-        New-Item -ItemType Directory -Path $docsDir -Force | Out-Null
+        # Directory.CreateDirectory is literal-path safe; New-Item -LiteralPath is not on all hosts.
+        [void][System.IO.Directory]::CreateDirectory($docsDir)
     }
 
     $payload = [ordered]@{
@@ -266,13 +272,15 @@ function Resolve-MetraDecisionRegistryEntry {
     $norm = (Normalize-MetraDecisionText $key).ToLowerInvariant()
     foreach ($c in @($Registry.candidates)) {
         $title = [string](Get-MetraProp -Object $c -Name 'title' -Default '')
-        if ($title.ToLowerInvariant() -eq $norm) {
+        $titleNorm = (Normalize-MetraDecisionText $title).ToLowerInvariant()
+        if ($titleNorm -eq $norm) {
             return [PSCustomObject]@{ Bucket = 'candidates'; Entry = $c }
         }
     }
     foreach ($c in @($Registry.confirmed)) {
         $title = [string](Get-MetraProp -Object $c -Name 'title' -Default '')
-        if ($title.ToLowerInvariant() -eq $norm) {
+        $titleNorm = (Normalize-MetraDecisionText $title).ToLowerInvariant()
+        if ($titleNorm -eq $norm) {
             return [PSCustomObject]@{ Bucket = 'confirmed'; Entry = $c }
         }
     }
@@ -397,6 +405,8 @@ function Promote-MetraDecisionRegistryEntry {
     <#
     .SYNOPSIS
         Promotes a candidate to confirmed. Requires why, confidence, and evidence.
+    .PARAMETER ExemptId
+        Confirmed id excluded from the active budget count (supersede promote-first).
     #>
     [CmdletBinding()]
     param(
@@ -404,6 +414,7 @@ function Promote-MetraDecisionRegistryEntry {
         [string]$Why,
         [string]$Confidence,
         $Evidence,
+        [string]$ExemptId,
         [string]$MetraRoot = (Get-MetraRoot)
     )
 
@@ -434,13 +445,22 @@ function Promote-MetraDecisionRegistryEntry {
             $validated.Why
         ) -join ' ')
     if (Test-MetraDecisionRegistryProductPolicyText -Text $probe) {
-        throw 'Looks like every-clone Metra product policy. Record it in docs/Decisions.md instead of the Decision Registry.'
+        throw 'Looks like every-clone Metra product policy, not local operational memory. Record product-wide policy in docs/Decisions.md instead of the Decision Registry.'
     }
 
     $max = [int]$registry.maxConfirmed
     if ($max -le 0) { $max = $script:MetraDecisionRegistryMaxConfirmed }
+    $exempt = Normalize-MetraDecisionText $ExemptId
     $activeConfirmed = @($registry.confirmed | Where-Object {
-            ([string](Get-MetraProp -Object $_ -Name 'status' -Default 'active')) -eq 'active'
+            $status = [string](Get-MetraProp -Object $_ -Name 'status' -Default 'active')
+            if ($status -ne 'active') { return $false }
+            if ($exempt) {
+                $rowId = [string](Get-MetraProp -Object $_ -Name 'id' -Default '')
+                if ([string]::Equals($rowId, $exempt, [StringComparison]::OrdinalIgnoreCase)) {
+                    return $false
+                }
+            }
+            return $true
         })
     if ($activeConfirmed.Count -ge $max) {
         throw ("Confirmed Decision Registry budget is full ({0}). Run decisions forget <id> or supersede before promoting another." -f $max)
@@ -692,7 +712,8 @@ function Get-MetraDecisionRegistryReview {
             if (-not [string]::IsNullOrWhiteSpace($why)) { continue }
             $id = [string](Get-MetraProp -Object $row -Name 'id' -Default '')
             if ([string]::IsNullOrWhiteSpace($id)) { continue }
-            if ($missingById.Contains($id)) { continue }
+            # OrderedDictionary has Contains(key), not ContainsKey - use Keys for clarity.
+            if (@($missingById.Keys) -contains $id) { continue }
             $missingById[$id] = [PSCustomObject]@{
                 id     = $id
                 title  = [string](Get-MetraProp -Object $row -Name 'title' -Default '')
@@ -801,8 +822,9 @@ function Search-MetraDecisionRegistry {
     $tokens = @()
     if (-not [string]::IsNullOrWhiteSpace($Query)) {
         $tokens = @(
-            ($Query.ToLowerInvariant() -split '\W+') |
-                Where-Object { $_ -and $_.Length -gt 1 }
+            ($Query.ToLowerInvariant() -split '[^a-z0-9_+]+') |
+                Where-Object { $_ -and $_.Length -gt 1 } |
+                Select-Object -Unique
         )
     }
     $projectFilter = Normalize-MetraDecisionText $Project
@@ -876,7 +898,10 @@ function Search-MetraDecisionRegistry {
 
     return @(
         $rows |
-            Sort-Object @{ Expression = 'Score'; Descending = $true }, @{ Expression = 'Date'; Descending = $true }, Title |
+            Sort-Object `
+                @{ Expression = { $_.Score }; Descending = $true },
+                @{ Expression = { $_.Date }; Descending = $true },
+                @{ Expression = { $_.Title } } |
             Select-Object -First $Limit
     )
 }
@@ -1050,6 +1075,9 @@ function Set-MetraDecisionRegistrySupersede {
     <#
     .SYNOPSIS
         Marks an old confirmed decision superseded and promotes a replacement.
+    .DESCRIPTION
+        Promote-first: the old decision stays active until the replacement is promoted.
+        Then old status and new supersedes are written in one final save.
     #>
     [CmdletBinding()]
     param(
@@ -1067,40 +1095,51 @@ function Set-MetraDecisionRegistrySupersede {
     )
 
     $validated = Assert-MetraDecisionPromotionFields -Why $Why -Confidence $Confidence -Evidence $Evidence
+
     $registry = Get-MetraDecisionRegistry -MetraRoot $MetraRoot
     $old = Resolve-MetraDecisionRegistryEntry -Registry $registry -IdOrTitle $OldId
     if (-not $old -or $old.Bucket -ne 'confirmed') {
         throw "supersede requires an existing confirmed id (got '$OldId')."
     }
 
-    $old.Entry.status = 'superseded'
+    $oldStatus = Get-MetraProp -Object $old.Entry -Name 'status' -Default 'active'
+    if ($oldStatus -eq 'superseded') {
+        throw ("Already superseded: {0}" -f $old.Entry.id)
+    }
+
     $note = Add-MetraDecisionRegistryCandidate `
         -Title $Title -Decision $Decision -Why $validated.Why -Project $Project `
         -Tags $Tags -See $See -Source $Source -Origin operator `
         -Confidence $validated.Confidence -Evidence $validated.Evidence `
         -MetraRoot $MetraRoot
 
-    # Reload after note write
+    $promoted = Promote-MetraDecisionRegistryEntry `
+        -IdOrTitle $note.Id `
+        -MetraRoot $MetraRoot `
+        -ExemptId ([string]$old.Entry.id)
+
     $registry = Get-MetraDecisionRegistry -MetraRoot $MetraRoot
+
     $oldAgain = Resolve-MetraDecisionRegistryEntry -Registry $registry -IdOrTitle $OldId
-    if ($oldAgain -and $oldAgain.Bucket -eq 'confirmed') {
-        $oldAgain.Entry.status = 'superseded'
-        Save-MetraDecisionRegistry -Registry $registry -MetraRoot $MetraRoot
+    if (-not $oldAgain -or $oldAgain.Bucket -ne 'confirmed') {
+        throw ("Replacement was promoted, but old decision could not be reloaded for supersede: {0}" -f $OldId)
     }
 
-    $promoted = Promote-MetraDecisionRegistryEntry -IdOrTitle $note.Id -MetraRoot $MetraRoot
-    $registry = Get-MetraDecisionRegistry -MetraRoot $MetraRoot
     $newEntry = Resolve-MetraDecisionRegistryEntry -Registry $registry -IdOrTitle $promoted.Id
-    if ($newEntry -and $newEntry.Bucket -eq 'confirmed') {
-        $newEntry.Entry.supersedes = [string]$old.Entry.id
-        Save-MetraDecisionRegistry -Registry $registry -MetraRoot $MetraRoot
+    if (-not $newEntry -or $newEntry.Bucket -ne 'confirmed') {
+        throw ("Replacement was promoted, but new decision could not be reloaded: {0}" -f $promoted.Id)
     }
+
+    $oldAgain.Entry.status = 'superseded'
+    $newEntry.Entry.supersedes = [string]$oldAgain.Entry.id
+
+    Save-MetraDecisionRegistry -Registry $registry -MetraRoot $MetraRoot
 
     return [PSCustomObject]@{
-        Action     = 'superseded'
-        OldId      = [string]$old.Entry.id
-        NewId      = [string]$promoted.Id
-        Title      = [string]$promoted.Title
+        Action = 'superseded'
+        OldId  = [string]$oldAgain.Entry.id
+        NewId  = [string]$promoted.Id
+        Title  = [string]$promoted.Title
     }
 }
 

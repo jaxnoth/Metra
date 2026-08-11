@@ -138,6 +138,7 @@ export type TicketWatchStoreResult = {
   iSupportWrite: boolean
   recommendationWritten: boolean
   warning?: string
+  nextSteps?: string
   autoStoreRecommend?: boolean
 }
 

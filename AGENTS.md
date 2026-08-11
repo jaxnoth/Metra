@@ -152,6 +152,6 @@ Focused module tests (PowerShell 7 + Pester 5+): `pwsh -NoProfile -File .\tests\
 
 ## Maintenance
 
-Re-run `.\metra.ps1 audit` after adding a project or changing layout. Update the appropriate registry (`projects.json` only for shared entries), project `AGENTS.md`, and `.cursorignore` only when audit reports drift. After registry **route / trigger / purpose** changes, run `.\metra.ps1 selfdoc` so the self-documentation canvas and `docs/Overview.md` regenerate standing examples (`snapshot` also runs selfdoc). See [docs/Context-Routing.md](docs/Context-Routing.md). After routing or persona policy changes that should stick, append [docs/Decisions.md](docs/Decisions.md). Smoke fixtures: `.\metra.ps1 verify`.
+Re-run `.\metra.ps1 audit` after adding a project or changing layout. Update the appropriate registry (`projects.json` only for shared entries), project `AGENTS.md`, and `.cursorignore` only when audit reports drift. After registry **route / trigger / purpose** changes, run `.\metra.ps1 selfdoc` so the self-documentation canvas and `docs/Overview.md` regenerate standing examples (or `snapshot -RefreshSelfDocumentation`). See [docs/Context-Routing.md](docs/Context-Routing.md). After routing or persona policy changes that should stick, append [docs/Decisions.md](docs/Decisions.md). Smoke fixtures: `.\metra.ps1 verify`.
 
 Operator-facing brand (palette, Ops board, workspace naming) lives in [docs/Brand.md](docs/Brand.md). Tickets and commits stay in the professional sink - no Metra chrome.

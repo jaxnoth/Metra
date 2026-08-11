@@ -12,6 +12,12 @@ Keep agent response time and token use low by routing to one project, then loadi
 | `projects.local.json` | Machine-private work entries (gitignored) |
 | Root `registryFile` | Optional per-root overlay (e.g. personal iCloud) |
 
+**Registry merge precedence** (same project `name`: later wins):
+
+1. Shared `projects.json`
+2. Each configured root `registryFile` (`Get-MetraRoots` order)
+3. `projects.local.json`
+
 Registry project rows use the same optional arrays for consistency: `triggers`, `capabilities`, `serves`, `gitPaths`, and `related` (all `string[]`). `gitPaths` names folders **below** the project root that hold the git repo, for projects where the root is not the repo (for example Jitterbit tracks `IWU.Jitterbit/`). When the root has no `.git` and `gitPaths` is absent, the snapshot shallow-probes immediate child folders; counts across nested repos are summed and the desk labels the subfolder. Set `gitPaths` explicitly when the probe would be ambiguous or wrong. `serves` is **For whom?** - audiences of the work (roles, teams, consumer systems), never people/requester memory. Omit or leave empty when unknown; `routing -Name` / `-Query` and `ctx` print a For whom? block only when non-empty. `related` is same-root neighbor topology (preserve registry order; dedupe; cap 6 in `ctx` / routing via `Get-MetraRelatedProjects`). **Related is topology, not permission to multi-repo search** - open a related project only when evidence requires it.
 | `profiles/sample/` | Anonymized operator pack for `import-profile` |
 | `AGENTS.md` | Short human/agent fallback for the Metra checkout |
@@ -47,7 +53,7 @@ Treat `triggers` like Agent Skills "when to activate" text: short, distinctive p
 
 Shared stop list for query scoring lives in `Get-MetraRoutingStopWords` (`scripts/private/Routing.ps1`). Prefer triggers that would survive that filter if used as query tokens.
 
-After any registry trigger / purpose / route edit that should appear in the explain surface: update the owning registry file, then `.\metra.ps1 selfdoc` (or `snapshot`). Do not invent a parallel process. Report-only route metadata checks live on `.\metra.ps1 audit` and `.\metra.ps1 audit -MetadataOnly` (empty purpose/triggers, optional missing `whenMissing`, exact stop-word / single-character triggers). Advisories only - never auto-edit the registry and never counted as drift.
+After any registry trigger / purpose / route edit that should appear in the explain surface: update the owning registry file, then `.\metra.ps1 selfdoc` (or `Export-MetraSnapshot -RefreshSelfDocumentation`). Do not invent a parallel process. Report-only route metadata checks live on `.\metra.ps1 audit` and `.\metra.ps1 audit -MetadataOnly` (empty purpose/triggers, optional missing `whenMissing`, exact stop-word / single-character triggers). Advisories only - never auto-edit the registry and never counted as drift.
 
 Human-facing desks (HTML Ops Ask / Route, Overview/selfdoc, companion stubs) consume these same fields - map quality is not agent-only. Parking-lot dependency notes: gitignored `docs/Future-Development.local.md` (Agent-facing lane).
 
@@ -87,12 +93,19 @@ What it updates:
 
 | Artifact | Role |
 |----------|------|
-| Cursor canvas `metra-self-documentation` | Visual primary - route diagram + standing examples from registry |
+| Cursor canvas `metra-self-documentation` | Visual primary - route diagram + standing examples verified by the live router |
 | `docs/Overview.md` | Sendable prose twin (standing route table between HTML markers) |
 | `docs/selfdoc-routes.json` | Sidecar for site/forge later |
+| `docs/selfdoc-routing-examples.json` | Living validation suite (ticket id, home fallback, verified asks) |
 | `integrations/cursor/metra-self-documentation.canvas.tsx.template` | Tracked template synced from the live canvas |
 
-`.\metra.ps1 snapshot` also runs `selfdoc` at the end so Ops refresh and self-doc stay coupled. Do not hand-edit the generated route table or the canvas `SELFDOC_ROUTES` embed - change the registry, then re-run `selfdoc`.
+Selfdoc documents **routing behavior**, not only registry fields:
+
+- Sample asks are confirmed with `Get-MetraRoutingAmbiguity` (so ticket id / vocab / solutions precedence stay honest).
+- Only **present** projects from `Get-MetraRoutingTable` appear.
+- Featured order comes from `routing.featuredProjects` and/or project `featured: true` (not a hard-coded list in `SelfDocumentation.ps1`).
+
+`.\metra.ps1 snapshot` exports board state only; pass `-RefreshSelfDocumentation` when you want selfdoc in the same call. `.\metra.ps1 setup` regenerates the context pack and self-documentation as a pair (same known-good checkout). Do not hand-edit the generated route table or the canvas `SELFDOC_ROUTES` embed - change the registry / triggers, then re-run `selfdoc`.
 
 ## What to update on drift
 
@@ -104,7 +117,7 @@ What it updates:
 | New large/generated path not excluded | Extend `.cursorignore` and registry `excludePaths` |
 | Stale trigger terms | Update the owning registry from current README/entry docs, then `.\metra.ps1 selfdoc` |
 | Route metadata advisories (`audit -MetadataOnly`) | Fix the named field on that registry row; never treat as drift; then `.\metra.ps1 selfdoc` if purpose/triggers changed |
-| Registry route / trigger / purpose change | `.\metra.ps1 selfdoc` (or `snapshot`) so the self-doc canvas + Overview stay honest |
+| Registry route / trigger / purpose change | `.\metra.ps1 selfdoc` (or `snapshot -RefreshSelfDocumentation`) so the self-doc canvas + Overview stay honest |
 | Routine edits inside existing paths | No registry work |
 
 ## Cadence principle

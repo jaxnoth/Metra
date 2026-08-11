@@ -153,6 +153,20 @@ function formatUpdatedShort(iso: string | undefined): string {
   return `Updated ${new Date(t).toLocaleString()}`
 }
 
+/** Compact relative time for satellite roster (today / yesterday / N days ago). */
+function formatRelativeUtc(iso: string | undefined): string {
+  if (!iso) return ''
+  const t = Date.parse(iso)
+  if (Number.isNaN(t)) return iso
+  const mins = Math.max(0, Math.round((Date.now() - t) / 60000))
+  if (mins < 60) return 'today'
+  const hours = Math.round(mins / 60)
+  if (hours < 24) return 'today'
+  const days = Math.round(hours / 24)
+  if (days === 1) return 'yesterday'
+  return `${days} days ago`
+}
+
 /** Quiet/busy narration - never invents certainty like "All clear." */
 function awarenessNarration(
   waiting: number,
@@ -333,11 +347,13 @@ function ResolveActions({
   const [diffText, setDiffText] = useState('')
   const [localBusy, setLocalBusy] = useState(false)
   const [feedback, setFeedback] = useState(attention.note || '')
+  const [recommendPreview, setRecommendPreview] = useState<string | null>(null)
   const bridge = getMetraBridge()
   const key = attention.key || attention.id
 
   useEffect(() => {
     setFeedback(attention.note || '')
+    setRecommendPreview(null)
   }, [attention.key, attention.id, attention.note])
 
   useEffect(() => {
@@ -528,27 +544,39 @@ function ResolveActions({
     return m ? m[1] : null
   })()
 
-  async function onWatchRecommend(mode: 'preview' | 'confirm') {
+  async function onWatchRecommend(mode: 'preview' | 'confirm', force = false) {
     if (!ticketIdFromKey) {
       onStatus('Missing ticket id for recommendation.')
       return
     }
+    if (mode === 'confirm' && force) {
+      const ok = window.confirm(
+        'Force write recommendation to iSupport even though local evidence is still thin?',
+      )
+      if (!ok) return
+    }
     setLocalBusy(true)
     onStatus(null)
+    setRecommendPreview(null)
     try {
       const res = await watchRecommend(ticketIdFromKey, {
         preview: mode === 'preview',
         confirm: mode === 'confirm',
+        force,
       })
       if (res.desk) onDeskUpdate(res.desk)
-      if (!res.ok || !res.store?.ok) {
-        onStatus(res.store?.warning || res.error || 'Recommendation action failed.')
+      const store = res.store
+      const next = store?.nextSteps || store?.warning || res.error || ''
+      if (!res.ok || !store?.ok) {
+        onStatus(next || 'Recommendation action failed.')
         return
       }
+      if (store.body) setRecommendPreview(store.body)
       if (mode === 'preview') {
-        onStatus(
-          'Preview: local recommend-draft saved (no iSupport write). Review body, then Write recommendation.',
-        )
+        const head = store.recommendable
+          ? 'Preview: local recommend-draft saved (no iSupport write).'
+          : 'Preview: next-evidence brief (not a recommendation; no iSupport write).'
+        onStatus(next ? `${head} ${next}` : head)
       } else {
         onStatus(
           'Wrote recommendation to iSupport (store-as-review). Re-run supersedes the same section. Not resolved.',
@@ -587,7 +615,21 @@ function ResolveActions({
           >
             Write recommendation
           </button>
+          <button
+            type="button"
+            className="btn btn-secondary"
+            disabled={disabled}
+            title="Write to iSupport even when local evidence is still thin"
+            onClick={() => void onWatchRecommend('confirm', true)}
+          >
+            Force write
+          </button>
         </div>
+      )}
+      {recommendPreview && (
+        <pre className="attention-recommend-preview" style={{ whiteSpace: 'pre-wrap' }}>
+          {recommendPreview}
+        </pre>
       )}
       <label className="attention-feedback">
         <span className="muted">
@@ -1335,12 +1377,7 @@ export default function App() {
       const issued = await issueProfileSyncToken(rotate)
       if (issued.token) {
         setProfileSyncTokenShown(issued.token)
-        try {
-          await navigator.clipboard.writeText(issued.token)
-          setSettingsStatus('Sync token copied to clipboard. Paste into satellite docs/profile-sync.local.json as syncToken.')
-        } catch {
-          setSettingsStatus(issued.message || 'Sync token issued - copy it now; it is shown once.')
-        }
+        setSettingsStatus(issued.message || 'Sync token issued. Copy it for the satellite.')
       } else {
         setProfileSyncTokenShown(null)
         setSettingsStatus(issued.message || 'Token already exists. Use Rotate to mint a new one.')
@@ -1349,6 +1386,16 @@ export default function App() {
       setError(e instanceof Error ? e.message : String(e))
     } finally {
       setBusy(false)
+    }
+  }
+
+  async function onCopyProfileSyncToken() {
+    if (!profileSyncTokenShown) return
+    try {
+      await navigator.clipboard.writeText(profileSyncTokenShown)
+      setSettingsStatus('Sync token copied to clipboard.')
+    } catch {
+      setError('Could not copy token to clipboard.')
     }
   }
 
@@ -1374,7 +1421,10 @@ export default function App() {
       const result = await postProductUpdate(target)
       if (result.updates) setProductUpdates(result.updates)
       else await loadProductUpdates(true)
-      setSettingsStatus(result.message || (result.ok ? 'Update finished.' : 'Update failed.'))
+      const baseMsg = result.message || (result.ok ? 'Update finished.' : 'Update failed.')
+      setSettingsStatus(
+        result.restartRequired ? `${baseMsg} Restart Metra Ops to finish.` : baseMsg,
+      )
       if (!result.ok) setError(result.message || 'Update failed.')
       await load()
     } catch (e) {
@@ -2763,8 +2813,10 @@ export default function App() {
             <div>
               <strong>Profile Sync</strong>
               <p className="muted">
-                HQ-published, satellite-pulled. Download a pack here, or sync from a laptop with{' '}
-                <code>.\metra.ps1 profile sync</code>. No Apply-to-this-device over Tailscale.
+                HQ-published, satellite-pulled. Fingerprint is publisher-side - satellites update
+                after <code>profile sync</code> or upgrade pull. Download a pack here, or sync from
+                a laptop with <code>.\metra.ps1 profile sync</code>. No Apply-to-this-device over
+                Tailscale.
               </p>
               {profileSyncStatus ? (
                 <ul className="muted" style={{ margin: '0.4rem 0', paddingLeft: '1.1rem' }}>
@@ -2778,6 +2830,23 @@ export default function App() {
               ) : (
                 <p className="muted">Status unavailable (needs operator session).</p>
               )}
+              <div style={{ marginTop: '0.6rem' }}>
+                <strong>Satellites</strong>
+                {profileSyncStatus?.satellites && profileSyncStatus.satellites.length > 0 ? (
+                  <ul className="muted" style={{ margin: '0.4rem 0', paddingLeft: '1.1rem' }}>
+                    {profileSyncStatus.satellites.map((sat) => (
+                      <li key={sat.machineName}>
+                        {sat.machineName} - {sat.state}
+                        {sat.lastSeenUtc ? ` - seen ${formatRelativeUtc(sat.lastSeenUtc)}` : ''}
+                      </li>
+                    ))}
+                  </ul>
+                ) : (
+                  <p className="muted" style={{ margin: '0.4rem 0' }}>
+                    No satellites have checked in yet. They report after profile status or sync.
+                  </p>
+                )}
+              </div>
               <div className="settings-root-actions">
                 <button type="button" disabled={busy} onClick={() => void onDownloadProfilePack()}>
                   Download profile zip
@@ -2801,9 +2870,23 @@ export default function App() {
                 </button>
               </div>
               {profileSyncTokenShown ? (
-                <p className="muted" style={{ marginTop: '0.5rem', wordBreak: 'break-all' }}>
-                  Token (copy now): <code>{profileSyncTokenShown}</code>
-                </p>
+                <div
+                  className="muted"
+                  style={{
+                    marginTop: '0.5rem',
+                    display: 'flex',
+                    flexWrap: 'wrap',
+                    gap: '0.5rem',
+                    alignItems: 'center',
+                  }}
+                >
+                  <span>
+                    Token: <code style={{ wordBreak: 'break-all' }}>{profileSyncTokenShown}</code>
+                  </span>
+                  <button type="button" disabled={busy} onClick={() => void onCopyProfileSyncToken()}>
+                    Copy
+                  </button>
+                </div>
               ) : null}
             </div>
           </div>
@@ -3084,6 +3167,20 @@ export default function App() {
               </p>
               {productUpdates ? (
                 <ul className="muted" style={{ marginTop: '0.5rem' }}>
+                  {productUpdates.lastUpdatedAt ? (
+                    <li style={{ marginBottom: '0.5rem' }}>
+                      Last applied:{' '}
+                      {productUpdates.lastMetraVersion
+                        ? `Metra ${productUpdates.lastMetraVersion}`
+                        : null}
+                      {productUpdates.lastMetraVersion && productUpdates.lastOllamaVersion
+                        ? '; '
+                        : null}
+                      {productUpdates.lastOllamaVersion
+                        ? `Ollama ${productUpdates.lastOllamaVersion}`
+                        : null}
+                    </li>
+                  ) : null}
                   <li style={{ marginBottom: '0.5rem' }}>
                     Metra: {productUpdates.metra.message || productUpdates.metra.status}
                     {productUpdates.metra.canUpdate ? (

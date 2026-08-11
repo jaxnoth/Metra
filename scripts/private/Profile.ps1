@@ -1,5 +1,91 @@
 # Generated from the original Metra.psm1 domain split. Edit this file directly.
 
+$script:MetraProfileSatelliteMaxAgeDays = 180
+
+function Write-MetraProfileAtomicText {
+    <#
+    .SYNOPSIS
+        Atomically replace a UTF-8 (no BOM) text file via temp + Move-Item.
+    #>
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory)][string]$Path,
+        [Parameter(Mandatory)][AllowEmptyString()][string]$Text
+    )
+
+    $dir = Split-Path -Parent $Path
+    if ($dir -and -not (Test-Path -LiteralPath $dir)) {
+        # Directory.CreateDirectory is literal-path safe; New-Item -LiteralPath is not on all hosts.
+        [void][System.IO.Directory]::CreateDirectory($dir)
+    }
+    $tmp = "$Path.tmp"
+    [System.IO.File]::WriteAllText($tmp, $Text, (Get-MetraUtf8NoBomEncoding))
+    Move-Item -LiteralPath $tmp -Destination $Path -Force
+}
+
+function Assert-MetraArchiveExtractContained {
+    <#
+    .SYNOPSIS
+        After Expand-Archive, refuse any extracted entry that escapes DestinationRoot (Zip Slip).
+    #>
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory)][string]$DestinationRoot
+    )
+
+    $rootFull = [System.IO.Path]::GetFullPath($DestinationRoot)
+    if (-not (Test-Path -LiteralPath $rootFull)) {
+        throw "Archive extract root missing: $rootFull"
+    }
+
+    foreach ($entry in @(Get-ChildItem -LiteralPath $rootFull -Recurse -Force -ErrorAction SilentlyContinue)) {
+        # Refuse junctions/symlinks - GetFullPath does not always resolve reparse targets.
+        if (($entry.Attributes -band [System.IO.FileAttributes]::ReparsePoint) -ne 0) {
+            throw "Archive contains invalid path (reparse point): $($entry.FullName)"
+        }
+        $full = $null
+        try {
+            $full = [System.IO.Path]::GetFullPath($entry.FullName)
+        }
+        catch {
+            throw "Archive contains invalid path: $($entry.FullName)"
+        }
+        if (-not (Test-MetraPathWithinRoot -Path $full -Root $rootFull)) {
+            throw "Archive contains invalid path: $($entry.FullName)"
+        }
+    }
+}
+
+function Test-MetraProfileOpsBaseUrlForm {
+    <#
+    .SYNOPSIS
+        True when OpsBaseUrl can be persisted (absolute http(s) URI, or host-like shorthand).
+    #>
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory)][AllowEmptyString()][string]$OpsBaseUrl
+    )
+
+    $raw = ([string]$OpsBaseUrl).Trim()
+    if ([string]::IsNullOrWhiteSpace($raw)) { return $true }
+
+    $candidate = $raw
+    if ($candidate -notmatch '^[a-zA-Z][a-zA-Z0-9+.-]*://') {
+        $candidate = 'http://' + $candidate
+    }
+    $uri = $null
+    if (-not [uri]::TryCreate($candidate, [UriKind]::Absolute, [ref]$uri)) {
+        return $false
+    }
+    if ($uri.Scheme -notin @('http', 'https')) {
+        return $false
+    }
+    if ([string]::IsNullOrWhiteSpace($uri.DnsSafeHost) -and [string]::IsNullOrWhiteSpace($uri.Host)) {
+        return $false
+    }
+    return $true
+}
+
 function Get-MetraProfileFileMap {
     <#
     .SYNOPSIS
@@ -52,8 +138,15 @@ function Resolve-MetraProfileSourceDir {
     }
 
     $tempRoot = Join-Path ([System.IO.Path]::GetTempPath()) ('metra-profile-' + [guid]::NewGuid().ToString('N'))
-    New-Item -ItemType Directory -Path $tempRoot -Force | Out-Null
-    Expand-Archive -LiteralPath $item.FullName -DestinationPath $tempRoot -Force
+    [void][System.IO.Directory]::CreateDirectory($tempRoot)
+    try {
+        Expand-Archive -LiteralPath $item.FullName -DestinationPath $tempRoot -Force
+        Assert-MetraArchiveExtractContained -DestinationRoot $tempRoot
+    }
+    catch {
+        Remove-Item -LiteralPath $tempRoot -Recurse -Force -ErrorAction SilentlyContinue
+        throw
+    }
 
     $manifest = Get-ChildItem -LiteralPath $tempRoot -Filter 'metra-profile.json' -Recurse -File -ErrorAction SilentlyContinue |
         Select-Object -First 1
@@ -68,14 +161,19 @@ function Resolve-MetraProfileSourceDir {
         $children = @(Get-ChildItem -LiteralPath $tempRoot -Directory)
         $childDir = if ($children.Count -eq 1) { $children[0].FullName } else { $null }
         if ($childDir -and (
-                (Test-Path (Join-Path $childDir 'metra-profile.json')) -or
-                (Test-Path (Join-Path $childDir 'meta-profile.json'))
+                (Test-Path -LiteralPath (Join-Path $childDir 'metra-profile.json')) -or
+                (Test-Path -LiteralPath (Join-Path $childDir 'meta-profile.json'))
             )) {
             $childDir
         }
         else {
             $tempRoot
         }
+    }
+
+    if (-not (Test-MetraPathWithinRoot -Path $dir -Root $tempRoot)) {
+        Remove-Item -LiteralPath $tempRoot -Recurse -Force -ErrorAction SilentlyContinue
+        throw "Archive resolved profile directory escapes extract root: $dir"
     }
 
     return [PSCustomObject]@{
@@ -102,6 +200,49 @@ function Get-MetraProfileFileSha256Hex {
 
     $hash = Get-FileHash -LiteralPath $Path -Algorithm SHA256
     return $hash.Hash.ToLowerInvariant()
+}
+
+function Assert-MetraProfilePlanHashes {
+    <#
+    .SYNOPSIS
+        When a profile manifest lists per-file hashes, verify staged sources before import.
+    #>
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory)]$Manifest,
+        [Parameter(Mandatory)]
+        $Plan
+    )
+
+    $files = @()
+    try {
+        $files = @(Get-MetraProp -Object $Manifest -Name 'files' -Default @())
+    }
+    catch {
+        return
+    }
+    if ($files.Count -eq 0) { return }
+
+    $expectedByRel = @{}
+    foreach ($entry in $files) {
+        if ($null -eq $entry -or $entry -is [string]) { continue }
+        $rel = [string](Get-MetraProp -Object $entry -Name 'relativePath' -Default '')
+        $hash = [string](Get-MetraProp -Object $entry -Name 'hash' -Default '')
+        if ([string]::IsNullOrWhiteSpace($rel) -or [string]::IsNullOrWhiteSpace($hash)) { continue }
+        $expectedByRel[($rel -replace '\\', '/')] = $hash.Trim().ToLowerInvariant()
+    }
+    if ($expectedByRel.Count -eq 0) { return }
+
+    foreach ($row in @($Plan)) {
+        if ($null -eq $row) { continue }
+        $key = ([string]$row.Relative -replace '\\', '/')
+        if (-not $expectedByRel.ContainsKey($key)) { continue }
+        $actual = 'sha256:' + (Get-MetraProfileFileSha256Hex -Path ([string]$row.Source))
+        $expected = [string]$expectedByRel[$key]
+        if ($actual -ne $expected) {
+            throw "Profile file hash mismatch for $($row.Relative). Expected $expected; got $actual."
+        }
+    }
 }
 
 function Get-MetraProfileStatus {
@@ -198,7 +339,7 @@ function Initialize-MetraProfileSyncToken {
     $path = Get-MetraProfileSyncTokenHashPath -DataDir $DataDir
     $dir = Split-Path -Parent $path
     if (-not (Test-Path -LiteralPath $dir)) {
-        $null = New-Item -ItemType Directory -Path $dir -Force
+        [void][System.IO.Directory]::CreateDirectory($dir)
     }
 
     if (-not $Rotate -and (Test-Path -LiteralPath $path)) {
@@ -225,7 +366,7 @@ function Initialize-MetraProfileSyncToken {
     }
     $token = -join ($rawBytes | ForEach-Object { $_.ToString('x2') })
     $tokenHash = Get-MetraProfileSyncTokenSha256Hex -Token $token
-    [System.IO.File]::WriteAllText($path, $tokenHash + "`n")
+    Write-MetraProfileAtomicText -Path $path -Text ($tokenHash + "`n")
 
     return [PSCustomObject]@{
         Token     = $token
@@ -337,10 +478,251 @@ function Save-MetraProfileSyncLocalState {
     $path = Get-MetraProfileSyncStatePath -MetraRoot $MetraRoot
     $dir = Split-Path -Parent $path
     if (-not (Test-Path -LiteralPath $dir)) {
-        $null = New-Item -ItemType Directory -Path $dir -Force
+        [void][System.IO.Directory]::CreateDirectory($dir)
     }
-    ($State | ConvertTo-Json -Depth 6) | Set-Content -Path $path -Encoding utf8
+    Write-MetraProfileAtomicText -Path $path -Text ((($State | ConvertTo-Json -Depth 6) + "`r`n"))
     return $path
+}
+
+function Get-MetraProfileSatelliteRegistryPath {
+    <#
+    .SYNOPSIS
+        HQ-local satellite check-in registry (machine telemetry, not profile pack).
+    #>
+    return Join-Path $env:LOCALAPPDATA 'Metra\profile-satellites.local.json'
+}
+
+function Get-MetraProfileSatelliteRegistry {
+    param([string]$Path = (Get-MetraProfileSatelliteRegistryPath))
+
+    if (-not (Test-Path -LiteralPath $Path)) {
+        return [PSCustomObject]@{
+            Path       = $Path
+            Satellites = @()
+        }
+    }
+    try {
+        $data = Get-Content -LiteralPath $Path -Raw -Encoding UTF8 | ConvertFrom-Json
+        $list = @()
+        if ($data -and $data.satellites) {
+            $list = @($data.satellites)
+        }
+        elseif ($data -is [System.Array]) {
+            $list = @($data)
+        }
+        return [PSCustomObject]@{
+            Path       = $Path
+            Satellites = $list
+        }
+    }
+    catch {
+        return [PSCustomObject]@{
+            Path       = $Path
+            Satellites = @()
+        }
+    }
+}
+
+function Save-MetraProfileSatelliteCheckIn {
+    <#
+    .SYNOPSIS
+        Upserts one satellite report into the HQ-local check-in registry.
+    .DESCRIPTION
+        Also drops satellites whose lastSeenUtc is older than MaxAgeDays (default 180)
+        so retired machines do not accumulate forever.
+    #>
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory)][string]$MachineName,
+        [Parameter(Mandatory)][string]$LastAppliedHash,
+        [string]$MetraVersion = '',
+        [string]$Role = 'Satellite',
+        [string]$Path = (Get-MetraProfileSatelliteRegistryPath),
+        [int]$MaxAgeDays = $(if ($script:MetraProfileSatelliteMaxAgeDays) { [int]$script:MetraProfileSatelliteMaxAgeDays } else { 180 })
+    )
+
+    $name = $MachineName.Trim()
+    if ([string]::IsNullOrWhiteSpace($name)) {
+        throw 'machineName is required for profile check-in.'
+    }
+    $hash = $LastAppliedHash.Trim()
+    if ([string]::IsNullOrWhiteSpace($hash)) {
+        throw 'lastAppliedHash is required for profile check-in.'
+    }
+    if ($MaxAgeDays -lt 1) {
+        throw "MaxAgeDays must be >= 1 (got $MaxAgeDays)"
+    }
+
+    $dir = Split-Path -Parent $Path
+    if (-not (Test-Path -LiteralPath $dir)) {
+        [void][System.IO.Directory]::CreateDirectory($dir)
+    }
+
+    $reg = Get-MetraProfileSatelliteRegistry -Path $Path
+    $now = [DateTime]::UtcNow.ToString('o')
+    $cutoff = [DateTime]::UtcNow.AddDays(-1 * $MaxAgeDays)
+    $kept = New-Object System.Collections.Generic.List[object]
+    $found = $false
+    $purged = 0
+    foreach ($row in @($reg.Satellites)) {
+        if ($null -eq $row) { continue }
+        $rowName = [string](Get-MetraProp -Object $row -Name 'machineName' -Default '')
+        if ($rowName.Equals($name, [System.StringComparison]::OrdinalIgnoreCase)) {
+            [void]$kept.Add([PSCustomObject]@{
+                    machineName      = $name
+                    lastAppliedHash  = $hash
+                    lastSeenUtc      = $now
+                    metraVersion     = $(if ($MetraVersion) { $MetraVersion } else { [string](Get-MetraProp -Object $row -Name 'metraVersion' -Default '') })
+                    role             = $(if ($Role) { $Role } else { [string](Get-MetraProp -Object $row -Name 'role' -Default 'Satellite') })
+                })
+            $found = $true
+            continue
+        }
+
+        $seenRaw = [string](Get-MetraProp -Object $row -Name 'lastSeenUtc' -Default '')
+        $seen = $null
+        if (-not [string]::IsNullOrWhiteSpace($seenRaw)) {
+            try {
+                $seen = [datetime]::Parse($seenRaw, $null, [System.Globalization.DateTimeStyles]::RoundtripKind).ToUniversalTime()
+            }
+            catch { }
+        }
+        if ($null -ne $seen -and $seen -lt $cutoff) {
+            $purged++
+            continue
+        }
+        [void]$kept.Add($row)
+    }
+    if (-not $found) {
+        [void]$kept.Add([PSCustomObject]@{
+                machineName     = $name
+                lastAppliedHash = $hash
+                lastSeenUtc     = $now
+                metraVersion    = $MetraVersion
+                role            = $(if ($Role) { $Role } else { 'Satellite' })
+            })
+    }
+
+    $payload = [ordered]@{
+        updatedUtc = $now
+        satellites = [object[]]($kept.ToArray())
+    }
+    Write-MetraProfileAtomicText -Path $Path -Text ((($payload | ConvertTo-Json -Depth 6) + "`r`n"))
+    return [PSCustomObject]@{
+        Ok          = $true
+        Path        = $Path
+        MachineName = $name
+        LastSeenUtc = $now
+        Purged      = $purged
+        MaxAgeDays  = $MaxAgeDays
+    }
+}
+
+function Get-MetraProfileSatelliteRoster {
+    <#
+    .SYNOPSIS
+        Derives Current/Behind/Stale for checked-in satellites vs publisher fingerprint.
+    #>
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory)][string]$PublisherHash,
+        [int]$StaleAfterDays = 14,
+        [string]$Path = (Get-MetraProfileSatelliteRegistryPath)
+    )
+
+    $reg = Get-MetraProfileSatelliteRegistry -Path $Path
+    $cutoff = [DateTime]::UtcNow.AddDays(-1 * [Math]::Abs($StaleAfterDays))
+    $rows = New-Object System.Collections.Generic.List[object]
+    foreach ($sat in @($reg.Satellites)) {
+        if ($null -eq $sat) { continue }
+        $name = [string](Get-MetraProp -Object $sat -Name 'machineName' -Default '')
+        if ([string]::IsNullOrWhiteSpace($name)) { continue }
+        $applied = [string](Get-MetraProp -Object $sat -Name 'lastAppliedHash' -Default '')
+        $seenRaw = [string](Get-MetraProp -Object $sat -Name 'lastSeenUtc' -Default '')
+        $seenDt = $null
+        $stale = $true
+        if (-not [string]::IsNullOrWhiteSpace($seenRaw)) {
+            try {
+                $seenDt = [DateTime]::Parse($seenRaw, $null, [System.Globalization.DateTimeStyles]::RoundtripKind).ToUniversalTime()
+                $stale = ($seenDt -lt $cutoff)
+            }
+            catch {
+                $stale = $true
+            }
+        }
+        $freshness = if ($stale) {
+            'Stale'
+        }
+        elseif ($applied -eq $PublisherHash) {
+            'Current'
+        }
+        else {
+            'Behind'
+        }
+        [void]$rows.Add([PSCustomObject]@{
+                machineName     = $name
+                lastAppliedHash = $applied
+                lastSeenUtc     = $seenRaw
+                metraVersion    = [string](Get-MetraProp -Object $sat -Name 'metraVersion' -Default '')
+                role            = [string](Get-MetraProp -Object $sat -Name 'role' -Default 'Satellite')
+                state           = $freshness
+                stale           = [bool]$stale
+            })
+    }
+
+    return [PSCustomObject]@{
+        Path       = $Path
+        Satellites = @($rows | Sort-Object machineName)
+    }
+}
+
+function Send-MetraProfileCheckIn {
+    <#
+    .SYNOPSIS
+        Best-effort POST /api/profile/check-in to HQ (never throws to callers).
+    #>
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory)][string]$OpsBaseUrl,
+        [Parameter(Mandatory)][string]$SyncToken,
+        [string]$LastAppliedHash = '',
+        [string]$MachineName = $env:COMPUTERNAME,
+        [string]$MetraVersion = '',
+        [string]$Role = 'Satellite'
+    )
+
+    try {
+        if ([string]::IsNullOrWhiteSpace($OpsBaseUrl) -or [string]::IsNullOrWhiteSpace($SyncToken)) {
+            return [PSCustomObject]@{ Ok = $false; Skipped = $true }
+        }
+        if ([string]::IsNullOrWhiteSpace($MetraVersion)) {
+            try {
+                $mod = Get-Module Metra -ErrorAction SilentlyContinue
+                if ($mod) { $MetraVersion = [string]$mod.Version }
+            }
+            catch { }
+        }
+        $body = @{
+            machineName     = $(if ($MachineName) { $MachineName } else { $env:COMPUTERNAME })
+            lastAppliedHash = $LastAppliedHash
+            metraVersion    = $MetraVersion
+            role            = $Role
+        } | ConvertTo-Json -Compress
+        $headers = @{
+            'X-Metra-Profile-Sync' = $SyncToken
+            'Content-Type'         = 'application/json'
+        }
+        $uri = "$($OpsBaseUrl.TrimEnd('/'))/api/profile/check-in"
+        $null = Invoke-RestMethod -Uri $uri -Method Post -Headers $headers -Body $body -TimeoutSec 30 -ErrorAction Stop
+        return [PSCustomObject]@{ Ok = $true; Skipped = $false }
+    }
+    catch {
+        return [PSCustomObject]@{
+            Ok      = $false
+            Skipped = $false
+            Error   = $_.Exception.Message
+        }
+    }
 }
 
 function Set-MetraProfileSyncClientToken {
@@ -464,6 +846,9 @@ function Set-MetraConfiguredOpsBaseUrl {
         }
     }
     else {
+        if (-not (Test-MetraProfileOpsBaseUrlForm -OpsBaseUrl $url)) {
+            throw "Invalid opsBaseUrl (expect http(s) URI or host shorthand): $url"
+        }
         if ($cfg.PSObject.Properties.Name -contains 'opsBaseUrl') {
             $cfg.opsBaseUrl = $url
         }
@@ -472,7 +857,7 @@ function Set-MetraConfiguredOpsBaseUrl {
         }
     }
     $json = ($cfg | ConvertTo-Json -Depth 20)
-    [System.IO.File]::WriteAllText($configPath, $json + "`r`n", (Get-MetraUtf8NoBomEncoding))
+    Write-MetraProfileAtomicText -Path $configPath -Text ($json + "`r`n")
     return [PSCustomObject]@{
         Path       = $configPath
         OpsBaseUrl = $(if ([string]::IsNullOrWhiteSpace($url)) { $null } else { $url })

@@ -4,6 +4,111 @@ function Get-MetraUpdatesCachePath {
     Join-Path $env:LOCALAPPDATA 'Metra\updates-status.local.json'
 }
 
+function Write-MetraUpdatesCacheAtomic {
+    <#
+    .SYNOPSIS
+        Atomically write the updates status cache (temp + Move-Item).
+    #>
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory)][string]$Path,
+        [Parameter(Mandatory)]$Payload
+    )
+
+    $json = ($Payload | ConvertTo-Json -Depth 8) + "`r`n"
+    if (Get-Command Write-MetraProfileAtomicText -ErrorAction SilentlyContinue) {
+        Write-MetraProfileAtomicText -Path $Path -Text $json
+        return
+    }
+    $dir = Split-Path -Parent $Path
+    if ($dir -and -not (Test-Path -LiteralPath $dir)) {
+        [void][System.IO.Directory]::CreateDirectory($dir)
+    }
+    $tmp = "$Path.tmp"
+    [System.IO.File]::WriteAllText($tmp, $json, [System.Text.UTF8Encoding]::new($false))
+    Move-Item -LiteralPath $tmp -Destination $Path -Force
+}
+
+function Get-MetraWingetExePath {
+    <#
+    .SYNOPSIS
+        Resolve winget.exe path from Get-Command (prefer .Source, then .Path).
+    #>
+    [CmdletBinding()]
+    param()
+
+    $cmd = Get-Command winget -ErrorAction SilentlyContinue
+    if (-not $cmd) { return $null }
+    $path = [string]$cmd.Source
+    if ([string]::IsNullOrWhiteSpace($path)) { $path = [string]$cmd.Path }
+    if ([string]::IsNullOrWhiteSpace($path)) { return $null }
+    return $path
+}
+
+function Read-MetraUpdatesCacheApplyStamp {
+    [CmdletBinding()]
+    param([string]$CachePath = (Get-MetraUpdatesCachePath))
+
+    $stamp = [PSCustomObject]@{
+        lastUpdatedAt     = $null
+        lastMetraVersion  = $null
+        lastOllamaVersion = $null
+    }
+    if (-not (Test-Path -LiteralPath $CachePath)) { return $stamp }
+    try {
+        $cached = Get-Content -LiteralPath $CachePath -Raw | ConvertFrom-Json
+        $stamp.lastUpdatedAt = Get-MetraProp -Object $cached -Name 'lastUpdatedAt' -Default $null
+        $stamp.lastMetraVersion = Get-MetraProp -Object $cached -Name 'lastMetraVersion' -Default $null
+        $stamp.lastOllamaVersion = Get-MetraProp -Object $cached -Name 'lastOllamaVersion' -Default $null
+    }
+    catch { }
+    return $stamp
+}
+
+function Set-MetraUpdatesCacheApplyStamp {
+    <#
+    .SYNOPSIS
+        Persist last successful apply timestamps/versions into the updates cache.
+    #>
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory)][ValidateSet('metra', 'ollama')][string]$Target,
+        [string]$Version,
+        [string]$CachePath = (Get-MetraUpdatesCachePath)
+    )
+
+    $payload = $null
+    if (Test-Path -LiteralPath $CachePath) {
+        try {
+            $payload = Get-Content -LiteralPath $CachePath -Raw | ConvertFrom-Json
+        }
+        catch { }
+    }
+    if (-not $payload) {
+        $payload = [PSCustomObject]@{
+            checkedAt = [datetime]::UtcNow.ToString('o')
+        }
+    }
+
+    $at = [datetime]::UtcNow.ToString('o')
+    if ($payload.PSObject.Properties['lastUpdatedAt']) { $payload.lastUpdatedAt = $at }
+    else { $payload | Add-Member -NotePropertyName lastUpdatedAt -NotePropertyValue $at -Force }
+
+    if ($Target -eq 'metra') {
+        if ($payload.PSObject.Properties['lastMetraVersion']) { $payload.lastMetraVersion = $Version }
+        else { $payload | Add-Member -NotePropertyName lastMetraVersion -NotePropertyValue $Version -Force }
+    }
+    else {
+        if ($payload.PSObject.Properties['lastOllamaVersion']) { $payload.lastOllamaVersion = $Version }
+        else { $payload | Add-Member -NotePropertyName lastOllamaVersion -NotePropertyValue $Version -Force }
+    }
+
+    try {
+        Write-MetraUpdatesCacheAtomic -Path $CachePath -Payload $payload
+    }
+    catch { }
+}
+
 function Get-MetraInstalledModuleVersion {
     [CmdletBinding()]
     param([string]$MetraRoot = (Get-MetraRoot))
@@ -57,18 +162,21 @@ function Get-MetraGitHubLatestRelease {
     if (-not $setupAsset) {
         $setupAsset = @($rel.assets) | Where-Object { $_.name -like 'MetraSetup-*.exe' } | Select-Object -First 1
     }
-    $downloadUrl = if ($setupAsset) {
-        [string]$setupAsset.browser_download_url
-    }
-    else {
-        "https://github.com/$Repo/releases/latest/download/MetraSetup.exe"
+    $hasInstaller = $null -ne $setupAsset
+    $downloadUrl = if ($hasInstaller) { [string]$setupAsset.browser_download_url } else { $null }
+    $assetSize = $null
+    if ($hasInstaller -and $null -ne $setupAsset.size) {
+        try { $assetSize = [long]$setupAsset.size } catch { $assetSize = $null }
     }
     return [PSCustomObject]@{
-        tag         = $tag
-        version     = $version
-        name        = [string]$rel.name
-        downloadUrl = $downloadUrl
-        htmlUrl     = [string]$rel.html_url
+        tag               = $tag
+        version           = $version
+        name              = [string]$rel.name
+        hasInstallerAsset = $hasInstaller
+        assetName         = $(if ($hasInstaller) { [string]$setupAsset.name } else { $null })
+        assetSize         = $assetSize
+        downloadUrl       = $downloadUrl
+        htmlUrl           = [string]$rel.html_url
     }
 }
 
@@ -88,10 +196,10 @@ function Get-MetraOllamaInstalledVersion {
 }
 
 function Get-MetraOllamaAvailableVersion {
-    $winget = Get-Command winget -ErrorAction SilentlyContinue
-    if (-not $winget) { return $null }
+    $wingetPath = Get-MetraWingetExePath
+    if (-not $wingetPath) { return $null }
     try {
-        $out = & $winget.Source show -e --id Ollama.Ollama 2>&1 | Out-String
+        $out = & $wingetPath show -e --id Ollama.Ollama 2>&1 | Out-String
         $m = [regex]::Match($out, '(?m)^Version:\s*(\S+)')
         if ($m.Success) { return $m.Groups[1].Value.Trim() }
     }
@@ -105,6 +213,8 @@ function Get-MetraProductUpdates {
         Returns Metra + Ollama update status for Settings / Host cache.
     .PARAMETER Force
         Bypass the 24h local cache and re-check remote versions.
+    .NOTES
+        Setup does not invoke this - update checks stay operator-initiated (Settings / Host).
     #>
     [CmdletBinding()]
     param(
@@ -114,6 +224,7 @@ function Get-MetraProductUpdates {
     )
 
     $cachePath = Get-MetraUpdatesCachePath
+    $applyStamp = Read-MetraUpdatesCacheApplyStamp -CachePath $cachePath
     if (-not $Force -and (Test-Path -LiteralPath $cachePath)) {
         try {
             $cached = Get-Content -LiteralPath $cachePath -Raw | ConvertFrom-Json
@@ -128,17 +239,20 @@ function Get-MetraProductUpdates {
     $installed = Get-MetraInstalledModuleVersion -MetraRoot $MetraRoot
     $devCheckout = Test-MetraDevCheckout -MetraRoot $MetraRoot
     $metra = [PSCustomObject]@{
-        id            = 'metra'
-        label         = 'Metra'
-        installed     = $installed
-        available     = $null
-        updateAvailable = $false
-        canUpdate     = $false
-        status        = 'unknown'
-        message       = $null
-        downloadUrl   = $null
-        releaseUrl    = $null
-        channel       = $(if ($devCheckout) { 'dev' } else { 'installer' })
+        id                = 'metra'
+        label             = 'Metra'
+        installed         = $installed
+        available         = $null
+        updateAvailable   = $false
+        canUpdate         = $false
+        status            = 'unknown'
+        message           = $null
+        downloadUrl       = $null
+        releaseUrl        = $null
+        hasInstallerAsset = $null
+        assetName         = $null
+        assetSize         = $null
+        channel           = $(if ($devCheckout) { 'dev' } else { 'installer' })
     }
 
     if ($devCheckout) {
@@ -151,12 +265,22 @@ function Get-MetraProductUpdates {
             $metra.available = $rel.version
             $metra.downloadUrl = $rel.downloadUrl
             $metra.releaseUrl = $rel.htmlUrl
+            $metra.hasInstallerAsset = [bool]$rel.hasInstallerAsset
+            $metra.assetName = $rel.assetName
+            $metra.assetSize = $rel.assetSize
             $cmp = Compare-MetraVersionString -Left $installed -Right $rel.version
             if ($cmp -lt 0) {
                 $metra.updateAvailable = $true
-                $metra.canUpdate = $true
-                $metra.status = 'update_available'
-                $metra.message = "Metra $($rel.version) is available (you have $installed)."
+                if ($rel.hasInstallerAsset) {
+                    $metra.canUpdate = $true
+                    $metra.status = 'update_available'
+                    $metra.message = "Metra $($rel.version) is available (you have $installed)."
+                }
+                else {
+                    $metra.canUpdate = $false
+                    $metra.status = 'no_installer_asset'
+                    $metra.message = "Metra $($rel.version) is available but release $($rel.tag) has no MetraSetup.exe asset."
+                }
             }
             else {
                 $metra.status = 'up_to_date'
@@ -209,18 +333,17 @@ function Get-MetraProductUpdates {
     }
 
     $payload = [PSCustomObject]@{
-        checkedAt = [datetime]::UtcNow.ToString('o')
-        metra     = $metra
-        ollama    = $ollama
-        anyUpdate = [bool]($metra.updateAvailable -or $ollama.updateAvailable)
+        checkedAt         = [datetime]::UtcNow.ToString('o')
+        lastUpdatedAt     = $applyStamp.lastUpdatedAt
+        lastMetraVersion  = $applyStamp.lastMetraVersion
+        lastOllamaVersion = $applyStamp.lastOllamaVersion
+        metra             = $metra
+        ollama            = $ollama
+        anyUpdate         = [bool]($metra.updateAvailable -or $ollama.updateAvailable)
     }
 
     try {
-        $dir = Split-Path -Parent $cachePath
-        if (-not (Test-Path -LiteralPath $dir)) {
-            New-Item -ItemType Directory -Path $dir -Force | Out-Null
-        }
-        ($payload | ConvertTo-Json -Depth 8) | Set-Content -LiteralPath $cachePath -Encoding UTF8
+        Write-MetraUpdatesCacheAtomic -Path $cachePath -Payload $payload
     }
     catch { }
 
@@ -243,40 +366,49 @@ function Update-MetraProduct {
 
     if (Test-MetraDevCheckout -MetraRoot $MetraRoot) {
         return [PSCustomObject]@{
-            ok      = $false
-            target  = 'metra'
-            status  = 'dev_checkout'
-            message = 'Developer checkout - use git pull instead of the installer Update button.'
+            ok              = $false
+            target          = 'metra'
+            status          = 'dev_checkout'
+            restartRequired = $false
+            message         = 'Developer checkout - use git pull instead of the installer Update button.'
         }
     }
 
     $status = Get-MetraProductUpdates -MetraRoot $MetraRoot -Force
     if (-not $status.metra.updateAvailable) {
         return [PSCustomObject]@{
-            ok      = $true
-            target  = 'metra'
-            status  = 'already_current'
-            message = $status.metra.message
-            updates = $status
+            ok              = $true
+            target          = 'metra'
+            status          = 'already_current'
+            restartRequired = $false
+            message         = $status.metra.message
+            updates         = $status
         }
     }
 
     $url = [string]$status.metra.downloadUrl
-    if ([string]::IsNullOrWhiteSpace($url)) {
+    $hasAsset = $true
+    if ($null -ne (Get-MetraProp -Object $status.metra -Name 'hasInstallerAsset' -Default $null)) {
+        $hasAsset = [bool]$status.metra.hasInstallerAsset
+    }
+    if (-not $hasAsset -or [string]::IsNullOrWhiteSpace($url)) {
         return [PSCustomObject]@{
-            ok      = $false
-            target  = 'metra'
-            status  = 'no_download_url'
-            message = 'Latest release has no MetraSetup.exe asset.'
+            ok              = $false
+            target          = 'metra'
+            status          = 'no_download_url'
+            restartRequired = $false
+            message         = 'Latest release has no MetraSetup.exe asset.'
+            updates         = $status
         }
     }
 
     if ($WhatIf) {
         return [PSCustomObject]@{
-            ok      = $true
-            target  = 'metra'
-            status  = 'whatif'
-            message = "Would download and run $url silently."
+            ok              = $true
+            target          = 'metra'
+            status          = 'whatif'
+            restartRequired = $false
+            message         = "Would download and run $url silently."
         }
     }
 
@@ -288,31 +420,36 @@ function Update-MetraProduct {
         Remove-Item -LiteralPath $temp -Force -ErrorAction SilentlyContinue
         if ($p.ExitCode -ne 0) {
             return [PSCustomObject]@{
-                ok       = $false
-                target   = 'metra'
-                status   = 'setup_failed'
-                exitCode = $p.ExitCode
-                message  = "MetraSetup.exe exited $($p.ExitCode)."
+                ok              = $false
+                target          = 'metra'
+                status          = 'setup_failed'
+                restartRequired = $false
+                exitCode        = $p.ExitCode
+                message         = "MetraSetup.exe exited $($p.ExitCode)."
             }
         }
     }
     catch {
         Remove-Item -LiteralPath $temp -Force -ErrorAction SilentlyContinue
         return [PSCustomObject]@{
-            ok      = $false
-            target  = 'metra'
-            status  = 'download_failed'
-            message = $_.Exception.Message
+            ok              = $false
+            target          = 'metra'
+            status          = 'download_failed'
+            restartRequired = $false
+            message         = $_.Exception.Message
         }
     }
 
+    $appliedVersion = [string]$status.metra.available
+    Set-MetraUpdatesCacheApplyStamp -Target metra -Version $appliedVersion
     $fresh = Get-MetraProductUpdates -MetraRoot $MetraRoot -Force
     return [PSCustomObject]@{
-        ok      = $true
-        target  = 'metra'
-        status  = 'updated'
-        message = 'Metra installer finished. Restart Metra Ops to load the new build.'
-        updates = $fresh
+        ok              = $true
+        target          = 'metra'
+        status          = 'updated'
+        restartRequired = $true
+        message         = 'Metra installer finished. Restart Metra Ops to load the new build.'
+        updates         = $fresh
     }
 }
 
@@ -330,44 +467,58 @@ function Update-MetraOllamaProduct {
     $status = Get-MetraProductUpdates -MetraRoot $MetraRoot -Force
     if ($status.ollama.status -eq 'not_installed') {
         if ($WhatIf) {
-            return [PSCustomObject]@{ ok = $true; target = 'ollama'; status = 'whatif_install'; message = 'Would run silent install.' }
+            return [PSCustomObject]@{
+                ok              = $true
+                target          = 'ollama'
+                status          = 'whatif_install'
+                restartRequired = $false
+                message         = 'Would run silent install.'
+            }
         }
         if (Get-Command Install-MetraAskOllamaRuntime -ErrorAction SilentlyContinue) {
             $install = Install-MetraAskOllamaRuntime -MetraRoot $MetraRoot
+            if ($install.ok) {
+                $ver = Get-MetraOllamaInstalledVersion
+                Set-MetraUpdatesCacheApplyStamp -Target ollama -Version $ver
+            }
             $fresh = Get-MetraProductUpdates -MetraRoot $MetraRoot -Force
             return [PSCustomObject]@{
-                ok      = [bool]$install.ok
-                target  = 'ollama'
-                status  = $(if ($install.ok) { 'installed' } else { [string]$install.status })
-                message = $(if ($install.ok) { 'Ollama installed.' } else { [string]$install.message })
-                step    = $install
-                updates = $fresh
+                ok              = [bool]$install.ok
+                target          = 'ollama'
+                status          = $(if ($install.ok) { 'installed' } else { [string]$install.status })
+                restartRequired = $false
+                message         = $(if ($install.ok) { 'Ollama installed.' } else { [string]$install.message })
+                step            = $install
+                updates         = $fresh
             }
         }
         return [PSCustomObject]@{
-            ok      = $false
-            target  = 'ollama'
-            status  = 'not_installed'
-            message = 'Ollama is not installed.'
+            ok              = $false
+            target          = 'ollama'
+            status          = 'not_installed'
+            restartRequired = $false
+            message         = 'Ollama is not installed.'
         }
     }
 
     if (-not $status.ollama.updateAvailable) {
         return [PSCustomObject]@{
-            ok      = $true
-            target  = 'ollama'
-            status  = 'already_current'
-            message = $status.ollama.message
-            updates = $status
+            ok              = $true
+            target          = 'ollama'
+            status          = 'already_current'
+            restartRequired = $false
+            message         = $status.ollama.message
+            updates         = $status
         }
     }
 
     if ($WhatIf) {
         return [PSCustomObject]@{
-            ok      = $true
-            target  = 'ollama'
-            status  = 'whatif'
-            message = "Would silently upgrade Ollama to $($status.ollama.available)."
+            ok              = $true
+            target          = 'ollama'
+            status          = 'whatif'
+            restartRequired = $false
+            message         = "Would silently upgrade Ollama to $($status.ollama.available)."
         }
     }
 
@@ -375,17 +526,17 @@ function Update-MetraOllamaProduct {
         $null = Set-MetraAskOllamaHiddenStartMarker
     }
 
-    $winget = Get-Command winget -ErrorAction SilentlyContinue
+    $wingetPath = Get-MetraWingetExePath
     $upgraded = $false
     $detail = $null
-    if ($winget) {
+    if ($wingetPath) {
         $args = @(
             'upgrade', '-e', '--id', 'Ollama.Ollama',
             '--silent',
             '--accept-package-agreements', '--accept-source-agreements',
             '--override', '/VERYSILENT /NORESTART /SUPPRESSMSGBOXES'
         )
-        $p = Start-Process -FilePath $winget.Source -ArgumentList $args -Wait -PassThru -NoNewWindow
+        $p = Start-Process -FilePath $wingetPath -ArgumentList $args -Wait -PassThru -NoNewWindow
         # 0 = upgraded; -1978335189 often means no newer package / already current
         if ($p.ExitCode -eq 0 -or $p.ExitCode -eq -1978335189) {
             $upgraded = $true
@@ -426,14 +577,15 @@ function Update-MetraOllamaProduct {
         }
     }
 
-    $fresh = Get-MetraProductUpdates -MetraRoot $MetraRoot -Force
     if (-not $upgraded) {
+        $freshFail = Get-MetraProductUpdates -MetraRoot $MetraRoot -Force
         return [PSCustomObject]@{
-            ok      = $false
-            target  = 'ollama'
-            status  = 'upgrade_failed'
-            message = $detail
-            updates = $fresh
+            ok              = $false
+            target          = 'ollama'
+            status          = 'upgrade_failed'
+            restartRequired = $false
+            message         = $detail
+            updates         = $freshFail
         }
     }
 
@@ -443,12 +595,17 @@ function Update-MetraOllamaProduct {
         Start-Process -FilePath $exe -ArgumentList @('serve') -WindowStyle Hidden -ErrorAction SilentlyContinue
     }
 
+    $appliedVersion = [string]$status.ollama.available
+    if (-not $appliedVersion) { $appliedVersion = Get-MetraOllamaInstalledVersion }
+    Set-MetraUpdatesCacheApplyStamp -Target ollama -Version $appliedVersion
+    $fresh = Get-MetraProductUpdates -MetraRoot $MetraRoot -Force
     return [PSCustomObject]@{
-        ok      = $true
-        target  = 'ollama'
-        status  = 'updated'
-        message = "Ollama updated ($detail)."
-        updates = $fresh
+        ok              = $true
+        target          = 'ollama'
+        status          = 'updated'
+        restartRequired = $false
+        message         = "Ollama updated ($detail)."
+        updates         = $fresh
     }
 }
 

@@ -1,9 +1,16 @@
 # Tailscale Serve HTTPS front for Metra Ops (optional when bindTailscale).
+# Reachability only - Serve never grants apply / write authority.
 
 function Get-MetraOpsTailscaleServeStatus {
     <#
     .SYNOPSIS
-        Best-effort Serve status: HTTPS share URL when Serve fronts a local port.
+        Best-effort Serve status: inferred HTTPS share URL when Serve appears configured.
+    .DESCRIPTION
+        Ok means MagicDNS is available and some Serve config section is non-empty
+        (Web / TCP / Background / Foreground). That is ServeConfigured, not a verified
+        HTTPS probe of the MagicDNS URL or proof that Serve targets -Port.
+        ShareUrl is constructed from MagicDNS when ServeConfigured; no network check.
+        -Port is echoed for caller correlation only.
     #>
     [CmdletBinding()]
     param([int]$Port = 0)
@@ -11,84 +18,125 @@ function Get-MetraOpsTailscaleServeStatus {
     $cmd = Get-Command tailscale -ErrorAction SilentlyContinue
     if (-not $cmd) {
         return [PSCustomObject]@{
-            Ok       = $false
-            ShareUrl = $null
-            Reason   = 'tailscale CLI not found'
-            Raw      = $null
+            Ok              = $false
+            ServeConfigured = $false
+            ShareUrl        = $null
+            DnsName         = $null
+            Port            = $Port
+            ServeSections   = @()
+            Reason          = 'tailscale CLI not found'
+            Raw             = $null
         }
     }
 
+    $raw = $null
     try {
         $raw = & tailscale serve status --json 2>$null | Out-String
-        if ([string]::IsNullOrWhiteSpace($raw)) {
-            return [PSCustomObject]@{
-                Ok       = $false
-                ShareUrl = $null
-                Reason   = 'serve status empty'
-                Raw      = $null
-            }
-        }
-        $status = $raw | ConvertFrom-Json
     }
     catch {
         return [PSCustomObject]@{
-            Ok       = $false
-            ShareUrl = $null
-            Reason   = "serve status failed: $($_.Exception.Message)"
-            Raw      = $null
+            Ok              = $false
+            ServeConfigured = $false
+            ShareUrl        = $null
+            DnsName         = $null
+            Port            = $Port
+            ServeSections   = @()
+            Reason          = "serve status failed: $($_.Exception.Message)"
+            Raw             = $null
         }
     }
 
-    $dns = $null
-    try { $dns = Get-MetraOpsTailscaleDnsName } catch { }
-    if ([string]::IsNullOrWhiteSpace($dns)) {
+    if ([string]::IsNullOrWhiteSpace($raw)) {
         return [PSCustomObject]@{
-            Ok       = $false
-            ShareUrl = $null
-            Reason   = 'MagicDNS name unavailable'
-            Raw      = $status
+            Ok              = $false
+            ServeConfigured = $false
+            ShareUrl        = $null
+            DnsName         = $null
+            Port            = $Port
+            ServeSections   = @()
+            Reason          = 'serve status empty'
+            Raw             = $null
         }
     }
 
-    # Serve status JSON is empty object when nothing is configured.
-    $httpsOn = $false
+    $status = $null
     try {
-        if ($null -ne $status.Web) {
-            $webProps = @($status.Web.PSObject.Properties)
-            if ($webProps.Count -gt 0) { $httpsOn = $true }
+        $status = $raw | ConvertFrom-Json
+    }
+    catch {
+        $rawForDiag = $raw
+        if ($rawForDiag.Length -gt 16384) {
+            $rawForDiag = $rawForDiag.Substring(0, 16384) + "`n...[truncated]"
         }
-        if (-not $httpsOn -and $null -ne $status.TCP) {
-            $tcpProps = @($status.TCP.PSObject.Properties)
-            if ($tcpProps.Count -gt 0) { $httpsOn = $true }
+        return [PSCustomObject]@{
+            Ok              = $false
+            ServeConfigured = $false
+            ShareUrl        = $null
+            DnsName         = $null
+            Port            = $Port
+            ServeSections   = @()
+            Reason          = "serve status failed: $($_.Exception.Message)"
+            Raw             = $rawForDiag
         }
-        if (-not $httpsOn -and $null -ne $status.Background) {
-            $bgProps = @($status.Background.PSObject.Properties)
-            if ($bgProps.Count -gt 0) { $httpsOn = $true }
-        }
-        if (-not $httpsOn -and $null -ne $status.Foreground) {
-            $fgProps = @($status.Foreground.PSObject.Properties)
-            if ($fgProps.Count -gt 0) { $httpsOn = $true }
+    }
+
+    # Non-empty Serve sections mean "something is configured," not "HTTPS fronts this Ops port."
+    $serveSections = [System.Collections.Generic.List[string]]::new()
+    try {
+        foreach ($section in @('Web', 'TCP', 'Background', 'Foreground')) {
+            $node = $status.$section
+            if ($null -eq $node) { continue }
+            $props = @($node.PSObject.Properties)
+            if ($props.Count -gt 0) {
+                [void]$serveSections.Add($section)
+            }
         }
     }
     catch { }
 
-    if (-not $httpsOn) {
+    $serveConfigured = $serveSections.Count -gt 0
+    $sectionArr = @($serveSections.ToArray())
+
+    $dns = $null
+    try { $dns = Get-MetraOpsTailscaleDnsName } catch { }
+
+    if (-not $serveConfigured) {
         return [PSCustomObject]@{
-            Ok       = $false
-            ShareUrl = $null
-            Reason   = 'Serve not configured'
-            Raw      = $status
+            Ok              = $false
+            ServeConfigured = $false
+            ShareUrl        = $null
+            DnsName         = $(if ([string]::IsNullOrWhiteSpace($dns)) { $null } else { $dns })
+            Port            = $Port
+            ServeSections   = @()
+            Reason          = 'Serve not configured'
+            Raw             = $status
         }
     }
 
+    if ([string]::IsNullOrWhiteSpace($dns)) {
+        return [PSCustomObject]@{
+            Ok              = $false
+            ServeConfigured = $true
+            ShareUrl        = $null
+            DnsName         = $null
+            Port            = $Port
+            ServeSections   = $sectionArr
+            Reason          = 'MagicDNS name unavailable'
+            Raw             = $status
+        }
+    }
+
+    # Inferred share URL from MagicDNS - not HTTP-probed against -Port.
     $share = "https://$dns/"
     return [PSCustomObject]@{
-        Ok       = $true
-        ShareUrl = $share
-        DnsName  = $dns
-        Port     = $Port
-        Reason   = $null
-        Raw      = $status
+        Ok              = $true
+        ServeConfigured = $true
+        ShareUrl        = $share
+        DnsName         = $dns
+        Port            = $Port
+        ServeSections   = $sectionArr
+        Reason          = $null
+        Raw             = $status
     }
 }
 
@@ -119,35 +167,38 @@ function Invoke-MetraOpsTailscaleServeCommand {
     $proc = New-Object System.Diagnostics.Process
     $proc.StartInfo = $psi
     try {
-        [void]$proc.Start()
-    }
-    catch {
-        return [PSCustomObject]@{ Ok = $false; ExitCode = -1; Output = $_.Exception.Message }
-    }
-
-    if (-not $proc.WaitForExit([Math]::Max(1, $TimeoutSec) * 1000)) {
-        try { $proc.Kill($true) } catch {
-            try { $proc.Kill() } catch { }
+        try {
+            [void]$proc.Start()
         }
-        try { $proc.Dispose() } catch { }
+        catch {
+            return [PSCustomObject]@{ Ok = $false; ExitCode = -1; Output = $_.Exception.Message }
+        }
+
+        if (-not $proc.WaitForExit([Math]::Max(1, $TimeoutSec) * 1000)) {
+            try { $proc.Kill($true) } catch {
+                try { $proc.Kill() } catch { }
+            }
+            return [PSCustomObject]@{
+                Ok       = $false
+                ExitCode = -1
+                Output   = "tailscale serve timed out after ${TimeoutSec}s"
+            }
+        }
+
+        $stdout = ''
+        $stderr = ''
+        try { $stdout = $proc.StandardOutput.ReadToEnd() } catch { }
+        try { $stderr = $proc.StandardError.ReadToEnd() } catch { }
+        $code = $proc.ExitCode
+        $out = (@($stdout, $stderr) | Where-Object { $_ } ) -join "`n"
         return [PSCustomObject]@{
-            Ok       = $false
-            ExitCode = -1
-            Output   = "tailscale serve timed out after ${TimeoutSec}s"
+            Ok       = ($code -eq 0)
+            ExitCode = $code
+            Output   = $out
         }
     }
-
-    $stdout = ''
-    $stderr = ''
-    try { $stdout = $proc.StandardOutput.ReadToEnd() } catch { }
-    try { $stderr = $proc.StandardError.ReadToEnd() } catch { }
-    $code = $proc.ExitCode
-    try { $proc.Dispose() } catch { }
-    $out = (@($stdout, $stderr) | Where-Object { $_ } ) -join "`n"
-    return [PSCustomObject]@{
-        Ok       = ($code -eq 0)
-        ExitCode = $code
-        Output   = $out
+    finally {
+        try { $proc.Dispose() } catch { }
     }
 }
 
@@ -159,6 +210,8 @@ function Enable-MetraOpsTailscaleServe {
         Serve is not required to run Metra. When bindTailscale is on, Metra tries to
         orchestrate Serve so the share URL is a secure context for phone clipboard APIs.
         Funnel stays out of scope. Commands are hard-timeout so Ops start never hangs.
+        Success means ServeConfigured + MagicDNS inference succeeded - not a verified
+        HTTPS health check of the Ops listener.
     #>
     [CmdletBinding()]
     param(

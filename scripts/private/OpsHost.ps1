@@ -1,10 +1,12 @@
 # Metra Ops host: user-session tray supervisor.
 # Ownership: Host -> Ops only. Never start/stop Ask directly (Ops owns Ask).
+# Authority: browser can propose; host/session applies; Ops owns Ask; host owns supervision.
 
 function Get-MetraOpsHostDataDir {
     $dir = Join-Path $env:LOCALAPPDATA 'Metra'
     if (-not (Test-Path -LiteralPath $dir)) {
-        $null = New-Item -ItemType Directory -Path $dir -Force
+        # Directory.CreateDirectory is literal-path safe; New-Item -LiteralPath is not on all hosts.
+        [void][System.IO.Directory]::CreateDirectory($dir)
     }
     return $dir
 }
@@ -104,7 +106,8 @@ function New-MetraOpsShortcut {
 
     $dir = Split-Path -Parent $LinkPath
     if (-not (Test-Path -LiteralPath $dir)) {
-        $null = New-Item -ItemType Directory -Path $dir -Force
+        # Directory.CreateDirectory is literal-path safe; New-Item -LiteralPath is not on all hosts.
+        [void][System.IO.Directory]::CreateDirectory($dir)
     }
 
     $wsh = New-Object -ComObject WScript.Shell
@@ -142,42 +145,45 @@ function Install-MetraOpsStartMenuShortcuts {
     $icoPath = Get-MetraOpsHostIconPath -MetraRoot $MetraRoot
     $folder = Get-MetraOpsStartMenuFolder
     $programs = [Environment]::GetFolderPath('Programs')
+    $links = [System.Collections.Generic.List[string]]::new()
 
+    $mainFolderLink = Join-Path $folder 'Metra Ops.lnk'
     New-MetraOpsShortcut `
-        -LinkPath (Join-Path $folder 'Metra Ops.lnk') `
+        -LinkPath $mainFolderLink `
         -TargetPath $opsCmd `
         -WorkingDirectory $MetraRoot `
         -Description 'Metra Ops host (user-session tray)' `
         -IconPath $icoPath `
         -WindowStyle 7
+    [void]$links.Add($mainFolderLink)
 
     # Top-level Programs entry (Start search / pin-friendly), same target as installer {autoprograms}.
+    $topLink = Join-Path $programs 'Metra Ops.lnk'
     New-MetraOpsShortcut `
-        -LinkPath (Join-Path $programs 'Metra Ops.lnk') `
+        -LinkPath $topLink `
         -TargetPath $opsCmd `
         -WorkingDirectory $MetraRoot `
         -Description 'Metra Ops host (user-session tray)' `
         -IconPath $icoPath `
         -WindowStyle 7
+    [void]$links.Add($topLink)
 
     if (Test-Path -LiteralPath $consoleCmd) {
+        $consoleLink = Join-Path $folder 'Metra Ops (console).lnk'
         New-MetraOpsShortcut `
-            -LinkPath (Join-Path $folder 'Metra Ops (console).lnk') `
+            -LinkPath $consoleLink `
             -TargetPath $consoleCmd `
             -WorkingDirectory $MetraRoot `
             -Description 'Metra Ops console (operator debug)' `
             -IconPath $icoPath `
             -WindowStyle 1
+        [void]$links.Add($consoleLink)
     }
 
     return [PSCustomObject]@{
         Folder   = $folder
         IconPath = $icoPath
-        Links    = @(
-            (Join-Path $folder 'Metra Ops.lnk')
-            (Join-Path $programs 'Metra Ops.lnk')
-            (Join-Path $folder 'Metra Ops (console).lnk')
-        )
+        Links    = @($links.ToArray())
     }
 }
 
@@ -313,14 +319,40 @@ function Get-MetraOpsHostState {
 }
 
 function Get-MetraOpsHostProcessId {
+    <#
+    .SYNOPSIS
+        Returns the live Ops host PID when the pid file matches Metra host state.
+    .DESCRIPTION
+        PID existence alone is not enough - Windows recycles PIDs. Require state.hostPid to match
+        so a stale ops-host.pid cannot block startup by pointing at an unrelated process.
+    #>
     $pidFile = Get-MetraOpsHostPidFile
     if (-not (Test-Path -LiteralPath $pidFile)) { return $null }
+
     $recorded = 0
     if (-not [int]::TryParse((Get-Content -LiteralPath $pidFile -Raw).Trim(), [ref]$recorded)) {
+        Remove-Item -LiteralPath $pidFile -Force -ErrorAction SilentlyContinue
         return $null
     }
+
     if ($recorded -eq $PID) { return $recorded }
-    if (Get-Process -Id $recorded -ErrorAction SilentlyContinue) { return $recorded }
+
+    $proc = Get-Process -Id $recorded -ErrorAction SilentlyContinue
+    if (-not $proc) {
+        Remove-Item -LiteralPath $pidFile -Force -ErrorAction SilentlyContinue
+        return $null
+    }
+
+    $state = Get-MetraOpsHostState
+    $stateHostPid = 0
+    if ($state) {
+        $stateHostPid = [int](Get-MetraProp -Object $state -Name 'hostPid' -Default 0)
+    }
+    if ($stateHostPid -eq $recorded) {
+        return $recorded
+    }
+
+    # PID exists but does not match Metra state. Treat as stale to avoid blocking startup.
     Remove-Item -LiteralPath $pidFile -Force -ErrorAction SilentlyContinue
     return $null
 }
@@ -339,13 +371,9 @@ function Open-MetraOpsDeskBrowser {
 
     if ([string]::IsNullOrWhiteSpace($Url)) {
         if ($Port -gt 0) {
-            $binding = Resolve-MetraOpsDeskBinding -MetraRoot $MetraRoot
-            if ([int]$binding.Port -eq $Port) {
-                $Url = [string]$binding.BrowserUrl
-            }
-            else {
-                $Url = "http://127.0.0.1:$Port"
-            }
+            # Honor Tailscale / friendly reach prefs for explicit supervised ports.
+            $binding = Get-MetraOpsDeskBindingForPort -Port $Port -MetraRoot $MetraRoot
+            $Url = [string]$binding.BrowserUrl
         }
         else {
             $Url = Get-MetraOpsDeskUrl -MetraRoot $MetraRoot
@@ -363,6 +391,9 @@ function Start-MetraOpsChildProcess {
     <#
     .SYNOPSIS
         Starts the hidden Ops child (Host -> Ops). Does not start Ask directly.
+    .DESCRIPTION
+        Passes -Port only. Listener prefixes (Tailscale / friendly / loopback) are resolved inside
+        Start-MetraOpsServer via Get-MetraOpsDeskBindingForPort - not loopback-only.
     #>
     [CmdletBinding()]
     param(
@@ -592,6 +623,8 @@ function Start-MetraOpsHost {
     }
 
     Set-Content -LiteralPath (Get-MetraOpsHostPidFile) -Value $PID -Encoding ASCII
+    # Claim hostPid in state immediately so single-instance checks cannot race a recycled PID.
+    Write-MetraOpsHostState -Status 'starting' -OpsPort $Port -RestartCount 0 -StartedAt $script:MetraOpsHostStartedAt
 
     $deskUp = Test-MetraOpsDeskAlive -Port $Port -TimeoutSec 2
     if (-not $deskUp) {
@@ -602,6 +635,7 @@ function Start-MetraOpsHost {
             Write-MetraOpsHostState -Status 'running' -OpsPort $Port -RestartCount 0 -StartedAt $script:MetraOpsHostStartedAt
         }
         catch {
+            Write-MetraOpsHostLog "Initial desk start failed - $($_.Exception.Message)" 'error'
             Write-MetraOpsHostState -Status 'failed' -OpsPort $Port -RestartCount 0 -LastFailure $_.Exception.Message -StartedAt $script:MetraOpsHostStartedAt
             Remove-Item -LiteralPath (Get-MetraOpsHostPidFile) -Force -ErrorAction SilentlyContinue
             throw
@@ -698,8 +732,9 @@ function Start-MetraOpsHost {
         })
 
     $exitItem = New-Object System.Windows.Forms.ToolStripMenuItem
-    $exitItem.Text = 'Exit'
+    $exitItem.Text = 'Exit Metra Ops'
     $exitItem.Add_Click({
+            # Exit leaves Metra: stop desk then leave the tray (not "exit tray, leave desk running").
             try { Stop-MetraOpsServer -Port $script:MetraOpsHostPort } catch { }
             Write-MetraOpsHostState -Status 'stopped' -OpsPort $script:MetraOpsHostPort -RestartCount $script:MetraOpsRestartCount -StartedAt $script:MetraOpsHostStartedAt
             $notify.Visible = $false
@@ -834,6 +869,8 @@ function Start-MetraOpsHost {
             try { $script:MetraOpsHostIcon.Dispose() } catch { }
             $script:MetraOpsHostIcon = $null
         }
+        # Do not stop the child here. Forced tray exit/crash should not kill a potentially busy desk.
+        # Menu Stop/Exit paths stop Ops explicitly before Application.Exit().
         Remove-Item -LiteralPath (Get-MetraOpsHostPidFile) -Force -ErrorAction SilentlyContinue
         $state = Get-MetraOpsHostState
         if ($state -and [string]$state.status -eq 'running') {

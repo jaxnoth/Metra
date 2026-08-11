@@ -1,5 +1,8 @@
 # Metra Ops proposal HTTP handlers (Slice 4). Preview + request-apply only - never writes project roots.
 
+$script:MetraProposalDiffMaxFileChars = 4000
+$script:MetraProposalDiffMaxTotalChars = 80000
+
 function Test-MetraOpsProposalCallerAllowed {
     <#
     .SYNOPSIS
@@ -61,8 +64,9 @@ function Resolve-MetraProposalApiRootPath {
         return $RootPath.TrimEnd('\', '/')
     }
 
+    # Project name match is case-insensitive (registry / filesystem folder names).
     $match = @(Get-MetraProjects) | Where-Object {
-        [string]$_.Name -eq $Project
+        [string]$_.Name.Equals($Project, [System.StringComparison]::OrdinalIgnoreCase)
     } | Select-Object -First 1
 
     if (-not $match) {
@@ -76,6 +80,11 @@ function New-MetraProposalDiffText {
         [Parameter(Mandatory)]$Proposal
     )
 
+    $maxFile = [int]$script:MetraProposalDiffMaxFileChars
+    if ($maxFile -lt 256) { $maxFile = 256 }
+    $maxTotal = [int]$script:MetraProposalDiffMaxTotalChars
+    if ($maxTotal -lt $maxFile) { $maxTotal = $maxFile }
+
     $lines = [System.Collections.Generic.List[string]]::new()
     $lines.Add(('Proposal: {0}' -f $Proposal.Id))
     $lines.Add(('Project: {0}' -f $Proposal.Body.project))
@@ -83,19 +92,34 @@ function New-MetraProposalDiffText {
     $lines.Add(('ContentHash: {0}' -f $Proposal.Body.contentHash))
     $lines.Add('')
 
+    $truncatedTotal = $false
     foreach ($file in @($Proposal.Body.files)) {
         $pathRelative = [string](Get-MetraProposalEntryValue -Entry $file -Name 'pathRelative')
         $action = [string](Get-MetraProposalEntryValue -Entry $file -Name 'action')
         $content = [string](Get-MetraProposalEntryValue -Entry $file -Name 'contentUtf8')
-        $lines.Add(('--- {0} ({1})' -f $pathRelative, $action))
+        $header = ('--- {0} ({1})' -f $pathRelative, $action)
         $preview = $content
-        if ($preview.Length -gt 4000) {
-            $preview = $preview.Substring(0, 4000) + "`n... [truncated]"
+        if ($preview.Length -gt $maxFile) {
+            $preview = $preview.Substring(0, $maxFile) + "`n... [truncated]"
         }
+        $chunk = [System.Collections.Generic.List[string]]::new()
+        $chunk.Add($header)
         foreach ($line in ($preview -split "`r?`n", -1)) {
-            $lines.Add(('+ {0}' -f $line))
+            $chunk.Add(('+ {0}' -f $line))
         }
-        $lines.Add('')
+        $chunk.Add('')
+
+        $soFarLen = if ($lines.Count -eq 0) { 0 } else { (($lines -join "`n").Length + 1) }
+        $chunkText = ($chunk -join "`n")
+        if (($soFarLen + $chunkText.Length) -gt $maxTotal) {
+            $truncatedTotal = $true
+            break
+        }
+        foreach ($part in $chunk) { $lines.Add($part) }
+    }
+
+    if ($truncatedTotal) {
+        $lines.Add('... [diff truncated: total size limit]')
     }
 
     return ($lines -join "`n")
@@ -108,14 +132,20 @@ function Save-MetraProposalDiffText {
 
     $diff = New-MetraProposalDiffText -Proposal $Proposal
     $path = Join-Path $Proposal.StoreRoot ($Proposal.Id + '.diff.txt')
-    Set-Content -LiteralPath $path -Value $diff -Encoding UTF8
+    $dir = Split-Path -Parent $path
+    if ($dir -and -not (Test-Path -LiteralPath $dir)) {
+        [void][System.IO.Directory]::CreateDirectory($dir)
+    }
+    $tmp = "$path.tmp"
+    [System.IO.File]::WriteAllText($tmp, ($diff + "`r`n"), (Get-MetraUtf8NoBomEncoding))
+    Move-Item -LiteralPath $tmp -Destination $path -Force
     return $path
 }
 
 function Get-MetraProposalApiView {
     <#
     .SYNOPSIS
-        Public proposal view for Ops HTTP - omits raw nonce (Host reads meta privately).
+        Public proposal view for Ops HTTP - omits raw nonce and absolute rootPath (Host keeps those privately).
     #>
     param(
         [Parameter(Mandatory)]$Proposal,
@@ -142,20 +172,28 @@ function Get-MetraProposalApiView {
         $files += ,[pscustomobject]$row
     }
 
+    $rootPath = [string]$Proposal.Body.rootPath
+    $rootName = $null
+    if (-not [string]::IsNullOrWhiteSpace($rootPath)) {
+        $rootName = [System.IO.Path]::GetFileName($rootPath.TrimEnd('\', '/'))
+    }
+
     return [pscustomobject]@{
-        id            = [string]$Proposal.Id
-        status        = [string]$Proposal.Status
-        schemaVersion = [int]$Proposal.Body.schemaVersion
-        project       = [string]$Proposal.Body.project
-        routeStop     = [string]$Proposal.Body.routeStop
-        rootPath      = [string]$Proposal.Body.rootPath
-        summary       = [string]$Proposal.Body.summary
-        source        = [string]$Proposal.Body.source
-        contentHash   = [string]$Proposal.Body.contentHash
-        createdAt     = [string]$Proposal.Body.createdAt
-        expiresAt     = [string]$Proposal.ExpiresAt
-        resultMessage = $(if ($Proposal.Meta.resultMessage) { [string]$Proposal.Meta.resultMessage } else { $null })
-        files         = $files
+        id                   = [string]$Proposal.Id
+        status               = [string]$Proposal.Status
+        schemaVersion        = [int]$Proposal.Body.schemaVersion
+        project              = [string]$Proposal.Body.project
+        routeStop            = [string]$Proposal.Body.routeStop
+        # Absolute filesystem root stays server-side; expose only folder leaf + known flag.
+        rootName             = $rootName
+        projectLocationKnown = (-not [string]::IsNullOrWhiteSpace($rootPath))
+        summary              = [string]$Proposal.Body.summary
+        source               = [string]$Proposal.Body.source
+        contentHash          = [string]$Proposal.Body.contentHash
+        createdAt            = [string]$Proposal.Body.createdAt
+        expiresAt            = [string]$Proposal.ExpiresAt
+        resultMessage        = $(if ($Proposal.Meta.resultMessage) { [string]$Proposal.Meta.resultMessage } else { $null })
+        files                = $files
     }
 }
 
@@ -238,7 +276,19 @@ function Invoke-MetraOpsProposalCommand {
                     Object     = [pscustomobject]@{ error = 'JSON body required' }
                 }
             }
-            $parsed = $Body | ConvertFrom-Json
+            $parsed = $null
+            try {
+                $parsed = $Body | ConvertFrom-Json -ErrorAction Stop
+            }
+            catch {
+                return @{
+                    StatusCode = 400
+                    Object     = [pscustomobject]@{
+                        error      = 'invalid JSON body'
+                        reasonCode = 'invalidJson'
+                    }
+                }
+            }
             $project = [string](Get-MetraProp -Object $parsed -Name 'project' -Default '')
             $summary = [string](Get-MetraProp -Object $parsed -Name 'summary' -Default '')
             $source = [string](Get-MetraProp -Object $parsed -Name 'source' -Default 'ask')
@@ -293,6 +343,7 @@ function Invoke-MetraOpsProposalCommand {
         }
 
         if ($method -eq 'GET' -and [string]::IsNullOrWhiteSpace($action)) {
+            try { $null = Sync-MetraProposalExpiration -Id $proposalId -StoreRoot $StoreRoot } catch { }
             $proposal = Get-MetraProposal -Id $proposalId -StoreRoot $StoreRoot
             return @{
                 StatusCode = 200
@@ -301,6 +352,7 @@ function Invoke-MetraOpsProposalCommand {
         }
 
         if ($method -eq 'GET' -and $action -eq 'status') {
+            try { $null = Sync-MetraProposalExpiration -Id $proposalId -StoreRoot $StoreRoot } catch { }
             $proposal = Get-MetraProposal -Id $proposalId -StoreRoot $StoreRoot
             return @{
                 StatusCode = 200
@@ -309,6 +361,7 @@ function Invoke-MetraOpsProposalCommand {
         }
 
         if ($method -eq 'GET' -and $action -eq 'diff') {
+            try { $null = Sync-MetraProposalExpiration -Id $proposalId -StoreRoot $StoreRoot } catch { }
             $proposal = Get-MetraProposal -Id $proposalId -StoreRoot $StoreRoot
             $diffPath = Join-Path $proposal.StoreRoot ($proposal.Id + '.diff.txt')
             if (-not (Test-Path -LiteralPath $diffPath)) {

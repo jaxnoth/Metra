@@ -6,5 +6,8 @@
   "top": 0,
   "syncOnScan": true,
   "syncOnSnapshot": false,
-  "scope": "mine"
+  "scope": "mine",
+  "productCues": [],
+  "vocabularyMinSightings": 2,
+  "vocabularyMaxSubjectShare": 0.4
 }

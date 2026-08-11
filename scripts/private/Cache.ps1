@@ -23,8 +23,10 @@ function Clear-MetraRoutingCache {
     .SYNOPSIS
         Clears Metra routing caches (projects scan, registry, solutions keywords, config).
     .DESCRIPTION
-        Call after editing projects.json / solutions/README.md / metra.config.json in the
-        same PowerShell session when you need an immediate re-read before the TTL expires.
+        Registry merges also invalidate automatically when projects.json, a root
+        registryFile, or projects.local.json LastWriteTimeUtc changes. Solutions keywords
+        invalidate on solutions/README.md LastWriteTimeUtc. Call this after metra.config.json
+        edits (or when you need a hard reset) in the same PowerShell session.
     #>
     [CmdletBinding()]
     param()

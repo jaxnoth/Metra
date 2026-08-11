@@ -4,10 +4,12 @@ function Get-MetraAskMachineSignals {
     [CmdletBinding()]
     param()
 
-    $ramGb = 16
+    $ramGb = $null
+    $ramDetected = $false
     try {
         $cs = Get-CimInstance -ClassName Win32_ComputerSystem -ErrorAction Stop
         $ramGb = [math]::Round(([double]$cs.TotalPhysicalMemory) / 1GB, 1)
+        $ramDetected = $true
     }
     catch { }
 
@@ -38,6 +40,7 @@ function Get-MetraAskMachineSignals {
 
     return [PSCustomObject]@{
         ramGb         = $ramGb
+        ramDetected   = $ramDetected
         hasUsefulGpu  = $hasUsefulGpu
         npuPresent    = $npuPresent
         ideInstalled  = (Test-MetraCursorInstall)
@@ -65,7 +68,11 @@ function Get-MetraAskEngineRecommendation {
     $sizeBand = 'medium'
     $reasons = [System.Collections.Generic.List[string]]::new()
 
-    if ($signals.ramGb -lt 12) {
+    if (-not [bool]$signals.ramDetected -or $null -eq $signals.ramGb) {
+        $sizeBand = 'medium'
+        $reasons.Add('RAM not detected - default Balanced (medium pin)')
+    }
+    elseif ([double]$signals.ramGb -lt 12) {
         $sizeBand = 'small'
         $reasons.Add("RAM $($signals.ramGb) GB -> Modest (small pin)")
     }
@@ -133,6 +140,67 @@ function Get-MetraAskOllamaExePath {
     return $null
 }
 
+function Test-MetraAskOllamaInstallerSignature {
+    <#
+    .SYNOPSIS
+        True when a file has a Valid Authenticode signature from O=Ollama Inc.
+    .NOTES
+        Matches Ollama's own install.ps1 trust rule (organization name with boundary anchors).
+        Subject substring "Ollama" alone is not enough.
+    #>
+    [CmdletBinding()]
+    param([Parameter(Mandatory)][string]$Path)
+
+    if (-not (Test-Path -LiteralPath $Path)) { return $false }
+    try {
+        $sig = Get-AuthenticodeSignature -LiteralPath $Path
+        if ($sig.Status -ne 'Valid') { return $false }
+        if (-not $sig.SignerCertificate) { return $false }
+        $subject = [string]$sig.SignerCertificate.Subject
+        # Anchor O= to avoid "O=Not Ollama Inc." style false positives (same as ollama/scripts/install.ps1).
+        return [bool]($subject -match '(^|, )O=Ollama Inc\.(,|$)')
+    }
+    catch {
+        return $false
+    }
+}
+
+function Merge-MetraAskOllamaConfigObject {
+    <#
+    .SYNOPSIS
+        Build ask.ollama patch object while preserving unknown nested keys (shallow patch safety).
+    #>
+    [CmdletBinding()]
+    param(
+        [string]$MetraRoot = (Get-MetraRoot),
+        [string]$BaseUrl = 'http://127.0.0.1:11434',
+        [Parameter(Mandatory)][string]$Model,
+        [Parameter(Mandatory)][string]$SizeBand
+    )
+
+    $merged = [ordered]@{
+        baseUrl  = $BaseUrl
+        model    = $Model
+        sizeBand = $SizeBand
+    }
+    try {
+        $path = Get-MetraAskConfigPath -MetraRoot $MetraRoot
+        if (Test-Path -LiteralPath $path) {
+            $cfg = Get-Content -Raw -LiteralPath $path | ConvertFrom-Json
+            $ask = Get-MetraProp -Object $cfg -Name 'ask' -Default $null
+            $existing = Get-MetraProp -Object $ask -Name 'ollama' -Default $null
+            if ($null -ne $existing) {
+                foreach ($p in @($existing.PSObject.Properties)) {
+                    if ($p.Name -in @('baseUrl', 'model', 'sizeBand')) { continue }
+                    $merged[$p.Name] = $p.Value
+                }
+            }
+        }
+    }
+    catch { }
+    return [PSCustomObject]$merged
+}
+
 function Set-MetraAskOllamaHiddenStartMarker {
     <#
     .SYNOPSIS
@@ -181,12 +249,14 @@ function Install-MetraAskOllamaRuntime {
     if ($ollamaExe) {
         try {
             if (-not $WhatIf) {
-                Start-Process -FilePath $ollamaExe -ArgumentList @('serve') -WindowStyle Hidden -ErrorAction SilentlyContinue
+                $serveProc = Start-Process -FilePath $ollamaExe -ArgumentList @('serve') `
+                    -WindowStyle Hidden -PassThru -ErrorAction SilentlyContinue
                 $deadline = [datetime]::UtcNow.AddSeconds(30)
                 while ([datetime]::UtcNow -lt $deadline) {
                     if (Test-MetraAskOpenAICompatHealth -BaseUrl $settings.ollamaBaseUrl -Kind ollama -TimeoutSec 1) {
                         return [PSCustomObject]@{ ok = $true; step = 'runtime'; status = 'started_existing' }
                     }
+                    if ($serveProc -and $serveProc.HasExited) { break }
                     Start-Sleep -Seconds 1
                 }
             }
@@ -211,13 +281,9 @@ function Install-MetraAskOllamaRuntime {
     $tempInstaller = Join-Path $env:TEMP 'MetraOllamaSetup.exe'
     try {
         Invoke-WebRequest -Uri 'https://ollama.com/download/OllamaSetup.exe' -OutFile $tempInstaller -UseBasicParsing -TimeoutSec 600
-        $sig = Get-AuthenticodeSignature -LiteralPath $tempInstaller
-        $signerOk = $sig.Status -eq 'Valid' -and
-            $sig.SignerCertificate -and
-            ($sig.SignerCertificate.Subject -match 'Ollama')
-        if (-not $signerOk) {
+        if (-not (Test-MetraAskOllamaInstallerSignature -Path $tempInstaller)) {
             Remove-Item -LiteralPath $tempInstaller -Force -ErrorAction SilentlyContinue
-            $installMessage = 'OllamaSetup.exe signature not verified - falling back to winget'
+            $installMessage = 'OllamaSetup.exe signature not verified (need Valid + O=Ollama Inc.) - falling back to winget'
         }
         else {
             $setupArgs = @('/VERYSILENT', '/NORESTART', '/SUPPRESSMSGBOXES')
@@ -271,15 +337,21 @@ function Install-MetraAskOllamaRuntime {
 
     # Make sure the local API is up (start the CLI hidden if the setup did not).
     $deadline2 = [datetime]::UtcNow.AddSeconds(120)
+    $serveProc2 = $null
     $startedServe = $false
     while ([datetime]::UtcNow -lt $deadline2) {
         if (Test-MetraAskOpenAICompatHealth -BaseUrl $settings.ollamaBaseUrl -Kind ollama -TimeoutSec 2) {
             return [PSCustomObject]@{ ok = $true; step = 'runtime'; status = $installStatus; note = $installMessage }
         }
+        if ($serveProc2 -and $serveProc2.HasExited) {
+            $serveProc2 = $null
+            $startedServe = $false
+        }
         if (-not $startedServe) {
             $exe = Get-MetraAskOllamaExePath
             if ($exe) {
-                Start-Process -FilePath $exe -ArgumentList @('serve') -WindowStyle Hidden -ErrorAction SilentlyContinue
+                $serveProc2 = Start-Process -FilePath $exe -ArgumentList @('serve') `
+                    -WindowStyle Hidden -PassThru -ErrorAction SilentlyContinue
                 $startedServe = $true
             }
         }
@@ -356,14 +428,13 @@ function Invoke-MetraAskAcceptRecommended {
     $rec = Get-MetraAskEngineRecommendation @recParams
 
     if (-not $WhatIf) {
+        # Preserve unknown ask.ollama.* keys (Save-MetraAskConfigPatch is a shallow merge).
+        $ollamaObj = Merge-MetraAskOllamaConfigObject -MetraRoot $MetraRoot `
+            -BaseUrl 'http://127.0.0.1:11434' -Model $rec.modelPin -SizeBand $rec.sizeBand
         Save-MetraAskConfigPatch -MetraRoot $MetraRoot -Patch @{
             enabled = $true
             engine  = 'ollama'
-            ollama  = [PSCustomObject]@{
-                baseUrl  = 'http://127.0.0.1:11434'
-                model    = $rec.modelPin
-                sizeBand = $rec.sizeBand
-            }
+            ollama  = $ollamaObj
         }
     }
 
@@ -472,11 +543,8 @@ function Set-MetraAskEngine {
         $pins = Get-MetraAskModelPinTable
         $band = if ($SizeBand) { $SizeBand } else { $settings.ollamaSizeBand }
         $model = if ($Model) { $Model } else { [string]$pins[$band] }
-        $patch['ollama'] = [PSCustomObject]@{
-            baseUrl  = $settings.ollamaBaseUrl
-            model    = $model
-            sizeBand = $band
-        }
+        $patch['ollama'] = Merge-MetraAskOllamaConfigObject -MetraRoot $MetraRoot `
+            -BaseUrl $settings.ollamaBaseUrl -Model $model -SizeBand $band
     }
     if ($Engine -eq 'cursor') {
         # Cursor Ask defaults to Auto Cost (auto-smart + optimizeFor=cost) - legacy Auto

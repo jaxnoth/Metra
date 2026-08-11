@@ -8,18 +8,30 @@ function Export-MetraProfile {
         Writes the same layout used by profiles/sample. A path ending in .zip produces an
         archive; other paths produce a folder. Secrets, ticket caches, canvas snapshots, and
         personal-root registry files are not included.
+        Non-empty destination folders and existing zip files require -Force.
     .PARAMETER Path
         Destination folder or .zip path. Environment variables and relative paths are supported.
+    .PARAMETER Force
+        Replace an existing non-empty folder or existing .zip destination.
+    .PARAMETER Quiet
+        Suppresses host status messages.
     .EXAMPLE
         Export-MetraProfile -Path $env:TEMP\my-metra-profile.zip
     .EXAMPLE
-        Export-MetraProfile -Path .\profile-backup
+        Export-MetraProfile -Path .\profile-backup -Force
     .OUTPUTS
         PSCustomObject containing destination path, included files, archive state, and manifest.
     #>
-    [CmdletBinding()]
+    [CmdletBinding(SupportsShouldProcess, ConfirmImpact = 'Low')]
+    [OutputType([pscustomobject])]
     param(
-        [Parameter(Mandatory)][string]$Path
+        [Parameter(Mandatory)]
+        [ValidateNotNullOrEmpty()]
+        [string]$Path,
+
+        [switch]$Force,
+
+        [switch]$Quiet
     )
 
     $metraRoot = Get-MetraRoot
@@ -39,8 +51,44 @@ function Export-MetraProfile {
     if (-not [System.IO.Path]::IsPathRooted($expanded)) {
         $expanded = Join-Path (Get-Location).Path $expanded
     }
-    $destFull = [System.IO.Path]::GetFullPath($expanded)
+    try {
+        $destFull = [System.IO.Path]::GetFullPath($expanded)
+    }
+    catch {
+        throw "Invalid profile destination path: $Path"
+    }
     $asZip = $destFull.EndsWith('.zip', [StringComparison]::OrdinalIgnoreCase)
+
+    if (-not $PSCmdlet.ShouldProcess($destFull, 'Export Metra profile pack')) {
+        return [PSCustomObject]@{
+            Path     = $destFull
+            Files    = @($present.ToArray())
+            IsZip    = $asZip
+            Manifest = $null
+            WhatIf   = $true
+        }
+    }
+
+    if ($asZip) {
+        $zipDir = Split-Path -Parent $destFull
+        if ($zipDir -and -not (Test-Path -LiteralPath $zipDir)) {
+            [void][System.IO.Directory]::CreateDirectory($zipDir)
+        }
+        if ((Test-Path -LiteralPath $destFull) -and -not $Force) {
+            throw "Destination zip already exists. Use -Force to replace it: $destFull"
+        }
+    }
+    else {
+        if (Test-Path -LiteralPath $destFull) {
+            $existing = @(Get-ChildItem -LiteralPath $destFull -Force -ErrorAction SilentlyContinue)
+            if ($existing.Count -gt 0 -and -not $Force) {
+                throw "Destination folder is not empty. Use -Force to replace profile export contents: $destFull"
+            }
+            if ($Force -and $existing.Count -gt 0) {
+                Remove-Item -LiteralPath $destFull -Recurse -Force
+            }
+        }
+    }
 
     $staging = if ($asZip) {
         Join-Path ([System.IO.Path]::GetTempPath()) ('metra-profile-export-' + [guid]::NewGuid().ToString('N'))
@@ -48,27 +96,33 @@ function Export-MetraProfile {
     else {
         $destFull
     }
-    New-Item -ItemType Directory -Path $staging -Force | Out-Null
+    [void][System.IO.Directory]::CreateDirectory($staging)
 
     foreach ($rel in $present) {
         $src = Join-Path $metraRoot ($rel -replace '/', [IO.Path]::DirectorySeparatorChar)
         $dst = Join-Path $staging ($rel -replace '/', [IO.Path]::DirectorySeparatorChar)
         $dstDir = Split-Path -Parent $dst
         if (-not (Test-Path -LiteralPath $dstDir)) {
-            New-Item -ItemType Directory -Path $dstDir -Force | Out-Null
+            [void][System.IO.Directory]::CreateDirectory($dstDir)
         }
         Copy-Item -LiteralPath $src -Destination $dst -Force
     }
 
     $status = Get-MetraProfileStatus -MetraRoot $metraRoot
+    $presentSet = @{}
+    foreach ($rel in $present) {
+        $presentSet[($rel -replace '\\', '/')] = $true
+    }
     $fileDetails = @(
-        $status.files | ForEach-Object {
-            [ordered]@{
-                logicalName  = $_.logicalName
-                relativePath = $_.relativePath
-                hash         = $_.hash
+        $status.files |
+            Where-Object { $presentSet.ContainsKey(($_.relativePath -replace '\\', '/')) } |
+            ForEach-Object {
+                [ordered]@{
+                    logicalName  = $_.logicalName
+                    relativePath = $_.relativePath
+                    hash         = $_.hash
+                }
             }
-        }
     )
 
     $manifest = [ordered]@{
@@ -79,7 +133,7 @@ function Export-MetraProfile {
         exportedUtc        = [DateTime]::UtcNow.ToString('o')
         createdUtc         = [DateTime]::UtcNow.ToString('o')
         contentHash        = $status.contentHash
-        source             = 'jumpbox'
+        source             = [System.Environment]::MachineName
         files              = $fileDetails
         notes              = @(
             'Personal-root registryFile (e.g. projects.personal.json beside personal projects) is not included; copy it with that root separately.',
@@ -89,7 +143,7 @@ function Export-MetraProfile {
         )
     }
     $manifestPath = Join-Path $staging 'metra-profile.json'
-    ($manifest | ConvertTo-Json -Depth 6) | Set-Content -Path $manifestPath -Encoding utf8
+    ($manifest | ConvertTo-Json -Depth 6) | Set-Content -LiteralPath $manifestPath -Encoding utf8
 
     $readmePath = Join-Path $staging 'README.md'
     @"
@@ -106,28 +160,35 @@ Import into another Metra checkout:
 ``````
 
 Personal-root ``registryFile`` is not included in this pack.
-"@ | Set-Content -Path $readmePath -Encoding utf8
+"@ | Set-Content -LiteralPath $readmePath -Encoding utf8
 
     $resultPath = $destFull
     $manifestOut = $manifestPath
     if ($asZip) {
-        $zipDir = Split-Path -Parent $destFull
-        if ($zipDir -and -not (Test-Path -LiteralPath $zipDir)) {
-            New-Item -ItemType Directory -Path $zipDir -Force | Out-Null
+        try {
+            if (Test-Path -LiteralPath $destFull) {
+                Remove-Item -LiteralPath $destFull -Force
+            }
+            Compress-Archive -Path (Join-Path $staging '*') -DestinationPath $destFull -Force
+            $manifestOut = 'metra-profile.json (inside zip)'
         }
-        if (Test-Path -LiteralPath $destFull) {
-            Remove-Item -LiteralPath $destFull -Force
+        finally {
+            if (Test-Path -LiteralPath $staging) {
+                Remove-Item -LiteralPath $staging -Recurse -Force -ErrorAction SilentlyContinue
+            }
         }
-        Compress-Archive -Path (Join-Path $staging '*') -DestinationPath $destFull -Force
-        Remove-Item -LiteralPath $staging -Recurse -Force
-        $manifestOut = 'metra-profile.json (inside zip)'
+    }
+
+    if (-not $Quiet) {
+        Write-Host ("Exported profile: {0}" -f $resultPath)
     }
 
     return [PSCustomObject]@{
-        Path      = $resultPath
-        Files     = @($present.ToArray())
-        IsZip     = $asZip
-        Manifest  = $manifestOut
+        Path     = $resultPath
+        Files    = @($present.ToArray())
+        IsZip    = $asZip
+        Manifest = $manifestOut
+        WhatIf   = $false
     }
 }
 
@@ -137,7 +198,8 @@ function Import-MetraProfile {
         Imports a Metra operator profile.
     .DESCRIPTION
         Reads a folder or .zip profile using the profiles/sample layout. Only recognized local
-        configuration, registry, and persona overlay files can be imported.
+        configuration, registry, and persona overlay files can be imported. When the manifest
+        includes per-file hashes, those hashes are verified before copy.
     .PARAMETER Path
         Source profile folder or .zip path.
     .PARAMETER Preview
@@ -153,11 +215,17 @@ function Import-MetraProfile {
     .OUTPUTS
         PSCustomObject containing preview state, files, source, and destination when applicable.
     #>
-    [CmdletBinding()]
+    [CmdletBinding(SupportsShouldProcess, ConfirmImpact = 'Medium')]
+    [OutputType([pscustomobject])]
     param(
-        [Parameter(Mandatory)][string]$Path,
+        [Parameter(Mandatory)]
+        [ValidateNotNullOrEmpty()]
+        [string]$Path,
+
         [switch]$Preview,
+
         [switch]$Force,
+
         [switch]$Quiet
     )
 
@@ -171,8 +239,15 @@ function Import-MetraProfile {
         }
         $fileMap = @(Get-MetraProfileFileMap)
         $fromManifest = @()
+        $manifest = $null
         if (Test-Path -LiteralPath $manifestPath) {
-            $manifest = Get-Content -Raw -Path $manifestPath | ConvertFrom-Json
+            try {
+                $manifest = Get-Content -LiteralPath $manifestPath -Raw -ErrorAction Stop |
+                    ConvertFrom-Json -ErrorAction Stop
+            }
+            catch {
+                throw "Profile manifest is not valid JSON: $manifestPath"
+            }
             $rawFiles = @(Get-MetraProp -Object $manifest -Name 'files' -Default @())
             $fromManifest = @(ConvertTo-MetraProfileManifestRelativePaths -Candidates $rawFiles)
         }
@@ -200,15 +275,19 @@ function Import-MetraProfile {
             $dst = Join-Path $metraRoot ($destRel -replace '/', [IO.Path]::DirectorySeparatorChar)
             $exists = Test-Path -LiteralPath $dst
             [void]$plan.Add([PSCustomObject]@{
-                Relative = $destRel
-                Source   = $src
-                Dest     = $dst
-                Exists   = $exists
-            })
+                    Relative = $destRel
+                    Source   = $src
+                    Dest     = $dst
+                    Exists   = $exists
+                })
         }
 
         if ($plan.Count -eq 0) {
             throw "No importable profile files found under: $srcDir"
+        }
+
+        if ($manifest) {
+            Assert-MetraProfilePlanHashes -Manifest $manifest -Plan $plan.ToArray()
         }
 
         if ($Preview) {
@@ -238,14 +317,29 @@ function Import-MetraProfile {
             throw "Refusing to overwrite existing files without -Force: $names"
         }
 
+        $copied = New-Object System.Collections.Generic.List[string]
         foreach ($row in $plan) {
+            if (-not $PSCmdlet.ShouldProcess($row.Dest, "Import Metra profile file $($row.Relative)")) {
+                continue
+            }
             $dstDir = Split-Path -Parent $row.Dest
             if (-not (Test-Path -LiteralPath $dstDir)) {
-                New-Item -ItemType Directory -Path $dstDir -Force | Out-Null
+                [void][System.IO.Directory]::CreateDirectory($dstDir)
             }
             Copy-Item -LiteralPath $row.Source -Destination $row.Dest -Force
+            [void]$copied.Add($row.Relative)
             if (-not $Quiet) {
                 Write-Host ("Imported {0}" -f $row.Relative)
+            }
+        }
+
+        if ($copied.Count -eq 0) {
+            return [PSCustomObject]@{
+                Preview = $false
+                Files   = @()
+                Source  = $resolved.Source
+                Dest    = $metraRoot
+                WhatIf  = $true
             }
         }
 
@@ -260,9 +354,10 @@ function Import-MetraProfile {
 
         return [PSCustomObject]@{
             Preview = $false
-            Files   = @($plan | ForEach-Object { $_.Relative })
+            Files   = @($copied.ToArray())
             Source  = $resolved.Source
             Dest    = $metraRoot
+            WhatIf  = $false
         }
     }
     finally {
@@ -279,16 +374,23 @@ function Sync-MetraProfile {
     .DESCRIPTION
         Metra Profile Sync v1: HQ-published, satellite-pulled. Calls GET /api/profile/status,
         downloads export when remote hash differs from docs/profile-sync.local.json, then
-        Import-MetraProfile. Never writes the remote machine.
+        Import-MetraProfile. Never writes the remote machine. Best-effort check-in after status/sync.
+        Supports native -WhatIf / -Confirm (SupportsShouldProcess).
     #>
-    [CmdletBinding()]
+    [CmdletBinding(SupportsShouldProcess, ConfirmImpact = 'Medium')]
+    [OutputType([pscustomobject])]
     param(
+        [ValidateNotNullOrEmpty()]
         [string]$OpsBaseUrl,
+
+        [ValidateNotNullOrEmpty()]
         [string]$SyncToken,
-        [switch]$WhatIf,
+
         [switch]$Force,
+
         [switch]$Quiet,
-        # Test / offline inject: skip HTTP GET /api/profile/status when provided.
+
+        [Parameter(DontShow)]
         $RemoteStatus
     )
 
@@ -314,7 +416,7 @@ function Sync-MetraProfile {
 
         $statusUri = "$base/api/profile/status"
         try {
-            $status = Invoke-RestMethod -Uri $statusUri -Headers $headers -Method Get
+            $status = Invoke-RestMethod -Uri $statusUri -Headers $headers -Method Get -TimeoutSec 30 -ErrorAction Stop
         }
         catch {
             throw "Failed to GET profile status from $statusUri : $($_.Exception.Message)"
@@ -332,21 +434,29 @@ function Sync-MetraProfile {
         $lastApplied = [string](Get-MetraProp -Object $local.Data -Name 'lastAppliedHash' -Default '')
     }
 
+    # Report current applied hash (or empty) so Behind machines still appear on HQ roster.
+    if (-not $RemoteStatus -and -not $WhatIfPreference -and -not [string]::IsNullOrWhiteSpace($token)) {
+        $checkIn = Send-MetraProfileCheckIn -OpsBaseUrl $base -SyncToken $token -LastAppliedHash $lastApplied
+        if (-not $Quiet -and $checkIn -and -not $checkIn.Ok -and -not $checkIn.Skipped) {
+            Write-Warning ("Profile check-in failed: {0}" -f $checkIn.Error)
+        }
+    }
+
     if (-not $Force -and $lastApplied -eq $remoteHash) {
         if (-not $Quiet) {
             Write-Host "Profile already current: $remoteHash"
         }
         return [PSCustomObject]@{
-            Ok              = $true
-            AlreadyCurrent  = $true
-            ContentHash     = $remoteHash
-            OpsBaseUrl      = $base
-            Imported        = $false
-            WhatIf          = [bool]$WhatIf
+            Ok             = $true
+            AlreadyCurrent = $true
+            ContentHash    = $remoteHash
+            OpsBaseUrl     = $base
+            Imported       = $false
+            WhatIf         = [bool]$WhatIfPreference
         }
     }
 
-    if ($WhatIf) {
+    if (-not $PSCmdlet.ShouldProcess($metraRoot, "Sync Metra profile from $base")) {
         if (-not $Quiet) {
             Write-Host 'Would sync profile:'
             Write-Host "  Remote hash: $remoteHash"
@@ -372,17 +482,27 @@ function Sync-MetraProfile {
         'X-Metra-Profile-Sync' = $token
     }
     $safeName = ($remoteHash -replace '[:\\/]', '-')
-    $zipPath = Join-Path ([System.IO.Path]::GetTempPath()) ("metra-profile-$safeName.zip")
+    $zipPath = Join-Path ([System.IO.Path]::GetTempPath()) (
+        "metra-profile-$safeName-$([guid]::NewGuid().ToString('N')).zip"
+    )
     $exportUri = "$base/api/profile/export"
     try {
-        Invoke-WebRequest -Uri $exportUri -Headers $headers -OutFile $zipPath -UseBasicParsing | Out-Null
+        Invoke-WebRequest -Uri $exportUri -Headers $headers -OutFile $zipPath -UseBasicParsing -TimeoutSec 60 -ErrorAction Stop |
+            Out-Null
     }
     catch {
         throw "Failed to download profile export from $exportUri : $($_.Exception.Message)"
     }
 
+    if (-not (Test-Path -LiteralPath $zipPath)) {
+        throw 'Profile export download did not create a file.'
+    }
+    if ((Get-Item -LiteralPath $zipPath).Length -le 0) {
+        throw 'Profile export download was empty.'
+    }
+
     try {
-        $importResult = Import-MetraProfile -Path $zipPath -Force -Quiet:$Quiet
+        $importResult = Import-MetraProfile -Path $zipPath -Force -Quiet:$Quiet -Confirm:$false
     }
     finally {
         if (Test-Path -LiteralPath $zipPath) {
@@ -391,7 +511,6 @@ function Sync-MetraProfile {
     }
 
     $prevToken = $token
-    $prevOps = $base
     if ($local.Data) {
         $existingTok = [string](Get-MetraProp -Object $local.Data -Name 'syncToken' -Default '')
         if (-not [string]::IsNullOrWhiteSpace($existingTok)) {
@@ -409,6 +528,11 @@ function Sync-MetraProfile {
     }
     $statePath = Save-MetraProfileSyncLocalState -State $newState -MetraRoot $metraRoot
 
+    $checkIn2 = Send-MetraProfileCheckIn -OpsBaseUrl $base -SyncToken $token -LastAppliedHash $remoteHash
+    if (-not $Quiet -and $checkIn2 -and -not $checkIn2.Ok -and -not $checkIn2.Skipped) {
+        Write-Warning ("Profile check-in failed: {0}" -f $checkIn2.Error)
+    }
+
     if (-not $Quiet) {
         Write-Host "Profile synced: $remoteHash"
     }
@@ -425,3 +549,151 @@ function Sync-MetraProfile {
     }
 }
 
+function Get-MetraProfileSyncClientStatus {
+    <#
+    .SYNOPSIS
+        Satellite freshness vs HQ published fingerprint (Current / Behind / Unknown).
+    .DESCRIPTION
+        Compares remote contentHash to local lastAppliedHash. Does not import. Best-effort check-in.
+    #>
+    [CmdletBinding()]
+    [OutputType([pscustomobject])]
+    param(
+        [ValidateNotNullOrEmpty()]
+        [string]$OpsBaseUrl,
+
+        [ValidateNotNullOrEmpty()]
+        [string]$SyncToken,
+
+        [switch]$Quiet,
+
+        [Parameter(DontShow)]
+        $RemoteStatus
+    )
+
+    $metraRoot = Get-MetraRoot
+    $base = $null
+    try {
+        $base = if ($RemoteStatus -and [string]::IsNullOrWhiteSpace($OpsBaseUrl)) {
+            'test://local'
+        }
+        else {
+            Resolve-MetraProfileOpsBaseUrl -OpsBaseUrl $OpsBaseUrl -MetraRoot $metraRoot
+        }
+    }
+    catch {
+        $msg = $_.Exception.Message
+        if (-not $Quiet) {
+            Write-Host 'Profile status: Unknown'
+            Write-Host 'Unable to reach the main Metra machine.'
+            Write-Host 'Configured HQ: (not set)'
+            Write-Host $msg
+        }
+        return [PSCustomObject]@{
+            Ok              = $false
+            State           = 'Unknown'
+            Message         = 'Unable to reach the main Metra machine.'
+            OpsBaseUrl      = $null
+            ContentHash     = $null
+            LastAppliedHash = $null
+            Error           = $msg
+        }
+    }
+
+    $token = Resolve-MetraProfileSyncToken -SyncToken $SyncToken -MetraRoot $metraRoot
+    $local = Get-MetraProfileSyncLocalState -MetraRoot $metraRoot
+    $lastApplied = ''
+    if ($local.Data) {
+        $lastApplied = [string](Get-MetraProp -Object $local.Data -Name 'lastAppliedHash' -Default '')
+    }
+
+    if ($RemoteStatus) {
+        $status = $RemoteStatus
+    }
+    else {
+        if ([string]::IsNullOrWhiteSpace($token)) {
+            $msg = 'Profile sync token missing.'
+            if (-not $Quiet) {
+                Write-Host 'Profile status: Unknown'
+                Write-Host 'Unable to reach the main Metra machine.'
+                Write-Host ("Configured HQ: {0}" -f $base)
+                Write-Host $msg
+            }
+            return [PSCustomObject]@{
+                Ok              = $false
+                State           = 'Unknown'
+                Message         = 'Unable to reach the main Metra machine.'
+                OpsBaseUrl      = $base
+                ContentHash     = $null
+                LastAppliedHash = $lastApplied
+                Error           = $msg
+            }
+        }
+        $headers = @{ 'X-Metra-Profile-Sync' = $token }
+        $statusUri = "$base/api/profile/status"
+        try {
+            $status = Invoke-RestMethod -Uri $statusUri -Headers $headers -Method Get -TimeoutSec 30 -ErrorAction Stop
+        }
+        catch {
+            $msg = $_.Exception.Message
+            if (-not $Quiet) {
+                Write-Host 'Profile status: Unknown'
+                Write-Host 'Unable to reach the main Metra machine.'
+                Write-Host ("Configured HQ: {0}" -f $base)
+            }
+            return [PSCustomObject]@{
+                Ok              = $false
+                State           = 'Unknown'
+                Message         = 'Unable to reach the main Metra machine.'
+                OpsBaseUrl      = $base
+                ContentHash     = $null
+                LastAppliedHash = $lastApplied
+                Error           = $msg
+            }
+        }
+    }
+
+    $remoteHash = [string](Get-MetraProp -Object $status -Name 'contentHash' -Default '')
+    if ([string]::IsNullOrWhiteSpace($remoteHash)) {
+        if (-not $Quiet) {
+            Write-Host 'Profile status: Unknown'
+            Write-Host 'Unable to reach the main Metra machine.'
+            Write-Host ("Configured HQ: {0}" -f $base)
+            Write-Host 'Remote /api/profile/status did not return contentHash.'
+        }
+        return [PSCustomObject]@{
+            Ok              = $false
+            State           = 'Unknown'
+            Message         = 'Unable to reach the main Metra machine.'
+            OpsBaseUrl      = $base
+            ContentHash     = $null
+            LastAppliedHash = $lastApplied
+            Error           = 'Remote /api/profile/status did not return contentHash.'
+        }
+    }
+
+    if (-not $RemoteStatus -and -not [string]::IsNullOrWhiteSpace($token)) {
+        $checkIn = Send-MetraProfileCheckIn -OpsBaseUrl $base -SyncToken $token -LastAppliedHash $lastApplied
+        if (-not $Quiet -and $checkIn -and -not $checkIn.Ok -and -not $checkIn.Skipped) {
+            Write-Warning ("Profile check-in failed: {0}" -f $checkIn.Error)
+        }
+    }
+
+    $state = if ($lastApplied -eq $remoteHash) { 'Current' } else { 'Behind' }
+    if (-not $Quiet) {
+        Write-Host ("Profile status: {0}" -f $state)
+        Write-Host ("  Remote: {0}" -f $remoteHash)
+        Write-Host ("  Local:  {0}" -f $(if ($lastApplied) { $lastApplied } else { '(none)' }))
+        Write-Host ("  Ops:    {0}" -f $base)
+    }
+
+    return [PSCustomObject]@{
+        Ok              = $true
+        State           = $state
+        Message         = $state
+        OpsBaseUrl      = $base
+        ContentHash     = $remoteHash
+        LastAppliedHash = $lastApplied
+        Error           = $null
+    }
+}

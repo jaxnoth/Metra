@@ -472,6 +472,17 @@ textarea:focus {
   font: inherit;
 }
 
+.attention-recommend-preview {
+  margin: 0 0 0.75rem;
+  padding: 0.65rem 0.75rem;
+  max-height: 14rem;
+  overflow: auto;
+  font: 0.85rem/1.35 ui-monospace, Consolas, monospace;
+  border: 1px solid color-mix(in srgb, var(--graphite) 28%, transparent);
+  background: color-mix(in srgb, var(--paper, #fff) 88%, var(--graphite));
+  border-radius: 6px;
+}
+
 .attention-card {
   display: flex;
   flex-direction: column;

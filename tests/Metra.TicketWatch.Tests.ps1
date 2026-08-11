@@ -100,7 +100,7 @@ Describe 'Ticket watch Attention helpers' {
             $q.detail | Should -Match 'High priority'
             $q.detail | Should -Match 'Jane Doe'
             $q.detail | Should -Match 'updated '
-            $q.statusRank | Should -Be 0
+            $q.statusRank | Should -Be 10
             $q.ticketStatus | Should -Be 'Open'
             $q.command | Should -Be '.\TicketTracker.ps1 brief 1034794'
         }
@@ -252,8 +252,12 @@ Describe 'Ticket watch Attention helpers' {
         }
     }
 
-    It 'ranks Waiting on Customer below Open tickets' {
+    It 'ranks Update from above Open and Open above Waiting on Customer' {
         InModuleScope Metra {
+            (Get-MetraTicketAttentionStatusRank -Status 'Update from Representative') |
+                Should -BeLessThan (Get-MetraTicketAttentionStatusRank -Status 'Open')
+            (Get-MetraTicketAttentionStatusRank -Status 'Update from Customer') |
+                Should -BeLessThan (Get-MetraTicketAttentionStatusRank -Status 'Open')
             (Get-MetraTicketAttentionStatusRank -Status 'Open') |
                 Should -BeLessThan (Get-MetraTicketAttentionStatusRank -Status 'Waiting on Customer')
 
@@ -265,23 +269,68 @@ Describe 'Ticket watch Attention helpers' {
                     Id = '2'; Subject = 'Waiting work'; Status = 'Waiting on Customer'; Priority = '1'
                     Customer = 'B'; Assignee = 'S'; Updated = (Get-Date).AddHours(1).ToString('o')
                 })
+            $update = ConvertTo-MetraTicketAttentionQueueItem -Ticket ([PSCustomObject]@{
+                    Id = '3'; Subject = 'Customer replied'; Status = 'Update from Customer'; Priority = '3'
+                    Customer = 'C'; Assignee = 'S'; Updated = (Get-Date).AddHours(-1).ToString('o')
+                })
             $mem = [PSCustomObject]@{
                 items = @(
                     [PSCustomObject]@{
                         key = 'ticket:2'; kind = 'ticket'; content = $waiting.content; detail = $waiting.detail
                         ticketStatus = $waiting.ticketStatus; statusRank = $waiting.statusRank
+                        evidenceSignature = $waiting.evidenceSignature
                         confidence = 'fresh'; state = 'active'; notRecheckedSince = $null
                     }
                     [PSCustomObject]@{
                         key = 'ticket:1'; kind = 'ticket'; content = $open.content; detail = $open.detail
                         ticketStatus = $open.ticketStatus; statusRank = $open.statusRank
+                        evidenceSignature = $open.evidenceSignature
+                        confidence = 'fresh'; state = 'active'; notRecheckedSince = $null
+                    }
+                    [PSCustomObject]@{
+                        key = 'ticket:3'; kind = 'ticket'; content = $update.content; detail = $update.detail
+                        ticketStatus = $update.ticketStatus; statusRank = $update.statusRank
+                        evidenceSignature = $update.evidenceSignature
                         confidence = 'fresh'; state = 'active'; notRecheckedSince = $null
                     }
                 )
             }
             $ranked = Get-MetraAttentionActiveItems -Memory $mem
-            $ranked[0].key | Should -Be 'ticket:1'
-            $ranked[1].key | Should -Be 'ticket:2'
+            $ranked[0].key | Should -Be 'ticket:3'
+            $ranked[1].key | Should -Be 'ticket:1'
+            $ranked[2].key | Should -Be 'ticket:2'
+        }
+    }
+
+    It 'ranks newer Update from tickets ahead of older ones' {
+        InModuleScope Metra {
+            $older = ConvertTo-MetraTicketAttentionQueueItem -Ticket ([PSCustomObject]@{
+                    Id = '10'; Subject = 'Older update'; Status = 'Update from Representative'; Priority = '1'
+                    Customer = 'A'; Assignee = 'S'; Updated = '2026-08-01T12:00:00Z'
+                })
+            $newer = ConvertTo-MetraTicketAttentionQueueItem -Ticket ([PSCustomObject]@{
+                    Id = '20'; Subject = 'Newer update'; Status = 'Update from Customer'; Priority = '1'
+                    Customer = 'B'; Assignee = 'S'; Updated = '2026-08-10T14:00:00Z'
+                })
+            $mem = [PSCustomObject]@{
+                items = @(
+                    [PSCustomObject]@{
+                        key = 'ticket:10'; kind = 'ticket'; content = $older.content
+                        ticketStatus = $older.ticketStatus; statusRank = $older.statusRank
+                        evidenceSignature = $older.evidenceSignature
+                        confidence = 'fresh'; state = 'active'
+                    }
+                    [PSCustomObject]@{
+                        key = 'ticket:20'; kind = 'ticket'; content = $newer.content
+                        ticketStatus = $newer.ticketStatus; statusRank = $newer.statusRank
+                        evidenceSignature = $newer.evidenceSignature
+                        confidence = 'fresh'; state = 'active'
+                    }
+                )
+            }
+            $ranked = Get-MetraAttentionActiveItems -Memory $mem
+            $ranked[0].key | Should -Be 'ticket:20'
+            $ranked[1].key | Should -Be 'ticket:10'
         }
     }
 
@@ -387,6 +436,152 @@ Describe 'Ticket watch Attention helpers' {
         }
     }
 
+    It 'E1: product cue list normalizes union from solutions, registry, and local' {
+        InModuleScope Metra {
+            $cues = ConvertTo-MetraTicketWatchNormalizedProductCues `
+                -SolutionsKeywords @('Pharos', 'pharos', '  THRIVE  ') `
+                -RegistryTriggers @('Jitterbit', 'ticket', 'sql', 'helpdesk', 'ab') `
+                -LocalProductCues @('ILLiad', 'illiad', 'oclc')
+            $cues | Should -Be @('illiad', 'jitterbit', 'oclc', 'pharos', 'thrive')
+            ($cues | Select-Object -Unique).Count | Should -Be $cues.Count
+
+            $viaGet = Get-MetraTicketWatchProductCueList `
+                -SolutionsKeywords @('AlphaProd') `
+                -RegistryTriggers @('BetaProd', 'monitoring') `
+                -LocalProductCues @('GammaGap')
+            $viaGet | Should -Contain 'alphaprod'
+            $viaGet | Should -Contain 'betaprod'
+            $viaGet | Should -Contain 'gammagap'
+            $viaGet | Should -Not -Contain 'monitoring'
+        }
+    }
+
+    It 'E1: evidence-driven vocabulary proposals (corpus DF + acronym gate)' {
+        InModuleScope Metra {
+            Get-Command Get-MetraTicketWatchVocabularyProposalBaseStopList -ErrorAction SilentlyContinue |
+                Should -BeNullOrEmpty
+            Get-Command Get-MetraTicketWatchVocabularyProposalStopList -ErrorAction SilentlyContinue |
+                Should -BeNullOrEmpty
+            $cfg = Get-MetraTicketWatchConfig
+            $cfg.PSObject.Properties.Name | Should -Not -Contain 'vocabularyStopWords'
+            $cfg.vocabularyMinSightings | Should -BeGreaterOrEqual 1
+            $cfg.vocabularyMaxSubjectShare | Should -BeGreaterThan 0
+            $cfg.PSObject.Properties.Name | Should -Contain 'productCues'
+
+            # Subject-level DF: repeats inside one subject count once
+            $dup = Get-MetraTicketWatchSubjectCorpusStats -Subjects @('ILLiad ILLiad access')
+            $dup.TokenDocumentFrequency['illiad'] | Should -Be 1
+
+            $fixtureSubjects = @(
+                'Student login error portal',
+                'Student password error reset',
+                'Student grade error report',
+                'Student hold error notice',
+                'Student email error sync',
+                'ILLiad request failed',
+                'Student error in ILLiad',
+                'OCLC lookup timeout',
+                'Pentegra one-off payroll',
+                'August calendar reprint'
+            )
+            $corpus = Get-MetraTicketWatchSubjectCorpusStats -Subjects $fixtureSubjects
+            $corpus.SubjectCount | Should -Be 10
+            $corpus.TokenDocumentFrequency['illiad'] | Should -Be 2
+            # 6/10 = 0.60 > vocabularyMaxSubjectShare (0.40)
+            $corpus.TokenDocumentFrequency['student'] | Should -BeGreaterOrEqual 6
+
+            $gap = @(Get-MetraTicketWatchSuggestedVocabulary `
+                -Subject 'Student error in ILLiad' `
+                -CueList @('pharos') `
+                -CorpusStats $corpus)
+            $tokens = @($gap | ForEach-Object { $_.Token })
+            $tokens | Should -Contain 'illiad'
+            ($gap | Where-Object { $_.Token -eq 'illiad' }).SubjectCount | Should -Be 2
+            $tokens | Should -Not -Contain 'student'
+            $tokens | Should -Not -Contain 'error'
+
+            $acronym = @(Get-MetraTicketWatchSuggestedVocabulary `
+                -Subject 'OCLC lookup timeout' `
+                -CueList @('pharos') `
+                -CorpusStats $corpus)
+            @($acronym | ForEach-Object { $_.Token }) | Should -Contain 'oclc'
+
+            $vendorOnce = @(Get-MetraTicketWatchSuggestedVocabulary `
+                -Subject 'Pentegra one-off payroll' `
+                -CueList @('pharos') `
+                -CorpusStats $corpus)
+            @($vendorOnce | ForEach-Object { $_.Token }) | Should -Not -Contain 'pentegra'
+
+            $known = @(Get-MetraTicketWatchSuggestedVocabulary `
+                -Subject 'Student error in ILLiad' `
+                -CueList @('illiad') `
+                -CorpusStats $corpus)
+            @($known | ForEach-Object { $_.Token }) | Should -Not -Contain 'illiad'
+
+            $empty = Get-MetraTicketWatchSubjectCorpusStats -Subjects @()
+            $empty.SubjectCount | Should -Be 0
+            $emptyVendor = @(Get-MetraTicketWatchSuggestedVocabulary `
+                -Subject 'Pentegra payroll glitch' `
+                -CueList @() `
+                -CorpusStats $empty)
+            @($emptyVendor | ForEach-Object { $_.Token }) | Should -Not -Contain 'pentegra'
+            $emptyStrong = @(Get-MetraTicketWatchSuggestedVocabulary `
+                -Subject 'OCLC lookup timeout' `
+                -CueList @() `
+                -CorpusStats $empty)
+            @($emptyStrong | ForEach-Object { $_.Token }) | Should -Contain 'oclc'
+            $emptyWeak = @(Get-MetraTicketWatchSuggestedVocabulary `
+                -Subject 'SSO login broken' `
+                -CueList @() `
+                -CorpusStats $empty)
+            @($emptyWeak | ForEach-Object { $_.Token }) | Should -Not -Contain 'sso'
+
+            $shareGate = @(Get-MetraTicketWatchSuggestedVocabulary `
+                -Subject 'Student error in ILLiad' `
+                -CueList @() `
+                -CorpusStats $corpus `
+                -MaxSubjectShare 0.10)
+            @($shareGate | ForEach-Object { $_.Token }) | Should -Not -Contain 'illiad'
+            $minSight = @(Get-MetraTicketWatchSuggestedVocabulary `
+                -Subject 'Student error in ILLiad' `
+                -CueList @() `
+                -CorpusStats $corpus `
+                -MinSightings 3)
+            @($minSight | ForEach-Object { $_.Token }) | Should -Not -Contain 'illiad'
+
+            $body = New-MetraTicketWatchNextEvidenceBody `
+                -TicketId '1035999' `
+                -Subject 'Student error in ILLiad' `
+                -CueList @('pharos') `
+                -CorpusStats $corpus `
+                -Suggestion ([PSCustomObject]@{
+                    action = 'solutionsKb'
+                    reason = 'Check solutions.'
+                    operatorHint = 'Open solutions.'
+                    suggestedQuery = ''
+                    deskLabel = 'Next evidence: Check solutions KB'
+                }) `
+                -SimilarCount 0 `
+                -SolutionsCount 0
+            $body | Should -Match 'Vocabulary gap \(propose only\)'
+            $body | Should -Match 'illiad \(2 subjects\)'
+        }
+    }
+
+    It 'E1: product cue matching uses token boundaries for single-token cues' {
+        InModuleScope Metra {
+            Test-MetraTicketWatchTextHasCue -Text 'Slate login issue' -Cue 'slate' | Should -BeTrue
+            Test-MetraTicketWatchTextHasCue -Text 'translated file issue' -Cue 'slate' | Should -BeFalse
+            Test-MetraTicketWatchTextHasCue -Text 'Plan Source SFTP failure' -Cue 'plan source' | Should -BeTrue
+            Test-MetraTicketWatchHasProductCue `
+                -Subject 'translated file issue' `
+                -CueList @('slate') | Should -BeFalse
+            Test-MetraTicketWatchHasProductCue `
+                -Subject 'Slate login issue' `
+                -CueList @('slate') | Should -BeTrue
+        }
+    }
+
     It 'E1: product cue prefers solutionsKb; thin alone does not ask operator' {
         InModuleScope Metra {
             $thin = Get-MetraTicketWatchEvidenceSignals -Subject 'Printer broken' -Description '' -InstitutionalExhausted:$false
@@ -396,8 +591,9 @@ Describe 'Ticket watch Attention helpers' {
             $s1.action | Should -Be 'solutionsKb'
             $s1.draftState | Should -Be 'needsEvidence'
 
+            Mock Get-MetraTicketWatchProductCueList { @('fixtureapp') }
             $cue = Get-MetraTicketWatchEvidenceSignals `
-                -Subject 'How do you install a printer in Colleague?' `
+                -Subject 'How do you install a printer in FixtureApp?' `
                 -InstitutionalExhausted:$false
             $cue.ProductCue | Should -BeTrue
             $s2 = Get-MetraTicketWatchEvidenceSuggestion -Signals $cue
@@ -428,24 +624,51 @@ Describe 'Ticket watch Attention helpers' {
             $b.draftState | Should -Be 'needsEvidence'
 
             $web = Get-MetraTicketWatchEvidenceSignals `
-                -Subject 'Colleague printer install steps' `
+                -Subject 'VendorApp printer install steps' `
                 -SolutionsCount 0 `
                 -SimilarCount 0 `
                 -InstitutionalExhausted:$true
             $w = Get-MetraTicketWatchEvidenceSuggestion -Signals $web
             $w.action | Should -Be 'boundedWeb'
-            $w.suggestedQuery | Should -Match 'Colleague'
+            $w.suggestedQuery | Should -Match 'VendorApp'
         }
     }
 
     It 'E1: note formatter never emits likely solution language' {
         InModuleScope Metra {
-            $sig = Get-MetraTicketWatchEvidenceSignals -Subject 'Jitterbit SFTP' -InstitutionalExhausted:$false
+            Mock Get-MetraTicketWatchProductCueList { @('fixturexfer') }
+            $sig = Get-MetraTicketWatchEvidenceSignals -Subject 'FixtureXfer SFTP' -InstitutionalExhausted:$false
             $sug = Get-MetraTicketWatchEvidenceSuggestion -Signals $sig
             $note = Format-MetraTicketWatchEvidenceNextNote -Suggestion $sug
             $note | Should -Match '\[evidence-next\]'
             $note | Should -Not -Match '(?i)Likely solution:'
             $note | Should -Match 'not a recommendation'
+        }
+    }
+
+    It 'M3: thin Preview is a next-evidence brief, not Findings Gaps' {
+        InModuleScope Metra {
+            $body = New-MetraTicketWatchNextEvidenceBody `
+                -TicketId '1035666' `
+                -Subject 'Student error in ILLiad' `
+                -Suggestion ([PSCustomObject]@{
+                    action = 'boundedWeb'
+                    reason = 'Sparse local hits; external docs may help.'
+                    operatorHint = 'Run a bounded search if useful.'
+                    suggestedQuery = 'Student error in ILLiad'
+                    deskLabel = 'Next evidence: Bounded web search'
+                }) `
+                -SimilarCount 0 `
+                -SolutionsCount 0
+            $body | Should -Match 'Not a recommendation yet'
+            $body | Should -Match 'Next evidence:'
+            $body | Should -Match 'brief 1035666'
+            $body | Should -Not -Match 'Findings:'
+            $body | Should -Not -Match 'Suggested investigation:'
+            Test-MetraTicketWatchHasProductCue -Subject 'Student error in ILLiad' -CueList @('illiad') |
+                Should -BeTrue
+            Test-MetraTicketWatchHasProductCue -Subject 'Student error in ILLiad' -CueList @('pharos') |
+                Should -BeFalse
         }
     }
 
@@ -479,7 +702,8 @@ Describe 'Ticket watch Attention helpers' {
             foreach ($n in @(
                     'Get-TrackedTickets', 'Get-TicketTrackerSettings', 'Add-TrackedTicketNote',
                     'Set-ISupportAiRecommendation', 'Get-TrackedTicketNotes',
-                    'Resolve-ISupportWorkItem', 'Set-ISupportWorkItemResolution'
+                    'Resolve-ISupportWorkItem', 'Set-ISupportWorkItemResolution',
+                    'New-TicketDraftAnalysis'
                 )) {
                 if (-not (Get-Command -Name $n -ErrorAction SilentlyContinue)) {
                     Set-Item -Path "Function:$n" -Value { }
@@ -500,10 +724,16 @@ Describe 'Ticket watch Attention helpers' {
                 [PSCustomObject]@{ meFilter = '*Swan*'; assigneeFilter = '' }
             }
             Mock Test-MetraTicketAttentionEligible { $true }
+            Mock New-TicketDraftAnalysis {
+                [PSCustomObject]@{
+                    Id = '1036001'; Similar = @(); Solutions = @()
+                    NoteId = 'analyze-1'
+                }
+            }
             Mock Get-MetraTicketWatchLatestNoteText {
                 param($TicketId, $Tag)
                 if ($Tag -eq 'evidence-next') {
-                    return "Draft state: needsEvidence`nAction: solutionsKb"
+                    return "Draft state: needsEvidence`nAction: solutionsKb`nDesk: Next evidence: Check solutions KB`nReason: Known product cue.`nOperator hint: Review solutions."
                 }
                 if ($Tag -eq 'analyze-draft') {
                     return @"
@@ -520,8 +750,16 @@ Solutions index hits:
             Mock Resolve-ISupportWorkItem { throw 'resolve must never run' }
 
             $blocked = Invoke-MetraTicketWatchStoreRecommend -Id '1036001' -Preview -Quiet
-            $blocked.ok | Should -BeFalse
-            $blocked.warning | Should -Match 'recommendable'
+            $blocked.ok | Should -BeTrue
+            $blocked.recommendable | Should -BeFalse
+            $blocked.preview | Should -BeTrue
+            $blocked.iSupportWrite | Should -BeFalse
+            $blocked.warning | Should -Match 'Evidence is still thin'
+            $blocked.warning | Should -Not -Match '(?i)\bE1\b'
+            $blocked.body | Should -Match 'Not a recommendation yet'
+            $blocked.body | Should -Match 'Next evidence:'
+            $blocked.body | Should -Not -Match 'Findings:'
+            $blocked.noteId | Should -Be 'note-preview'
 
             $forced = Invoke-MetraTicketWatchStoreRecommend -Id '1036001' -Preview -Force -Quiet
             $forced.ok | Should -BeTrue
@@ -530,6 +768,13 @@ Solutions index hits:
             $forced.recommendationWritten | Should -BeFalse
             $forced.noteId | Should -Be 'note-preview'
             $forced.body | Should -Match 'Findings:'
+
+            $confirmBlocked = Invoke-MetraTicketWatchStoreRecommend -Id '1036001' -Confirm -Quiet
+            $confirmBlocked.ok | Should -BeFalse
+            $confirmBlocked.warning | Should -Match 'Write to iSupport is blocked'
+            $confirmBlocked.warning | Should -Not -Match '(?i)\bE1\b'
+            $confirmBlocked.iSupportWrite | Should -BeFalse
+            $confirmBlocked.recommendationWritten | Should -BeFalse
         }
     }
 

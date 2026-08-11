@@ -6,6 +6,16 @@
     "ticketFirst": true,
     "defaultEntry": "Metra",
     "homeDestination": "Metra",
+    "featuredProjects": [
+      "TicketTracker",
+      "Solarwinds",
+      "Trivia",
+      "Colleague",
+      "IWUDATA-Automation",
+      "Reporting",
+      "Jitterbit",
+      "Metra"
+    ],
     "rules": [
       "Classify the request before searching sibling repos.",
       "Metra (this orchestration checkout) is the home destination until a stronger project route wins.",
@@ -23,6 +33,7 @@
       "name": "Metra",
       "purpose": "Portfolio orchestration home - routing, ctx, decisions, HTML Ops desk, installer, and portfolio ops CLI.",
       "share": true,
+      "featured": true,
       "optional": false,
       "triggers": [
         "metra",
@@ -76,6 +87,7 @@
       "name": "TicketTracker",
       "purpose": "Local ticket assistant for iSupport and future helpdesk systems - sync, search, notes, recommendations.",
       "share": true,
+      "featured": true,
       "optional": true,
       "triggers": [
         "ticket",
@@ -123,6 +135,7 @@
       "name": "Solarwinds",
       "purpose": "Orion platform-as-code - alerts, monitors, templates, dashboards, dependencies.",
       "share": true,
+      "featured": true,
       "optional": true,
       "triggers": [
         "solarwinds",

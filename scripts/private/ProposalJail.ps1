@@ -83,17 +83,25 @@ function Test-MetraProposalJailPathSyntax {
         return New-MetraProposalJailResult -Ok:$false -Mode Preview -ReasonCode pathRejected -Message 'Absolute paths are not allowed.' -PathRelative $normalized
     }
 
+    if ($normalized -match '//') {
+        return New-MetraProposalJailResult -Ok:$false -Mode Preview -ReasonCode pathRejected -Message 'Repeated path separators are not allowed.' -PathRelative $normalized
+    }
+
     $segments = @($normalized -split '/' | Where-Object { $_ -ne '' })
     if ($segments.Count -eq 0) {
         return New-MetraProposalJailResult -Ok:$false -Mode Preview -ReasonCode pathRejected -Message 'Path is empty.' -PathRelative $normalized
     }
 
+    $invalidNameChars = [System.IO.Path]::GetInvalidFileNameChars()
     foreach ($segment in $segments) {
         if ($segment -eq '.' -or $segment -eq '..') {
             return New-MetraProposalJailResult -Ok:$false -Mode Preview -ReasonCode pathRejected -Message 'Path escape segments are not allowed.' -PathRelative $normalized
         }
         if ($segment.IndexOfAny([char[]]@([char]0)) -ge 0) {
             return New-MetraProposalJailResult -Ok:$false -Mode Preview -ReasonCode pathRejected -Message 'Path contains invalid characters.' -PathRelative $normalized
+        }
+        if ($segment.IndexOfAny($invalidNameChars) -ge 0) {
+            return New-MetraProposalJailResult -Ok:$false -Mode Preview -ReasonCode pathRejected -Message 'Path contains invalid filename characters.' -PathRelative $normalized
         }
     }
 
@@ -113,7 +121,8 @@ function Test-MetraProposalJailPathPolicy {
 
     $lower = $normalized.ToLowerInvariant()
     foreach ($exact in $script:MetraProposalJailDeniedExactPaths) {
-        if ($lower -eq $exact.ToLowerInvariant()) {
+        $exactNorm = Get-MetraProposalJailNormalizedRelativePath -PathRelative $exact
+        if ($lower -eq $exactNorm.ToLowerInvariant()) {
             return New-MetraProposalJailResult -Ok:$false -Mode Preview -ReasonCode policyDenied -Message "Path is denied by policy: $normalized" -PathRelative $normalized
         }
     }
@@ -381,6 +390,24 @@ function Test-MetraProposalJailPreview {
         return $limits
     }
 
+    $seenPaths = @{}
+    foreach ($file in $Files) {
+        $pathRelative = Get-MetraProposalJailNormalizedRelativePath -PathRelative ([string](Get-MetraProposalEntryValue -Entry $file -Name 'pathRelative'))
+        $key = $pathRelative.ToLowerInvariant()
+        if ([string]::IsNullOrWhiteSpace($key)) {
+            continue
+        }
+        if ($seenPaths.ContainsKey($key)) {
+            return New-MetraProposalJailResult `
+                -Ok:$false `
+                -Mode Preview `
+                -ReasonCode policyDenied `
+                -Message "Duplicate proposal path: $pathRelative" `
+                -PathRelative $pathRelative
+        }
+        $seenPaths[$key] = $true
+    }
+
     foreach ($file in $Files) {
         $entry = Test-MetraProposalJailFileEntryPreview -File $file
         if (-not $entry.Ok) {
@@ -436,6 +463,26 @@ function Test-MetraProposalJailApply {
         return New-MetraProposalJailResult -Ok:$false -Mode Apply -ReasonCode pathRejected -Message 'Project root is a reparse point and is not allowed.'
     }
 
+    # When using the live project registry (not a test ProjectCatalog / skip override), RootPath must match.
+    $skipRootRegistryMatch = $SkipProjectLookup -or
+        ($null -ne $ProjectCatalog -and @($ProjectCatalog).Count -gt 0) -or
+        ($env:METRA_JAIL_SKIP_ROOT_MATCH -match '^(?i)(1|true|yes)$')
+    if (-not $skipRootRegistryMatch) {
+        $projectRow = @(Get-MetraProjects | Where-Object {
+                [string]$_.Name.Equals($Project, [System.StringComparison]::OrdinalIgnoreCase)
+            } | Select-Object -First 1)
+        if ($projectRow) {
+            $registered = [System.IO.Path]::GetFullPath([string]$projectRow.Path).TrimEnd('\', '/')
+            if (-not $registered.Equals($rootFull, [System.StringComparison]::OrdinalIgnoreCase)) {
+                return New-MetraProposalJailResult `
+                    -Ok:$false `
+                    -Mode Apply `
+                    -ReasonCode pathRejected `
+                    -Message 'RootPath does not match the registered project path.'
+            }
+        }
+    }
+
     foreach ($file in $Files) {
         $pathRelative = Get-MetraProposalJailNormalizedRelativePath -PathRelative ([string](Get-MetraProposalEntryValue -Entry $file -Name 'pathRelative'))
         $action = [string](Get-MetraProposalEntryValue -Entry $file -Name 'action')
@@ -462,8 +509,20 @@ function Test-MetraProposalJailApply {
             }
 
             $previousHash = [string](Get-MetraProposalEntryValue -Entry $file -Name 'previousHash')
-            $bytes = [System.IO.File]::ReadAllBytes($target)
-            $text = [System.Text.Encoding]::UTF8.GetString($bytes)
+            # Fail closed: proposal content is UTF-8; invalid existing bytes are not silently replaced.
+            try {
+                $enc = [System.Text.UTF8Encoding]::new($false, $true)
+                $bytes = [System.IO.File]::ReadAllBytes($target)
+                $text = $enc.GetString($bytes)
+            }
+            catch {
+                return New-MetraProposalJailResult `
+                    -Ok:$false `
+                    -Mode Apply `
+                    -ReasonCode hashMismatch `
+                    -Message 'Existing file is not valid UTF-8.' `
+                    -PathRelative $pathRelative
+            }
             $currentHash = ConvertTo-MetraProposalSha256 -Text $text
             if ($currentHash -ne $previousHash) {
                 return New-MetraProposalJailResult -Ok:$false -Mode Apply -ReasonCode hashMismatch -Message 'File changed since proposal (previousHash mismatch).' -PathRelative $pathRelative

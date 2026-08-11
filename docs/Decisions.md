@@ -18,6 +18,220 @@ Entry shape:
 
 ---
 
+## 2026-08-11 - Public Export-MetraContext re-review: no blockers
+
+- Decision: Leave `Export-MetraContext` as the prior hardened contract (Limit, AsString/Path '-', path parent/directory checks, optional Query). Re-review found no release blockers; only normalize whitespace Path to null before invoke and splat Quiet when true. No ValidateNotNullOrEmpty on Query; overwrite policy stays in `Export-MetraContextPack`.
+- Why: Bing Context re-review scored 9.7/10 - further changes would be polish, not risk reduction.
+- See: `scripts/public/Context.ps1`
+
+## 2026-08-11 - Start-MetraSetup bootstrap hardening
+
+- Decision: `Start-MetraSetup.ps1` fails closed on PreferFriendly+NoPreferFriendly and on Quiet Satellite without OpsBaseUrl; validates OpsBaseUrl as absolute http/https; warns when Quiet Satellite omits SyncToken; checks module path before Import-Module; starts transcript before installer-log copy with fail-soft warnings if logging fails; only splats true setup switches into Initialize-Metra. Keeps Quiet=>NoPause, hashtable splat, SkipSetup/Preview shortcut, and Wait-MetraBootstrapPause.
+- Why: Bing Setup bootstrap review - installer entrypoint needs early validation and non-fatal logging so onboarding does not die on transcript permissions.
+- See: `scripts/bootstrap/Start-MetraSetup.ps1`
+
+## 2026-08-11 - Start-MetraOpsHost bootstrap hardening
+
+- Decision: `Start-MetraOpsHost.ps1` validates Port 0-65535 (0 = auto), checks `scripts\Metra.psd1` before Import-Module, sanity-checks the resolved port, and refuses `-Stop` with startup switches. CLI `host` mirrors Stop/startup conflict and port sanity. No SupportsShouldProcess on the launcher.
+- Why: Bing Ops host bootstrap review - long-lived host start needs clearer failures without adding cmdlet machinery.
+- See: `scripts/bootstrap/Start-MetraOpsHost.ps1`, `metra.ps1`
+
+## 2026-08-11 - Start-MetraOps bootstrap hardening
+
+- Decision: `Start-MetraOps.ps1` validates Port 1-65535, refuses `-Full` with `-Quick`, checks `metra.ps1` exists before invoke, and exits with LASTEXITCODE or 0. Keeps in-process hashtable splat (no nested powershell.exe).
+- Why: Bing Ops bootstrap review - launcher polish only; stay simple and predictable.
+- See: `scripts/bootstrap/Start-MetraOps.ps1`
+
+## 2026-08-11 - Public Update-MetraWorkspace polish
+
+- Decision: `Update-MetraWorkspace` adds OutputType, ConfirmImpact Low, Months 1-120 / ScanDepth 1-100 (Nullable + post-config range check), UTF-8 no-BOM writes, LiteralPath / Directory.CreateDirectory, and return fields ScanDepth + Preview. `-WhatIfPreview` kept with alias `-Preview` for CLI compatibility; help prefers native `-WhatIf`. Invalid project names with path separators are skipped. CLI workspace only splats true Preview/WhatIf and Months/ScanDepth when >= 1.
+- Why: Bing Workspace review - already SupportsShouldProcess; remaining work was validation, encoding, and aligning preview with PowerShell-native WhatIf.
+- See: `scripts/public/Workspace.ps1`, `metra.ps1`
+
+## 2026-08-11 - Public Test-MetraInstallation contract hardening
+
+- Decision: `Test-MetraInstallation` declares OutputType bool+pscustomobject and reads Ok via Get-MetraProp (default false) so a null/malformed verify report fails closed as Boolean false. `-Detailed` stays; no ShouldProcess / Force / WhatIf / Quiet / category filters.
+- Why: Bing Verify public review - already release-ready; only dual-output metadata and defensive Ok access were missing.
+- See: `scripts/public/Verify.ps1`
+
+## 2026-08-11 - Public Export-MetraSnapshot contract hardening
+
+- Decision: `Export-MetraSnapshot` uses SupportsShouldProcess (ConfirmImpact Low), OutputType, and ScanDepth ValidateRange 1-100 via Nullable so omitted ScanDepth keeps the helper default. `-WhatIf` returns before the expensive scan/write. `-Quick` remains the only fast path; `-RefreshSelfDocumentation` stays opt-in. No Force/Quiet/parameter sets. Private `Export-MetraCanvasSnapshot` mirrors ScanDepth range and adds SnapshotPath / Quick / GeneratedUtc on the result (OutPath retained). CLI snapshot only splats true switches and forwards WhatIf.
+- Why: Bing Snapshot public review - write-capable export needed native WhatIf and early ScanDepth rejection while staying intentionally small.
+- See: `scripts/public/Snapshot.ps1`, `scripts/private/Snapshot.ps1`, `metra.ps1`
+
+## 2026-08-11 - Public Initialize-Metra onboarding hardening
+
+- Decision: `Initialize-Metra` uses SupportsShouldProcess (ConfirmImpact Medium) and OutputType. `-Preview` stays for setup planning; `-WhatIf` maps to the Preview planning path (no writes). Months 1-120 and ScanDepth 1-100 use Nullable ValidateRange. OpsBaseUrl is `[uri]` requiring absolute http/https. PreferFriendly vs NoPreferFriendly conflict fails closed. Role rules: AcceptAsk / PreferFriendly / Advanced refuse Satellite; BindTailscale is Hq-only. SyncToken stays plain string for v1. Result objects add Success and summary flags without removing prior properties. Quiet remains output/prompt only. Private `Invoke-MetraSetup` mirrors validation; CLI setup only splats true switches and forwards WhatIf.
+- Why: Bing Setup review - onboarding is the primary public UX and must be PowerShell-native, predictable, and role-safe.
+- See: `scripts/public/Setup.ps1`, `scripts/private/Setup.ps1`, `metra.ps1`
+
+## 2026-08-11 - Public Get-MetraRouting contract hardening
+
+- Decision: `Get-MetraRouting` declares OutputType, ValidateNotNullOrEmpty on Name, pipeline Name (value or property), and documents that `-SharedOnly` + `-MissingOnly` may be combined. Implementation buffers pipeline names in begin/process/end so the registry merge runs once. No ShouldProcess / Force / ValidateSet on dynamic project names. Capability/trigger filter parameters stay deferred.
+- Why: Bing Routing review - read-only Tier-1 surface needed discoverability and composition, not safety theater.
+- See: `scripts/public/Routing.ps1`, `scripts/private/Routing.ps1`
+
+## 2026-08-11 - Public Projects contract hardening
+
+- Decision: `New-MetraProject` uses SupportsShouldProcess, ValidateNotNullOrEmpty Name, LiteralPath / Directory.CreateDirectory, `git -C` (no Push-Location), and returns the resolved root name (not the literal `primary`). Get-* project helpers declare OutputType, document exact `-Name` vs `-Filter` wildcards, and accept pipeline Name. `Update-MetraProject` / `Invoke-MetraProjectCommand` use SupportsShouldProcess; Invoke help matches private parsing (whitespace executable+args, never Invoke-Expression). `Copy-MetraProjectFile` fails fast when Source is missing. Private `Invoke-AcrossProjects` / `Update-MetraProjects` / `Copy-AcrossProjects` mirror ShouldProcess and the source-file guard. CLI `new` / `apply` only splat true switches.
+- Why: Bing Projects review (Tier-1 public surface) - mutating project ops needed native WhatIf, literal paths, honest Root labels, and help that matches the hardened command runner.
+- See: `scripts/public/Projects.ps1`, `scripts/private/Projects.ps1`, `metra.ps1`
+
+## 2026-08-11 - Public Projects path/WhatIf follow-up
+
+- Decision: `New-MetraProject` rejects empty/invalid template names (`^[A-Za-z0-9._-]+$`) and requires the resolved template dir under `templatesDir` via `Test-MetraPathWithinRoot`. `Copy-MetraProjectFile` / `Copy-AcrossProjects` reject rooted RelativePath, `..` segments, and control chars, and contain the destination under each project root. Public Update/Invoke/Copy forward `WhatIf` / explicit `Confirm` into helpers that already call `$PSCmdlet.ShouldProcess`. Invoke `.PARAMETER Command` documents non-shell quoting (use ScriptBlock for spaces).
+- Why: Bing Projects re-review - template traversal, RelativePath escape, and honest WhatIf pass-through were the remaining release blockers; false WhatIf is worse than none.
+- See: `scripts/public/Projects.ps1`, `scripts/private/Projects.ps1`
+
+## 2026-08-11 - Profile public API security hardening
+
+- Decision: `Export-MetraProfile` refuses non-empty folder / existing zip without `-Force`, uses SupportsShouldProcess, zip staging cleanup in finally, filters manifest file details to exported paths, and records `source` as MachineName. `Import-MetraProfile` uses SupportsShouldProcess, hardened manifest JSON parse, and optional per-file hash verification via `Assert-MetraProfilePlanHashes`. `Sync-MetraProfile` / status use native WhatIf (SupportsShouldProcess), HTTP timeouts, unique temp zip names, empty-download checks, DontShow RemoteStatus, and warning on failed check-in. CLI export/sync pass Force/WhatIf only when true.
+- Why: Bing Profile review - security-sensitive surface needs destination safety, native ShouldProcess, network timeouts, and integrity checks before public readiness.
+- See: `scripts/public/Profile.ps1`, `scripts/private/Profile.ps1`, `metra.ps1`
+
+## 2026-08-11 - Public Export-MetraContext contract hardening
+
+- Decision: `Export-MetraContext` validates Limit 1-100, declares OutputType string+pscustomobject, fails early when a file Path parent is missing or Path is a directory, and adds `-AsString` (alias PassThru) as the discoverable stdout mode equivalent to `-Path '-'`. Query stays optional. Private `Export-MetraContextPack` mirrors Limit ValidateRange. CLI `metra.ps1 ctx` accepts `-AsString`.
+- Why: Bing public Context review - release-ready surface after bounds + output metadata; path/AsString are QoL for cleaner public failures and PowerShell discoverability.
+- See: `scripts/public/Context.ps1`, `scripts/private/Context.ps1`, `metra.ps1`
+
+## 2026-08-11 - Public Get-MetraChat contract hardening
+
+- Decision: `Get-MetraChat` uses Search vs Ticket parameter sets (`-Query` / `-Ticket` exclusive), ValidateRange on Days/Limit, OutputType, pipeline Name, and fails fast unless `-Name`, `-Query`, `-Ticket`, or `-IncludeMetra` is supplied. Private `Get-MetraProjectChats` mirrors Days/Limit ranges and rejects Query+Ticket. CLI `metra.ps1 chats` matches those guards and only splats true switches.
+- Why: Bing public Chats review - Tier-1 surface needed bounds, exclusive search modes, empty-search guard, and pipeline Name without ValidateSet on registry names.
+- See: `scripts/public/Chats.ps1`, `scripts/private/Chats.ps1`, `metra.ps1`
+
+## 2026-08-11 - Public audit contract: validate ranges and exclusive modes
+
+- Decision: `Test-MetraProjectContext` uses parameter sets so `-DriftOnly` and `-MetadataOnly` are mutually exclusive; documents that `-Name` is exact-match only (wildcards via `-Filter`); validates `LargeFileBytes` / `HighCardinalityCount` / `ScanDepth` ranges; declares `[OutputType([PSCustomObject])]`; accepts pipeline `Name` (string or property). Private `Invoke-MetraProjectContextAudit` mirrors ValidateRange and throws if both mode switches are set. CLI `metra.ps1 audit` only splats a mode switch when true (false switch keys break exclusive sets).
+- Why: Bing public Audit review - Tier-1 surface needed validation, OutputType, and clear Drift vs Metadata semantics without changing audit behavior.
+- See: `scripts/public/Audit.ps1`, `scripts/private/Audit.ps1`, `metra.ps1`
+
+## 2026-08-11 - Verify v3 covers snapshot, selfdoc, updates, Ask
+
+- Decision: `Invoke-MetraVerify` is VerifyVersion 3. Beyond routing/foundation smoke it checks `Export-MetraCanvasSnapshot -Quick`, `Get-MetraDeskPayload`, read-only selfdoc route/behavior examples (+ Overview.md present), fail-soft `Get-MetraProductUpdates`, and `Get-MetraAskCapability` shape. Results include `Category`. TicketTracker related-set check renamed for clearer PASS meaning. Select-String uses `-LiteralPath`. Full `Update-MetraSelfDocumentation` is not run from verify (avoids mutating Overview/canvas during smoke).
+- Why: Bing Verify review - suite still routing-centric while Metra grew Ops/selfdoc/updates/Ask; need versionable check set without silent doc rewrites.
+- See: `scripts/private/Verify.ps1`, `scripts/public/Verify.ps1`, `.\metra.ps1 verify`
+
+## 2026-08-11 - Updates cache atomic writes and installer honesty
+
+- Decision: Product update status cache uses temp + Move-Item. GitHub release discovery exposes `hasInstallerAsset` / asset name / size and does not invent a latest-download URL when MetraSetup.exe is missing (`canUpdate` stays false). Winget calls resolve an explicit exe path via Get-Command. Successful Metra installer apply returns `restartRequired: true` and stamps `lastUpdatedAt` / last product versions on the cache. Setup does not invoke update checks.
+- Why: Bing Updates review - non-atomic cache; winget.Source ambiguity; silent latest/download fallback; API needed restartRequired for Settings UX.
+- See: `scripts/private/Updates.ps1`, `ops/src/types.ts`, `ops/src/App.tsx`
+
+## 2026-08-11 - TicketWatch module import and Affirm A Force override
+
+- Decision: TicketWatch resolves TicketTracker via `Resolve-MetraTicketTrackerModule` (wraps Routing's `Get-MetraTicketTrackerProject`) and imports through `Import-MetraTicketTrackerModule` without forced reload when already loaded. Evidence-next notes are skipped when text is unchanged. Affirm A Confirm with `-Force` on thin evidence prepends a durable operator-override line to the iSupport recommendation body and sets `warning`. Structured `New-TicketDraftAnalysis` Similar/Solutions are preferred over analyze-note regex parsing. `autoStoreRecommend` remains config-visible but never auto-writes.
+- Why: Bing TicketWatch review - function-name confusion vs routing helper; repeated Import-Module -Force; evidence-next churn; Force writes needed a durable audit trail; fragile note parsing.
+- See: `scripts/private/TicketWatch.ps1`, `scripts/private/AttentionMemory.ps1`, `scripts/private/Routing.ps1`
+
+## 2026-08-11 - Snapshot export stays focused; desk state writes are atomic
+
+- Decision: `Export-MetraCanvasSnapshot` no longer refreshes self-documentation by default. Use `-RefreshSelfDocumentation` when needed; setup already pairs context pack + selfdoc. Snapshot, desk preferences, and Ask journal writes use temp-file + `Move-Item`. Ask journal appends take a named mutex. Git folder probes use `git -C`. Desk payload `homeLabel` is the checkout leaf; `meta.metraRoot` is omitted for Ops HTTP callers without local authority. Full file splits (ask-journal / desk-payload) stay deferred with a domain map comment at the top of `Snapshot.ps1`.
+- Why: Bing Snapshot review - implicit selfdoc side effects on every export; non-atomic board/journal state; Push-Location git probes; journal race; remote path exposure; module scope creep.
+- See: `scripts/private/Snapshot.ps1`, `scripts/public/Snapshot.ps1`, `scripts/private/OpsServer.ps1`
+
+## 2026-08-11 - Capture Inbox: ledger safety and promote boundaries
+
+- Decision: Capture Inbox stays a thin intake ledger - immutable `derivedFrom`, never auto-loaded into routing or Ask prompts, durable writes only via operator promote. Ledger reads sort by `at` descending; saves use temp-file then `Move-Item`. Suggestion helpers always receive `-MetraRoot`. Project name matches use `-ieq`. Cross-root path checks use `Test-MetraPathWithinRoot` (not raw StartsWith). Markdown stubs flatten multiline summaries and avoid tool-specific "Bing plan" wording (`operator review required`). TicketTracker and ProjectAgents remain suggest-only promote refusals.
+- Why: Bing Capture review - MetraRoot drift on suggest paths; file-order ledger reads; non-atomic write; case-sensitive project labels; `_meta` / `_meta2` prefix false positive; multiline TODO injection; product-agnostic parking copy.
+- See: `scripts/private/Capture.ps1`, `tests/Metra.Capture.Tests.ps1`
+
+## 2026-08-11 - Audit drift metrics and README trigger ceiling
+
+- Decision: `Invoke-MetraProjectContextAudit` returns both `DriftProjects` (distinct projects with drift, including registry-missing) and `DriftFindings` (actionable finding increments). `DriftCount` remains as a backward-compatible alias of `DriftFindings` for Snapshot/Ops. Stop-word trigger advisories compare `ToLowerInvariant()` keys so case-sensitive stop lists still match. README trigger suggestions use `Get-MetraAuditSuggestedTriggersFromText` with a 200 KB ceiling. Generated-path coverage helper extraction stays deferred.
+- Why: Bing Audit review - DriftCount mixed findings vs projects; README regex had no size bound; stop-word Contains needed explicit lowercasing for non-IgnoreCase sets.
+- See: `scripts/private/Audit.ps1`, `tests/Metra.Audit.Tests.ps1`, `tests/Metra.AuditMetadata.Tests.ps1`
+
+## 2026-08-11 - Ask secrets: bearer length and connection shapes
+
+- Decision: Ask secrets keeps refuse-vs-redact (PEM refuse; github/aws/slack/api_key/bearer/connection redact). Bearer tokens require at least 20 token characters after `Bearer ` so documentation placeholders (`Bearer test`) are not scrubbed. Connection-string detection covers quoted, brace, and unquoted `Password=` / `Pwd=` values; empty `Password=` and Integrated Security-only strings are left alone. Object walk handles `PSCustomObject` before generic `IEnumerable`. Azure storage keys and bare JWTs stay out of the pattern set until incident evidence warrants them (high signal over broad coverage).
+- Why: Bing AskSecrets review - short Bearer matches were false-positive prone; connection edge cases needed explicit coverage; enumerable-before-PSCustomObject was a future footgun.
+- See: `scripts/private/AskSecrets.ps1`, `tests/Metra.AskSecrets.Tests.ps1`
+
+## 2026-08-11 - Ask recommend: Ollama trust and honest machine signals
+
+- Decision: Ask recommend stays Ollama-first (never llama.cpp / GPT4All as default). Silent `OllamaSetup.exe` requires Authenticode `Status=Valid` and subject organization `O=Ollama Inc.` (anchored; same rule as Ollama install.ps1). `ollama serve` polling stops early when the process has exited. Undetected RAM is `ramDetected=false` / `ramGb=null` and defaults to medium with an explicit reason - not a fake 16 GB reading. Accept / `ask engine set ollama` merge `ask.ollama` while preserving unknown nested keys despite shallow `Save-MetraAskConfigPatch`.
+- Why: Bing AskRecommend review - substring "Ollama" signer trust was weak; serve bind failures waited full timeout; missing RAM looked authoritative.
+- See: `scripts/private/AskRecommend.ps1`, `tests/Metra.AskRecommend.Tests.ps1`
+
+## 2026-08-11 - OpenAI-compat Ask health and enterprise capability states
+
+- Decision: OpenAI-compatible Ask health (`Get-MetraAskOpenAICompatHealthResult`) treats only HTTP 2xx as healthy. 401/403/404 map to `auth_required` / `forbidden` / `not_found` (reachable-but-not-ready). Do not probe the base URL root. Enterprise capability surfaces `enterprise_key_missing`, `enterprise_forbidden`, `enterprise_api_missing`, and `enterprise_unreachable` distinctly; completion errors use stable codes (`enterprise_auth_failed`, `enterprise_request_failed`, `ollama_unreachable`, `llamacpp_unreachable`) instead of raw exception text. Context JSON ceiling is evidence `maxTotalChars` * 5. Enterprise prompts send project leaf name, not full local CWD. Ollama tagged model pins do not fuzzy-match different size tags.
+- Why: Bing AskOpenAICompat review - 401 counted as healthy; enterprise credential vs unreachable were conflated; root URL and raw errors leaked misleading readiness.
+- See: `scripts/private/AskOpenAICompat.ps1`, `scripts/private/AskEngine.ps1` (`Get-MetraAskCapability`), `tests/Metra.AskOpenAICompat.Tests.ps1`
+
+## 2026-08-11 - Ask image resolve: quarantine containment and size
+
+- Decision: `Resolve-MetraAskImages` only accepts Place-quarantined image files. Both metadata `fileName` and on-disk path must have an allowed image extension; the resolved path must pass `Test-MetraPathWithinRoot` against `Get-MetraPlaceQuarantineRoot`; per-file size is capped at 8 MB (aligned with Place upload). Journal pointers remain `id` + `fileName` only. MIME stays extension-derived for Ladder 3; magic-byte sniff is a future hardening note.
+- Why: Bing AskImage review - metadata-only validation could pass arbitrary local paths to the Cursor sidecar; size was count-capped only.
+- See: `scripts/private/AskImage.ps1`, `tests/Metra.AskImage.Tests.ps1`, `Get-MetraPlaceQuarantineRoot`
+
+## 2026-08-11 - Ask evidence: ids not factual; live intent heuristic; CLI cap
+
+- Decision: Ask evidence quality stays deterministic from route + collected items (not model confidence). Ticket **ids** in the prompt are identifier cues only (`factualSupport=false`); factual ticket/brief support requires content (brief/summary). Live-status intent uses phrase match plus a scored token heuristic. AGENTS CLI surfaces are capped at 2 evidence items so documentation does not fill the 6-item budget.
+- Why: Bing AskEvidence review - ids were over-counting as factual; live phrasing was too narrow; CLI excerpts crowded out richer future evidence.
+- See: `scripts/private/AskEvidence.ps1`, `tests/Metra.AskEvidence.Tests.ps1`
+
+## 2026-08-11 - Ask engine normalized capability/invoke contract
+
+- Decision: Ask engines are selected by configuration but exposed through one normalized capability/invoke contract (`Get-MetraAskSettings` / `Get-MetraAskCapability` / `Invoke-MetraAskEngine`). Cursor owns vision in this release. OpenAI-compatible engines (Ollama, enterprise, llama.cpp) are text-only unless explicitly upgraded. Secrets are scrubbed before engine calls and after engine responses.
+- Decision: `Save-MetraAskConfigPatch` is a shallow merge into `ask.*` (nested engine objects replace wholesale). Cursor sidecar stop validates node/sidecar process identity before `Stop-Process`. Enterprise `apiKeyEnv` is optional unless `ask.enterprise.requireApiKey`; capability reports `enterpriseKeyPresent` and reason `enterprise_key_missing` when required. Operator-facing engine errors use stable codes (`engine_request_failed`) instead of raw HTTP exception text.
+- Why: Multi-engine Ask needs a single desk language; Bing pre-ship review called out shallow-patch semantics, stale PID kill risk, credential vs unreachable distinction, and error leakage.
+- See: `scripts/private/AskEngine.ps1`, `scripts/private/AskOpenAICompat.ps1`, `tests/Metra.AskEngine.Tests.ps1`
+
+## 2026-08-11 - Ops local-authority helper and CORS removal
+
+- Decision: Remove wildcard CORS from the Ops HttpListener (same-origin UI only). Centralize locality checks in `Test-MetraOpsRequestHasLocalAuthority` / `Assert-MetraOpsLocalAuthority` (same-machine Serve-aware or validated `X-Metra-Local-Session`). Gate refresh, watch, preferences PUT, ask/engine POST, attention mutations, place confirm/correct, settings, updates, open, and profile issue-sync-token. Keep Ask-class remote reach for ask, capture create/dismiss/propose, place upload/route, and read-only meta endpoints. Profile satellite roster is local-authority only (`GET /api/profile/satellites`; status fingerprint without roster for sync-token callers). `GET /api/local-session` rejects Serve-proxied requests. Default 1 MiB request body limit (10 MiB place multipart); static files require `Test-MetraPathWithinRoot` under `ops/dist`.
+- Why: Wildcard CORS plus ungated mutation endpoints let any origin on a shared Tailscale URL act like a local operator; roster leak and missing body limits were Bing review blockers.
+- See: `scripts/private/OpsServer.ps1`, [SECURITY.md](../SECURITY.md), [ops/README.md](../ops/README.md)
+
+## 2026-08-11 - TicketWatch vocabulary proposals are evidence-driven
+
+- Decision: Vocabulary proposals are evidence-driven. TicketWatch proposes additions from recurring ticket terminology that is not already represented in portfolio vocabulary. TicketWatch does not maintain a product catalog, product vocabulary list, or a growing product/noise word blacklist.
+- Decision: Thin Preview may propose gaps with subject counts (propose only). Sighting gate: `df >= vocabularyMinSightings` (default 2), or `df == 1` and strong acronym (acronym-like and length >= 4). Language filler uses `Get-MetraRoutingStopWords`. Common tokens die via `vocabularyMaxSubjectShare`.
+- Decision: Seed pending recognition keywords in TicketTracker solutions index (no write-up yet) from open ticket subjects; promote into write-up rows when durable guidance exists.
+- Why: Blacklist-subtraction (`vocabularyStopWords`) recreated the same drift as hardcoded product cues. Portfolio owns vocabulary; TicketWatch observes and proposes.
+- See: `Get-MetraTicketWatchSuggestedVocabulary`; `Get-MetraTicketWatchSubjectCorpusStats`; `TicketTracker/solutions/README.md` Recognition vocabulary
+
+## 2026-08-11 - TicketWatch product cues consume portfolio vocabulary
+
+- Decision: TicketWatch does not maintain a portfolio product catalog. Product cues are derived from portfolio sources (solutions keywords, registry triggers, and local overlays).
+- Decision: Cue builder normalizes (trim, lowercase, length >= 3, unique, sort). Registry triggers are filtered aggressively for generic routing/ops words; solutions keywords remain the strongest recognition signal; `ticket-watch.local.json` `productCues` is the escape hatch for temporary gaps (e.g. ILLiad before a solutions row). Recognition (cue) is not routing (trigger) - do not add cues as TicketTracker `projects.json` triggers merely for recognition.
+- Decision: TicketWatch may filter generic routing triggers when deriving product cues from the registry. That filter is not a vocabulary proposal blacklist and must not grow in response to ticket-subject noise.
+- Decision: Product-cue recognition uses token-boundary matching for single-token cues (avoid substring false positives) and phrase substring for multi-word cues.
+- Why: A hardcoded IWU product list in TicketWatch.ps1 drifted (ILLiad hand-add) and duplicated solutions + registry vocabulary ownership.
+- See: `scripts/private/TicketWatch.ps1` (`ConvertTo-MetraTicketWatchNormalizedProductCues`, `Get-MetraTicketWatchProductCueList`, `Test-MetraTicketWatchTextHasCue`); `docs/ticket-watch.local.example.json`
+
+## 2026-08-11 - Preview recommendation soft-gate (operator feedback)
+
+- Decision: Attention **Preview recommendation** always drafts locally for Mine-eligible tickets. Thin evidence returns actionable next steps (no E1 jargon) and still saves a local recommend-draft. **Write recommendation** stays hard-gated unless Force.
+- Decision: Thin-evidence Preview must not emit Findings / Suggested investigation Gaps template. It refreshes local analyze + evidence-next, then returns a **next-evidence brief** ("Not a recommendation yet"). Real recommend bodies require recommendable evidence or Force.
+- Why: Hard-failing Preview with "E1 draftState is not recommendable" gave operators nothing to do with. Soft-gating into a fake Findings body was worse - it looked like routing/troubleshooting happened when only the subject was echoed.
+- See: `scripts/private/TicketWatch.ps1` (`New-MetraTicketWatchNextEvidenceBody`, `Invoke-MetraTicketWatchEnsureAnalyzeEvidence`); Ops ResolveActions
+
+## 2026-08-11 - Ticket Watch Attention ranks Update from first
+
+- Decision: Attention ticket sort ranks `Update from Representative` / `Update from Customer` above `Open`, then by newest `updated` timestamp within the same status band. Waiting on Customer stays below Open.
+- Decision: TicketTracker full open-queue SQL includes `Status LIKE 'Update from%'` so inbound update statuses cannot be dropped when StatusType is outside 1/4.
+- Why: Update from and Open previously shared statusRank 0, so the desk sorted by ticket id text. Portfolio refresh never covers tickets, so operators rely on Scan tickets plus correct ranking to surface inbound replies.
+- See: `scripts/private/TicketWatch.ps1`; `scripts/private/AttentionMemory.ps1`; `TicketTracker/providers/isupport/sql/open-tickets.sql`
+
+## 2026-08-11 - Profile Sync Serve authority and freshness visibility
+
+- Decision: Serve remotes must not inherit loopback authority. `Test-MetraOpsRequestIsSameMachine` treats Tailscale Serve identity headers (and non-loopback `X-Forwarded-For` / `X-Real-IP`) as remote even when `RemoteEndPoint` is loopback. After that deny, locality prefers loopback and a validated `X-Metra-Local-Session` over raw IP ownership.
+- Decision: Profile fingerprints are publisher-side state. Satellite freshness is determined by comparing the published fingerprint with the last applied fingerprint (`.\metra.ps1 profile status`).
+- Decision: HQ satellite roster is check-in only. HQ never invents unseen machines and never pushes profile state. Satellites POST `/api/profile/check-in` after status/sync; registry lives under `%LOCALAPPDATA%\Metra\profile-satellites.local.json`.
+- Why: Tailscale Serve collapsed remote callers into local machine authority for profile status, issue-token, and other local-only routes. Operators also needed "Am I current?" and "Which satellites have checked in?" without daemons or pack push.
+- See: `scripts/private/OpsOpen.ps1`; `scripts/public/Profile.ps1`; `scripts/private/OpsServer.ps1`; Ops Settings Profile Sync
+
+## 2026-08-11 - Bootstrap calls Initialize-Metra directly (no array splat)
+
+- Decision: `Start-MetraSetup.ps1` invokes `Initialize-Metra` with a hashtable splat. It must not array-splat switches through `metra.ps1`. `metra.ps1 setup` also ignores `$Rest` tokens that start with `-` when resolving a profile path.
+- Why: On Windows PowerShell 5.1, `.\metra.ps1 setup -Quiet ...` via `@('setup','-Quiet',...)` put `-Quiet` in `$Rest`; setup treated it as a profile path (`...\-Quiet`) and aborted before SyncToken write / first sync.
+- See: `scripts/bootstrap/Start-MetraSetup.ps1`; `metra.ps1` setup case
+
 ## 2026-08-11 - Satellite installer accepts optional Profile sync token
 
 - Decision: Satellite connect page collects optional **Profile sync token** (password field) alongside **Main Metra address**. Quiet setup passes `-SyncToken` and writes `docs/profile-sync.local.json`, then best-effort `profile sync`. Token remains optional; address stays required.
@@ -384,8 +598,8 @@ Entry shape:
 
 ## 2026-08-05 - Open in editor is a desk-process launch, not a browser trick
 
-- Decision: `POST /api/open` launches the operator's editor from the desk process. Preference `editorCommand` accepts `auto` (Cursor, then VS Code, then Windows default), `cursor`, `code`, `system`, or a full executable path; default is `auto`. Path must be an existing folder inside a configured root or the Metra home. Caller must be the operator machine (loopback or one of its own addresses) or present `X-Metra-Local-Session`. UI order stays bridge, then `/api/open`, then clipboard (with an `execCommand` fallback for plain-http origins).
-- Why: Clipboard-only degrade was the whole feature in a browser, and the async clipboard does not exist on non-secure share URLs, so Open in editor silently did nothing. Same-machine addresses count as local because MagicDNS is the normal desk URL here; a genuinely remote peer still cannot spawn processes.
+- Decision: `POST /api/open` launches the operator's editor from the desk process. Preference `editorCommand` accepts `auto` (Cursor, then VS Code, then Windows default), `cursor`, `code`, `system`, or a full executable path; default is `auto`. `editorCommand` may be a custom executable path intentionally (not limited to cursor/code/system); a missing custom path falls back to Windows default. Path must be an existing folder inside a configured root or the Metra home (`Test-MetraPathWithinRoot`). Locality: deny Serve proxying, allow loopback, allow validated `X-Metra-Local-Session`, then own-IP match as supplemental. UI order stays bridge, then `/api/open`, then clipboard (with an `execCommand` fallback for plain-http origins).
+- Why: Clipboard-only degrade was the whole feature in a browser, and the async clipboard does not exist on non-secure share URLs, so Open in editor silently did nothing. Identity signals beat brittle IP ownership for MagicDNS; a genuinely remote peer still cannot spawn processes.
 - See: `scripts/private/OpsOpen.ps1`, `scripts/private/OpsServer.ps1` (`/api/open`), [ops/README.md](../ops/README.md), [SECURITY.md](../SECURITY.md)
 
 ## 2026-08-05 - Attention memory (continuity, not work management)
@@ -424,9 +638,22 @@ Entry shape:
 - Why: HTML Ops is replacing canvas as the regular-user desk. Without a write boundary locked before the UI is beloved, request-apply drifts into remote Invoke-Expression with buttons. Dual-pass validation and Host-only apply keep teacher/coworker reach useful without granting anonymous disk authority.
 - See: [SECURITY.md](../SECURITY.md), Cursor plan `attention_resolve_actions_bcb3e7aa`, [Future-Development.local.md](Future-Development.local.md) (Secure Ops scar)
 
+## 2026-08-11 - Setup regenerates context pack and self-doc as a pair
+
+- Decision: `.\metra.ps1 setup` / `Initialize-Metra` runs `Update-MetraSelfDocumentation` immediately after `Export-MetraContextPack`, returns `SelfDocumentation` / `Proposal` / `Tasks` on the result object, and declares the step inventory via `Get-MetraSetupTasks`. Setup also ensures the proposal store root exists (`Get-MetraProposalStoreRoot`). New setup capabilities should extend the task list rather than growing an ad-hoc god function.
+- Why: Context pack without self-doc leaves Overview/canvas stale after onboarding; pairing them keeps "known-good checkout" trustworthy for adoption.
+- See: `scripts/private/Setup.ps1`, `docs/Context-Routing.md`
+
+## 2026-08-11 - Self-doc documents live routing behavior
+
+- Decision: `.\metra.ps1 selfdoc` verifies standing sample asks with `Get-MetraRoutingAmbiguity` (present projects only). Featured order comes from `routing.featuredProjects` and/or project `featured: true` - not a hard-coded list in `SelfDocumentation.ps1`. Also writes `docs/selfdoc-routing-examples.json` as a living validation suite (ticket id, home fallback, verified asks). Overview and canvas show why (ticket-id / trigger-phrase / home-default / ...) so adoption docs cannot claim routes the engine will not take.
+- Why: Registry-only examples drift from ticket precedence and home-first routing; behavior docs keep Overview/canvas trustworthy as the intelligence layer evolves.
+- See: `scripts/private/SelfDocumentation.ps1`, `docs/Context-Routing.md`, `docs/selfdoc-routing-examples.json`
+- Amends: 2026-08-04 "Self-doc refresh is a required step after route changes"
+
 ## 2026-08-04 - Self-doc refresh is a required step after route changes
 
-- Decision: `.\metra.ps1 selfdoc` regenerates standing route examples from the merged registry into the self-documentation canvas embed, `docs/Overview.md` markers, `docs/selfdoc-routes.json`, and the tracked canvas template. `Export-MetraSnapshot` / `.\metra.ps1 snapshot` also invokes selfdoc. After registry trigger, purpose, or project-row changes that should appear in the explain surface, operators and agents must run `selfdoc` (or snapshot) - do not hand-edit the generated route table or `SELFDOC_ROUTES` embed.
+- Decision: `.\metra.ps1 selfdoc` regenerates standing route examples into the self-documentation canvas embed, `docs/Overview.md` markers, `docs/selfdoc-routes.json`, and the tracked canvas template. After registry trigger, purpose, or project-row changes that should appear in the explain surface, operators and agents must run `selfdoc` (or `Export-MetraSnapshot -RefreshSelfDocumentation`) - do not hand-edit the generated route table or `SELFDOC_ROUTES` embed. (Amended 2026-08-11: examples are live-routing verified; snapshot no longer refreshes selfdoc by default - see "Snapshot export stays focused".)
 - Why: Leadership asked for visual self-docs; those docs go stale the first time a route changes unless refresh is an explicit, repeatable product operation.
 - See: `scripts/private/SelfDocumentation.ps1`, `docs/Context-Routing.md`, `.\metra.ps1 selfdoc`
 
