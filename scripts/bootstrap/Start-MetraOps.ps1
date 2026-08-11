@@ -9,6 +9,7 @@ param(
     [switch]$NoRefresh,
     [switch]$Full,
     [switch]$Quick,
+    [switch]$ForceLocal,
     [int]$Port = 7380
 )
 
@@ -24,6 +25,7 @@ if ($NoBrowser) { $opsArgs.NoBrowser = $true }
 if ($NoRefresh) { $opsArgs.NoRefresh = $true }
 if ($Full) { $opsArgs.Full = $true }
 if ($Quick) { $opsArgs.Quick = $true }
+if ($ForceLocal) { $opsArgs.ForceLocal = $true }
 
 & (Join-Path $metraRoot 'metra.ps1') 'ops' @opsArgs
 exit $LASTEXITCODE

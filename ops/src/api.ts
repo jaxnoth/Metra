@@ -88,10 +88,91 @@ export function refreshSnapshot(full = false): Promise<DeskPayload> {
   }).then((r) => parseJson<DeskPayload>(r))
 }
 
+export type TicketWatchResult = {
+  ok: boolean
+  available: boolean
+  scope: string
+  synced: boolean
+  syncError?: string
+  warning?: string
+  scanned: number
+  added: number
+  refreshed: number
+  unchanged: number
+  draftsWritten: number
+  /** True when at least one local analyze draft was written this scan. */
+  draftAvailable?: boolean
+  /** E1: count of Next evidence notes written this scan. */
+  evidenceSuggestions?: number
+  nextEvidenceAvailable?: boolean
+  /** E1: at least one draftState=recommendable (Ready for recommendation - no auto-write). */
+  readyForRecommendation?: boolean
+  iSupportWrites: boolean
+}
+
+export type WatchTicketsResponse = {
+  ok: boolean
+  watch: TicketWatchResult
+  desk: DeskPayload
+}
+
+/** Mine-scope TicketWatch scan into Attention. No iSupport writes. */
+export function watchTickets(draft = false): Promise<WatchTicketsResponse> {
+  return fetch('/api/watch/tickets', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ draft }),
+  }).then((r) => parseJson<WatchTicketsResponse>(r))
+}
+
+export type TicketWatchStoreResult = {
+  ok: boolean
+  id: string
+  preview: boolean
+  confirm: boolean
+  force: boolean
+  mineEligible: boolean
+  recommendable: boolean
+  body?: string
+  noteId?: string
+  iSupportWrite: boolean
+  recommendationWritten: boolean
+  warning?: string
+  autoStoreRecommend?: boolean
+}
+
+export type WatchRecommendResponse = {
+  ok: boolean
+  store: TicketWatchStoreResult
+  desk: DeskPayload
+  error?: string
+}
+
+/** M3: Preview local recommend-draft or Confirm Affirm A TT recommend. */
+export function watchRecommend(
+  id: string,
+  opts: { preview?: boolean; confirm?: boolean; force?: boolean; minutes?: number } = {},
+): Promise<WatchRecommendResponse> {
+  const confirm = Boolean(opts.confirm)
+  const preview = confirm ? false : opts.preview !== false
+  return fetch('/api/watch/recommend', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      id,
+      preview,
+      confirm,
+      force: Boolean(opts.force),
+      minutes: opts.minutes ?? 15,
+    }),
+  }).then((r) => parseJson<WatchRecommendResponse>(r))
+}
+
 export function putPreferences(
   deskMode: DeskMode,
   attentionVisibleCount?: number,
   editorCommand?: string,
+  ticketWatchEnabled?: boolean,
 ): Promise<Preferences> {
   const body: Record<string, unknown> = { deskMode }
   if (typeof attentionVisibleCount === 'number') {
@@ -99,6 +180,9 @@ export function putPreferences(
   }
   if (typeof editorCommand === 'string' && editorCommand) {
     body.editorCommand = editorCommand
+  }
+  if (typeof ticketWatchEnabled === 'boolean') {
+    body.ticketWatchEnabled = ticketWatchEnabled
   }
   return fetch('/api/preferences', {
     method: 'PUT',
@@ -183,6 +267,52 @@ export async function postProductUpdate(
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ target }),
+      },
+      token,
+    ),
+  ).then((r) => parseJson(r))
+}
+
+export async function fetchProfileStatus(): Promise<import('./types').ProfileSyncStatus> {
+  const token = await ensureLocalSessionToken()
+  return fetch('/api/profile/status', withSessionHeaders({}, token)).then((r) => parseJson(r))
+}
+
+export async function downloadProfileExport(): Promise<void> {
+  const token = await ensureLocalSessionToken()
+  const res = await fetch('/api/profile/export', withSessionHeaders({}, token))
+  if (!res.ok) {
+    let detail = res.statusText
+    try {
+      const body = await res.json()
+      if (body?.error) detail = String(body.error)
+    } catch {
+      /* ignore */
+    }
+    throw new Error(detail || `HTTP ${res.status}`)
+  }
+  const blob = await res.blob()
+  const url = URL.createObjectURL(blob)
+  const a = document.createElement('a')
+  a.href = url
+  a.download = 'metra-profile.zip'
+  document.body.appendChild(a)
+  a.click()
+  a.remove()
+  URL.revokeObjectURL(url)
+}
+
+export async function issueProfileSyncToken(
+  rotate = false,
+): Promise<import('./types').ProfileSyncTokenIssue> {
+  const token = await ensureLocalSessionToken()
+  return fetch(
+    '/api/profile/issue-sync-token',
+    withSessionHeaders(
+      {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ rotate }),
       },
       token,
     ),

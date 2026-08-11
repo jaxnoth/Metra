@@ -388,11 +388,11 @@ Filled **2026-08-06**. Loop-form annotations added same day (TikTok glean). Revi
 | Ceiling reason | policy |
 | Completeness | complete |
 | Evidence quality | adequate (live sync/list/updates via TicketTracker module; fail-soft when TT missing) |
-| Loop form | turn-based via `.\metra.ps1 watch tickets`; time-based when full Snapshot covers `ticket` (exit = scan cadence, not "work finished"). Later Host poll: time-based. Thin event bus: proactive - keep cold until allowlisted |
-| Evidence (current) | Attention kind `ticket`; `Invoke-MetraTicketWatchScan` / `.\metra.ps1 watch tickets`; Snapshot full-scan fail-soft ingest; sticky dismiss on id+Updated+Status; no iSupport writes from watch |
-| On hard stop | TT unavailable / sync fail: Snapshot continues with warning; CLI reports skip; next: fix TT path or retry `watch tickets` - do not invent tickets |
-| Gaps to target | none for Target L3 intake. Stretch (not required): goal-based L5 draft validator; Phase 2 affirm-to-recommend |
-| Next bite | Phase 2 affirm UX calling TicketTracker `recommend` (separate bite); keep Host poll / Mail / Orion later |
+| Loop form | turn-based via Scan tickets / `.\metra.ps1 watch tickets` (Portfolio refresh never covers `ticket`). Later Host poll: time-based. Thin event bus: proactive - keep cold until allowlisted |
+| Evidence (current) | Attention kind `ticket`; Scan tickets / watch CLI; Portfolio never covers tickets; **M1 mine-first**; **M2** opt-in autoAnalyze -> TT local analyze draft; **E1** opt-in evidenceRouter -> Next evidence / Ready for recommendation (local only); **M3** Preview recommend-draft + Confirm Affirm A TT recommend (operator-gated; autoStore off); ladder Observe->Draft->Next evidence->Review(Affirm A)->Apply(Affirm B) |
+| On hard stop | TT unavailable / sync fail: CLI/Scan reports skip; empty meFilter under mine: fail closed zero candidates - next: set TT `meFilter` or retry Scan tickets - do not invent tickets |
+| Gaps to target | none for Target L3 intake. Stretch items parked in Future-Dev F3.x (M4+) |
+| Next bite | none for this plan (complete). Parked: M4 dual-scope from Future-Dev F3.x when activated |
 
 Do not call this L4 (no specialist merge). Do not grant L5 because Snapshot or Host poll woke up. Stretch goal-based L5 only with a machine-checkable draft validator.
 

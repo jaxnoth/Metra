@@ -22,6 +22,8 @@ import {
   postProposalRequestApply,
   putPreferences,
   refreshSnapshot,
+  watchTickets,
+  watchRecommend,
   releaseAttention,
   snoozeAttention,
   fetchAskEngine,
@@ -30,6 +32,9 @@ import {
   fetchSettings,
   putSettings,
   fetchUpdates,
+  fetchProfileStatus,
+  downloadProfileExport,
+  issueProfileSyncToken,
   postProductUpdate,
 } from './api'
 import { AskMarkdown } from './AskMarkdown'
@@ -41,6 +46,7 @@ import type {
   AskEnginePanel,
   SettingsPortfolio,
   ProductUpdates,
+  ProfileSyncStatus,
   CaptureItem,
   CaptureProposal,
   DeskPayload,
@@ -160,11 +166,11 @@ function awarenessNarration(
     return 'One item ready for review - discuss it, or type what you\'re thinking.'
   }
   const quiet = 'Clear for now. Toss me an idea whenever.'
-  if (emptyHint && /not reviewed|quick check|recheck|full refresh/i.test(emptyHint)) {
+  if (emptyHint && /not reviewed|quick check|light check|recheck|full refresh|Portfolio refresh/i.test(emptyHint)) {
     return `${quiet} ${emptyHint}`
   }
   if (gitChecked === false) {
-    return `${quiet} Some areas were not reviewed - run a full refresh to confirm.`
+    return `${quiet} Some areas were not reviewed - run Portfolio refresh to confirm.`
   }
   return quiet
 }
@@ -516,6 +522,45 @@ function ResolveActions({
     }
   }
 
+  const ticketIdFromKey = (() => {
+    if (attention.kind !== 'ticket' || !key) return null
+    const m = /^ticket:(.+)$/i.exec(key)
+    return m ? m[1] : null
+  })()
+
+  async function onWatchRecommend(mode: 'preview' | 'confirm') {
+    if (!ticketIdFromKey) {
+      onStatus('Missing ticket id for recommendation.')
+      return
+    }
+    setLocalBusy(true)
+    onStatus(null)
+    try {
+      const res = await watchRecommend(ticketIdFromKey, {
+        preview: mode === 'preview',
+        confirm: mode === 'confirm',
+      })
+      if (res.desk) onDeskUpdate(res.desk)
+      if (!res.ok || !res.store?.ok) {
+        onStatus(res.store?.warning || res.error || 'Recommendation action failed.')
+        return
+      }
+      if (mode === 'preview') {
+        onStatus(
+          'Preview: local recommend-draft saved (no iSupport write). Review body, then Write recommendation.',
+        )
+      } else {
+        onStatus(
+          'Wrote recommendation to iSupport (store-as-review). Re-run supersedes the same section. Not resolved.',
+        )
+      }
+    } catch (e) {
+      onStatus(e instanceof Error ? e.message : String(e))
+    } finally {
+      setLocalBusy(false)
+    }
+  }
+
   const disabled = busy || localBusy
 
   return (
@@ -523,6 +568,26 @@ function ResolveActions({
       <p className="resolve-copy">{attention.resolveCopy}</p>
       {attention.doneWhen && (
         <p className="muted resolve-done">You're done when: {attention.doneWhen}</p>
+      )}
+      {ticketIdFromKey && (
+        <div className="actions wrap" style={{ marginBottom: '0.75rem' }}>
+          <button
+            type="button"
+            className="btn btn-secondary"
+            disabled={disabled}
+            onClick={() => void onWatchRecommend('preview')}
+          >
+            Preview recommendation
+          </button>
+          <button
+            type="button"
+            className="btn btn-primary"
+            disabled={disabled}
+            onClick={() => void onWatchRecommend('confirm')}
+          >
+            Write recommendation
+          </button>
+        </div>
       )}
       <label className="attention-feedback">
         <span className="muted">
@@ -971,10 +1036,13 @@ export default function App() {
   const [askEngineOpen, setAskEngineOpen] = useState(false)
   const [settingsPortfolio, setSettingsPortfolio] = useState<SettingsPortfolio | null>(null)
   const [productUpdates, setProductUpdates] = useState<ProductUpdates | null>(null)
+  const [profileSyncStatus, setProfileSyncStatus] = useState<ProfileSyncStatus | null>(null)
+  const [profileSyncTokenShown, setProfileSyncTokenShown] = useState<string | null>(null)
   const [rootsDraft, setRootsDraft] = useState<RootDraft[]>(() => portfolioRootsToDrafts(null))
   const [cursorKeyDraft, setCursorKeyDraft] = useState('')
   const [settingsStatus, setSettingsStatus] = useState<string | null>(null)
   const [resolveStatus, setResolveStatus] = useState<string | null>(null)
+  const [ticketWatchStatus, setTicketWatchStatus] = useState<string | null>(null)
   const [selectedAttentionKey, setSelectedAttentionKey] = useState<string | null>(null)
   const [selectedHeldKey, setSelectedHeldKey] = useState<string | null>(null)
   const [compactViewport, setCompactViewport] = useState(() =>
@@ -1024,6 +1092,7 @@ export default function App() {
 
   const deskMode: DeskMode = desk?.preferences?.deskMode ?? 'general'
   const advanced = deskMode === 'advanced'
+  const ticketWatchEnabled = desk?.preferences?.ticketWatchEnabled !== false
 
   const load = useCallback(async () => {
     setError(null)
@@ -1055,12 +1124,72 @@ export default function App() {
     ]
   }, [advanced])
 
-  async function onRefresh(full = false) {
+  async function onPortfolioRefresh() {
+    setBusy(true)
+    setError(null)
+    setTicketWatchStatus(null)
+    try {
+      // Full-depth portfolio scan; never covers tickets (Scan tickets owns that).
+      const payload = await refreshSnapshot(true)
+      setDesk(payload)
+      setTicketWatchStatus('Portfolio refreshed (non-ticket Attention only).')
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e))
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  async function onScanTickets() {
+    if (!ticketWatchEnabled) {
+      setTicketWatchStatus('Ticket Watch is off - turn it on to scan tickets.')
+      return
+    }
+    setBusy(true)
+    setError(null)
+    setTicketWatchStatus(null)
+    try {
+      const res = await watchTickets(false)
+      setDesk(res.desk)
+      const w = res.watch
+      if (w.warning) {
+        setTicketWatchStatus(w.warning)
+      } else if (!w.available) {
+        setTicketWatchStatus('TicketTracker not available - ticket scan skipped.')
+      } else {
+        const draftBit =
+          w.draftAvailable || w.draftsWritten > 0
+            ? ` Draft available (${w.draftsWritten}).`
+            : ''
+        const evidenceStatus = (() => {
+          if (!(w.nextEvidenceAvailable || (w.evidenceSuggestions ?? 0) > 0)) return ''
+          if (w.readyForRecommendation) {
+            return ` Next evidence (${w.evidenceSuggestions}). Ready for recommendation.`
+          }
+          return ` Next evidence (${w.evidenceSuggestions}).`
+        })()
+        setTicketWatchStatus(
+          `Tickets (${w.scope}): scanned ${w.scanned} - added ${w.added}, refreshed ${w.refreshed}, unchanged ${w.unchanged}.${draftBit}${evidenceStatus} No iSupport writes.`,
+        )
+      }
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e))
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  async function onToggleTicketWatch(next: boolean) {
     setBusy(true)
     setError(null)
     try {
-      const payload = await refreshSnapshot(full)
-      setDesk(payload)
+      const prefs = await putPreferences(deskMode, undefined, undefined, next)
+      setDesk((prev) => (prev ? { ...prev, preferences: prefs } : prev))
+      setTicketWatchStatus(
+        next
+          ? 'Ticket Watch on - Scan tickets is available. Portfolio refresh still ignores tickets.'
+          : 'Ticket Watch off - Scan tickets disabled. Portfolio refresh never covers tickets.',
+      )
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e))
     } finally {
@@ -1135,12 +1264,61 @@ export default function App() {
     }
   }
 
+  async function loadProfileSyncStatus() {
+    try {
+      const status = await fetchProfileStatus()
+      setProfileSyncStatus(status)
+    } catch {
+      setProfileSyncStatus(null)
+    }
+  }
+
   useEffect(() => {
     if (!settingsOpen && tab !== 'settings') return
     void loadSettingsPortfolio()
     void loadProductUpdates(false)
+    void loadProfileSyncStatus()
     // eslint-disable-next-line react-hooks/exhaustive-deps -- load when Settings opens
   }, [settingsOpen, tab])
+
+  async function onDownloadProfilePack() {
+    setBusy(true)
+    setError(null)
+    setSettingsStatus(null)
+    try {
+      await downloadProfileExport()
+      setSettingsStatus('Downloaded metra-profile.zip.')
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e))
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  async function onIssueProfileSyncToken(rotate: boolean) {
+    setBusy(true)
+    setError(null)
+    setSettingsStatus(null)
+    try {
+      const issued = await issueProfileSyncToken(rotate)
+      if (issued.token) {
+        setProfileSyncTokenShown(issued.token)
+        try {
+          await navigator.clipboard.writeText(issued.token)
+          setSettingsStatus('Sync token copied to clipboard. Paste into satellite docs/profile-sync.local.json as syncToken.')
+        } catch {
+          setSettingsStatus(issued.message || 'Sync token issued - copy it now; it is shown once.')
+        }
+      } else {
+        setProfileSyncTokenShown(null)
+        setSettingsStatus(issued.message || 'Token already exists. Use Rotate to mint a new one.')
+      }
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e))
+    } finally {
+      setBusy(false)
+    }
+  }
 
   async function onCheckUpdates() {
     setBusy(true)
@@ -2113,21 +2291,45 @@ export default function App() {
                     type="button"
                     className="btn btn-secondary"
                     disabled={busy}
-                    onClick={() => void onRefresh(false)}
+                    title="Refresh non-ticket Attention (git, drift, verify, decisions). Does not scan tickets."
+                    onClick={() => void onPortfolioRefresh()}
                   >
-                    {busy ? 'Refreshing...' : 'Quick'}
+                    {busy ? 'Refreshing...' : 'Portfolio refresh'}
                   </button>
+                  <label
+                    className="switch"
+                    title="Enable gate for Scan tickets. Portfolio refresh never covers tickets."
+                  >
+                    <input
+                      type="checkbox"
+                      checked={ticketWatchEnabled}
+                      disabled={busy}
+                      onChange={(e) => void onToggleTicketWatch(e.target.checked)}
+                      aria-label="Ticket Watch"
+                    />
+                    Ticket Watch
+                  </label>
                   <button
                     type="button"
                     className="btn btn-secondary"
-                    disabled={busy}
-                    onClick={() => void onRefresh(true)}
+                    disabled={busy || !ticketWatchEnabled}
+                    title={
+                      ticketWatchEnabled
+                        ? 'Mine-scope tickets into Attention. No iSupport writes.'
+                        : 'Turn Ticket Watch on to scan tickets.'
+                    }
+                    onClick={() => void onScanTickets()}
                   >
-                    {busy ? 'Scanning...' : 'Full refresh'}
+                    {busy ? 'Scanning...' : 'Scan tickets'}
                   </button>
                 </div>
               )}
             </div>
+            {attentionOpen && ticketWatchStatus && (
+              <p className="place-ack" role="status" aria-live="polite">
+                {ticketWatchStatus}
+              </p>
+            )}
             {attentionOpen && (() => {
               const active = desk?.attention?.active ?? (desk?.nextAttention ? [desk.nextAttention] : [])
               const held = desk?.attention?.held ?? []
@@ -2154,8 +2356,8 @@ export default function App() {
                     <p className="muted">
                       {desk?.attentionEmptyHint ||
                         (desk && !desk.gitChecked
-                          ? 'Nothing waiting from this quick check. Some areas were not reviewed. Run a full refresh to confirm.'
-                          : 'Nothing waiting. The last full check found no open items.')}
+                          ? 'Nothing waiting from this light check. Run Portfolio refresh to confirm portfolio health.'
+                          : 'Nothing waiting from Portfolio refresh. Use Scan tickets for the ticket queue (when Ticket Watch is on).')}
                     </p>
                     {heldCount > 0 && selectedHeld && (
                       <div className="holding-block">
@@ -2527,6 +2729,54 @@ export default function App() {
           ) : null}
           <div className="settings-row">
             <div>
+              <strong>Profile Sync</strong>
+              <p className="muted">
+                HQ-published, satellite-pulled. Download a pack here, or sync from a laptop with{' '}
+                <code>.\metra.ps1 profile sync</code>. No Apply-to-this-device over Tailscale.
+              </p>
+              {profileSyncStatus ? (
+                <ul className="muted" style={{ margin: '0.4rem 0', paddingLeft: '1.1rem' }}>
+                  <li>Fingerprint: {profileSyncStatus.contentHash}</li>
+                  <li>Last write: {profileSyncStatus.maxWriteUtc || '(none)'}</li>
+                  <li>
+                    Files: {profileSyncStatus.fileCount} (pack v
+                    {profileSyncStatus.profilePackVersion})
+                  </li>
+                </ul>
+              ) : (
+                <p className="muted">Status unavailable (needs operator session).</p>
+              )}
+              <div className="settings-root-actions">
+                <button type="button" disabled={busy} onClick={() => void onDownloadProfilePack()}>
+                  Download profile zip
+                </button>
+                <button
+                  type="button"
+                  disabled={busy}
+                  onClick={() => void onIssueProfileSyncToken(false)}
+                >
+                  Issue sync token
+                </button>
+                <button
+                  type="button"
+                  disabled={busy}
+                  onClick={() => void onIssueProfileSyncToken(true)}
+                >
+                  Rotate sync token
+                </button>
+                <button type="button" disabled={busy} onClick={() => void loadProfileSyncStatus()}>
+                  Refresh status
+                </button>
+              </div>
+              {profileSyncTokenShown ? (
+                <p className="muted" style={{ marginTop: '0.5rem', wordBreak: 'break-all' }}>
+                  Token (copy now): <code>{profileSyncTokenShown}</code>
+                </p>
+              ) : null}
+            </div>
+          </div>
+          <div className="settings-row">
+            <div>
               <strong>Projects folders</strong>
               <p className="muted">
                 {settingsPortfolio?.hint ??
@@ -2712,6 +2962,24 @@ export default function App() {
                 onChange={(e) => void onToggleAdvanced(e.target.checked)}
               />
               {advanced ? 'On' : 'Off'}
+            </label>
+          </div>
+          <div className="settings-row">
+            <div>
+              <strong>Ticket Watch</strong>
+              <p className="muted">
+                Enable gate for Scan tickets only. Portfolio refresh never covers tickets. Off disables
+                Scan tickets. No iSupport writes either way.
+              </p>
+            </div>
+            <label className="switch">
+              <input
+                type="checkbox"
+                checked={ticketWatchEnabled}
+                disabled={busy}
+                onChange={(e) => void onToggleTicketWatch(e.target.checked)}
+              />
+              {ticketWatchEnabled ? 'On' : 'Off'}
             </label>
           </div>
           <div className="settings-row">

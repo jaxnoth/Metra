@@ -52,6 +52,7 @@ docs/ops-ask-log.local.json
 docs/ops-capture.local.json
 docs/ops-attention.local.json
 docs/ops-place.local.json
+docs/profile-sync.local.json
 
 # Ops desk: track dist for end users; ignore node_modules via ops/.gitignore + root rule
 ops/node_modules/

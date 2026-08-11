@@ -919,17 +919,138 @@ function Invoke-MetraCaptureCommand {
     }
 }
 
-function Invoke-MetraAskLogCommand {
+function Invoke-MetraAskJournalRemote {
     <#
     .SYNOPSIS
-        CLI surface: ask log|sessions|get|recall - Session Journal continuity and episodic search.
+        Query HQ GET /api/ask/journal and unwrap to local CLI shapes.
     #>
     [CmdletBinding()]
     param(
         [Parameter(Mandatory)][string]$Subcommand,
         [string[]]$ArgsRest = @(),
+        [Parameter(Mandatory)][string]$OpsBaseUrl
+    )
+
+    $base = $OpsBaseUrl.Trim().TrimEnd('/')
+    $unreachable = @"
+HQ Ask host unreachable ($base).
+
+Check:
+  - Tailscale connected
+  - METRA_OPS_BASE_URL (or docs/profile-sync.local.json opsBaseUrl)
+  - HQ machine available
+
+For local troubleshooting:
+  .\metra.ps1 ask sessions -Local
+"@
+
+    try {
+        switch ($Subcommand.ToLowerInvariant()) {
+            { $_ -in @('log', 'list') } {
+                $limit = 20
+                if ($ArgsRest.Count -gt 0 -and $ArgsRest[0] -match '^\d+$') { $limit = [int]$ArgsRest[0] }
+                $url = '{0}/api/ask/journal?limit={1}' -f $base, $limit
+                $payload = Invoke-RestMethod -Method Get -Uri $url -TimeoutSec 30
+                return ,@($payload.turns)
+            }
+            'sessions' {
+                $url = '{0}/api/ask/journal' -f $base
+                $payload = Invoke-RestMethod -Method Get -Uri $url -TimeoutSec 30
+                return ,@($payload.sessions)
+            }
+            { $_ -in @('get', 'resume') } {
+                if ($ArgsRest.Count -lt 1 -or [string]::IsNullOrWhiteSpace([string]$ArgsRest[0])) {
+                    throw "ask get requires a sessionId. Example: .\metra.ps1 ask get <sessionId>"
+                }
+                $sid = [uri]::EscapeDataString([string]$ArgsRest[0])
+                $url = '{0}/api/ask/journal?sessionId={1}' -f $base, $sid
+                $payload = Invoke-RestMethod -Method Get -Uri $url -TimeoutSec 30
+                return [PSCustomObject]@{
+                    sessionId  = [string](Get-MetraProp -Object $payload -Name 'sessionId' -Default $ArgsRest[0])
+                    turnCount  = [int](Get-MetraProp -Object $payload -Name 'turnCount' -Default @($payload.turns).Count)
+                    continuity = (Get-MetraProp -Object $payload -Name 'continuity' -Default $null)
+                    turns      = @($payload.turns)
+                }
+            }
+            'recall' {
+                if ($ArgsRest.Count -lt 1 -or [string]::IsNullOrWhiteSpace([string]$ArgsRest[0])) {
+                    throw "ask recall requires a query. Example: .\metra.ps1 ask recall `"gateway msal`""
+                }
+                $limit = 20
+                $queryParts = [System.Collections.Generic.List[string]]::new()
+                foreach ($a in $ArgsRest) {
+                    if ($a -match '^\d+$' -and $queryParts.Count -gt 0) {
+                        $limit = [int]$a
+                        continue
+                    }
+                    [void]$queryParts.Add([string]$a)
+                }
+                $query = ($queryParts -join ' ').Trim()
+                $url = '{0}/api/ask/journal?q={1}&limit={2}' -f $base, [uri]::EscapeDataString($query), $limit
+                $payload = Invoke-RestMethod -Method Get -Uri $url -TimeoutSec 30
+                return ,@($payload.hits)
+            }
+            default {
+                throw "Unknown ask subcommand: $Subcommand. Use log|sessions|get|recall."
+            }
+        }
+    }
+    catch {
+        $msg = [string]$_.Exception.Message
+        if ($msg -match '(?i)(ask get requires|ask recall requires|Unknown ask subcommand)') {
+            throw
+        }
+        throw ($unreachable.TrimEnd() + "`n`nDetail: $msg")
+    }
+}
+
+function Invoke-MetraAskLogCommand {
+    <#
+    .SYNOPSIS
+        CLI surface: ask log|sessions|get|recall - Session Journal continuity and episodic search.
+    .DESCRIPTION
+        Desk Mode B (HQ Client) routes to GET /api/ask/journal on OpsBaseUrl.
+        -Local / ForceLocal reads docs/ops-ask-log.local.json. Never auto-falls back.
+    #>
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory)][string]$Subcommand,
+        [string[]]$ArgsRest = @(),
+        [string]$OpsBaseUrl,
+        [switch]$Local,
         [string]$MetraRoot = (Get-MetraRoot)
     )
+
+    $forceLocal = [bool]$Local
+    $effectiveOpsUrl = $OpsBaseUrl
+    $filtered = [System.Collections.Generic.List[string]]::new()
+    for ($i = 0; $i -lt @($ArgsRest).Count; $i++) {
+        $a = [string]$ArgsRest[$i]
+        if ($a -match '^(?i)-Local$') {
+            $forceLocal = $true
+            continue
+        }
+        if ($a -match '^(?i)-OpsBaseUrl$' -and ($i + 1) -lt $ArgsRest.Count) {
+            $effectiveOpsUrl = [string]$ArgsRest[$i + 1]
+            $i++
+            continue
+        }
+        if ($a -match '^(?i)-OpsBaseUrl=(.+)$') {
+            $effectiveOpsUrl = $Matches[1]
+            continue
+        }
+        [void]$filtered.Add($a)
+    }
+    $ArgsRest = @($filtered)
+
+    $mode = Get-MetraDeskMode -ForceLocal:$forceLocal -OpsBaseUrl $effectiveOpsUrl -MetraRoot $MetraRoot
+    if ($mode -eq 'HqClient') {
+        $base = Get-MetraProfileOpsBaseUrlOrNull -OpsBaseUrl $effectiveOpsUrl -MetraRoot $MetraRoot
+        if ([string]::IsNullOrWhiteSpace($base)) {
+            throw 'Desk Mode is HQ Client but OpsBaseUrl could not be resolved.'
+        }
+        return Invoke-MetraAskJournalRemote -Subcommand $Subcommand -ArgsRest $ArgsRest -OpsBaseUrl $base
+    }
 
     switch ($Subcommand.ToLowerInvariant()) {
         { $_ -in @('log', 'list') } {

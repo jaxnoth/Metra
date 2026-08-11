@@ -1252,6 +1252,7 @@ function Get-MetraDeskPreferences {
         bindTailscale          = $false
         attentionVisibleCount  = 1
         editorCommand          = 'auto'
+        ticketWatchEnabled     = $true
         updatedAt              = $null
     }
     if (-not (Test-Path -LiteralPath $path)) {
@@ -1286,6 +1287,9 @@ function Get-MetraDeskPreferences {
         if ($vis -gt 10) { $vis = 10 }
         $editorCommand = [string](Get-MetraProp -Object $raw -Name 'editorCommand' -Default 'auto')
         if ([string]::IsNullOrWhiteSpace($editorCommand)) { $editorCommand = 'auto' }
+        $ticketWatchEnabled = Get-MetraProp -Object $raw -Name 'ticketWatchEnabled' -Default $true
+        if ($null -eq $ticketWatchEnabled) { $ticketWatchEnabled = $true }
+        else { $ticketWatchEnabled = [bool]$ticketWatchEnabled }
         return [PSCustomObject]@{
             deskMode               = $mode
             opsPort                = $opsPort
@@ -1294,6 +1298,7 @@ function Get-MetraDeskPreferences {
             bindTailscale          = $bindTs
             attentionVisibleCount  = $vis
             editorCommand          = $editorCommand
+            ticketWatchEnabled     = $ticketWatchEnabled
             updatedAt              = (Get-MetraProp -Object $raw -Name 'updatedAt' -Default $null)
         }
     }
@@ -1317,6 +1322,7 @@ function Set-MetraDeskPreferences {
         [bool]$BindTailscale,
         [int]$AttentionVisibleCount,
         [string]$EditorCommand,
+        [bool]$TicketWatchEnabled,
         [string]$MetraRoot = (Get-MetraRoot)
     )
 
@@ -1346,6 +1352,9 @@ function Set-MetraDeskPreferences {
         $ed = $EditorCommand
         if ([string]::IsNullOrWhiteSpace($ed)) { $ed = 'auto' }
         $current.editorCommand = $ed.Trim()
+    }
+    if ($PSBoundParameters.ContainsKey('TicketWatchEnabled')) {
+        $current.ticketWatchEnabled = [bool]$TicketWatchEnabled
     }
     $current.updatedAt = (Get-Date).ToString('o')
     $path = Get-MetraDeskPreferencesPath -MetraRoot $MetraRoot
@@ -2526,39 +2535,11 @@ function ConvertTo-MetraDeskPayload {
         }
     }
 
-    # Ticket watch: full scan only. Fail-soft - never break desk payload.
-    # Quick scan must not cover ticket (no surprise help-desk polling).
-    $ticketCovered = $false
-    if ($scanMode -eq 'full') {
-        try {
-            $tt = Get-MetraTicketTrackerProject
-            if ($tt) {
-                $ticketCfg = Get-MetraTicketWatchConfig -MetraRoot $MetraRoot
-                # Local cache by default; syncOnSnapshot opts in to pulling iSupport on a full refresh.
-                $candidates = Get-MetraTicketWatchCandidates `
-                    -ModulePath $tt.ModulePath `
-                    -Top ([int]$ticketCfg.top) `
-                    -DoSync ([bool]$ticketCfg.syncOnSnapshot)
-                foreach ($t in @($candidates.Tickets)) {
-                    $qi = ConvertTo-MetraTicketAttentionQueueItem -Ticket $t -TicketTrackerPath $tt.Path
-                    if ($qi) { $attentionQueue += $qi }
-                }
-                # Truncated list is not full coverage - do not auto-close tickets past the cap.
-                $ticketCovered = -not [bool](Get-MetraProp -Object $candidates -Name 'Truncated' -Default $false)
-            }
-            else {
-                Write-Warning 'TicketTracker project or module not present; ticket watch skipped.'
-            }
-        }
-        catch {
-            Write-Warning ("Ticket watch scan skipped: {0}" -f $_.Exception.Message)
-        }
-    }
-
+    # Portfolio refresh never covers tickets. Ticket Attention only via Scan tickets
+    # (Invoke-MetraTicketWatchScan / POST /api/watch/tickets), gated by ticketWatchEnabled.
     $coveredKinds = @('drift', 'decision', 'contract')
     if ($gitChecked) { $coveredKinds += 'git' }
     if ($verifyChecked) { $coveredKinds += 'verify' }
-    if ($ticketCovered) { $coveredKinds += 'ticket' }
 
     $memory = Update-MetraAttentionMemory `
         -Queue $attentionQueue `
@@ -2668,10 +2649,10 @@ function ConvertTo-MetraDeskPayload {
     $emptyHint = $null
     if (-not $nextAttention) {
         if ($scanMode -ne 'full' -or -not $gitChecked) {
-            $emptyHint = 'Nothing waiting from this quick check. Some areas were not reviewed. Run a full refresh to confirm.'
+            $emptyHint = 'Nothing waiting from this light check. Run Portfolio refresh to confirm portfolio health.'
         }
         else {
-            $emptyHint = 'Nothing waiting. The last full check found no open items.'
+            $emptyHint = 'Nothing waiting from Portfolio refresh. Use Scan tickets for the ticket queue (when Ticket Watch is on).'
         }
     }
 

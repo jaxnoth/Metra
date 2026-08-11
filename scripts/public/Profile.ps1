@@ -60,16 +60,32 @@ function Export-MetraProfile {
         Copy-Item -LiteralPath $src -Destination $dst -Force
     }
 
+    $status = Get-MetraProfileStatus -MetraRoot $metraRoot
+    $fileDetails = @(
+        $status.files | ForEach-Object {
+            [ordered]@{
+                logicalName  = $_.logicalName
+                relativePath = $_.relativePath
+                hash         = $_.hash
+            }
+        }
+    )
+
     $manifest = [ordered]@{
-        version     = 1
-        id          = 'export'
-        description = 'Operator profile exported from local Metra checkout customizations.'
-        exportedUtc = [DateTime]::UtcNow.ToString('o')
-        files       = @($present.ToArray())
-        notes       = @(
+        version            = 1
+        profilePackVersion = 1
+        id                 = 'export'
+        description        = 'Operator profile exported from local Metra checkout customizations.'
+        exportedUtc        = [DateTime]::UtcNow.ToString('o')
+        createdUtc         = [DateTime]::UtcNow.ToString('o')
+        contentHash        = $status.contentHash
+        source             = 'jumpbox'
+        files              = $fileDetails
+        notes              = @(
             'Personal-root registryFile (e.g. projects.personal.json beside personal projects) is not included; copy it with that root separately.',
             'Optional metra-humor.local.mdc / metra-teaching-gentle.local.mdc are included when present (Persona Add-ons).',
-            'Do not pack secrets, ticket caches, or canvas snapshots.'
+            'Do not pack secrets, ticket caches, or canvas snapshots.',
+            'Metra Profile Sync v1: HQ-published, satellite-pulled.'
         )
     }
     $manifestPath = Join-Path $staging 'metra-profile.json'
@@ -157,7 +173,8 @@ function Import-MetraProfile {
         $fromManifest = @()
         if (Test-Path -LiteralPath $manifestPath) {
             $manifest = Get-Content -Raw -Path $manifestPath | ConvertFrom-Json
-            $fromManifest = @(Get-MetraProp -Object $manifest -Name 'files' -Default @())
+            $rawFiles = @(Get-MetraProp -Object $manifest -Name 'files' -Default @())
+            $fromManifest = @(ConvertTo-MetraProfileManifestRelativePaths -Candidates $rawFiles)
         }
         $candidates = if ($fromManifest.Count -gt 0) { $fromManifest } else { $fileMap }
 
@@ -252,6 +269,159 @@ function Import-MetraProfile {
         if ($resolved.TempDir -and (Test-Path -LiteralPath $resolved.TempDir)) {
             Remove-Item -LiteralPath $resolved.TempDir -Recurse -Force -ErrorAction SilentlyContinue
         }
+    }
+}
+
+function Sync-MetraProfile {
+    <#
+    .SYNOPSIS
+        Pulls HQ profile pack over Ops when contentHash differs (satellite apply).
+    .DESCRIPTION
+        Metra Profile Sync v1: HQ-published, satellite-pulled. Calls GET /api/profile/status,
+        downloads export when remote hash differs from docs/profile-sync.local.json, then
+        Import-MetraProfile. Never writes the remote machine.
+    #>
+    [CmdletBinding()]
+    param(
+        [string]$OpsBaseUrl,
+        [string]$SyncToken,
+        [switch]$WhatIf,
+        [switch]$Force,
+        [switch]$Quiet,
+        # Test / offline inject: skip HTTP GET /api/profile/status when provided.
+        $RemoteStatus
+    )
+
+    $metraRoot = Get-MetraRoot
+    $base = if ($RemoteStatus -and [string]::IsNullOrWhiteSpace($OpsBaseUrl)) {
+        'test://local'
+    }
+    else {
+        Resolve-MetraProfileOpsBaseUrl -OpsBaseUrl $OpsBaseUrl -MetraRoot $metraRoot
+    }
+    $token = Resolve-MetraProfileSyncToken -SyncToken $SyncToken -MetraRoot $metraRoot
+    if (-not $RemoteStatus -and [string]::IsNullOrWhiteSpace($token)) {
+        throw 'Profile sync token missing. Pass -SyncToken, set METRA_PROFILE_SYNC_TOKEN, or store syncToken in docs/profile-sync.local.json (issue on HQ via profile issue-sync-token).'
+    }
+
+    if ($RemoteStatus) {
+        $status = $RemoteStatus
+    }
+    else {
+        $headers = @{
+            'X-Metra-Profile-Sync' = $token
+        }
+
+        $statusUri = "$base/api/profile/status"
+        try {
+            $status = Invoke-RestMethod -Uri $statusUri -Headers $headers -Method Get
+        }
+        catch {
+            throw "Failed to GET profile status from $statusUri : $($_.Exception.Message)"
+        }
+    }
+
+    $remoteHash = [string](Get-MetraProp -Object $status -Name 'contentHash' -Default '')
+    if ([string]::IsNullOrWhiteSpace($remoteHash)) {
+        throw 'Remote /api/profile/status did not return contentHash.'
+    }
+
+    $local = Get-MetraProfileSyncLocalState -MetraRoot $metraRoot
+    $lastApplied = ''
+    if ($local.Data) {
+        $lastApplied = [string](Get-MetraProp -Object $local.Data -Name 'lastAppliedHash' -Default '')
+    }
+
+    if (-not $Force -and $lastApplied -eq $remoteHash) {
+        if (-not $Quiet) {
+            Write-Host "Profile already current: $remoteHash"
+        }
+        return [PSCustomObject]@{
+            Ok              = $true
+            AlreadyCurrent  = $true
+            ContentHash     = $remoteHash
+            OpsBaseUrl      = $base
+            Imported        = $false
+            WhatIf          = [bool]$WhatIf
+        }
+    }
+
+    if ($WhatIf) {
+        if (-not $Quiet) {
+            Write-Host 'Would sync profile:'
+            Write-Host "  Remote hash: $remoteHash"
+            Write-Host "  Local hash:  $(if ($lastApplied) { $lastApplied } else { '(none)' })"
+            Write-Host "  Ops:         $base"
+        }
+        return [PSCustomObject]@{
+            Ok             = $true
+            AlreadyCurrent = $false
+            ContentHash    = $remoteHash
+            LocalHash      = $lastApplied
+            OpsBaseUrl     = $base
+            Imported       = $false
+            WhatIf         = $true
+        }
+    }
+
+    if ($RemoteStatus) {
+        throw 'RemoteStatus is for status/WhatIf tests only. Omit it to download and import from Ops.'
+    }
+
+    $headers = @{
+        'X-Metra-Profile-Sync' = $token
+    }
+    $safeName = ($remoteHash -replace '[:\\/]', '-')
+    $zipPath = Join-Path ([System.IO.Path]::GetTempPath()) ("metra-profile-$safeName.zip")
+    $exportUri = "$base/api/profile/export"
+    try {
+        Invoke-WebRequest -Uri $exportUri -Headers $headers -OutFile $zipPath -UseBasicParsing | Out-Null
+    }
+    catch {
+        throw "Failed to download profile export from $exportUri : $($_.Exception.Message)"
+    }
+
+    try {
+        $importResult = Import-MetraProfile -Path $zipPath -Force -Quiet:$Quiet
+    }
+    finally {
+        if (Test-Path -LiteralPath $zipPath) {
+            Remove-Item -LiteralPath $zipPath -Force -ErrorAction SilentlyContinue
+        }
+    }
+
+    $prevToken = $token
+    $prevOps = $base
+    if ($local.Data) {
+        $existingTok = [string](Get-MetraProp -Object $local.Data -Name 'syncToken' -Default '')
+        if (-not [string]::IsNullOrWhiteSpace($existingTok)) {
+            $prevToken = $existingTok
+        }
+    }
+
+    $newState = [ordered]@{
+        lastAppliedHash = $remoteHash
+        lastSyncUtc     = [DateTime]::UtcNow.ToString('o')
+        lastSourceUrl   = $base
+        opsBaseUrl      = $base
+        lastFileCount   = [int](Get-MetraProp -Object $status -Name 'fileCount' -Default 0)
+        syncToken       = $prevToken
+    }
+    $statePath = Save-MetraProfileSyncLocalState -State $newState -MetraRoot $metraRoot
+
+    if (-not $Quiet) {
+        Write-Host "Profile synced: $remoteHash"
+    }
+
+    return [PSCustomObject]@{
+        Ok             = $true
+        AlreadyCurrent = $false
+        ContentHash    = $remoteHash
+        OpsBaseUrl     = $base
+        Imported       = $true
+        WhatIf         = $false
+        Files          = @($importResult.Files)
+        StatePath      = $statePath
     }
 }
 

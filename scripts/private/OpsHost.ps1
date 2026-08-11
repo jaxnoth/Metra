@@ -391,6 +391,9 @@ function Start-MetraOpsChildProcess {
     )
     if ($NoRefresh) { $argList += '-NoRefresh' }
     if ($Quick) { $argList += '-Quick' }
+    if ($env:METRA_OPS_FORCE_LOCAL -match '^(?i)(1|true|yes)$') {
+        $argList += '-ForceLocal'
+    }
 
     $proc = Start-Process -FilePath 'powershell.exe' -ArgumentList $argList `
         -WorkingDirectory $MetraRoot -PassThru -WindowStyle Hidden
@@ -529,8 +532,16 @@ function Start-MetraOpsHost {
         [switch]$NoBrowser,
         [switch]$NoRefresh,
         [switch]$Quick,
+        [switch]$ForceLocal,
+        [string]$OpsBaseUrl,
         [string]$MetraRoot = (Get-MetraRoot)
     )
+
+    Assert-MetraOpsMayStartLocally -ForceLocal:$ForceLocal -OpsBaseUrl $OpsBaseUrl -MetraRoot $MetraRoot
+
+    if ($ForceLocal) {
+        $env:METRA_OPS_FORCE_LOCAL = '1'
+    }
 
     if ($Port -le 0) {
         $Port = [int](Resolve-MetraOpsDeskBinding -MetraRoot $MetraRoot).Port

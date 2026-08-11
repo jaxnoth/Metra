@@ -61,6 +61,9 @@ HTML Ops is the first client. Future native iOS (and phone browser over Tailscal
 |--------|------|-------|-------|
 | GET | `/api/settings` | Settings | Portfolio roots (labeled list) + Ask key presence (never the key value). |
 | PUT | `/api/settings` | Settings | Body: `roots: [{ name?, label, path, primary, optional }]` (preferred); legacy `primaryPath` / `personalPath` / `clearPersonal`; `cursorApiKey` / `clearCursorApiKey`. Operator machine only (loopback or `X-Metra-Local-Session`). |
+| GET | `/api/profile/status` | Settings | Profile Sync v1 fingerprint (`contentHash`, `profilePackVersion`, files). Same-machine, local-session, or `X-Metra-Profile-Sync` bearer. |
+| GET | `/api/profile/export` | Settings | Profile zip via `Export-MetraProfile` (optional cache by hash). Same auth as status. |
+| POST | `/api/profile/issue-sync-token` | Settings | Body optional `{ rotate: true }`. Issues satellite bearer (plaintext once). Operator machine / local-session only. |
 | GET | `/api/updates` | Settings | Metra + Ollama update status (`?force=1` bypasses 24h cache). |
 | POST | `/api/updates` | Settings | Body: `{ target: "metra" \| "ollama" }`. Operator-confirm apply only - never auto. Operator machine only. |
 | POST | `/api/ask` | Ask | Body: `prompt`, optional `sessionId`, `recallSessionId`, `client`, `clientHint`. Header `X-Metra-Client`: `ops-web` \| `ops-ios` \| `cli`. Journals a turn (`turnIndex` within session). Returns `entry`, `message`, `handoff`, `sessionId`, `continuity` (summary / recent / recall flags). |
@@ -70,6 +73,8 @@ HTML Ops is the first client. Future native iOS (and phone browser over Tailscal
 | PATCH/POST | `/api/capture/{id}` | Ask | Update framing only - rejects `derivedFrom` mutation. |
 | POST | `/api/capture/{id}/dismiss` | Ask | Status dismissed. |
 | POST | `/api/capture/{id}/promote` | Ask (local homes) | Affirm into Future Development / Decision Registry candidate / OCC candidate. Never auto. |
+| POST | `/api/watch/tickets` | Attention | Mine-scope TicketWatch scan into Attention (`Invoke-MetraTicketWatchScan`). Returns `{ ok, watch, desk }`. No iSupport writes. Optional body `{ draft: true }` for local TT notes only. |
+| POST | `/api/watch/recommend` | Attention | M3 Affirm A: `{ id, preview?, confirm?, force?, minutes? }`. Preview writes local `recommend-draft`. Confirm calls TT recommend (store-as-review). Mine-eligible + E1 recommendable unless force. Never resolve. Returns `{ ok, store, desk }`. |
 
 CLI mirrors: `.\metra.ps1 ask sessions|log|get|recall`, `.\metra.ps1 capture list|note|promote|from-ask`.
 
@@ -100,6 +105,8 @@ The panel is **continuity**, not a task list. Metra remembers observations acros
 | Full re-scan | Only path that auto-closes missing covered observations |
 
 Settings: **Attention visible count** (1-10) controls how many active items show before expanding. Keeping in view shows a quiet routing nudge toward a ticket or saved decision.
+
+**Attention actions:** **Portfolio refresh** (non-ticket `coveredKinds` only - git/drift/verify/decision/contract) and **Scan tickets** (ticket only via `POST /api/watch/tickets`). **Ticket Watch** toggle gates Scan tickets. Portfolio never covers tickets. Optional M2: set `autoAnalyze: true` in `docs/ticket-watch.local.json` so Scan tickets / `watch tickets` runs TicketTracker `analyze` (local draft) for Added/Refreshed; `-Draft` forces analyze; Unchanged never re-analyzes. Desk shows **Draft available** - not a recommendation. Optional E1: set `evidenceRouter: true` to append **Next evidence** (or **Ready for recommendation** / Evidence appears sufficient) after analyze - never a likely solution, never auto iSupport recommend. **M3:** ticket Attention detail offers **Preview recommendation** (local `recommend-draft`) and **Write recommendation** (Affirm A TT recommend; supersedes). CLI: `.\metra.ps1 watch recommend <id> -Preview|-Confirm [-Force]`. `autoStoreRecommend` stays false. Affirm B (resolve/close) stays out of TicketWatch. Requires TicketTracker `meFilter` (empty filter fails closed). CLI `.\metra.ps1 watch tickets` is independent of the desk preference.
 
 Default card copy is plain language (what / why / what to do). Advanced desk adds the technical detail strip, CLI command, and path.
 
