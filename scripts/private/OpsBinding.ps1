@@ -640,6 +640,7 @@ function Invoke-MetraMachineRoleSetup {
         [string]$MetraRoot = (Get-MetraRoot),
         [string]$Role,
         [string]$OpsBaseUrl,
+        [string]$SyncToken,
         [switch]$Advanced,
         [switch]$PreferFriendly,
         [switch]$NoPreferFriendly,
@@ -700,6 +701,7 @@ function Invoke-MetraMachineRoleSetup {
     }
 
     $opsUrlWritten = $null
+    $syncTokenWritten = $null
     if ($resolved -eq 'Satellite' -and -not $Preview) {
         $existing = Get-MetraProfileOpsBaseUrlOrNull -MetraRoot $MetraRoot
         $url = $existing
@@ -733,6 +735,20 @@ function Invoke-MetraMachineRoleSetup {
         }
         elseif ($Interactive -and -not $Quiet) {
             Write-Host '  No OpsBaseUrl yet. Set later in Ops Settings or metra.config.json opsBaseUrl.' -ForegroundColor Yellow
+        }
+
+        $tokenToStore = $SyncToken
+        if ([string]::IsNullOrWhiteSpace($tokenToStore) -and $Interactive -and -not $Quiet) {
+            Write-Host ''
+            Write-Host 'Profile sync token (optional):' -ForegroundColor Cyan
+            Write-Host '  From HQ Metra Ops Settings -> Issue sync token. Leave blank to skip.'
+            try { $tokenToStore = Read-Host 'Profile sync token' } catch { $tokenToStore = '' }
+        }
+        if (-not [string]::IsNullOrWhiteSpace($tokenToStore)) {
+            $syncTokenWritten = Set-MetraProfileSyncClientToken -SyncToken $tokenToStore -MetraRoot $MetraRoot
+            if (-not $Quiet) {
+                Write-Host ("  Profile sync token saved: {0}" -f $syncTokenWritten.Path) -ForegroundColor DarkGray
+            }
         }
     }
     elseif ($resolved -ne 'Satellite' -and -not $Preview) {
@@ -846,13 +862,14 @@ function Invoke-MetraMachineRoleSetup {
     }
 
     return [PSCustomObject]@{
-        MachineRole     = $resolved
-        Advanced        = $useAdvanced
-        PreferFriendly  = [bool]$PreferFriendly
+        MachineRole      = $resolved
+        Advanced         = $useAdvanced
+        PreferFriendly   = [bool]$PreferFriendly
         NoPreferFriendly = [bool]$NoPreferFriendly
-        BindTailscale   = [bool]$BindTailscale
-        OpsBaseUrl      = $(if ($opsUrlWritten) { $opsUrlWritten.OpsBaseUrl } else { Get-MetraProfileOpsBaseUrlOrNull -MetraRoot $MetraRoot })
-        DeskBinding     = $deskBinding
+        BindTailscale    = [bool]$BindTailscale
+        OpsBaseUrl       = $(if ($opsUrlWritten) { $opsUrlWritten.OpsBaseUrl } else { Get-MetraProfileOpsBaseUrlOrNull -MetraRoot $MetraRoot })
+        SyncTokenPath    = $(if ($syncTokenWritten) { $syncTokenWritten.Path } else { $null })
+        DeskBinding      = $deskBinding
     }
 }
 

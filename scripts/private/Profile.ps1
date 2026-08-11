@@ -343,6 +343,40 @@ function Save-MetraProfileSyncLocalState {
     return $path
 }
 
+function Set-MetraProfileSyncClientToken {
+    <#
+    .SYNOPSIS
+        Writes or updates syncToken in docs/profile-sync.local.json (satellite client).
+    #>
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory)]
+        [string]$SyncToken,
+        [string]$MetraRoot = (Get-MetraRoot)
+    )
+
+    $trimmed = $SyncToken.Trim()
+    if ([string]::IsNullOrWhiteSpace($trimmed)) {
+        return $null
+    }
+
+    $local = Get-MetraProfileSyncLocalState -MetraRoot $MetraRoot
+    $state = [ordered]@{}
+    if ($null -ne $local.Data) {
+        foreach ($p in @($local.Data.PSObject.Properties)) {
+            if ($null -eq $p -or [string]::IsNullOrWhiteSpace([string]$p.Name)) { continue }
+            $state[[string]$p.Name] = $p.Value
+        }
+    }
+    $state['syncToken'] = $trimmed
+    $state['updatedUtc'] = (Get-Date).ToUniversalTime().ToString('o')
+    $path = Save-MetraProfileSyncLocalState -State ([pscustomobject]$state) -MetraRoot $MetraRoot
+    return [PSCustomObject]@{
+        Path      = $path
+        SyncToken = $trimmed
+    }
+}
+
 function Resolve-MetraProfileOpsBaseUrl {
     param(
         [string]$OpsBaseUrl,

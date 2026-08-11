@@ -18,6 +18,12 @@ Entry shape:
 
 ---
 
+## 2026-08-11 - Satellite installer accepts optional Profile sync token
+
+- Decision: Satellite connect page collects optional **Profile sync token** (password field) alongside **Main Metra address**. Quiet setup passes `-SyncToken` and writes `docs/profile-sync.local.json`, then best-effort `profile sync`. Token remains optional; address stays required.
+- Why: Manual paste into profile-sync.local.json blocked easy Satellite first-run after the wizard already collected the HQ address.
+- See: `packaging/inno/Metra.iss`; `Set-MetraProfileSyncClientToken`; `docs/Brand.md`
+
 ## 2026-08-11 - Quiet setup runs during install; no Finished checkbox
 
 - Decision: After the wizard collects role and preferences, `Metra-Setup.cmd -Quiet ...` runs from `[Run]` during install (`runhidden waituntilterminated`), not as an Inno Finished `postinstall` checkbox. Files only still skips via `Check`. Finished is handoff-only (Metra Ops / Metra Setup).
