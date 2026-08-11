@@ -1,23 +1,35 @@
 /** idle = resting; listening = Ask/work in flight (pulse interchange); speaking = reserved for voice reply */
 export type VoiceState = 'idle' | 'listening' | 'speaking'
 
+/** Orthogonal to voice: route posture when waiting Attention is present */
+export type AttentionPosture = 'quiet' | 'busy'
+
 type MetraPresenceProps = {
   voiceState?: VoiceState
+  /** When true, subtle route-line weight (not a count badge) */
+  attentionBusy?: boolean
 }
 
-export function MetraPresence({ voiceState = 'idle' }: MetraPresenceProps) {
+export function MetraPresence({
+  voiceState = 'idle',
+  attentionBusy = false,
+}: MetraPresenceProps) {
   const working = voiceState === 'listening' || voiceState === 'speaking'
+  const attention: AttentionPosture = attentionBusy ? 'busy' : 'quiet'
   const description =
     voiceState === 'listening'
       ? 'Metra wordmark over a three-node route - working on your question'
       : voiceState === 'speaking'
         ? 'Metra wordmark over a three-node route - answering'
-        : 'Large Metra wordmark over a three-node route'
+        : attentionBusy
+          ? 'Large Metra wordmark over a three-node route - Attention waiting'
+          : 'Large Metra wordmark over a three-node route'
 
   return (
     <div
       className="metra-presence"
       data-voice-state={voiceState}
+      data-attention={attention}
       aria-busy={working || undefined}
     >
       <svg

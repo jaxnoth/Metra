@@ -2407,6 +2407,191 @@ Labeled preview - authoritative Why Here remains routing -Query / ctx -Query.
     }
 }
 
+Describe 'Attention visible count normalization' {
+    It 'normalizes Attention visible count to 1..10' {
+        InModuleScope Metra {
+            Normalize-MetraAttentionVisibleCount -Value $null | Should -Be 1
+            Normalize-MetraAttentionVisibleCount -Value '' | Should -Be 1
+            Normalize-MetraAttentionVisibleCount -Value 'abc' | Should -Be 1
+            Normalize-MetraAttentionVisibleCount -Value 0 | Should -Be 1
+            Normalize-MetraAttentionVisibleCount -Value -4 | Should -Be 1
+            Normalize-MetraAttentionVisibleCount -Value 1 | Should -Be 1
+            Normalize-MetraAttentionVisibleCount -Value 5 | Should -Be 5
+            Normalize-MetraAttentionVisibleCount -Value 10 | Should -Be 10
+            Normalize-MetraAttentionVisibleCount -Value 99 | Should -Be 10
+            Normalize-MetraAttentionVisibleCount -Value 3.9 | Should -Be 3
+        }
+    }
+
+    It 'Set-MetraDeskPreferences fail-closes bad AttentionVisibleCount input' {
+        InModuleScope Metra {
+            $temp = Join-Path ([IO.Path]::GetTempPath()) ("metra-attn-set-" + [guid]::NewGuid().ToString('n'))
+            New-Item -ItemType Directory -Path (Join-Path $temp 'docs') -Force | Out-Null
+            try {
+                $p = Set-MetraDeskPreferences -MetraRoot $temp -AttentionVisibleCount 'abc'
+                $p.attentionVisibleCount | Should -Be 1
+                $p2 = Set-MetraDeskPreferences -MetraRoot $temp -AttentionVisibleCount ''
+                $p2.attentionVisibleCount | Should -Be 1
+            }
+            finally {
+                Remove-Item -LiteralPath $temp -Recurse -Force -ErrorAction SilentlyContinue
+            }
+        }
+    }
+}
+
+Describe 'Attention volume contract' {
+    It 'shows no detail card when nothing is waiting' {
+        InModuleScope Metra {
+            $v = Get-MetraAttentionVolumeView -Active @() -Held @() -AttentionVisibleCount 3
+            $v.visibleCount | Should -Be 3
+            $v.waitingCount | Should -Be 0
+            $v.heldCount | Should -Be 0
+            @($v.summaryKeys).Count | Should -Be 0
+            $v.focusedKey | Should -BeNullOrEmpty
+            $v.detailCardCount | Should -Be 0
+            $v.overflowAvailable | Should -BeFalse
+            $v.overflowExpanded | Should -BeFalse
+        }
+    }
+
+    It 'shows one summary and one detail for one waiting item' {
+        InModuleScope Metra {
+            $v = Get-MetraAttentionVolumeView -Active @('a') -AttentionVisibleCount 3
+            @($v.summaryKeys) | Should -Be @('a')
+            $v.focusedKey | Should -Be 'a'
+            $v.detailCardCount | Should -Be 1
+            $v.overflowCount | Should -Be 0
+            $v.overflowAvailable | Should -BeFalse
+        }
+    }
+
+    It 'caps compact rows to visibleCount and keeps one focused detail card' {
+        InModuleScope Metra {
+            $v = Get-MetraAttentionVolumeView `
+                -Active @('a', 'b', 'c', 'd', 'e') `
+                -AttentionVisibleCount 3 `
+                -SelectedKey 'd'
+            @($v.summaryKeys) | Should -Be @('a', 'b', 'c')
+            $v.summaryCount | Should -Be 3
+            $v.overflowCount | Should -Be 2
+            $v.overflowAvailable | Should -BeTrue
+            $v.overflowExpanded | Should -BeFalse
+            $v.focusedKey | Should -Be 'd'
+            $v.detailCardCount | Should -Be 1
+        }
+    }
+
+    It 'falls back to the first visible item when selected item disappears' {
+        InModuleScope Metra {
+            $v = Get-MetraAttentionVolumeView `
+                -Active @('a', 'b', 'c') `
+                -AttentionVisibleCount 2 `
+                -SelectedKey 'missing'
+            @($v.summaryKeys) | Should -Be @('a', 'b')
+            $v.focusedKey | Should -Be 'a'
+            $v.detailCardCount | Should -Be 1
+        }
+    }
+
+    It 'shows all compact rows without adding detail cards' {
+        InModuleScope Metra {
+            $items = 1..100 | ForEach-Object { "item-$_" }
+            $v = Get-MetraAttentionVolumeView `
+                -Active $items `
+                -AttentionVisibleCount 10 `
+                -ShowAll
+            @($v.summaryKeys).Count | Should -Be 100
+            $v.waitingCount | Should -Be 100
+            $v.detailCardCount | Should -Be 1
+            $v.overflowCount | Should -Be 90
+            $v.overflowAvailable | Should -BeTrue
+            $v.overflowExpanded | Should -BeTrue
+        }
+    }
+
+    It 'keeps held count truthful without changing waiting detail behavior' {
+        InModuleScope Metra {
+            $v = Get-MetraAttentionVolumeView `
+                -Active @('a', 'b') `
+                -Held @('held-1', 'held-2', 'held-3') `
+                -AttentionVisibleCount 1
+            $v.waitingCount | Should -Be 2
+            $v.heldCount | Should -Be 3
+            @($v.summaryKeys) | Should -Be @('a')
+            $v.detailCardCount | Should -Be 1
+        }
+    }
+
+    It 'clamps negative waiting and held override counts to zero' {
+        InModuleScope Metra {
+            $v = Get-MetraAttentionVolumeView `
+                -Active @('a') `
+                -Held @('h1') `
+                -WaitingCount -2 `
+                -HeldCount -5
+            $v.waitingCount | Should -Be 0
+            $v.heldCount | Should -Be 0
+            $v.detailCardCount | Should -Be 1
+        }
+    }
+
+    It 'preserves truthful waiting and held counts when overrides differ from list length' {
+        InModuleScope Metra {
+            $view = Get-MetraAttentionVolumeView `
+                -Active @('a', 'b') `
+                -Held @('h1') `
+                -AttentionVisibleCount 1 `
+                -WaitingCount 7 `
+                -HeldCount 3
+            $view.waitingCount | Should -Be 7
+            $view.heldCount | Should -Be 3
+            $view.summaryCount | Should -Be 1
+            $view.overflowCount | Should -Be 1
+            $view.detailCardCount | Should -Be 1
+        }
+    }
+
+    It 'loads corrupt preference attentionVisibleCount fail-closed' {
+        InModuleScope Metra {
+            $temp = Join-Path ([IO.Path]::GetTempPath()) ("metra-attn-prefs-" + [guid]::NewGuid().ToString('n'))
+            New-Item -ItemType Directory -Path (Join-Path $temp 'docs') -Force | Out-Null
+            try {
+                $path = Get-MetraDeskPreferencesPath -MetraRoot $temp
+                Set-Content -LiteralPath $path -Value '{"attentionVisibleCount":0}' -Encoding utf8
+                (Get-MetraDeskPreferences -MetraRoot $temp).attentionVisibleCount | Should -Be 1
+
+                Set-Content -LiteralPath $path -Value '{"attentionVisibleCount":99}' -Encoding utf8
+                (Get-MetraDeskPreferences -MetraRoot $temp).attentionVisibleCount | Should -Be 10
+
+                Set-Content -LiteralPath $path -Value '{"attentionVisibleCount":"abc"}' -Encoding utf8
+                (Get-MetraDeskPreferences -MetraRoot $temp).attentionVisibleCount | Should -Be 1
+            }
+            finally {
+                Remove-Item -LiteralPath $temp -Recurse -Force -ErrorAction SilentlyContinue
+            }
+        }
+    }
+
+    It 'keeps data-voice-state and data-attention orthogonal in Ops UI source' {
+        $presence = Get-Content -LiteralPath (Join-Path (Get-MetraRoot) 'ops\src\MetraPresence.tsx') -Raw
+        $presence | Should -Match 'data-voice-state=\{voiceState\}'
+        $presence | Should -Match 'data-attention=\{attention\}'
+        $presence | Should -Match "VoiceState = 'idle' \| 'listening' \| 'speaking'"
+        $presence | Should -Match "AttentionPosture = 'quiet' \| 'busy'"
+        $presence | Should -Not -Match 'data-state='
+
+        $app = Get-Content -LiteralPath (Join-Path (Get-MetraRoot) 'ops\src\App.tsx') -Raw
+        $app | Should -Match 'desk-presence-stack'
+        $app | Should -Match 'normalizeAttentionVisibleCount'
+        $app | Should -Match 'attention-summary-row'
+        $app | Should -Match 'Show all'
+        # Waiting Attention renders exactly one primary detail card; overflow must not add another.
+        $waitingPrimary = [regex]::Matches($app, '<AttentionCard[\s\S]*?\bprimary\b')
+        $waitingPrimary.Count | Should -Be 1
+    }
+}
+
 Describe 'Ask Session Journal and Capture Inbox' {
     It 'persists journal turns with turnIndex, origin, client, and stripped message' {
         InModuleScope Metra {

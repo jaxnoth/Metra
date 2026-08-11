@@ -39,6 +39,10 @@ import {
 } from './api'
 import { AskMarkdown } from './AskMarkdown'
 import { formatAskTabTitle, getMetraBridge } from './bridge'
+import {
+  DEFAULT_ATTENTION_VISIBLE_COUNT,
+  normalizeAttentionVisibleCount,
+} from './attentionVisibleCount'
 import { MetraPresence } from './MetraPresence'
 import type {
   AttentionItem,
@@ -253,6 +257,10 @@ function kindLabel(kind?: string | null): string {
   }
 }
 
+function attentionItemKey(item: AttentionItem): string {
+  return item.key || item.id
+}
+
 function attentionPickerLabel(item: AttentionItem): string {
   const kind = kindLabel(item.kind)
   const summary = (item.summary || item.content || item.key || item.id || 'Item').trim()
@@ -262,6 +270,37 @@ function attentionPickerLabel(item: AttentionItem): string {
     return `${kind}: ${text}`
   }
   return text
+}
+
+function PresenceBrand({
+  askPending,
+  attentionWaiting,
+  attentionEmptyHint,
+  gitChecked,
+  generatedAt,
+}: {
+  askPending: boolean
+  attentionWaiting: number
+  attentionEmptyHint?: string | null
+  gitChecked?: boolean
+  generatedAt?: string | null
+}) {
+  return (
+    <div className="brand">
+      <MetraPresence
+        voiceState={askPending ? 'listening' : 'idle'}
+        attentionBusy={attentionWaiting > 0}
+      />
+      <div className="awareness-strip" aria-live="polite">
+        <p className="awareness-narration muted">
+          {askPending
+            ? 'Working...'
+            : awarenessNarration(attentionWaiting, attentionEmptyHint, gitChecked)}
+        </p>
+        <p className="awareness-meta muted">{formatUpdatedShort(generatedAt ?? undefined)}</p>
+      </div>
+    </div>
+  )
 }
 
 function AttentionCard({
@@ -1088,6 +1127,7 @@ export default function App() {
   const [resolveStatus, setResolveStatus] = useState<string | null>(null)
   const [ticketWatchStatus, setTicketWatchStatus] = useState<string | null>(null)
   const [selectedAttentionKey, setSelectedAttentionKey] = useState<string | null>(null)
+  const [attentionShowAll, setAttentionShowAll] = useState(false)
   const [selectedHeldKey, setSelectedHeldKey] = useState<string | null>(null)
   const [compactViewport, setCompactViewport] = useState(() =>
     typeof window === 'undefined' ? false : window.matchMedia('(max-width: 42rem)').matches,
@@ -1258,6 +1298,21 @@ export default function App() {
         setTab('route')
         setSettingsOpen(false)
       }
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e))
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  async function onAttentionVisibleCount(next: number) {
+    setBusy(true)
+    setError(null)
+    try {
+      const normalized = normalizeAttentionVisibleCount(next)
+      const prefs = await putPreferences(deskMode, normalized)
+      setDesk((prev) => (prev ? { ...prev, preferences: prefs } : prev))
+      setAttentionShowAll(false)
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e))
     } finally {
@@ -2011,25 +2066,24 @@ export default function App() {
     desk?.attention?.activeCount ??
     (desk?.nextAttention ? 1 : 0)
   const attentionHeld = desk?.attention?.heldCount ?? desk?.attention?.held?.length ?? 0
+  const attentionVisibleCount = normalizeAttentionVisibleCount(
+    desk?.attention?.visibleCount ??
+      desk?.preferences?.attentionVisibleCount ??
+      DEFAULT_ATTENTION_VISIBLE_COUNT,
+  )
 
   return (
     <div className="app">
       <header className="topbar">
-        <div className="brand">
-          <MetraPresence voiceState={askPending ? 'listening' : 'idle'} />
-          <div className="awareness-strip" aria-live="polite">
-            <p className="awareness-narration muted">
-              {askPending
-                ? 'Working...'
-                : awarenessNarration(
-                    attentionWaiting,
-                    desk?.attentionEmptyHint,
-                    desk?.gitChecked,
-                  )}
-            </p>
-            <p className="awareness-meta muted">{formatUpdatedShort(desk?.generatedAt)}</p>
-          </div>
-        </div>
+        {!showRoute && (
+          <PresenceBrand
+            askPending={askPending}
+            attentionWaiting={attentionWaiting}
+            attentionEmptyHint={desk?.attentionEmptyHint}
+            gitChecked={desk?.gitChecked}
+            generatedAt={desk?.generatedAt}
+          />
+        )}
         <button
           type="button"
           className="icon-btn"
@@ -2063,6 +2117,14 @@ export default function App() {
 
       {showRoute && (
         <div className="desk-stack">
+          <div className="desk-presence-stack">
+            <PresenceBrand
+              askPending={askPending}
+              attentionWaiting={attentionWaiting}
+              attentionEmptyHint={desk?.attentionEmptyHint}
+              gitChecked={desk?.gitChecked}
+              generatedAt={desk?.generatedAt}
+            />
           <section className="panel panel-ask">
             <div className="panel-heading">
               <h2>Where should we start?</h2>
@@ -2348,14 +2410,17 @@ export default function App() {
               </div>
             )}
           </section>
+          </div>
 
-          <section className="panel panel-attention">
+          <section
+            className={`panel panel-attention${attentionOpen ? ' attention-expanded' : ''}`}
+          >
             <div className="panel-heading attention-heading">
               <button
                 type="button"
                 className="attention-toggle"
                 aria-expanded={attentionOpen}
-                aria-label={`${attentionWaiting} waiting${attentionHeld > 0 ? `, ${attentionHeld} held` : ''}. ${
+                aria-label={`Attention has ${attentionWaiting} waiting${attentionHeld > 0 ? `, ${attentionHeld} held` : ''}. ${
                   attentionOpen ? 'Collapse' : 'Expand'
                 } attention${compactViewport ? ' on mobile' : ''}.`}
                 onClick={() => setAttentionOpen((open) => !open)}
@@ -2416,66 +2481,74 @@ export default function App() {
               const active = desk?.attention?.active ?? (desk?.nextAttention ? [desk.nextAttention] : [])
               const held = desk?.attention?.held ?? []
               const heldCount = desk?.attention?.heldCount ?? held.length
-              const activeKeys = active.map((a) => a.key || a.id)
-              const heldKeys = held.map((h) => h.key || h.id)
-              const selectedKey =
-                selectedAttentionKey && activeKeys.includes(selectedAttentionKey)
-                  ? selectedAttentionKey
-                  : activeKeys[0] ?? null
-              const selected =
-                active.find((a) => (a.key || a.id) === selectedKey) ?? active[0] ?? null
+              const heldKeys = held.map((h) => attentionItemKey(h))
+              const visibleRows = attentionShowAll
+                ? active
+                : active.slice(0, attentionVisibleCount)
+              const focused =
+                active.find((a) => attentionItemKey(a) === selectedAttentionKey) ??
+                visibleRows[0] ??
+                active[0] ??
+                null
               const selectedHeldKeyResolved =
                 selectedHeldKey && heldKeys.includes(selectedHeldKey)
                   ? selectedHeldKey
                   : heldKeys[0] ?? null
               const selectedHeld =
-                held.find((h) => (h.key || h.id) === selectedHeldKeyResolved) ?? held[0] ?? null
+                held.find((h) => attentionItemKey(h) === selectedHeldKeyResolved) ??
+                held[0] ??
+                null
+              const overflowCount = Math.max(0, active.length - attentionVisibleCount)
+              const notRechecked = desk?.attention?.notRecheckedCount ?? 0
 
-              if (!selected) {
+              const heldBlock =
+                heldCount > 0 && selectedHeld ? (
+                  <div className="holding-block">
+                    <h3>Keeping in view ({heldCount})</h3>
+                    {desk?.attention?.holdRoutingHint && (
+                      <p className="muted hold-hint">{desk.attention.holdRoutingHint}</p>
+                    )}
+                    {heldCount > 1 && (
+                      <label className="attention-picker">
+                        <span className="muted">Item</span>
+                        <select
+                          value={selectedHeldKeyResolved ?? ''}
+                          onChange={(e) => setSelectedHeldKey(e.target.value || null)}
+                        >
+                          {held.map((h) => {
+                            const key = attentionItemKey(h)
+                            return (
+                              <option key={key} value={key}>
+                                {attentionPickerLabel(h)}
+                              </option>
+                            )
+                          })}
+                        </select>
+                      </label>
+                    )}
+                    <AttentionCard
+                      key={attentionItemKey(selectedHeld)}
+                      item={selectedHeld}
+                      advanced={advanced}
+                      busy={busy}
+                      onAskSeed={onAskFromAttention}
+                      onStatus={setResolveStatus}
+                      onDeskUpdate={setDesk}
+                    />
+                  </div>
+                ) : null
+
+              if (!focused) {
                 return (
                   <div className="attention-empty">
                     <p className="attention">No active attention.</p>
                     <p className="muted">
                       {desk?.attentionEmptyHint ||
                         (desk && !desk.gitChecked
-                          ? 'Nothing waiting from this light check. Run Portfolio refresh to confirm portfolio health.'
-                          : 'Nothing waiting from Portfolio refresh. Use Scan tickets for the ticket queue (when Ticket Watch is on).')}
+                          ? 'Nothing waiting from this light check. Run Portfolio refresh to confirm.'
+                          : 'Nothing waiting from Portfolio refresh. Use Scan tickets when Ticket Watch is on.')}
                     </p>
-                    {heldCount > 0 && selectedHeld && (
-                      <div className="holding-block">
-                        <h3>Keeping in view ({heldCount})</h3>
-                        {desk?.attention?.holdRoutingHint && (
-                          <p className="muted hold-hint">{desk.attention.holdRoutingHint}</p>
-                        )}
-                        {heldCount > 1 && (
-                          <label className="attention-picker">
-                            <span className="muted">Item</span>
-                            <select
-                              value={selectedHeldKeyResolved ?? ''}
-                              onChange={(e) => setSelectedHeldKey(e.target.value || null)}
-                            >
-                              {held.map((h) => {
-                                const key = h.key || h.id
-                                return (
-                                  <option key={key} value={key}>
-                                    {attentionPickerLabel(h)}
-                                  </option>
-                                )
-                              })}
-                            </select>
-                          </label>
-                        )}
-                        <AttentionCard
-                          key={selectedHeld.key || selectedHeld.id}
-                          item={selectedHeld}
-                          advanced={advanced}
-                          busy={busy}
-                          onAskSeed={onAskFromAttention}
-                          onStatus={setResolveStatus}
-                          onDeskUpdate={setDesk}
-                        />
-                      </div>
-                    )}
+                    {heldBlock}
                   </div>
                 )
               }
@@ -2484,32 +2557,44 @@ export default function App() {
                 <div className="attention-block">
                   <p className="muted attention-count">
                     {desk?.attention?.activeCount ?? active.length} waiting
-                    {(desk?.attention?.notRecheckedCount ?? 0) > 0
-                      ? ` · ${desk!.attention!.notRecheckedCount} not rechecked yet`
-                      : ''}
+                    {notRechecked > 0 ? ` · ${notRechecked} not rechecked yet` : ''}
                   </p>
-                  {active.length > 1 && (
-                    <label className="attention-picker">
-                      <span className="muted">Showing</span>
-                      <select
-                        value={selectedKey ?? ''}
-                        onChange={(e) => setSelectedAttentionKey(e.target.value || null)}
-                        aria-label="Select attention item"
+                  <div className="attention-list-region" role="list" aria-label="Attention summaries">
+                    {visibleRows.map((item) => {
+                      const key = attentionItemKey(item)
+                      const selected = attentionItemKey(focused) === key
+                      return (
+                        <button
+                          key={key}
+                          type="button"
+                          role="listitem"
+                          className={`attention-summary-row${selected ? ' is-selected' : ''}`}
+                          aria-pressed={selected}
+                          onClick={() => setSelectedAttentionKey(key)}
+                        >
+                          <span className="attention-summary-label">
+                            {attentionPickerLabel(item)}
+                          </span>
+                        </button>
+                      )
+                    })}
+                  </div>
+                  {overflowCount > 0 && (
+                    <div className="actions attention-overflow-actions">
+                      <button
+                        type="button"
+                        className="btn btn-quiet"
+                        onClick={() => setAttentionShowAll((v) => !v)}
                       >
-                        {active.map((item, index) => {
-                          const key = item.key || item.id
-                          return (
-                            <option key={key} value={key}>
-                              {index + 1}. {attentionPickerLabel(item)}
-                            </option>
-                          )
-                        })}
-                      </select>
-                    </label>
+                        {attentionShowAll
+                          ? 'Show fewer'
+                          : `Show all (${active.length})`}
+                      </button>
+                    </div>
                   )}
                   <AttentionCard
-                    key={selected.key || selected.id}
-                    item={selected}
+                    key={attentionItemKey(focused)}
+                    item={focused}
                     advanced={advanced}
                     busy={busy}
                     onAskSeed={onAskFromAttention}
@@ -2517,41 +2602,7 @@ export default function App() {
                     onDeskUpdate={setDesk}
                     primary
                   />
-                  {heldCount > 0 && selectedHeld && (
-                    <div className="holding-block">
-                      <h3>Keeping in view ({heldCount})</h3>
-                      {desk?.attention?.holdRoutingHint && (
-                        <p className="muted hold-hint">{desk.attention.holdRoutingHint}</p>
-                      )}
-                      {heldCount > 1 && (
-                        <label className="attention-picker">
-                          <span className="muted">Item</span>
-                          <select
-                            value={selectedHeldKeyResolved ?? ''}
-                            onChange={(e) => setSelectedHeldKey(e.target.value || null)}
-                          >
-                            {held.map((h) => {
-                              const key = h.key || h.id
-                              return (
-                                <option key={key} value={key}>
-                                  {attentionPickerLabel(h)}
-                                </option>
-                              )
-                            })}
-                          </select>
-                        </label>
-                      )}
-                      <AttentionCard
-                        key={selectedHeld.key || selectedHeld.id}
-                        item={selectedHeld}
-                        advanced={advanced}
-                        busy={busy}
-                        onAskSeed={onAskFromAttention}
-                        onStatus={setResolveStatus}
-                        onDeskUpdate={setDesk}
-                      />
-                    </div>
-                  )}
+                  {heldBlock}
                   {resolveStatus && <p className="muted resolve-status">{resolveStatus}</p>}
                 </div>
               )
@@ -3136,6 +3187,28 @@ export default function App() {
                 onChange={(e) => void onToggleTicketWatch(e.target.checked)}
               />
               {ticketWatchEnabled ? 'On' : 'Off'}
+            </label>
+          </div>
+          <div className="settings-row">
+            <div>
+              <strong>Attention visible count</strong>
+              <p className="muted">
+                How many waiting summaries show before Show all. Detail stays one focused card.
+              </p>
+            </div>
+            <label>
+              <select
+                disabled={busy}
+                value={attentionVisibleCount}
+                onChange={(e) => void onAttentionVisibleCount(Number(e.target.value))}
+                aria-label="Attention visible count"
+              >
+                {Array.from({ length: 10 }, (_, i) => i + 1).map((n) => (
+                  <option key={n} value={n}>
+                    {n}
+                  </option>
+                ))}
+              </select>
             </label>
           </div>
           <div className="settings-row">

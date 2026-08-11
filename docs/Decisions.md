@@ -18,6 +18,12 @@ Entry shape:
 
 ---
 
+## 2026-08-11 - Attention volume handling (composer-first)
+
+- Decision: When Attention exceeds the operator's preferred visible count (`attentionVisibleCount`, fail-closed default 1, clamp 1-10): show compact summary rows; render exactly one focused detail card; contain overflow within a bounded scroll region (Show all expands compact rows only); preserve composer-first access via a sticky presence shell on compact viewports. Held / Keeping in view stays the prior one-card picker in this bite. Voice (`data-voice-state`) and Attention posture (`data-attention`) remain orthogonal on the desk mark.
+- Why: Attention may become denser without displacing the primary Ask / Put work surface (presence-first scar).
+- See: `ops/src/App.tsx`, `ops/src/attentionVisibleCount.ts`, `ops/src/MetraPresence.tsx`, `Normalize-MetraAttentionVisibleCount` / `Get-MetraAttentionVolumeView` in `scripts/private/Snapshot.ps1`, `tests/Metra.Tests.ps1` (Attention volume contract), [ops/README.md](../ops/README.md), [Brand.md](Brand.md) (desk presence mark)
+
 ## 2026-08-11 - Bing file code review required for Metra changes
 
 - Decision: Future Metra code changes are not done until Bing has reviewed the touched files for hardening (validation, ShouldProcess honesty, path safety, contracts, fail-closed edges). Plan review alone is not enough - paste the changed files (or a focused diff) after implementation, fold accepted fixes, then park residuals under Future-Development Bing follow-ups when they are polish-only. Exceptions: pure docs/parking-lot edits with no executable surface, and urgent incident/hotfix when the operator explicitly waives the gate (record the waiver in chat).
