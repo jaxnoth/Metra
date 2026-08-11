@@ -102,8 +102,13 @@ function Write-MetraUnblockResult {
     [CmdletBinding()]
     param(
         [Parameter(Mandatory)]
-        $Result
+        $Result,
+        [switch]$Quiet
     )
+
+    if ($Quiet -and $Result.Failed -eq 0 -and $Result.BlockedDetected -eq 0) {
+        return
+    }
 
     Write-Host ''
     if ($Result.Preview) {
@@ -112,6 +117,12 @@ function Write-MetraUnblockResult {
     else {
         Write-Host 'Unblock:' -ForegroundColor Cyan
     }
+
+    if ($Quiet -or ($Result.Failed -eq 0 -and $Result.BlockedDetected -eq 0 -and -not $Result.Preview)) {
+        Write-Host ("  Scripts OK ({0} checked)." -f $Result.ScannedCount) -ForegroundColor DarkGray
+        return
+    }
+
     Write-Host ("  Path:             {0}" -f $Result.Path)
     Write-Host ("  Scanned:          {0}" -f $Result.ScannedCount)
     Write-Host ("  BlockedDetected:  {0}" -f $Result.BlockedDetected)
@@ -124,9 +135,6 @@ function Write-MetraUnblockResult {
     elseif ($Result.Preview -and $Result.BlockedDetected -gt 0) {
         Write-Host '  Hint: .\metra.ps1 unblock' -ForegroundColor Yellow
     }
-    elseif (-not $Result.Preview -and $Result.BlockedDetected -eq 0) {
-        Write-Host '  No mark-of-the-web streams found on script files.' -ForegroundColor Yellow
-    }
 }
 
 function Show-MetraUnblockCli {
@@ -137,12 +145,13 @@ function Show-MetraUnblockCli {
     [CmdletBinding()]
     param(
         [string]$Path,
-        [switch]$Preview
+        [switch]$Preview,
+        [switch]$Quiet
     )
 
     $params = @{ Preview = [bool]$Preview }
     if ($Path) { $params.Path = $Path }
     $result = Unblock-MetraCheckout @params
-    Write-MetraUnblockResult -Result $result
+    Write-MetraUnblockResult -Result $result -Quiet:$Quiet
     return $result
 }

@@ -659,7 +659,6 @@ function Invoke-MetraMachineRoleSetup {
             Write-Host '  [1] HQ         - This PC hosts Ops (main desk / jumpbox)'
             Write-Host '  [2] Satellite  - Use another machine Ops URL (laptop)'
             Write-Host '  [3] Standalone - Local only; no remote Ops'
-            Write-Host '  Then Defaults apply networking for that role, or choose Advanced for each knob.'
         }
         $pick = ''
         try { $pick = Read-Host 'Choice [1/2/3]' } catch { $pick = '3' }
@@ -674,9 +673,18 @@ function Invoke-MetraMachineRoleSetup {
         if (-not $Quiet) {
             Write-Host ("  Selected: {0}" -f $resolved) -ForegroundColor Green
         }
-        $advPick = ''
-        try { $advPick = Read-Host 'Use Defaults for this role, or Advanced networking prompts? [D]efaults / [A]dvanced' } catch { $advPick = 'D' }
-        if ($advPick -match '^[aA]') { $useAdvanced = $true }
+        # Advanced networking knobs are for machines that host Ops locally.
+        if ($resolved -in @('Hq', 'Standalone') -and -not $Advanced) {
+            $advPick = ''
+            try {
+                $advPick = Read-Host 'Use Defaults for this role, or Advanced local Ops prompts? [D]efaults / [A]dvanced'
+            }
+            catch { $advPick = 'D' }
+            if ($advPick -match '^[aA]') { $useAdvanced = $true }
+        }
+        else {
+            $useAdvanced = $false
+        }
     }
 
     if (-not $resolved) {
@@ -691,19 +699,34 @@ function Invoke-MetraMachineRoleSetup {
     if ($resolved -eq 'Satellite' -and -not $Preview) {
         $existing = Get-MetraProfileOpsBaseUrlOrNull -MetraRoot $MetraRoot
         $url = $existing
-        if ($Interactive -and [string]::IsNullOrWhiteSpace($url)) {
+        $shouldAskUrl = $Interactive -and (
+            [string]::IsNullOrWhiteSpace($url) -or $useAdvanced -or [bool]$Advanced
+        )
+        if ($shouldAskUrl) {
             if (-not $Quiet) {
                 Write-Host ''
-                Write-Host 'Satellite OpsBaseUrl:' -ForegroundColor Cyan
-                Write-Host '  Enter the HQ Ops URL (Tailscale Serve / MagicDNS), e.g. https://metra.example.ts.net'
+                Write-Host 'HQ Ops URL (required for Satellite):' -ForegroundColor Cyan
+                Write-Host '  Paste the jumpbox Ops URL from Tailscale Serve / MagicDNS.'
+                Write-Host '  Example: https://metra.example.ts.net'
+                if (-not [string]::IsNullOrWhiteSpace($existing)) {
+                    Write-Host ("  Current: {0}" -f $existing) -ForegroundColor DarkGray
+                }
             }
-            try { $url = Read-Host 'HQ OpsBaseUrl' } catch { $url = '' }
+            $entered = ''
+            try {
+                $prompt = if ([string]::IsNullOrWhiteSpace($existing)) { 'HQ OpsBaseUrl' } else { 'HQ OpsBaseUrl (Enter keeps current)' }
+                $entered = Read-Host $prompt
+            }
+            catch { $entered = '' }
+            if (-not [string]::IsNullOrWhiteSpace($entered)) {
+                $url = $entered
+            }
         }
         if (-not [string]::IsNullOrWhiteSpace($url)) {
             $opsUrlWritten = Set-MetraConfiguredOpsBaseUrl -OpsBaseUrl $url -MetraRoot $MetraRoot
         }
         elseif ($Interactive -and -not $Quiet) {
-            Write-Host '  No OpsBaseUrl yet. Set later in Settings or: edit metra.config.json opsBaseUrl' -ForegroundColor Yellow
+            Write-Host '  No OpsBaseUrl yet. Set later in Ops Settings or metra.config.json opsBaseUrl.' -ForegroundColor Yellow
         }
     }
     elseif ($resolved -ne 'Satellite' -and -not $Preview) {
@@ -721,10 +744,8 @@ function Invoke-MetraMachineRoleSetup {
 
     $deskBinding = $null
     $port80Free = Test-MetraTcpPortFree -Port 80
-    if ($useAdvanced) {
-        $deskBinding = Initialize-MetraOpsDeskBinding -MetraRoot $MetraRoot -Interactive:$Interactive -Preview:$Preview -Quiet:$Quiet
-    }
-    elseif ($resolved -eq 'Satellite') {
+    if ($resolved -eq 'Satellite') {
+        # Satellite never hosts Ops - ignore Advanced host/Tailscale quizzes.
         $loop = Get-MetraOpsLoopbackBinding -Port (Get-MetraOpsFallbackPort)
         if (-not $Preview) {
             $null = Set-MetraDeskPreferences -MetraRoot $MetraRoot `
@@ -744,11 +765,17 @@ function Invoke-MetraMachineRoleSetup {
         }
         if (-not $Quiet) {
             Write-Host ''
-            Write-Host 'Satellite defaults: no local friendly URL / Tailscale bind. Use HQ via OpsBaseUrl.' -ForegroundColor Cyan
+            Write-Host 'Satellite: use HQ Ops via OpsBaseUrl. Do not start local Ops on this PC.' -ForegroundColor Cyan
+        }
+    }
+    elseif ($useAdvanced) {
+        $deskBinding = Initialize-MetraOpsDeskBinding -MetraRoot $MetraRoot -Interactive:$Interactive -Preview:$Preview -Quiet:$Quiet
+        if (-not $Preview) {
+            $null = Set-MetraDeskPreferences -MetraRoot $MetraRoot -MachineRole $resolved
         }
     }
     else {
-        # HQ / Standalone defaults: prefer friendly when free; no Tailscale quiz except optional HQ offer.
+        # HQ / Standalone defaults: prefer friendly when free; optional HQ Tailscale offer.
         if ($port80Free) {
             $deskBinding = Initialize-MetraOpsDeskBinding -MetraRoot $MetraRoot -PreferFriendly -Interactive:$Interactive -Preview:$Preview -Quiet:$Quiet
         }

@@ -445,7 +445,8 @@ switch ($Command) {
         if ($Role) { $params.Role = $Role }
         if ($Months -ge 0) { $params.Months = $Months }
         if ($ScanDepth -ge 0) { $params.ScanDepth = $ScanDepth }
-        Initialize-Metra @params | Format-List Preview, WouldSeedConfig, SeededConfig, Profile, MachineRole
+        $setupResult = Initialize-Metra @params
+        $setupResult | Format-List Preview, SeededConfig, MachineRole
     }
 
     'verify' {
