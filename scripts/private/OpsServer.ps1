@@ -2,8 +2,8 @@
 #
 # Reach is not authority:
 # - Share/Tailscale/Serve may view, ask, upload quarantine files, and create bounded candidate records.
-# - Local authority is required for settings, refresh, engine changes, promotion, editor open, updates, and sync-token issuance.
-# - OperatorUrl remains loopback even when BrowserUrl/ShareUrl is remote-friendly.
+# - Local authority is the Host-minted session token (X-Metra-Local-Session), not the network path.
+# - Host Open uses Get-MetraOpsDeskOpenUrl (memorable ShareUrl + hash bootstrap). OperatorUrl is loopback recovery.
 
 function Get-MetraOpsDistPath {
     [CmdletBinding()]
@@ -968,6 +968,15 @@ function Invoke-MetraOpsApi {
             return
         }
 
+        if ($method -eq 'GET' -and $path -eq '/api/local-authority') {
+            # Lightweight probe for Ops UI Settings gating. Always 200; transport is not authority.
+            $authorized = Test-MetraOpsRequestHasLocalAuthority -Request $Request
+            Write-MetraOpsJsonResponse -Response $Response -Object ([PSCustomObject]@{
+                    authorized = [bool]$authorized
+                })
+            return
+        }
+
         if ($method -eq 'GET' -and $path -eq '/api/local-session') {
             # Loopback-only: browser / webview on the operator machine may fetch the Host session marker.
             if (Test-MetraOpsRequestLooksProxiedThroughServe -Request $Request) {
@@ -1808,16 +1817,27 @@ function Start-MetraOpsServer {
         }
     }
 
-    $shareUrl = [string]$binding.BrowserUrl
+    $shareUrl = [string](Get-MetraProp -Object $binding -Name 'ShareUrl' -Default ([string]$binding.BrowserUrl))
+    if ([string]::IsNullOrWhiteSpace($shareUrl)) { $shareUrl = [string]$binding.BrowserUrl }
     $operatorUrl = Get-MetraOpsOperatorOpenUrl -Binding $binding
+    $deskDisplay = if ($shareUrl -and (Test-MetraOpsMemorableDeskBaseUrl -Url $shareUrl -OperatorUrl $operatorUrl)) {
+        $shareUrl
+    }
+    else { $operatorUrl }
     if (Test-MetraOpsDeskResponding -Port $Port) {
-        Write-Host ("Metra Ops desk already serving (operator: {0})" -f $operatorUrl) -ForegroundColor Green
-        if ($shareUrl -and $shareUrl -ne $operatorUrl) {
+        Write-Host ("Metra Ops desk already serving: {0}" -f $deskDisplay) -ForegroundColor Green
+        if ($shareUrl -and $shareUrl -ne $operatorUrl -and $shareUrl -ne $deskDisplay) {
             Write-Host ("Share URL: {0}" -f $shareUrl) -ForegroundColor Cyan
         }
         Write-Host ("Restart it with: .\metra.ps1 ops -Stop -Port {0}" -f $Port) -ForegroundColor DarkGray
         if (-not $NoBrowser) {
-            try { Start-Process $operatorUrl | Out-Null } catch { }
+            try {
+                $authorizedOpenUrl = Get-MetraOpsDeskOpenUrl -Binding $binding
+                Start-Process $authorizedOpenUrl | Out-Null
+            }
+            catch {
+                Write-Warning "Could not open browser: $($_.Exception.Message)"
+            }
         }
         return
     }
@@ -1853,21 +1873,23 @@ function Start-MetraOpsServer {
     $pidFile = Get-MetraOpsPidFile -Port $Port
     Set-Content -LiteralPath $pidFile -Value $PID -Encoding ASCII
 
-    Write-Host ("Metra Ops desk (operator): {0}" -f $operatorUrl) -ForegroundColor Green
+    Write-Host ("Metra Ops desk: {0}" -f $deskDisplay) -ForegroundColor Green
     $isTailscale = $false
     try { $isTailscale = [bool](Get-MetraProp -Object $binding -Name 'Tailscale' -Default $false) } catch { }
     if ($isTailscale) {
         $serveOn = $false
         try { $serveOn = [bool](Get-MetraProp -Object $binding -Name 'Serve' -Default $false) } catch { }
         if ($serveOn) {
-            Write-Host 'Tailscale Serve HTTPS share enabled (view/ask for peers). Settings / Save role / issue-sync-token use the operator loopback URL; tray Apply once still gates disk writes.' -ForegroundColor DarkYellow
+            Write-Host 'Tailscale Serve HTTPS enabled. Host Open uses the memorable Share URL with a local-session bootstrap; peers without Host open stay Ask-class.' -ForegroundColor DarkYellow
         }
         else {
-            Write-Host 'Tailscale reach enabled without Serve HTTPS (view/ask for peers). Clipboard APIs need a secure context - fix Serve or use loopback.' -ForegroundColor DarkYellow
+            Write-Host 'Tailscale reach enabled without Serve HTTPS (view/ask for peers). Clipboard APIs need a secure context - fix Serve or use Host Open on the share desk.' -ForegroundColor DarkYellow
             $serveErr = [string](Get-MetraProp -Object $binding -Name 'ServeError' -Default '')
             if ($serveErr) { Write-Warning $serveErr }
         }
-        Write-Host ("Share URL: {0}" -f $shareUrl) -ForegroundColor Cyan
+        if ($shareUrl) {
+            Write-Host ("Share URL: {0}" -f $shareUrl) -ForegroundColor Cyan
+        }
     }
     else {
         Write-Host 'Loopback bind. Press Ctrl+C to stop.' -ForegroundColor DarkGray
@@ -1891,7 +1913,9 @@ function Start-MetraOpsServer {
 
     if (-not $NoBrowser) {
         try {
-            Start-Process $operatorUrl | Out-Null
+            # Do not Write-Host the open URL - it includes #metraLocalSession bootstrap.
+            $authorizedOpenUrl = Get-MetraOpsDeskOpenUrl -Binding $binding
+            Start-Process $authorizedOpenUrl | Out-Null
         }
         catch {
             Write-Warning "Could not open browser: $($_.Exception.Message)"

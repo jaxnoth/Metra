@@ -25,31 +25,57 @@ async function parseJson<T>(res: Response): Promise<T> {
 
 let cachedSessionToken: string | null = null
 const SESSION_STORAGE_KEY = 'metraLocalSession'
+const SESSION_TOKEN_RE = /^[0-9a-f]{64}$/i
 
-/** Host may open ShareUrl with #metraLocalSession=<64-hex>; store then strip. */
+function stripLocationHash(): void {
+  try {
+    if (typeof window === 'undefined') return
+    const clean = `${window.location.pathname}${window.location.search}`
+    window.history.replaceState(null, document.title, clean)
+  } catch {
+    /* ignore */
+  }
+}
+
+/**
+ * Host may open desk with #metraLocalSession=<64-hex>.
+ * Valid: store in sessionStorage then strip. Malformed: ignore (do not store) and still strip.
+ */
 function consumeHashOrStoredSessionToken(): string | null {
   try {
     if (typeof window === 'undefined') return null
     const hash = window.location.hash || ''
-    const match = hash.match(/metraLocalSession=([0-9a-f]{64})/i)
-    if (match?.[1]) {
-      const token = match[1]
-      sessionStorage.setItem(SESSION_STORAGE_KEY, token)
-      const clean = `${window.location.pathname}${window.location.search}`
-      window.history.replaceState(null, '', clean)
-      return token
+    if (/metraLocalSession=/i.test(hash)) {
+      const match = hash.match(/(?:^|#|&)metraLocalSession=([0-9a-fA-F]*)/)
+      const raw = match?.[1] ?? ''
+      stripLocationHash()
+      if (SESSION_TOKEN_RE.test(raw)) {
+        sessionStorage.setItem(SESSION_STORAGE_KEY, raw.toLowerCase())
+        return raw.toLowerCase()
+      }
+      // Malformed bootstrap - do not store; hash already stripped.
+      return null
     }
     const stored = sessionStorage.getItem(SESSION_STORAGE_KEY)
-    return stored && /^[0-9a-f]{64}$/i.test(stored) ? stored : null
+    return stored && SESSION_TOKEN_RE.test(stored) ? stored : null
   } catch {
     return null
+  }
+}
+
+export function clearLocalSessionToken(): void {
+  cachedSessionToken = null
+  try {
+    sessionStorage.removeItem(SESSION_STORAGE_KEY)
+  } catch {
+    /* ignore */
   }
 }
 
 /** Prefer bridge / hash bootstrap; else loopback /api/local-session. */
 export async function ensureLocalSessionToken(): Promise<string | null> {
   const bridge = getMetraBridge()
-  if (bridge.sessionToken) {
+  if (bridge.sessionToken && SESSION_TOKEN_RE.test(bridge.sessionToken)) {
     cachedSessionToken = bridge.sessionToken
     return cachedSessionToken
   }
@@ -58,15 +84,38 @@ export async function ensureLocalSessionToken(): Promise<string | null> {
     cachedSessionToken = bootstrapped
     return cachedSessionToken
   }
-  if (cachedSessionToken) return cachedSessionToken
+  if (cachedSessionToken && SESSION_TOKEN_RE.test(cachedSessionToken)) {
+    return cachedSessionToken
+  }
+  cachedSessionToken = null
   try {
     const res = await fetch('/api/local-session')
     if (!res.ok) return null
     const body = (await res.json()) as { token?: string }
-    cachedSessionToken = body.token ? String(body.token) : null
+    const tok = body.token ? String(body.token) : ''
+    cachedSessionToken = SESSION_TOKEN_RE.test(tok) ? tok : null
     return cachedSessionToken
   } catch {
     return null
+  }
+}
+
+/**
+ * Probe local authority (session token and/or same-machine).
+ * GET /api/local-authority always returns 200 with { authorized }.
+ * Clears stored bootstrap only when the server reports not authorized while a token was presented.
+ */
+export async function verifyLocalSessionAuthority(): Promise<boolean> {
+  const token = await ensureLocalSessionToken()
+  try {
+    const res = await fetch('/api/local-authority', withSessionHeaders(undefined, token))
+    if (!res.ok) return false
+    const body = (await res.json()) as { authorized?: boolean }
+    const ok = Boolean(body.authorized)
+    if (!ok && token) clearLocalSessionToken()
+    return ok
+  } catch {
+    return false
   }
 }
 

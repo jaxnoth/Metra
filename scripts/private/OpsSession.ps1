@@ -59,7 +59,8 @@ function Initialize-MetraOpsLocalSessionToken {
 
     if (-not $Rotate -and (Test-Path -LiteralPath $path)) {
         $existing = (Get-Content -LiteralPath $path -Raw -Encoding UTF8).Trim()
-        if (-not [string]::IsNullOrWhiteSpace($existing)) {
+        # Reuse only a well-formed 64-hex token; missing/malformed fall through to mint/replace.
+        if (Test-MetraOpsLocalSessionTokenFormat -Value $existing) {
             return [PSCustomObject]@{
                 Token   = $existing
                 Path    = $path

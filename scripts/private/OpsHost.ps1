@@ -423,21 +423,22 @@ function Open-MetraOpsDeskBrowser {
     )
 
     if ([string]::IsNullOrWhiteSpace($Url)) {
-        # Local Host open uses OperatorUrl (loopback), not Tailscale ShareUrl.
-        # Serve strips loopback authority; Settings / Save role need /api/local-session.
+        # Memorable ShareUrl/BrowserUrl when available + #metraLocalSession bootstrap.
+        # Do not log the returned URL (token in fragment).
         if ($Port -gt 0) {
             $binding = Get-MetraOpsDeskBindingForPort -Port $Port -MetraRoot $MetraRoot
-            $Url = Get-MetraOpsOperatorOpenUrl -Binding $binding
+            $Url = Get-MetraOpsDeskOpenUrl -Binding $binding
         }
         else {
             $binding = Resolve-MetraOpsDeskBinding -MetraRoot $MetraRoot
-            $Url = Get-MetraOpsOperatorOpenUrl -Binding $binding
+            $Url = Get-MetraOpsDeskOpenUrl -Binding $binding
         }
     }
     try {
         Start-Process $Url | Out-Null
     }
     catch {
+        # Omit URL from warning - may contain local-session hash bootstrap.
         Write-Warning "Could not open browser: $($_.Exception.Message)"
     }
 }
