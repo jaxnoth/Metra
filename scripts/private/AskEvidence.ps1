@@ -27,7 +27,7 @@ function New-MetraAskEvidenceItem {
     #>
     [CmdletBinding()]
     param(
-        [Parameter(Mandatory)][ValidateSet('project', 'file', 'cmdlet', 'ticket', 'brief', 'journal', 'route', 'image')]
+        [Parameter(Mandatory)][ValidateSet('project', 'file', 'cmdlet', 'ticket', 'brief', 'journal', 'route', 'image', 'azdo')]
         [string]$Kind,
         [Parameter(Mandatory)][string]$Label,
         [string]$Source = '',
@@ -181,7 +181,7 @@ function Get-MetraAskEvidenceQuality {
             if ($k -in @('journal', 'image', 'route')) { return $false }
             if ($k -in @('ticket', 'brief')) { return $fs }
             if ($fs) { return $true }
-            return ($k -in @('file', 'project', 'cmdlet'))
+            return ($k -in @('file', 'project', 'cmdlet', 'azdo'))
         }
     )
     $nonJournal = @($Items | Where-Object { [string](Get-MetraProp -Object $_ -Name 'kind' -Default '') -ne 'journal' })
@@ -198,7 +198,7 @@ function Get-MetraAskEvidenceQuality {
                 $k = [string](Get-MetraProp -Object $_ -Name 'kind' -Default '')
                 $c = [string](Get-MetraProp -Object $_ -Name 'confidence' -Default '')
                 $fs = [bool](Get-MetraProp -Object $_ -Name 'factualSupport' -Default $false)
-                $k -in @('file', 'project', 'brief') -or ($k -eq 'ticket' -and $fs) -or $c -eq 'high'
+                $k -in @('file', 'project', 'brief', 'azdo') -or ($k -eq 'ticket' -and $fs) -or $c -eq 'high'
             }
         )
         if ($strong.Count -gt 0) { return 'adequate' }
@@ -222,6 +222,8 @@ function New-MetraAskEvidencePack {
         $Continuity,
         $Capability,
         [object[]]$Images = @(),
+        [switch]$Remote,
+        [string]$Repo = '',
         [string]$MetraRoot = (Get-MetraRoot)
     )
 
@@ -272,6 +274,33 @@ function New-MetraAskEvidencePack {
             $items.Add((New-MetraAskEvidenceItem -Kind 'cmdlet' -Label 'AGENTS CLI surface' `
                     -Source $agentsPath -Excerpt $cli -Confidence 'medium' -FactualSupport))
             if ($items.Count -ge ([int]$limits.maxItems - 2)) { break }
+        }
+    }
+
+    # AzDO remote evidence (gated; additive - never replaces local AGENTS when local wins gating)
+    $azdoGate = Test-MetraAskAzdoRemoteGating -Prompt $Prompt -Where $where -Remote:$Remote -MetraRoot $MetraRoot
+    if ($azdoGate.UseRemote -and $items.Count -lt [int]$limits.maxItems) {
+        try {
+            $azdo = Get-MetraAskAzdoEvidence -Prompt $Prompt -Where $where -ExplicitRepo $Repo -MetraRoot $MetraRoot
+            if ($azdo.ambiguous) {
+                throw [string]$azdo.error
+            }
+            if ($azdo.ok) {
+                foreach ($row in @($azdo.items)) {
+                    if ($items.Count -ge [int]$limits.maxItems) { break }
+                    $items.Add((New-MetraAskEvidenceItem -Kind 'azdo' -Label ([string]$row.label) `
+                            -Source 'azure-devops' -Excerpt ([string]$row.excerpt) -Confidence 'high' -FactualSupport))
+                }
+            }
+        }
+        catch {
+            if ($azdoGate.Reason -eq 'missing_checkout') {
+                $items.Add((New-MetraAskEvidenceItem -Kind 'route' -Label 'AzDO evidence unavailable' `
+                        -Source 'azure-devops' -Excerpt ([string]$_.Exception.Message) -Confidence 'low'))
+            }
+            elseif ($Remote -or $Prompt -match '(?i)\b(azure devops|remote repo)\b') {
+                throw
+            }
         }
     }
 

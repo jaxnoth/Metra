@@ -129,6 +129,9 @@ Optional entries may be absent: follow `whenMissing` advice instead of inventing
 .\metra.ps1 inspect plan <filename-fragment> -Name Metra
 .\metra.ps1 inspect pack
 .\metra.ps1 inspect pack plan
+.\metra.ps1 inspect pack-only -Name Metra
+.\metra.ps1 inspect pack-only plan -Latest -Name Metra
+.\metra.ps1 azdo status|repos|get|gaps|tree|search|ideas
 .\metra.ps1 ops
 .\metra.ps1 unblock
 .\packaging\Build-MetraInstaller.ps1
@@ -180,6 +183,8 @@ Independence of review matters more than the specific model. The safety net is i
 .\metra.ps1 inspect plan <filename-fragment> -Name Metra
 .\metra.ps1 inspect pack
 .\metra.ps1 inspect pack plan
+.\metra.ps1 inspect pack-only -Name Metra
+.\metra.ps1 inspect pack-only plan -Latest -Name Metra
 ```
 
 - Default diff (no `-Base`) includes unstaged + staged + untracked text files (scope-reducer still skips secrets/binaries/lockfiles).

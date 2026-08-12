@@ -37,7 +37,7 @@ param(
     [ValidateSet(
         'list', 'status', 'pull', 'fetch', 'run', 'new', 'apply', 'workspace',
         'audit', 'snapshot', 'selfdoc', 'ops', 'host', 'chats', 'roots', 'routing',
-        'export-profile', 'import-profile', 'ctx', 'setup', 'verify', 'unblock', 'profile', 'decisions', 'coverage', 'ask', 'capture', 'watch', 'inspect', 'help'
+        'export-profile', 'import-profile', 'ctx', 'setup', 'verify', 'unblock', 'profile', 'decisions', 'coverage', 'ask', 'capture', 'watch', 'inspect', 'azdo', 'help'
     )]
     [string]$Command = 'help',
 
@@ -165,9 +165,13 @@ Usage:
   .\metra.ps1 inspect [-Name Metra] [-Base <rev>] [-WhatIf]
   .\metra.ps1 inspect plan [-Latest] [-Path <file>] [<filename-fragment>] -Name <Project> [-WhatIf]
   .\metra.ps1 inspect pack [plan] [-WhatIf]
+  .\metra.ps1 inspect pack-only [-Name <Project>] [-Base <rev>] [-WhatIf]
+  .\metra.ps1 inspect pack-only plan [-Latest] [-Path <file>] [<fragment>] -Name <Project> [-WhatIf]
+      pack-only: Bing comparison lane without Ask engine (scrubbed diff/plan + preamble).
+      inspect pack: requires a prior inspect run; includes assessed findings.
       Local AI-assisted inspection of git diffs or Cursor plans (Ask/Ollama). Recommend-only.
-      Default diff (no -Base) includes unstaged + staged + untracked text. -Base is three-dot Base...HEAD only (local edits excluded with a warning when the working tree is dirty).
-      -WhatIf skips the Ask engine. Bare inspect plan lists recent plans. Non-list plan inspect requires -Name. Default coding loop: inspect after batches, chat gate, re-inspect until ship-ready (see AGENTS.md / metra-inspect-loop rule).
+  .\metra.ps1 azdo status|repos|get|gaps|tree|search|ideas
+      Read-only Azure DevOps remote evidence (PAT: METRA_AZDO_PAT or docs/azdo.local.json). gaps maps AzDO vs registry/disk.
   .\metra.ps1 verify
 
 Roots:
@@ -750,6 +754,35 @@ switch ($Command) {
             }
             default {
                 throw "watch supports 'tickets' or 'recommend'. Examples: .\metra.ps1 watch tickets | .\metra.ps1 watch recommend <id> -Preview"
+            }
+        }
+    }
+
+    'azdo' {
+        if (-not $Rest -or $Rest.Count -eq 0) {
+            throw "azdo requires a subcommand. Example: .\metra.ps1 azdo status"
+        }
+        $sub = $Rest[0]
+        $subArgs = @()
+        if ($Rest.Count -gt 1) {
+            $subArgs = @($Rest[1..($Rest.Count - 1)])
+        }
+        $result = Invoke-MetraAzdoCommand -Subcommand $sub -ArgsRest $subArgs
+        if ($sub -eq 'ideas' -and $result.draft) {
+            Write-Host $result.draft
+            if ($result.outFile) {
+                Write-Host ("Draft also written: {0}" -f $result.outFile) -ForegroundColor DarkGray
+            }
+        }
+        elseif ($subArgs -contains '-Json' -or $subArgs -contains '-json') {
+            $result | ConvertTo-Json -Depth 10
+        }
+        else {
+            if ($result -is [System.Array]) {
+                $result | Format-Table -AutoSize
+            }
+            else {
+                $result | Format-List
             }
         }
     }

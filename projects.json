@@ -42,7 +42,10 @@
         "metra ops",
         "routing",
         "portfolio ops",
-        "orchestration"
+        "orchestration",
+        "azdo",
+        "azure devops",
+        "dev.azure"
       ],
       "entry": "AGENTS.md",
       "capabilities": [

@@ -246,7 +246,7 @@ function Test-MetraAskOpenAICompatResponseFormatRejected {
         }
     }
     if ([string]::IsNullOrWhiteSpace($msg)) { return $false }
-    return $msg -match '(?i)response_format|json_object|structured.?output|unknown field'
+    return $msg -match '(?i)response_format|json_object|structured.?output|unknown field|\bformat\b'
 }
 
 function Invoke-MetraAskOpenAICompatComplete {
@@ -307,6 +307,7 @@ function Invoke-MetraAskOpenAICompatComplete {
             'Return JSON only. No markdown, prose, or code fences.',
             'Use one object: {"findings":[...]} where each finding includes severity, confidence, category, file, line, finding, recommendation, evidence.',
             'If no issues, return {"findings":[]}.',
+            'Never return plan summaries (overview, implementation_steps, steps, title). Review input; output findings only.',
             $cwdLine
         )
     }
@@ -364,6 +365,9 @@ function Invoke-MetraAskOpenAICompatComplete {
     }
     if ($isInspect) {
         $body['response_format'] = @{ type = 'json_object' }
+        if ($Settings.engine -eq 'ollama') {
+            $body['format'] = 'json'
+        }
     }
     $url = "$($baseUrl.TrimEnd('/'))/v1/chat/completions"
     $jsonDepth = if ($isInspect) { 12 } else { 8 }
@@ -389,10 +393,11 @@ function Invoke-MetraAskOpenAICompatComplete {
         $response = & $invokeChat -ChatBody $body -Depth $jsonDepth
     }
     catch {
-        if ($isInspect -and $body.ContainsKey('response_format') -and (Test-MetraAskOpenAICompatResponseFormatRejected -Exception $_)) {
-            Write-Verbose 'Inspect response_format rejected; retrying without json_object.'
+        if ($isInspect -and ($body.ContainsKey('response_format') -or $body.ContainsKey('format')) -and (Test-MetraAskOpenAICompatResponseFormatRejected -Exception $_)) {
+            Write-Verbose 'Inspect response_format/format rejected; retrying without json_object/format.'
             $bodyNoFormat = @{} + $body
             $bodyNoFormat.Remove('response_format')
+            if ($bodyNoFormat.ContainsKey('format')) { $bodyNoFormat.Remove('format') }
             try {
                 $response = & $invokeChat -ChatBody $bodyNoFormat -Depth $jsonDepth
             }

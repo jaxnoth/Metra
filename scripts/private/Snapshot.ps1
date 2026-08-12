@@ -340,6 +340,8 @@ function Get-MetraKnowledgeCoverage {
         }
     }
 
+    $azdoAdv = Get-MetraAzdoCoverageAdvisory -MetraRoot $MetraRoot
+
     return [PSCustomObject]@{
         ProjectCount          = $pop.Count
         ProjectNames          = @($projectNames)
@@ -370,6 +372,8 @@ function Get-MetraKnowledgeCoverage {
                 Select-Object -First $GapLimit
         )
         UncoveredCount        = $uncoveredFull.Count
+        AzdoAdvisory          = [string]$azdoAdv.line
+        AzdoAdvisoryAvailable = [bool]$azdoAdv.available
     }
 }
 
@@ -405,6 +409,9 @@ function Write-MetraKnowledgeCoverage {
     Write-Host ("  Uncovered (missing AGENTS + serves + decisions): {0}" -f $Coverage.UncoveredCount)
     if (@($Coverage.Uncovered).Count -gt 0) {
         Write-Host ("    Uncovered: {0}" -f ($Coverage.Uncovered -join ', '))
+    }
+    if ($Coverage.PSObject.Properties.Name -contains 'AzdoAdvisory' -and $Coverage.AzdoAdvisory) {
+        Write-Host ("  {0}" -f $Coverage.AzdoAdvisory)
     }
 }
 
@@ -598,6 +605,8 @@ function Get-MetraOpsStewardshipSummaries {
         missingDecisionsCount    = [int]$kc.MissingDecisionsCount
         uncovered                = @($kc.Uncovered)
         uncoveredCount           = [int]$kc.UncoveredCount
+        azdoAdvisory             = [string]$kc.AzdoAdvisory
+        azdoAdvisoryAvailable    = [bool]$kc.AzdoAdvisoryAvailable
     }
 
     return [PSCustomObject]@{
@@ -2182,6 +2191,8 @@ function Get-MetraDeskAskResult {
         [string]$RecallSessionId,
         [string[]]$ImageIds = @(),
         [object[]]$Images = @(),
+        [switch]$Remote,
+        [string]$Repo = '',
         [string]$MetraRoot = (Get-MetraRoot)
     )
 
@@ -2242,7 +2253,7 @@ function Get-MetraDeskAskResult {
     }
 
     $pack = New-MetraAskEvidencePack -Prompt $q -Handoff $handoff -Continuity $continuity `
-        -Capability $capability -Images $resolvedImages -MetraRoot $MetraRoot
+        -Capability $capability -Images $resolvedImages -Remote:$Remote -Repo $Repo -MetraRoot $MetraRoot
     $quality = [string]$pack.quality
     $handoffNext = [string](Get-MetraProp -Object $handoff -Name 'next' -Default '')
     # Live-status ask + screenshot alone stays thin/provisional (L2 invariants).

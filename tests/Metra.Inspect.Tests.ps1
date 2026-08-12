@@ -138,6 +138,57 @@ Review complete:
             $p.Findings.Count | Should -Be 0
         }
     }
+
+    It 'flags plan-summary JSON as wrong shape with actionable error' {
+        InModuleScope Metra {
+            $msg = '{"overview":"AzDO integration","implementation_steps":[{"step_name":"Config"}]}'
+            $p = ConvertTo-MetraInspectFindings -Message $msg
+            $p.Ok | Should -BeFalse
+            $p.ShapeMismatch | Should -BeTrue
+            $p.Error | Should -Match 'wrong JSON shape'
+            $p.Error | Should -Match 'overview'
+        }
+    }
+
+    It 'does not flag valid findings wrapper as wrong shape' {
+        InModuleScope Metra {
+            $msg = '{"findings":[{"severity":"Low","confidence":"Medium","category":"Scope","file":"plan.md","line":1,"finding":"x","recommendation":"y","evidence":"z"}]}'
+            $p = ConvertTo-MetraInspectFindings -Message $msg
+            $p.Ok | Should -BeTrue
+            $p.ShapeMismatch | Should -BeFalse
+            $p.Findings.Count | Should -Be 1
+        }
+    }
+}
+
+Describe 'Inspect engine parse retry' {
+    It 'retries once when engine returns plan-summary JSON then findings' {
+        InModuleScope Metra {
+            $script:AskCount = 0
+            Mock Invoke-MetraAskEngine {
+                $script:AskCount++
+                if ($script:AskCount -eq 1) {
+                    return [PSCustomObject]@{
+                        ok      = $true
+                        message = '{"overview":"summary","implementation_steps":[]}'
+                        engine  = 'ollama'
+                        model   = 'qwen2.5:14b'
+                    }
+                }
+                return [PSCustomObject]@{
+                    ok      = $true
+                    message = '{"findings":[]}'
+                    engine  = 'ollama'
+                    model   = 'qwen2.5:14b'
+                }
+            }
+            $r = Invoke-MetraInspectEngine -Prompt 'review plan' -Cwd 'C:\Projects\_meta'
+            $r.Ok | Should -BeTrue
+            $r.RetryAttempt | Should -Be 1
+            $r.Findings.Count | Should -Be 0
+            $script:AskCount | Should -Be 2
+        }
+    }
 }
 
 Describe 'Inspect report wrapper' {
@@ -363,6 +414,7 @@ Describe 'Inspect pack pointer honesty' {
                     SkippedPaths     = @()
                     DocsCollapsed    = @()
                     Truncated        = $false
+                    OmittedByFileCap = @()
                 }
             }
             Mock ConvertTo-MetraInspectScrubbedDiffParts {
@@ -723,6 +775,165 @@ Describe 'Inspect provenance omits large bodies' {
             $report.provenance.PSObject.Properties.Name | Should -Not -Contain 'assessedDiff'
             $report.provenance.PSObject.Properties.Name | Should -Not -Contain 'planBody'
             $report.provenance.baseMode | Should -Be 'working-tree'
+        }
+    }
+}
+
+Describe 'Inspect pack-only' {
+    It 'plan pack-only skips Invoke-MetraInspectEngine and marks Bing-only findings' {
+        InModuleScope Metra {
+            $state = Join-Path $env:TEMP ("metra-inspect-state-" + [guid]::NewGuid().ToString('n'))
+            $planDir = Join-Path $env:TEMP ("metra-inspect-planfile-" + [guid]::NewGuid().ToString('n'))
+            New-Item -ItemType Directory -Path $state -Force | Out-Null
+            New-Item -ItemType Directory -Path $planDir -Force | Out-Null
+            Mock Get-MetraInspectStateRoot { $state }
+
+            $planPath = Join-Path $planDir 'bing-only.plan.md'
+            Set-Content -LiteralPath $planPath -Value '# Bing-only plan body' -Encoding utf8
+
+            Mock Get-MetraInspectPlanRoots { @($planDir) }
+            Mock Resolve-MetraInspectProjectContext {
+                [PSCustomObject]@{
+                    Ok             = $true
+                    Project        = 'Metra'
+                    Root           = (Get-MetraRoot)
+                    ContextLimited = $false
+                    Warning        = $null
+                    Error          = $null
+                }
+            }
+            Mock Invoke-MetraInspectEngine { throw 'engine should not run for pack-only' }
+            Mock Set-Clipboard { }
+
+            try {
+                $pack = Invoke-MetraInspectPackOnly -Mode plan -Name Metra -Path $planPath
+                $pack.Mode | Should -Be 'plan'
+                $pack.Text | Should -Match 'Bing-only: no Ask engine run'
+                $pack.Text | Should -Match 'none - Bing-only pack; no Ask engine run'
+                $pack.Text | Should -Match 'Bing-only plan body'
+                $pack.Text | Should -Match 'Assessed report: \(none - Bing-only pack\)'
+            }
+            finally {
+                Remove-Item -LiteralPath $state -Recurse -Force -ErrorAction SilentlyContinue
+                Remove-Item -LiteralPath $planDir -Recurse -Force -ErrorAction SilentlyContinue
+            }
+        }
+    }
+
+    It 'diff pack-only skips Invoke-MetraInspectEngine' {
+        InModuleScope Metra {
+            $state = Join-Path $env:TEMP ("metra-inspect-state-" + [guid]::NewGuid().ToString('n'))
+            New-Item -ItemType Directory -Path $state -Force | Out-Null
+            Mock Get-MetraInspectStateRoot { $state }
+
+            Mock Resolve-MetraInspectProjectContext {
+                [PSCustomObject]@{
+                    Ok             = $true
+                    Project        = 'Metra'
+                    Root           = (Get-MetraRoot)
+                    ContextLimited = $false
+                    Warning        = $null
+                    Error          = $null
+                }
+            }
+            Mock Get-MetraInspectGitDiffFiles {
+                [PSCustomObject]@{
+                    Empty            = $false
+                    Files            = @([PSCustomObject]@{ path = 'a.ps1'; content = 'diff content' })
+                    GitHead          = 'abc'
+                    RawDiff          = 'diff'
+                    UntrackedCount   = 0
+                    WorkingTreeDirty = $false
+                    Warning          = $null
+                    BaseMode         = 'working-tree'
+                    Base             = ''
+                }
+            }
+            Mock Reduce-MetraInspectDiffFiles {
+                [PSCustomObject]@{
+                    Files            = @([PSCustomObject]@{ path = 'a.ps1'; content = 'diff content'; class = 'code' })
+                    FileCount        = 1
+                    ReducedFileCount = 1
+                    SkippedFileCount = 0
+                    SkippedPaths     = @()
+                    DocsCollapsed    = @()
+                    Truncated        = $false
+                    OmittedByFileCap = @()
+                }
+            }
+            Mock ConvertTo-MetraInspectScrubbedDiffParts {
+                @([PSCustomObject]@{ path = 'a.ps1'; content = 'scrubbed'; class = 'code' })
+            }
+            Mock Invoke-MetraInspectEngine { throw 'engine should not run for pack-only' }
+            Mock Set-Clipboard { }
+
+            try {
+                $pack = Invoke-MetraInspectPackOnly -Mode diff -Name Metra
+                $pack.Mode | Should -Be 'diff'
+                $pack.Text | Should -Match 'Bing-only: no Ask engine run'
+                $pack.Text | Should -Match 'scrubbed'
+                $pack.Text | Should -Match 'a.ps1'
+                $pack.Text | Should -Match 'Pack profile: bing'
+            }
+            finally {
+                Remove-Item -LiteralPath $state -Recurse -Force -ErrorAction SilentlyContinue
+            }
+        }
+    }
+}
+
+Describe 'Inspect Bing pack profile' {
+    It 'extracts Describe and It names for test catalog' {
+        InModuleScope Metra {
+            $root = Join-Path $env:TEMP ("metra-inspect-catalog-" + [guid]::NewGuid().ToString('n'))
+            New-Item -ItemType Directory -Path (Join-Path $root 'tests') -Force | Out-Null
+            try {
+                $testPath = Join-Path $root 'tests/Sample.Tests.ps1'
+                @(
+                    "Describe 'Outer block' {"
+                    "    It 'does the thing' {"
+                    '    }'
+                    "    It 'inventory-path check' {"
+                    '    }'
+                    '}'
+                ) | Set-Content -LiteralPath $testPath -Encoding utf8
+
+                $catalog = Get-MetraInspectPesterTestCatalogText -Root $root -RelativePaths @('tests/Sample.Tests.ps1')
+                $catalog | Should -Match 'Test catalog'
+                $catalog | Should -Match "Describe 'Outer block'"
+                $catalog | Should -Match "It 'does the thing'"
+                $catalog | Should -Match "It 'inventory-path check'"
+            }
+            finally {
+                Remove-Item -LiteralPath $root -Recurse -Force -ErrorAction SilentlyContinue
+            }
+        }
+    }
+
+    It 'Build-MetraInspectPackDiffAppendix appends test catalog and manifest for bing profile' {
+        InModuleScope Metra {
+            $root = Join-Path $env:TEMP ("metra-inspect-bingpack-" + [guid]::NewGuid().ToString('n'))
+            New-Item -ItemType Directory -Path (Join-Path $root 'tests') -Force | Out-Null
+            try {
+                $testPath = Join-Path $root 'tests/Widget.Tests.ps1'
+                Set-Content -LiteralPath $testPath -Value "Describe 'Widget' { It 'works' { } }" -Encoding utf8
+
+                Mock ConvertTo-MetraInspectScrubbedDiffParts {
+                    @([PSCustomObject]@{ path = 'tests/Widget.Tests.ps1'; content = 'diff'; class = 'code' })
+                }
+
+                $appendix = Build-MetraInspectPackDiffAppendix -Root $root -Files @(
+                    [PSCustomObject]@{ path = 'tests/Widget.Tests.ps1'; content = 'diff body' }
+                ) -Profile bing
+
+                $appendix.Manifest | Should -Match 'Pack profile: bing'
+                $appendix.Manifest | Should -Match 'MaxPackBodyChars=250000'
+                $appendix.TestCatalog | Should -Match 'tests/Widget.Tests.ps1'
+                $appendix.TestCatalog | Should -Match "It 'works'"
+            }
+            finally {
+                Remove-Item -LiteralPath $root -Recurse -Force -ErrorAction SilentlyContinue
+            }
         }
     }
 }
