@@ -1,6 +1,6 @@
 @{
     RootModule        = 'Metra.psm1'
-    ModuleVersion     = '0.1.10'
+    ModuleVersion     = '0.1.11'
     GUID              = 'afe44c63-0346-4acf-b723-164fb28c585d'
     Author            = 'Metra contributors'
     CompanyName       = 'Community'
@@ -68,6 +68,7 @@
         'Invoke-MetraDecisionRegistryCommand',
         'Show-MetraRoutingCli',
         'Show-MetraKnowledgeCoverageCli',
+        'Show-MetraInspectCli',
         'Show-MetraUnblockCli',
         'Start-MetraOpsServer',
         'Stop-MetraOpsServer',

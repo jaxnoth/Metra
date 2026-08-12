@@ -228,6 +228,27 @@ function Resolve-MetraAskOpenAICompatErrorCode {
     }
 }
 
+function Test-MetraAskOpenAICompatResponseFormatRejected {
+    <#
+    .SYNOPSIS
+        True when an OpenAI-compat endpoint rejected response_format / json_object.
+    #>
+    [CmdletBinding()]
+    param(
+        $Exception
+    )
+
+    $msg = ''
+    if ($Exception) {
+        $msg = [string](Get-MetraProp -Object $Exception -Name 'Message' -Default '')
+        if ([string]::IsNullOrWhiteSpace($msg) -and $Exception.Exception) {
+            $msg = [string]$Exception.Exception.Message
+        }
+    }
+    if ([string]::IsNullOrWhiteSpace($msg)) { return $false }
+    return $msg -match '(?i)response_format|json_object|structured.?output|unknown field'
+}
+
 function Invoke-MetraAskOpenAICompatComplete {
     [CmdletBinding()]
     param(
@@ -274,17 +295,34 @@ function Invoke-MetraAskOpenAICompatComplete {
         "Working directory: $Cwd"
     }
 
-    $systemParts = @(
-        'You are Metra Ask - answer-only portfolio ops assistant.',
-        'Follow route-first context. Do not invent live system state without evidence.',
-        'DESK HONESTY: Be brief. Do not paste routing furniture (Where / What / Why / Next).',
-        'Do not invent operator biography or personal observations - journal is continuity, not personal memory.',
-        'Do not promise to write files, save notes, or create Capture entries. For park/save/remember asks, point at Save for portfolio or .\metra.ps1 capture note.',
-        $cwdLine
-    )
+    $purpose = ''
+    if ($Context -is [hashtable] -or $Context -is [PSCustomObject]) {
+        $purpose = [string](Get-MetraProp -Object $Context -Name 'purpose' -Default '')
+    }
+    $isInspect = ($purpose -eq 'metra-inspect')
+
+    if ($isInspect) {
+        $systemParts = @(
+            'You are Metra Inspect - structured code review for portfolio ops.',
+            'Return JSON only. No markdown, prose, or code fences.',
+            'Use one object: {"findings":[...]} where each finding includes severity, confidence, category, file, line, finding, recommendation, evidence.',
+            'If no issues, return {"findings":[]}.',
+            $cwdLine
+        )
+    }
+    else {
+        $systemParts = @(
+            'You are Metra Ask - answer-only portfolio ops assistant.',
+            'Follow route-first context. Do not invent live system state without evidence.',
+            'DESK HONESTY: Be brief. Do not paste routing furniture (Where / What / Why / Next).',
+            'Do not invent operator biography or personal observations - journal is continuity, not personal memory.',
+            'Do not promise to write files, save notes, or create Capture entries. For park/save/remember asks, point at Save for portfolio or .\metra.ps1 capture note.',
+            $cwdLine
+        )
+    }
 
     $evQuality = ''
-    if ($Context -is [hashtable] -or $Context -is [PSCustomObject]) {
+    if (-not $isInspect -and ($Context -is [hashtable] -or $Context -is [PSCustomObject])) {
         $ev = Get-MetraProp -Object $Context -Name 'evidence' -Default $null
         if ($ev) {
             $evQuality = [string](Get-MetraProp -Object $ev -Name 'quality' -Default '')
@@ -303,15 +341,17 @@ function Invoke-MetraAskOpenAICompatComplete {
         else {
             $systemParts += 'No structured evidence bag - stay provisional; do not invent live system state.'
         }
-        try {
-            $ctxJson = ($Context | ConvertTo-Json -Depth 6 -Compress)
-            # Ceiling = evidence maxTotalChars * 5 (route/continuity/capability headroom).
-            $ceiling = Get-MetraAskOpenAICompatContextJsonMaxChars
-            if ($ctxJson -and $ctxJson.Length -lt $ceiling) {
-                $systemParts += "Context JSON: $ctxJson"
+        if (-not $isInspect) {
+            try {
+                $ctxJson = ($Context | ConvertTo-Json -Depth 6 -Compress)
+                # Ceiling = evidence maxTotalChars * 5 (route/continuity/capability headroom).
+                $ceiling = Get-MetraAskOpenAICompatContextJsonMaxChars
+                if ($ctxJson -and $ctxJson.Length -lt $ceiling) {
+                    $systemParts += "Context JSON: $ctxJson"
+                }
             }
+            catch { }
         }
-        catch { }
     }
 
     $body = @{
@@ -320,11 +360,20 @@ function Invoke-MetraAskOpenAICompatComplete {
             @{ role = 'system'; content = ($systemParts -join "`n") }
             @{ role = 'user'; content = $Prompt }
         )
-        temperature = 0.2
+        temperature = if ($isInspect) { 0.1 } else { 0.2 }
+    }
+    if ($isInspect) {
+        $body['response_format'] = @{ type = 'json_object' }
     }
     $url = "$($baseUrl.TrimEnd('/'))/v1/chat/completions"
-    $json = $body | ConvertTo-Json -Depth 8 -Compress
-    try {
+    $jsonDepth = if ($isInspect) { 12 } else { 8 }
+
+    $invokeChat = {
+        param(
+            [hashtable]$ChatBody,
+            [int]$Depth
+        )
+        $json = $ChatBody | ConvertTo-Json -Depth $Depth -Compress
         $irmParams = @{
             Uri         = $url
             Method      = 'Post'
@@ -333,7 +382,34 @@ function Invoke-MetraAskOpenAICompatComplete {
             TimeoutSec  = $TimeoutSec
         }
         if ($headers.Count -gt 0) { $irmParams['Headers'] = $headers }
-        $response = Invoke-RestMethod @irmParams
+        return Invoke-RestMethod @irmParams
+    }
+
+    try {
+        $response = & $invokeChat -ChatBody $body -Depth $jsonDepth
+    }
+    catch {
+        if ($isInspect -and $body.ContainsKey('response_format') -and (Test-MetraAskOpenAICompatResponseFormatRejected -Exception $_)) {
+            Write-Verbose 'Inspect response_format rejected; retrying without json_object.'
+            $bodyNoFormat = @{} + $body
+            $bodyNoFormat.Remove('response_format')
+            try {
+                $response = & $invokeChat -ChatBody $bodyNoFormat -Depth $jsonDepth
+            }
+            catch {
+                $code = Resolve-MetraAskOpenAICompatErrorCode -Settings $Settings -Exception $_
+                return New-MetraAskEngineErrorResult -Settings $Settings -SessionId $SessionId `
+                    -ErrorMessage $code -PromptScrub $PromptScrub -CtxScrub $CtxScrub
+            }
+        }
+        else {
+            $code = Resolve-MetraAskOpenAICompatErrorCode -Settings $Settings -Exception $_
+            return New-MetraAskEngineErrorResult -Settings $Settings -SessionId $SessionId `
+                -ErrorMessage $code -PromptScrub $PromptScrub -CtxScrub $CtxScrub
+        }
+    }
+
+    try {
         $rawMessage = ''
         $choice = @($response.choices) | Select-Object -First 1
         if ($choice) {

@@ -37,7 +37,7 @@ param(
     [ValidateSet(
         'list', 'status', 'pull', 'fetch', 'run', 'new', 'apply', 'workspace',
         'audit', 'snapshot', 'selfdoc', 'ops', 'host', 'chats', 'roots', 'routing',
-        'export-profile', 'import-profile', 'ctx', 'setup', 'verify', 'unblock', 'profile', 'decisions', 'coverage', 'ask', 'capture', 'watch', 'help'
+        'export-profile', 'import-profile', 'ctx', 'setup', 'verify', 'unblock', 'profile', 'decisions', 'coverage', 'ask', 'capture', 'watch', 'inspect', 'help'
     )]
     [string]$Command = 'help',
 
@@ -51,6 +51,7 @@ param(
     [string]$Template,
     [string]$RelativePath,
     [string]$Path,
+    [string]$Base,
     [string]$Profile,
     [int]$Months = -1,
     [int]$ScanDepth = -1,
@@ -161,6 +162,12 @@ Usage:
       Capture Inbox (thin portfolio intake; promote on affirm - never auto).
   .\metra.ps1 coverage
       Knowledge coverage visibility (AGENTS / serves / decisions / uncovered) - counts and gap lists, not a score.
+  .\metra.ps1 inspect [-Name Metra] [-Base <rev>] [-WhatIf]
+  .\metra.ps1 inspect plan [-Latest] [-Path <file>] [<filename-fragment>] -Name <Project> [-WhatIf]
+  .\metra.ps1 inspect pack [plan] [-WhatIf]
+      Local AI-assisted inspection of git diffs or Cursor plans (Ask/Ollama). Recommend-only.
+      Default diff (no -Base) includes unstaged + staged + untracked text. -Base is three-dot Base...HEAD only (local edits excluded with a warning when the working tree is dirty).
+      -WhatIf skips the Ask engine. Bare inspect plan lists recent plans. Non-list plan inspect requires -Name. Default coding loop: inspect after batches, chat gate, re-inspect until ship-ready (see AGENTS.md / metra-inspect-loop rule).
   .\metra.ps1 verify
 
 Roots:
@@ -604,6 +611,24 @@ switch ($Command) {
     'coverage' {
         # Helper stays private; Show-MetraKnowledgeCoverageCli is a thin compatibility export for the CLI.
         Show-MetraKnowledgeCoverageCli
+    }
+
+    'inspect' {
+        # Helper stays private; Show-MetraInspectCli is a thin compatibility export for the CLI.
+        try {
+            $inspectParams = @{
+                Rest = @($Rest)
+            }
+            if ($Name) { $inspectParams.Name = $Name }
+            if ($Path) { $inspectParams.Path = $Path }
+            if ($Base) { $inspectParams.Base = $Base }
+            if ($WhatIf) { $inspectParams.WhatIf = $true }
+            $null = Show-MetraInspectCli @inspectParams
+        }
+        catch {
+            Write-Error $_
+            exit 1
+        }
     }
 
     'decisions' {

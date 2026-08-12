@@ -1,0 +1,59 @@
+---
+description: Default Metra Inspect coding loop after implementation batches (observe, chat gate, re-inspect)
+alwaysApply: true
+---
+
+# Metra Inspect coding loop
+
+Default workflow when implementing **meaningful code changes** in a routed git project. Inspect stays **recommend-only**; the operator affirms fixes in chat. The CLI does not auto-fix or auto-loop.
+
+## When
+
+Apply after a coherent implementation batch (feature slice, hardening pass, multi-file fix) before claiming done, pack, or ship.
+
+Skip when:
+
+- Ticket-ops only (`post` / `recommend` / `resolve`, status, drafts) with no code edits
+- Ask/plan/brainstorm with no implementation yet
+- Trivial one-line typo with no behavioral change (operator may still ask for inspect)
+- Ask engine unavailable - report failure; do not skip inspect silently or invent findings
+
+## Loop
+
+1. **Plan (before implement):** When work started from a Cursor plan, run `.\metra.ps1 inspect plan -Latest -Name <Project>` (or fragment / `-Path`). Summarize findings in chat; operator picks fix / defer / reject before coding.
+2. **Implement** the agreed batch in the routed project root only.
+3. **Diff inspect (after batch):** `.\metra.ps1 inspect -Name <Project>` from the project or Metra checkout.
+4. **Chat gate:** Post findings High first, then actionable Medium. Do **not** auto-fix from inspect output. Wait for operator picks (fix / defer / reject). Mark deferred items so they are not re-litigated every loop.
+5. **Fix only affirmed items**, then re-run the **same inspect mode** (step 3 or 1).
+6. **Stop** when: no High findings remain **and** operator says ship / good enough, or inspect returns zero actionable findings and operator agrees. Low/Info are optional unless operator wants them addressed.
+7. **Ship lane:** Metra executable changes still use `.\metra.ps1 inspect pack` and Bing as the comparison gate during calibration. Other projects: inspect loop ends at operator ship; pack/Bing optional.
+
+## Engine independence
+
+Inspect findings are strongest when implementation and review use **different model families or providers**. Do not treat inspect as independent validation when coder and reviewer share the same engine family.
+
+**Preferred**
+
+- Cursor Agent → Cursor-hosted model
+- Metra Inspect → Ollama (`ask.engine` in `metra.config.json`; `.\metra.ps1 ask engine show`)
+
+**Acceptable during quota constraints**
+
+- Cursor Agent → Ollama model A
+- Metra Inspect → Ollama model B (different `ask.ollama.model` than the Cursor Ollama agent)
+
+**When implementation and inspection share an engine family**
+
+Treat inspect as a **first-pass review**, not independent validation. Ship decisions need additional evidence: operator judgment in chat, Pester/verify, pack checks, Bing comparison, or other external signals. Never claim "inspect clean" alone is ship-ready in this mode.
+
+Safety net = inspect + verify + operator judgment, not any single LLM.
+
+## Agent rules
+
+- Never claim "inspect clean" without running the CLI when this loop applies.
+- Never mutate source from inspect findings without operator confirmation in chat.
+- Same finding twice after a fix: call calibration noise or ask operator; do not blind-loop forever.
+- Use `-WhatIf` only when operator asks for a dry-run; normal loop runs the engine.
+- Persisted report path is under `%LOCALAPPDATA%\Metra\inspect\`; cite severity/file in chat, not full JSON dumps.
+
+See Metra `AGENTS.md` Inspect section and `docs/Decisions.md` (Inspect coding loop; Inspect engine independence).

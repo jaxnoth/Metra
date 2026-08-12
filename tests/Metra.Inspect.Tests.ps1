@@ -1,0 +1,728 @@
+# Requires Pester 5+. Run via:
+# pwsh -NoProfile -Command "Invoke-Pester -Path .\tests\Metra.Inspect.Tests.ps1"
+
+BeforeAll {
+    $metraRoot = (Resolve-Path (Join-Path $PSScriptRoot '..')).Path
+    Import-Module (Join-Path $metraRoot 'scripts\Metra.psd1') -Force
+}
+
+Describe 'Inspect file classification' {
+    It 'classifies PowerShell as code' {
+        InModuleScope Metra {
+            Get-MetraInspectFileClass -RelativePath 'scripts/private/Inspect.ps1' | Should -Be 'code'
+        }
+    }
+
+    It 'skips lockfiles and credentials' {
+        InModuleScope Metra {
+            Get-MetraInspectFileClass -RelativePath 'package-lock.json' | Should -Be 'skip'
+            Get-MetraInspectFileClass -RelativePath 'credentials/config.json' | Should -Be 'skip'
+        }
+    }
+
+    It 'skips root env dotfiles without stripping the leading dot' {
+        InModuleScope Metra {
+            Get-MetraInspectFileClass -RelativePath '.env' | Should -Be 'skip'
+            Get-MetraInspectFileClass -RelativePath './.env' | Should -Be 'skip'
+            Get-MetraInspectFileClass -RelativePath '.env.local' | Should -Be 'skip'
+            Get-MetraInspectFileClass -RelativePath './.env.production' | Should -Be 'skip'
+        }
+    }
+
+    It 'does not classify harmless root dotfiles as env secrets' {
+        InModuleScope Metra {
+            Get-MetraInspectFileClass -RelativePath '.gitignore' | Should -Be 'config'
+            Get-MetraInspectFileClass -RelativePath './.editorconfig' | Should -Be 'config'
+        }
+    }
+
+    It 'classifies markdown as docs' {
+        InModuleScope Metra {
+            Get-MetraInspectFileClass -RelativePath 'AGENTS.md' | Should -Be 'docs'
+        }
+    }
+}
+
+Describe 'Inspect scope reducer' {
+    It 'prefers code over docs and skips lockfiles' {
+        InModuleScope Metra {
+            $files = @(
+                [PSCustomObject]@{ path = 'package-lock.json'; content = 'x' }
+                [PSCustomObject]@{ path = 'README.md'; content = 'docs' }
+                [PSCustomObject]@{ path = 'src/App.ps1'; content = 'code here' }
+            )
+            $r = Reduce-MetraInspectDiffFiles -Files $files
+            $r.SkippedFileCount | Should -Be 1
+            ($r.Files | Where-Object { $_.path -eq 'src/App.ps1' }).Count | Should -Be 1
+            ($r.Files | Where-Object { $_.class -eq 'docs' }).Count | Should -BeGreaterThan 0
+        }
+    }
+}
+
+Describe 'Inspect findings JSON parse' {
+    It 'parses a findings array' {
+        InModuleScope Metra {
+            $msg = '[{"severity":"High","confidence":"Low","category":"Security","file":"a.ps1","line":1,"finding":"x","recommendation":"y","evidence":"z"}]'
+            $p = ConvertTo-MetraInspectFindings -Message $msg
+            $p.Ok | Should -BeTrue
+            $p.Findings.Count | Should -Be 1
+            $p.Findings[0].severity | Should -Be 'High'
+            $p.Findings[0].confidence | Should -Be 'Low'
+        }
+    }
+
+    It 'parses fenced JSON wrapper object' {
+        InModuleScope Metra {
+            $msg = @'
+```json
+{"findings":[]}
+```
+'@
+            $p = ConvertTo-MetraInspectFindings -Message $msg
+            $p.Ok | Should -BeTrue
+            $p.Findings.Count | Should -Be 0
+        }
+    }
+
+    It 'fails closed on non-JSON' {
+        InModuleScope Metra {
+            $p = ConvertTo-MetraInspectFindings -Message 'not json at all'
+            $p.Ok | Should -BeFalse
+            $p.Excerpt | Should -Not -BeNullOrEmpty
+        }
+    }
+
+    It 'non-integer line becomes null while Ok' {
+        InModuleScope Metra {
+            $msg = '[{"severity":"High","confidence":"Low","category":"Security","file":"a.ps1","line":"abc","finding":"x","recommendation":"y","evidence":"z"}]'
+            $p = ConvertTo-MetraInspectFindings -Message $msg
+            $p.Ok | Should -BeTrue
+            $p.Findings.Count | Should -Be 1
+            $p.Findings[0].line | Should -BeNullOrEmpty
+        }
+    }
+
+    It 'clamps invalid severity confidence and category enums' {
+        InModuleScope Metra {
+            $msg = '[{"severity":"Critical","confidence":"Maybe","category":"Unknown","file":"a.ps1","line":null,"finding":"x","recommendation":"","evidence":""}]'
+            $p = ConvertTo-MetraInspectFindings -Message $msg
+            $p.Ok | Should -BeTrue
+            $p.Findings[0].severity | Should -Be 'Info'
+            $p.Findings[0].confidence | Should -Be 'Medium'
+            $p.Findings[0].category | Should -Be 'Standards'
+        }
+    }
+
+    It 'extracts JSON object from leading prose' {
+        InModuleScope Metra {
+            $msg = @'
+Here is my review output:
+{"findings":[{"severity":"Low","confidence":"Medium","category":"Standards","file":"a.ps1","line":1,"finding":"x","recommendation":"y","evidence":"z"}]}
+'@
+            $p = ConvertTo-MetraInspectFindings -Message $msg
+            $p.Ok | Should -BeTrue
+            $p.Findings.Count | Should -Be 1
+        }
+    }
+
+    It 'extracts fenced json block not at message start' {
+        InModuleScope Metra {
+            $msg = @'
+Review complete:
+```json
+{"findings":[]}
+```
+'@
+            $p = ConvertTo-MetraInspectFindings -Message $msg
+            $p.Ok | Should -BeTrue
+            $p.Findings.Count | Should -Be 0
+        }
+    }
+}
+
+Describe 'Inspect report wrapper' {
+    It 'builds schemaVersion 1 report with provenance' {
+        InModuleScope Metra {
+            $prov = [ordered]@{
+                engine         = 'ollama'
+                model          = 'test'
+                inspectedAtUtc = '2026-08-12T00:00:00Z'
+                inputHash      = 'abc'
+                contextLimited = $false
+            }
+            $report = New-MetraInspectReport -Mode diff -Provenance $prov -Findings @()
+            $report.schemaVersion | Should -Be 1
+            $report.mode | Should -Be 'diff'
+            $report.provenance.engine | Should -Be 'ollama'
+            $report.findings.Count | Should -Be 0
+        }
+    }
+}
+
+Describe 'Inspect plan path resolution' {
+    It 'list-only when no selector' {
+        InModuleScope Metra {
+            $r = Resolve-MetraInspectPlanPath
+            $r.ListOnly | Should -BeTrue
+            $r.Ok | Should -BeFalse
+        }
+    }
+
+    It 'fails closed when multiple selectors' {
+        InModuleScope Metra {
+            $r = Resolve-MetraInspectPlanPath -Latest -Fragment 'metra'
+            $r.Ok | Should -BeFalse
+            $r.Error | Should -Match 'Only one plan selector'
+        }
+    }
+
+    It 'fails closed on missing -Path' {
+        InModuleScope Metra {
+            $r = Resolve-MetraInspectPlanPath -Path 'C:\definitely\missing\nope.plan.md'
+            $r.Ok | Should -BeFalse
+            $r.Error | Should -Match 'not found'
+        }
+    }
+
+    It 'resolves unique fragment against fixture plans' {
+        InModuleScope Metra {
+            $temp = Join-Path $env:TEMP ("metra-inspect-plans-" + [guid]::NewGuid().ToString('n'))
+            New-Item -ItemType Directory -Path $temp -Force | Out-Null
+            try {
+                $a = Join-Path $temp 'alpha-unique-xyz.plan.md'
+                $b = Join-Path $temp 'beta-other.plan.md'
+                Set-Content -LiteralPath $a -Value '# a' -Encoding utf8
+                Set-Content -LiteralPath $b -Value '# b' -Encoding utf8
+                Mock Get-MetraInspectPlanRoots { @($temp) }
+                $r = Resolve-MetraInspectPlanPath -Fragment 'unique-xyz'
+                $r.Ok | Should -BeTrue
+                $r.Path | Should -Be ([System.IO.Path]::GetFullPath($a))
+            }
+            finally {
+                Remove-Item -LiteralPath $temp -Recurse -Force -ErrorAction SilentlyContinue
+            }
+        }
+    }
+
+    It 'fails closed on ambiguous fragment' {
+        InModuleScope Metra {
+            $temp = Join-Path $env:TEMP ("metra-inspect-plans-" + [guid]::NewGuid().ToString('n'))
+            New-Item -ItemType Directory -Path $temp -Force | Out-Null
+            try {
+                Set-Content -LiteralPath (Join-Path $temp 'metra-one.plan.md') -Value '#1' -Encoding utf8
+                Set-Content -LiteralPath (Join-Path $temp 'metra-two.plan.md') -Value '#2' -Encoding utf8
+                Mock Get-MetraInspectPlanRoots { @($temp) }
+                $r = Resolve-MetraInspectPlanPath -Fragment 'metra'
+                $r.Ok | Should -BeFalse
+                $r.Matches.Count | Should -Be 2
+            }
+            finally {
+                Remove-Item -LiteralPath $temp -Recurse -Force -ErrorAction SilentlyContinue
+            }
+        }
+    }
+
+    It 'fails closed when -Path is outside plan roots' {
+        InModuleScope Metra {
+            $outside = Join-Path $env:TEMP ("metra-inspect-outside-" + [guid]::NewGuid().ToString('n'))
+            New-Item -ItemType Directory -Path $outside -Force | Out-Null
+            try {
+                $file = Join-Path $outside 'outside.plan.md'
+                Set-Content -LiteralPath $file -Value '# outside' -Encoding utf8
+                Mock Get-MetraInspectPlanRoots { @((Join-Path $env:TEMP 'metra-inspect-no-such-root')) }
+                $r = Resolve-MetraInspectPlanPath -Path $file
+                $r.Ok | Should -BeFalse
+                $r.Error | Should -Match 'known plan root'
+            }
+            finally {
+                Remove-Item -LiteralPath $outside -Recurse -Force -ErrorAction SilentlyContinue
+            }
+        }
+    }
+
+    It 'resolves -Path under a mocked plan root' {
+        InModuleScope Metra {
+            $temp = Join-Path $env:TEMP ("metra-inspect-plans-" + [guid]::NewGuid().ToString('n'))
+            New-Item -ItemType Directory -Path $temp -Force | Out-Null
+            try {
+                $file = Join-Path $temp 'under-root.plan.md'
+                Set-Content -LiteralPath $file -Value '# ok' -Encoding utf8
+                Mock Get-MetraInspectPlanRoots { @($temp) }
+                $r = Resolve-MetraInspectPlanPath -Path $file
+                $r.Ok | Should -BeTrue
+                $r.Path | Should -Be ([System.IO.Path]::GetFullPath($file))
+            }
+            finally {
+                Remove-Item -LiteralPath $temp -Recurse -Force -ErrorAction SilentlyContinue
+            }
+        }
+    }
+
+    It 'fails closed when -Path is not *.plan.md' {
+        InModuleScope Metra {
+            $temp = Join-Path $env:TEMP ("metra-inspect-plans-" + [guid]::NewGuid().ToString('n'))
+            New-Item -ItemType Directory -Path $temp -Force | Out-Null
+            try {
+                $file = Join-Path $temp 'notes.md'
+                Set-Content -LiteralPath $file -Value '# not a plan' -Encoding utf8
+                Mock Get-MetraInspectPlanRoots { @($temp) }
+                $r = Resolve-MetraInspectPlanPath -Path $file
+                $r.Ok | Should -BeFalse
+                $r.Error | Should -Match 'plan\.md'
+            }
+            finally {
+                Remove-Item -LiteralPath $temp -Recurse -Force -ErrorAction SilentlyContinue
+            }
+        }
+    }
+}
+
+Describe 'Inspect project context' {
+    It 'resolves Metra by -Name' {
+        InModuleScope Metra {
+            $c = Resolve-MetraInspectProjectContext -Name 'Metra' -Mode diff
+            $c.Ok | Should -BeTrue
+            $c.Project | Should -Be 'Metra'
+            $c.ContextLimited | Should -BeFalse
+        }
+    }
+
+    It 'plan mode continues context-limited without -Name or cwd project' {
+        InModuleScope Metra {
+            $c = Resolve-MetraInspectProjectContext -Mode plan -Cwd $env:TEMP
+            $c.Ok | Should -BeTrue
+            $c.ContextLimited | Should -BeTrue
+            $c.Warning | Should -Match 'Project context not resolved'
+        }
+    }
+
+    It 'diff mode fails without project root' {
+        InModuleScope Metra {
+            $c = Resolve-MetraInspectProjectContext -Mode diff -Cwd $env:TEMP
+            $c.Ok | Should -BeFalse
+            $c.Error | Should -Match 'resolve project'
+        }
+    }
+}
+
+Describe 'Inspect pack pointer honesty' {
+    It 'warns when inputHash differs from pointer' {
+        InModuleScope Metra {
+            $state = Join-Path $env:TEMP ("metra-inspect-state-" + [guid]::NewGuid().ToString('n'))
+            New-Item -ItemType Directory -Path $state -Force | Out-Null
+            Mock Get-MetraInspectStateRoot { $state }
+
+            $slot = Join-Path $state 'Metra'
+            New-Item -ItemType Directory -Path $slot -Force | Out-Null
+            $report = [ordered]@{
+                schemaVersion = 1
+                mode          = 'diff'
+                provenance    = [ordered]@{
+                    engine         = 'ollama'
+                    model          = 'test'
+                    inspectedAtUtc = [datetime]::UtcNow.ToString('o')
+                    project        = 'Metra'
+                    root           = (Get-MetraRoot)
+                    inputHash      = 'deadbeef'
+                    assessedFiles  = @('x.ps1')
+                    base           = ''
+                }
+                findings      = @()
+            }
+            $latest = Join-Path $slot 'latest.json'
+            ($report | ConvertTo-Json -Depth 8) | Set-Content -LiteralPath $latest -Encoding utf8
+            $pointer = [ordered]@{
+                mode             = 'diff'
+                latestReportPath = $latest
+                project          = 'Metra'
+                root             = (Get-MetraRoot)
+                inputHash        = 'deadbeef'
+                createdAtUtc     = [datetime]::UtcNow.ToString('o')
+            }
+            ($pointer | ConvertTo-Json -Depth 6) | Set-Content -LiteralPath (Join-Path $state 'last-diff.json') -Encoding utf8
+
+            Mock Get-MetraInspectGitDiffFiles {
+                [PSCustomObject]@{
+                    Empty            = $false
+                    Files            = @([PSCustomObject]@{ path = 'x.ps1'; content = 'new-content' })
+                    GitHead          = 'abc'
+                    RawDiff          = 'diff'
+                    UntrackedCount   = 0
+                    WorkingTreeDirty = $false
+                    Warning          = $null
+                    BaseMode         = 'working-tree'
+                    Base             = ''
+                }
+            }
+            Mock Reduce-MetraInspectDiffFiles {
+                [PSCustomObject]@{
+                    Files            = @([PSCustomObject]@{ path = 'x.ps1'; content = 'new-content'; class = 'code' })
+                    FileCount        = 1
+                    ReducedFileCount = 1
+                    SkippedFileCount = 0
+                    SkippedPaths     = @()
+                    DocsCollapsed    = @()
+                    Truncated        = $false
+                }
+            }
+            Mock ConvertTo-MetraInspectScrubbedDiffParts {
+                @([PSCustomObject]@{ path = 'x.ps1'; content = 'new-content'; class = 'code' })
+            }
+            Mock Get-MetraInspectInputHash { 'freshhash' }
+            Mock Set-Clipboard { }
+
+            try {
+                $pack = Invoke-MetraInspectPack -Mode diff
+                $pack.Stale | Should -BeTrue
+                $pack.Text | Should -Match 'assessed snapshot'
+                $pack.Text | Should -Match 'new-content'
+            }
+            finally {
+                Remove-Item -LiteralPath $state -Recurse -Force -ErrorAction SilentlyContinue
+            }
+        }
+    }
+}
+
+
+Describe 'Inspect pack plan disk scrub' {
+    It 'throws when plan disk scrub refuses (no planBody persistence required)' {
+        InModuleScope Metra {
+            $state = Join-Path $env:TEMP ("metra-inspect-state-" + [guid]::NewGuid().ToString('n'))
+            $planDir = Join-Path $env:TEMP ("metra-inspect-planfile-" + [guid]::NewGuid().ToString('n'))
+            New-Item -ItemType Directory -Path $state -Force | Out-Null
+            New-Item -ItemType Directory -Path $planDir -Force | Out-Null
+            Mock Get-MetraInspectStateRoot { $state }
+
+            $planPath = Join-Path $planDir 'secret.plan.md'
+            Set-Content -LiteralPath $planPath -Value 'plan body' -Encoding utf8
+
+            $slot = Join-Path $state 'plan-Metra'
+            New-Item -ItemType Directory -Path $slot -Force | Out-Null
+            $report = [ordered]@{
+                schemaVersion = 1
+                mode          = 'plan'
+                provenance    = [ordered]@{
+                    engine         = 'ollama'
+                    model          = 'test'
+                    inspectedAtUtc = [datetime]::UtcNow.ToString('o')
+                    project        = 'Metra'
+                    planPath       = $planPath
+                    inputHash      = 'deadbeef'
+                }
+                findings      = @()
+            }
+            $latest = Join-Path $slot 'latest.json'
+            ($report | ConvertTo-Json -Depth 8) | Set-Content -LiteralPath $latest -Encoding utf8
+            $pointer = [ordered]@{
+                mode             = 'plan'
+                latestReportPath = $latest
+                project          = 'Metra'
+                inputHash        = 'deadbeef'
+                planPath         = $planPath
+                createdAtUtc     = [datetime]::UtcNow.ToString('o')
+            }
+            ($pointer | ConvertTo-Json -Depth 6) | Set-Content -LiteralPath (Join-Path $state 'last-plan.json') -Encoding utf8
+
+            Mock Get-MetraInspectPlanRoots { @($planDir) }
+            Mock Get-MetraInspectScrubbedPlanText { throw 'Plan content refused by secrets scrub: mocked' }
+            Mock Set-Clipboard { }
+
+            try {
+                { Invoke-MetraInspectPack -Mode plan } | Should -Throw '*refused by secrets scrub*'
+            }
+            finally {
+                Remove-Item -LiteralPath $state -Recurse -Force -ErrorAction SilentlyContinue
+                Remove-Item -LiteralPath $planDir -Recurse -Force -ErrorAction SilentlyContinue
+            }
+        }
+    }
+}
+
+
+Describe 'Inspect pack path confine' {
+    It 'rejects latestReportPath outside state root' {
+        InModuleScope Metra {
+            $state = Join-Path $env:TEMP ("metra-inspect-state-" + [guid]::NewGuid().ToString('n'))
+            $outside = Join-Path $env:TEMP ("metra-inspect-outside-" + [guid]::NewGuid().ToString('n'))
+            New-Item -ItemType Directory -Path $state -Force | Out-Null
+            New-Item -ItemType Directory -Path $outside -Force | Out-Null
+            Mock Get-MetraInspectStateRoot { $state }
+
+            $evil = Join-Path $outside 'evil-latest.json'
+            Set-Content -LiteralPath $evil -Value '{"schemaVersion":1,"mode":"diff","provenance":{},"findings":[]}' -Encoding utf8
+            $pointer = [ordered]@{
+                mode             = 'diff'
+                latestReportPath = $evil
+                project          = 'Metra'
+                inputHash        = 'deadbeef'
+                createdAtUtc     = [datetime]::UtcNow.ToString('o')
+            }
+            ($pointer | ConvertTo-Json -Depth 6) | Set-Content -LiteralPath (Join-Path $state 'last-diff.json') -Encoding utf8
+
+            try {
+                { Invoke-MetraInspectPack -Mode diff } | Should -Throw '*inspect state root*'
+            }
+            finally {
+                Remove-Item -LiteralPath $state -Recurse -Force -ErrorAction SilentlyContinue
+                Remove-Item -LiteralPath $outside -Recurse -Force -ErrorAction SilentlyContinue
+            }
+        }
+    }
+}
+
+Describe 'Inspect WhatIf honesty' {
+    It 'diff WhatIf skips Invoke-MetraInspectEngine' {
+        InModuleScope Metra {
+            Mock Resolve-MetraInspectProjectContext {
+                [PSCustomObject]@{
+                    Ok             = $true
+                    Project        = 'Metra'
+                    Root           = (Get-MetraRoot)
+                    ContextLimited = $false
+                    Warning        = $null
+                    Error          = $null
+                }
+            }
+            Mock Get-MetraInspectGitDiffFiles {
+                [PSCustomObject]@{
+                    Empty            = $false
+                    Files            = @([PSCustomObject]@{ path = 'a.ps1'; content = 'x' })
+                    GitHead          = 'abc'
+                    RawDiff          = 'diff'
+                    UntrackedCount   = 0
+                    WorkingTreeDirty = $false
+                    Warning          = $null
+                    BaseMode         = 'working-tree'
+                    Base             = ''
+                }
+            }
+            Mock Reduce-MetraInspectDiffFiles {
+                [PSCustomObject]@{
+                    Files            = @([PSCustomObject]@{ path = 'a.ps1'; content = 'x'; class = 'code' })
+                    FileCount        = 1
+                    ReducedFileCount = 1
+                    SkippedFileCount = 0
+                    SkippedPaths     = @()
+                    DocsCollapsed    = @()
+                    Truncated        = $false
+                }
+            }
+            Mock Invoke-MetraInspectEngine { throw 'engine should not run under WhatIf' }
+
+            $r = Invoke-MetraInspectDiff -Name Metra -WhatIf
+            $r.WhatIf | Should -BeTrue
+            $r.Mode | Should -Be 'diff'
+            $r.FileCount | Should -Be 1
+        }
+    }
+
+    It 'plan WhatIf skips Invoke-MetraInspectEngine' {
+        InModuleScope Metra {
+            $temp = Join-Path $env:TEMP ("metra-inspect-plans-" + [guid]::NewGuid().ToString('n'))
+            New-Item -ItemType Directory -Path $temp -Force | Out-Null
+            try {
+                $plan = Join-Path $temp 'whatif.plan.md'
+                Set-Content -LiteralPath $plan -Value '# plan' -Encoding utf8
+                Mock Get-MetraInspectPlanRoots { @($temp) }
+                Mock Resolve-MetraInspectProjectContext {
+                    [PSCustomObject]@{
+                        Ok             = $true
+                        Project        = 'Metra'
+                        Root           = (Get-MetraRoot)
+                        ContextLimited = $false
+                        Warning        = $null
+                        Error          = $null
+                    }
+                }
+                Mock Invoke-MetraInspectEngine { throw 'engine should not run under WhatIf' }
+                Mock Get-MetraInspectScrubbedPlanText { throw 'scrub should not run under WhatIf' }
+
+                $r = Invoke-MetraInspectPlan -Name Metra -Path $plan -WhatIf
+                $r.WhatIf | Should -BeTrue
+                $r.Mode | Should -Be 'plan'
+                $r.PlanPath | Should -Be ([System.IO.Path]::GetFullPath($plan))
+                }
+            finally {
+                Remove-Item -LiteralPath $temp -Recurse -Force -ErrorAction SilentlyContinue
+            }
+        }
+    }
+}
+
+Describe 'Inspect pack empty-diff stale' {
+    It 'marks stale when current diff is empty' {
+        InModuleScope Metra {
+            $state = Join-Path $env:TEMP ("metra-inspect-state-" + [guid]::NewGuid().ToString('n'))
+            New-Item -ItemType Directory -Path $state -Force | Out-Null
+            Mock Get-MetraInspectStateRoot { $state }
+
+            $slot = Join-Path $state 'Metra'
+            New-Item -ItemType Directory -Path $slot -Force | Out-Null
+            $report = [ordered]@{
+                schemaVersion = 1
+                mode          = 'diff'
+                provenance    = [ordered]@{
+                    engine         = 'ollama'
+                    model          = 'test'
+                    inspectedAtUtc = [datetime]::UtcNow.ToString('o')
+                    project        = 'Metra'
+                    root           = (Get-MetraRoot)
+                    inputHash      = 'deadbeef'
+                    assessedFiles  = @('x.ps1')
+                    base           = ''
+                }
+                findings      = @()
+            }
+            $latest = Join-Path $slot 'latest.json'
+            ($report | ConvertTo-Json -Depth 8) | Set-Content -LiteralPath $latest -Encoding utf8
+            $pointer = [ordered]@{
+                mode             = 'diff'
+                latestReportPath = $latest
+                project          = 'Metra'
+                root             = (Get-MetraRoot)
+                inputHash        = 'deadbeef'
+                createdAtUtc     = [datetime]::UtcNow.ToString('o')
+            }
+            ($pointer | ConvertTo-Json -Depth 6) | Set-Content -LiteralPath (Join-Path $state 'last-diff.json') -Encoding utf8
+
+            Mock Get-MetraInspectGitDiffFiles {
+                [PSCustomObject]@{
+                    Empty            = $true
+                    Files            = @()
+                    GitHead          = 'abc'
+                    RawDiff          = ''
+                    UntrackedCount   = 0
+                    WorkingTreeDirty = $false
+                    Warning          = $null
+                    BaseMode         = 'working-tree'
+                    Base             = ''
+                }
+            }
+            Mock Set-Clipboard { }
+
+            try {
+                $pack = Invoke-MetraInspectPack -Mode diff
+                $pack.Stale | Should -BeTrue
+                $pack.Text | Should -Match 'Working tree is now empty'
+            }
+            finally {
+                Remove-Item -LiteralPath $state -Recurse -Force -ErrorAction SilentlyContinue
+            }
+        }
+    }
+}
+
+Describe 'Inspect input hash' {
+    It 'is stable for same parts' {
+        InModuleScope Metra {
+            $parts = @(
+                [PSCustomObject]@{ path = 'a.ps1'; content = 'hello' }
+            )
+            $h1 = Get-MetraInspectInputHash -Parts $parts
+            $h2 = Get-MetraInspectInputHash -Parts $parts
+            $h1 | Should -Be $h2
+            $h1.Length | Should -Be 64
+        }
+    }
+}
+
+Describe 'Inspect git base validation' {
+    It 'rejects leading dash' {
+        InModuleScope Metra {
+            { Resolve-MetraInspectGitBase -Root (Get-MetraRoot) -Base '-evil' } | Should -Throw "*must not start*"
+        }
+    }
+
+    It 'rejects path traversal segments' {
+        InModuleScope Metra {
+            { Resolve-MetraInspectGitBase -Root (Get-MetraRoot) -Base 'foo/..' } | Should -Throw '*path traversal*'
+        }
+    }
+
+    It 'rejects whitespace-only' {
+        InModuleScope Metra {
+            { Resolve-MetraInspectGitBase -Root (Get-MetraRoot) -Base '   ' } | Should -Throw '*empty or whitespace*'
+        }
+    }
+
+    It 'rejects unknown revision' {
+        InModuleScope Metra {
+            { Resolve-MetraInspectGitBase -Root (Get-MetraRoot) -Base 'this-rev-definitely-does-not-exist-zzzz' } | Should -Throw '*not a valid git revision*'
+        }
+    }
+}
+
+Describe 'Inspect untracked working-tree inclusion' {
+    It 'includes untracked text files in a temp git repo' {
+        InModuleScope Metra {
+            $tmp = Join-Path $env:TEMP ("metra-inspect-git-" + [guid]::NewGuid().ToString('n'))
+            New-Item -ItemType Directory -Path $tmp -Force | Out-Null
+            try {
+                Push-Location -LiteralPath $tmp
+                try {
+                    & git init 2>&1 | Out-Null
+                    & git config user.email 'metra-inspect@example.com' 2>&1 | Out-Null
+                    & git config user.name 'Metra Inspect' 2>&1 | Out-Null
+                    Set-Content -LiteralPath (Join-Path $tmp 'tracked.txt') -Value 'tracked' -Encoding utf8
+                    & git add tracked.txt 2>&1 | Out-Null
+                    & git commit -m 'init' 2>&1 | Out-Null
+                    Set-Content -LiteralPath (Join-Path $tmp 'new-feature.ps1') -Value 'Write-Host "hi"' -Encoding utf8
+                }
+                finally {
+                    Pop-Location
+                }
+
+                $diff = Get-MetraInspectGitDiffFiles -Root $tmp
+                $diff.Empty | Should -BeFalse
+                $diff.UntrackedCount | Should -BeGreaterThan 0
+                $diff.BaseMode | Should -Be 'working-tree'
+                ($diff.Files | Where-Object { $_.path -eq 'new-feature.ps1' }).Count | Should -Be 1
+                ($diff.Files | Where-Object { $_.path -eq 'new-feature.ps1' }).content | Should -Match 'UNTRACKED FILE'
+            }
+            finally {
+                Remove-Item -LiteralPath $tmp -Recurse -Force -ErrorAction SilentlyContinue
+            }
+        }
+    }
+
+    It 'Reduce keeps untracked-shaped code files' {
+        InModuleScope Metra {
+            $files = @(
+                [PSCustomObject]@{ path = 'fresh.ps1'; content = "UNTRACKED FILE`nWrite-Host 1" }
+            )
+            $r = Reduce-MetraInspectDiffFiles -Files $files
+            $r.ReducedFileCount | Should -Be 1
+            $r.Files[0].class | Should -Be 'code'
+        }
+    }
+}
+
+Describe 'Inspect CLI Name arity' {
+    It 'throws when -Name has more than one project' {
+        InModuleScope Metra {
+            { Show-MetraInspectCli -Name @('Metra', 'Trivia') } | Should -Throw '*single -Name*'
+        }
+    }
+}
+
+Describe 'Inspect provenance omits large bodies' {
+    It 'New-MetraInspectReport keeps caller provenance without requiring assessedDiff/planBody' {
+        InModuleScope Metra {
+            $prov = [PSCustomObject]@{
+                engine             = 'ollama'
+                model              = 'test'
+                inputHash          = 'abc'
+                assessedFiles      = @('a.ps1')
+                baseMode           = 'working-tree'
+                untrackedFileCount = 1
+                workingTreeDirty   = $false
+            }
+            $report = New-MetraInspectReport -Mode diff -Provenance $prov -Findings @()
+            $report.provenance.assessedFiles | Should -Contain 'a.ps1'
+            $report.provenance.PSObject.Properties.Name | Should -Not -Contain 'assessedDiff'
+            $report.provenance.PSObject.Properties.Name | Should -Not -Contain 'planBody'
+            $report.provenance.baseMode | Should -Be 'working-tree'
+        }
+    }
+}
