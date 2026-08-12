@@ -18,6 +18,18 @@ Entry shape:
 
 ---
 
+## 2026-08-12 - Host opens operator loopback for Settings authority
+
+- Decision: With Tailscale Serve, `BrowserUrl` / `ShareUrl` stay the peer reach URL. Local Host / Ops browser open uses `OperatorUrl` (`http://127.0.0.1:<port>/`) via `Get-MetraOpsOperatorOpenUrl`. Settings Save role, issue-sync-token, and other local-authority UI stay on that operator desk. Serve peers remain view/ask without inheriting loopback authority.
+- Why: Opening the Serve MagicDNS URL on HQ made Save role look broken - Serve strips same-machine authority and `/api/local-session` is loopback-only.
+- See: `scripts/private/OpsBinding.ps1`; `scripts/private/OpsHost.ps1`; `scripts/private/OpsServer.ps1`; Ops Settings
+
+## 2026-08-11 - Product update apply is async outside the Ops listener
+
+- Decision: Settings Metra/Ollama Update uses a single-flight background apply job (`%LOCALAPPDATA%\Metra\updates-apply.local.json`) outside the Ops HttpListener request thread. `POST /api/updates` returns **202** with `applyJob` (or **409** `updateAlreadyRunning` / **422** `updateNotApplicable` with no job). `GET /api/updates` while `applyJob.state === running` returns cached Metra/Ollama version fields plus live `applyJob` (no winget/GitHub refresh). Progress is phase + message only for v1 (`percent` always null). Metra self-update may restart or interrupt Ops; interrupted reconciliation surfaces verify-and-retry and best-effort deletes known installer temps only. No auto-apply, no concurrent apply jobs, no generic Ops job framework, no fake percent bar, no shutdown handshake / job resurrection.
+- Why: Synchronous apply (especially a ~1.5 GB Ollama setup download) froze the Ops request loop and Settings global `busy` with no progress.
+- See: `scripts/private/Updates.ps1`, `scripts/private/OpsServer.ps1`, `ops/src/App.tsx`, plan `non-blocking_product_updates_d09d5386`, [Shipped.local.md](Shipped.local.md) (non-blocking product updates)
+
 ## 2026-08-11 - Attention volume handling (composer-first)
 
 - Decision: When Attention exceeds the operator's preferred visible count (`attentionVisibleCount`, fail-closed default 1, clamp 1-10): show compact summary rows; render exactly one focused detail card; contain overflow within a bounded scroll region (Show all expands compact rows only); preserve composer-first access via a sticky presence shell on compact viewports. Held / Keeping in view stays the prior one-card picker in this bite. Voice (`data-voice-state`) and Attention posture (`data-attention`) remain orthogonal on the desk mark.

@@ -96,6 +96,32 @@ function Get-MetraProp {
     return $prop.Value
 }
 
+function Test-MetraPropExists {
+    <#
+    .SYNOPSIS
+        True when a PSCustomObject or dictionary has a named property/key (case-insensitive for dictionaries).
+    #>
+    [CmdletBinding()]
+    param(
+        $Object,
+        [Parameter(Mandatory)][string]$Name
+    )
+
+    if ($null -eq $Object) { return $false }
+
+    if ($Object -is [System.Collections.IDictionary]) {
+        if ($Object.Contains($Name)) { return $true }
+        foreach ($key in $Object.Keys) {
+            if ([string]::Equals([string]$key, $Name, [System.StringComparison]::OrdinalIgnoreCase)) {
+                return $true
+            }
+        }
+        return $false
+    }
+
+    return [bool]$Object.PSObject.Properties[$Name]
+}
+
 function Get-MetraRoots {
     <#
     .SYNOPSIS
@@ -297,18 +323,24 @@ function Get-MetraSettingsPortfolio {
     }
 
     $bindingSummary = 'loopback'
+    $operatorUrl = $null
+    $shareUrl = $null
     try {
         if (Get-Command Resolve-MetraOpsDeskBinding -ErrorAction SilentlyContinue) {
             $binding = Resolve-MetraOpsDeskBinding -MetraRoot $MetraRoot
             if ($binding -and $binding.BrowserUrl) {
+                $shareUrl = [string]$binding.BrowserUrl
+                if (Get-Command Get-MetraOpsOperatorOpenUrl -ErrorAction SilentlyContinue) {
+                    $operatorUrl = Get-MetraOpsOperatorOpenUrl -Binding $binding
+                }
                 if ([bool]$prefs.bindTailscale) {
-                    $bindingSummary = "Tailscale reach ($($binding.BrowserUrl))"
+                    $bindingSummary = "Tailscale reach ($shareUrl)"
                 }
                 elseif ([bool]$prefs.preferFriendlyUrl -or ($binding.BrowserHost -eq 'metra')) {
-                    $bindingSummary = "Friendly URL ($($binding.BrowserUrl))"
+                    $bindingSummary = "Friendly URL ($shareUrl)"
                 }
                 else {
-                    $bindingSummary = "Loopback ($($binding.BrowserUrl))"
+                    $bindingSummary = "Loopback ($shareUrl)"
                 }
             }
         }
@@ -335,6 +367,8 @@ function Get-MetraSettingsPortfolio {
         machineRole     = $prefs.machineRole
         opsBaseUrl      = $opsBaseUrl
         bindingSummary  = $bindingSummary
+        operatorUrl     = $operatorUrl
+        shareUrl        = $shareUrl
         preferFriendlyUrl = $prefs.preferFriendlyUrl
         bindTailscale   = [bool]$prefs.bindTailscale
     }

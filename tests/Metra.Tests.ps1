@@ -301,6 +301,19 @@ Describe 'Profile satellite check-in roster' {
             $b.state | Should -Be 'Behind'
         }
     }
+
+    It 'accepts empty lastAppliedHash as (none) for first sync' {
+        InModuleScope Metra {
+            $path = Join-Path $TestDrive 'profile-satellites-first.local.json'
+            $null = Save-MetraProfileSatelliteCheckIn -MachineName 'New-Satellite' -LastAppliedHash '' -Path $path
+            $raw = Get-Content -LiteralPath $path -Raw | ConvertFrom-Json
+            $row = @($raw.satellites) | Where-Object { $_.machineName -eq 'New-Satellite' } | Select-Object -First 1
+            $row.lastAppliedHash | Should -Be '(none)'
+            $roster = Get-MetraProfileSatelliteRoster -PublisherHash 'sha256:pub' -Path $path
+            $n = @($roster.Satellites) | Where-Object { $_.machineName -eq 'New-Satellite' } | Select-Object -First 1
+            $n.state | Should -Be 'Behind'
+        }
+    }
 }
 
 Describe 'Export-MetraContext' {
@@ -1439,6 +1452,72 @@ Describe 'Update-MetraWorkspace' {
     }
 }
 
+Describe 'Metra Ops Server request safety' {
+    It 'rejects static path traversal after URL decoding' {
+        InModuleScope Metra {
+            $root = Join-Path ([IO.Path]::GetTempPath()) ("metra-dist-" + [guid]::NewGuid().ToString('n'))
+            New-Item -ItemType Directory -Path $root | Out-Null
+            try {
+                Resolve-MetraOpsStaticPath -DistPath $root -UrlPath '/../secret.txt' | Should -BeNullOrEmpty
+                Resolve-MetraOpsStaticPath -DistPath $root -UrlPath '/%2e%2e/secret.txt' | Should -BeNullOrEmpty
+            }
+            finally {
+                Remove-Item -LiteralPath $root -Recurse -Force -ErrorAction SilentlyContinue
+            }
+        }
+    }
+
+    It 'allows filenames that merely contain two dots' {
+        InModuleScope Metra {
+            $root = Join-Path ([IO.Path]::GetTempPath()) ("metra-dist-" + [guid]::NewGuid().ToString('n'))
+            New-Item -ItemType Directory -Path $root | Out-Null
+            try {
+                $resolved = Resolve-MetraOpsStaticPath -DistPath $root -UrlPath '/release..notes.html'
+                $resolved | Should -Not -BeNullOrEmpty
+                $resolved | Should -Match 'release\.\.notes\.html$'
+            }
+            finally {
+                Remove-Item -LiteralPath $root -Recurse -Force -ErrorAction SilentlyContinue
+            }
+        }
+    }
+
+    It 'detects hashtable properties' {
+        InModuleScope Metra {
+            $obj = @{ body = ''; derivedFrom = @{ type = 'ask' } }
+
+            Test-MetraPropExists -Object $obj -Name 'body' | Should -BeTrue
+            Test-MetraPropExists -Object $obj -Name 'derivedFrom' | Should -BeTrue
+            Test-MetraPropExists -Object $obj -Name 'missing' | Should -BeFalse
+        }
+    }
+
+    It 'parses query values safely' {
+        InModuleScope Metra {
+            $fake = [PSCustomObject]@{
+                Url = [PSCustomObject]@{ Query = '?q=hello%20world&limit=25' }
+            }
+            Get-MetraOpsQueryValue -Request $fake -Name 'q' | Should -Be 'hello world'
+            Get-MetraOpsQueryValue -Request $fake -Name 'limit' | Should -Be '25'
+            Get-MetraOpsQueryValue -Request $fake -Name 'missing' | Should -BeNullOrEmpty
+        }
+    }
+
+    It 'does not stop Ask when Stop-MetraOpsServer kills a desk process' {
+        $source = Get-Content -LiteralPath (Join-Path (Get-MetraRoot) 'scripts\private\OpsServer.ps1') -Raw
+        $chunk = [regex]::Match($source, '(?s)function Stop-MetraOpsServer \{.*?function Start-MetraOpsServer').Value
+        $chunk | Should -Not -BeNullOrEmpty
+        # Comment may mention the cmdlet; the call site must stay gone.
+        ($chunk -match '(?m)^\s*try\s*\{\s*Stop-MetraAskEngine\b') | Should -BeFalse
+    }
+
+    It 'requires profile sync bearer for check-in' {
+        $source = Get-Content -LiteralPath (Join-Path (Get-MetraRoot) 'scripts\private\OpsServer.ps1') -Raw
+        $source | Should -Match 'Test-MetraOpsProfileSyncBearer'
+        $source | Should -Match "Profile check-in requires X-Metra-Profile-Sync bearer"
+    }
+}
+
 Describe 'HTML Ops desk payload' {
     It 'ships a built ops/dist index for end users without Node' {
         $index = Join-Path (Get-MetraRoot) 'ops\dist\index.html'
@@ -1914,13 +1993,70 @@ Describe 'HTML Ops desk payload' {
         $route | Should -Not -Match "Get-MetraProp -Object \`$body -Name '(action|engine)'"
     }
 
+    It 'rejects unsafe friendly hostnames' {
+        InModuleScope Metra {
+            Test-MetraFriendlyHostName -Name 'metra' | Should -BeTrue
+            Test-MetraFriendlyHostName -Name 'metra-hq' | Should -BeTrue
+            Test-MetraFriendlyHostName -Name '-metra' | Should -BeFalse
+            Test-MetraFriendlyHostName -Name 'metra-' | Should -BeFalse
+            Test-MetraFriendlyHostName -Name 'metra.local' | Should -BeFalse
+            Test-MetraFriendlyHostName -Name '' | Should -BeFalse
+        }
+    }
+
+    It 'validates IPv4 addresses' {
+        InModuleScope Metra {
+            Test-MetraIPv4Address -Address '100.64.1.2' | Should -BeTrue
+            Test-MetraIPv4Address -Address '127.0.0.1' | Should -BeTrue
+            Test-MetraIPv4Address -Address '999.999.999.999' | Should -BeFalse
+            Test-MetraIPv4Address -Address 'not-an-ip' | Should -BeFalse
+        }
+    }
+
+    It 'creates loopback operator URL for Tailscale binding' {
+        InModuleScope Metra {
+            Mock Get-MetraOpsTailscaleDnsName { $null }
+            $b = Get-MetraOpsTailscaleBinding -Address '100.64.1.2' -Port 7380 -DnsName 'metra.example.ts.net'
+            $b.BrowserUrl | Should -Be 'http://metra.example.ts.net:7380/'
+            $b.OperatorUrl | Should -Be 'http://127.0.0.1:7380/'
+            @($b.ListenerPrefixes) | Should -Contain 'http://127.0.0.1:7380/'
+            @($b.ListenerPrefixes) | Should -Contain 'http://100.64.1.2:7380/'
+            @($b.ListenerPrefixes) | Should -Contain 'http://metra.example.ts.net:7380/'
+        }
+    }
+
+    It 'prefers Serve HTTPS for share URL but keeps loopback operator URL' {
+        InModuleScope Metra {
+            Mock Get-MetraOpsTailscaleDnsName { 'metra.example.ts.net' }
+            $b = Get-MetraOpsTailscaleBinding `
+                -Address '100.64.1.2' `
+                -Port 7380 `
+                -DnsName 'metra.example.ts.net' `
+                -ServeHttpsUrl 'https://metra.example.ts.net'
+            $b.BrowserUrl | Should -Be 'https://metra.example.ts.net/'
+            $b.ShareUrl | Should -Be 'https://metra.example.ts.net/'
+            $b.OperatorUrl | Should -Be 'http://127.0.0.1:7380/'
+            $b.Serve | Should -BeTrue
+            @($b.ListenerPrefixes) | Should -Contain 'http://127.0.0.1:7380/'
+        }
+    }
+
     It 'Tailscale binding prefers HTTPS share when Serve URL is provided' {
         InModuleScope Metra {
             Mock Get-MetraOpsTailscaleDnsName { 'dev-jmp01.taila8f8a7.ts.net' }
             $b = Get-MetraOpsTailscaleBinding -Address '100.64.1.2' -Port 7380 -ServeHttpsUrl 'https://dev-jmp01.taila8f8a7.ts.net/'
             $b.Serve | Should -BeTrue
             $b.ShareUrl | Should -Be 'https://dev-jmp01.taila8f8a7.ts.net/'
+            $b.OperatorUrl | Should -Be 'http://127.0.0.1:7380/'
+            (Get-MetraOpsOperatorOpenUrl -Binding $b) | Should -Be 'http://127.0.0.1:7380/'
             @($b.ListenerPrefixes) | Should -Be @('http://127.0.0.1:7380/')
+        }
+    }
+
+    It 'rejects invalid Tailscale IPv4 in binding constructor' {
+        InModuleScope Metra {
+            { Get-MetraOpsTailscaleBinding -Address '999.999.999.999' -Port 7380 } | Should -Throw
+            { Get-MetraOpsTailscaleBinding -Address 'not-an-ip' -Port 7380 } | Should -Throw
         }
     }
 
@@ -3200,6 +3336,271 @@ Describe 'Ask multi-engine (ladder 1)' {
         }
     }
 
+    It 'product update apply job status emits required fields with null percent' {
+        InModuleScope Metra {
+            $realLocalAppData = $env:LOCALAPPDATA
+            $env:LOCALAPPDATA = Join-Path ([IO.Path]::GetTempPath()) ("metra-apply-" + [guid]::NewGuid().ToString('n'))
+            $script:MetraUpdateApplyHandles = @{}
+            $script:MetraUpdateApplyJobRunner = $null
+            try {
+                $job = [PSCustomObject]@{
+                    jobId      = '20260811-unit-aaaa'
+                    target     = 'ollama'
+                    state      = 'running'
+                    phase      = 'downloading'
+                    message    = 'Downloading Ollama installer...'
+                    percent    = $null
+                    startedAt  = '2026-08-11T20:10:18Z'
+                    finishedAt = $null
+                    result     = $null
+                }
+                (Write-MetraUpdateApplyStatus -Job $job) | Should -BeTrue
+                $read = Read-MetraUpdateApplyJob
+                $read.jobId | Should -Be '20260811-unit-aaaa'
+                $read.state | Should -Be 'running'
+                $read.phase | Should -Be 'downloading'
+                $null -eq $read.percent | Should -BeTrue
+                $read.finishedAt | Should -BeNullOrEmpty
+
+                $job.state = 'succeeded'
+                $job.phase = 'done'
+                $job.finishedAt = '2026-08-11T20:20:00Z'
+                $job.result = [PSCustomObject]@{
+                    target          = 'ollama'
+                    changed         = $true
+                    versionBefore   = '0.1.0'
+                    versionAfter    = '0.2.0'
+                    restartRequired = $false
+                    message         = 'ok'
+                    status          = 'updated'
+                    ok              = $true
+                }
+                (Write-MetraUpdateApplyStatus -Job $job) | Should -BeTrue
+                $done = Read-MetraUpdateApplyJob
+                $done.finishedAt | Should -Not -BeNullOrEmpty
+                $done.state | Should -Be 'succeeded'
+                $done.phase | Should -Be 'done'
+                $done.result.changed | Should -BeTrue
+                $done.result.versionBefore | Should -Be '0.1.0'
+                $done.result.versionAfter | Should -Be '0.2.0'
+            }
+            finally {
+                Remove-Item -LiteralPath $env:LOCALAPPDATA -Recurse -Force -ErrorAction SilentlyContinue
+                $env:LOCALAPPDATA = $realLocalAppData
+                $script:MetraUpdateApplyHandles = @{}
+                $script:MetraUpdateApplyJobRunner = $null
+            }
+        }
+    }
+
+    It 'product update apply refuses stale jobId overwrite while running' {
+        InModuleScope Metra {
+            $realLocalAppData = $env:LOCALAPPDATA
+            $env:LOCALAPPDATA = Join-Path ([IO.Path]::GetTempPath()) ("metra-apply-" + [guid]::NewGuid().ToString('n'))
+            try {
+                $running = [PSCustomObject]@{
+                    jobId      = 'job-a'
+                    target     = 'ollama'
+                    state      = 'running'
+                    phase      = 'downloading'
+                    message    = 'a'
+                    percent    = $null
+                    startedAt  = '2026-08-11T20:10:18Z'
+                    finishedAt = $null
+                    result     = $null
+                }
+                (Write-MetraUpdateApplyStatus -Job $running) | Should -BeTrue
+                $stale = [PSCustomObject]@{
+                    jobId      = 'job-b'
+                    target     = 'ollama'
+                    state      = 'running'
+                    phase      = 'installing'
+                    message    = 'b'
+                    percent    = $null
+                    startedAt  = '2026-08-11T20:11:18Z'
+                    finishedAt = $null
+                    result     = $null
+                }
+                (Write-MetraUpdateApplyStatus -Job $stale) | Should -BeFalse
+                (Read-MetraUpdateApplyJob).jobId | Should -Be 'job-a'
+            }
+            finally {
+                Remove-Item -LiteralPath $env:LOCALAPPDATA -Recurse -Force -ErrorAction SilentlyContinue
+                $env:LOCALAPPDATA = $realLocalAppData
+            }
+        }
+    }
+
+    It 'product update apply preflight not-applicable does not create a job' {
+        InModuleScope Metra {
+            $realLocalAppData = $env:LOCALAPPDATA
+            $env:LOCALAPPDATA = Join-Path ([IO.Path]::GetTempPath()) ("metra-apply-" + [guid]::NewGuid().ToString('n'))
+            $script:MetraUpdateApplyHandles = @{}
+            $script:MetraUpdateApplyJobRunner = { throw 'runner should not run' }
+            try {
+                Mock Get-MetraProductUpdates {
+                    [PSCustomObject]@{
+                        metra  = [PSCustomObject]@{ canUpdate = $false; message = 'Metra is up to date.' }
+                        ollama = [PSCustomObject]@{ canUpdate = $false; message = 'Ollama is up to date.' }
+                    }
+                }
+                $r = Start-MetraProductUpdateApplyJob -Target ollama
+                $r.StatusCode | Should -Be 422
+                $r.Accepted | Should -BeFalse
+                $r.Error | Should -Be 'updateNotApplicable'
+                (Test-Path -LiteralPath (Get-MetraUpdateApplyStatusPath)) | Should -BeFalse
+            }
+            finally {
+                $script:MetraUpdateApplyJobRunner = $null
+                $script:MetraUpdateApplyHandles = @{}
+                Remove-Item -LiteralPath $env:LOCALAPPDATA -Recurse -Force -ErrorAction SilentlyContinue
+                $env:LOCALAPPDATA = $realLocalAppData
+            }
+        }
+    }
+
+    It 'product update apply accept and second start conflict shapes' {
+        InModuleScope Metra {
+            $realLocalAppData = $env:LOCALAPPDATA
+            $env:LOCALAPPDATA = Join-Path ([IO.Path]::GetTempPath()) ("metra-apply-" + [guid]::NewGuid().ToString('n'))
+            $script:MetraUpdateApplyHandles = @{}
+            $script:MetraUpdateApplyJobRunner = {
+                param($Target, $MetraRoot, $JobId)
+                # Leave job running; Start registers a fake handle for single-flight.
+            }
+            try {
+                Mock Get-MetraProductUpdates {
+                    [PSCustomObject]@{
+                        metra  = [PSCustomObject]@{ canUpdate = $false; message = 'dev' }
+                        ollama = [PSCustomObject]@{
+                            canUpdate       = $true
+                            updateAvailable = $true
+                            message         = 'Ollama update available'
+                            status          = 'update_available'
+                        }
+                    }
+                }
+                $a = Start-MetraProductUpdateApplyJob -Target ollama
+                $a.StatusCode | Should -Be 202
+                $a.Accepted | Should -BeTrue
+                $a.Job.jobId | Should -Not -BeNullOrEmpty
+                $a.Job.state | Should -Be 'running'
+                $null -eq $a.Job.percent | Should -BeTrue
+
+                $b = Start-MetraProductUpdateApplyJob -Target ollama
+                $b.StatusCode | Should -Be 409
+                $b.Accepted | Should -BeFalse
+                $b.Error | Should -Be 'updateAlreadyRunning'
+                $b.Job.jobId | Should -Be $a.Job.jobId
+            }
+            finally {
+                $script:MetraUpdateApplyJobRunner = $null
+                $script:MetraUpdateApplyHandles = @{}
+                Remove-Item -LiteralPath $env:LOCALAPPDATA -Recurse -Force -ErrorAction SilentlyContinue
+                $env:LOCALAPPDATA = $realLocalAppData
+            }
+        }
+    }
+
+    It 'product update cheap GET while running skips remote version helpers' {
+        InModuleScope Metra {
+            $realLocalAppData = $env:LOCALAPPDATA
+            $env:LOCALAPPDATA = Join-Path ([IO.Path]::GetTempPath()) ("metra-apply-" + [guid]::NewGuid().ToString('n'))
+            $script:MetraUpdateApplyHandles = @{}
+            $script:MetraUpdateApplyJobRunner = $null
+            try {
+                $cacheDir = Join-Path $env:LOCALAPPDATA 'Metra'
+                [void][System.IO.Directory]::CreateDirectory($cacheDir)
+                $cache = [PSCustomObject]@{
+                    checkedAt         = '2026-08-11T12:00:00Z'
+                    lastUpdatedAt     = $null
+                    lastMetraVersion  = $null
+                    lastOllamaVersion = $null
+                    metra             = [PSCustomObject]@{ id = 'metra'; canUpdate = $false; status = 'up_to_date'; message = 'cached metra' }
+                    ollama            = [PSCustomObject]@{ id = 'ollama'; canUpdate = $true; status = 'update_available'; message = 'cached ollama' }
+                    anyUpdate         = $true
+                }
+                Write-MetraUpdatesCacheAtomic -Path (Get-MetraUpdatesCachePath) -Payload $cache
+
+                $jobId = 'cheap-get-job'
+                $job = [PSCustomObject]@{
+                    jobId      = $jobId
+                    target     = 'ollama'
+                    state      = 'running'
+                    phase      = 'downloading'
+                    message    = 'Downloading...'
+                    percent    = $null
+                    startedAt  = '2026-08-11T20:10:18Z'
+                    finishedAt = $null
+                    result     = $null
+                }
+                $null = Write-MetraUpdateApplyStatus -Job $job
+                $script:MetraUpdateApplyHandles[$jobId] = @{
+                    PowerShell  = $null
+                    AsyncResult = [PSCustomObject]@{ IsCompleted = $false }
+                }
+
+                Mock Get-MetraGitHubLatestRelease { throw 'remote metra should not run' }
+                Mock Get-MetraOllamaAvailableVersion { throw 'remote ollama should not run' }
+                Mock Get-MetraProductUpdates { throw 'Get-MetraProductUpdates should not run while apply is running' }
+
+                $payload = Get-MetraOpsUpdatesApiPayload -Force
+                $payload.applyJob.state | Should -Be 'running'
+                $payload.ollama.message | Should -Be 'cached ollama'
+                $payload.metra.message | Should -Be 'cached metra'
+            }
+            finally {
+                $script:MetraUpdateApplyHandles = @{}
+                Remove-Item -LiteralPath $env:LOCALAPPDATA -Recurse -Force -ErrorAction SilentlyContinue
+                $env:LOCALAPPDATA = $realLocalAppData
+            }
+        }
+    }
+
+    It 'product update stale running reconciles to interrupted and cleans known temps' {
+        InModuleScope Metra {
+            $realLocalAppData = $env:LOCALAPPDATA
+            $realTemp = $env:TEMP
+            $env:LOCALAPPDATA = Join-Path ([IO.Path]::GetTempPath()) ("metra-apply-" + [guid]::NewGuid().ToString('n'))
+            $env:TEMP = Join-Path ([IO.Path]::GetTempPath()) ("metra-apply-temp-" + [guid]::NewGuid().ToString('n'))
+            $script:MetraUpdateApplyHandles = @{}
+            try {
+                [void][System.IO.Directory]::CreateDirectory($env:TEMP)
+                $known = Join-Path $env:TEMP 'MetraOllamaSetup-upgrade.exe'
+                Set-Content -LiteralPath $known -Value 'x' -Encoding ascii
+                $setup = Join-Path $env:TEMP 'MetraSetup-update-deadbeef.exe'
+                Set-Content -LiteralPath $setup -Value 'y' -Encoding ascii
+
+                $job = [PSCustomObject]@{
+                    jobId      = 'stale-job'
+                    target     = 'metra'
+                    state      = 'running'
+                    phase      = 'installing'
+                    message    = 'Installing...'
+                    percent    = $null
+                    startedAt  = '2026-08-11T20:10:18Z'
+                    finishedAt = $null
+                    result     = $null
+                }
+                $null = Write-MetraUpdateApplyStatus -Job $job
+
+                $reconciled = Sync-MetraUpdateApplyInterrupted
+                $reconciled.state | Should -Be 'interrupted'
+                $reconciled.message | Should -Match 'Verify installed version'
+                $reconciled.finishedAt | Should -Not -BeNullOrEmpty
+                (Test-Path -LiteralPath $known) | Should -BeFalse
+                (Test-Path -LiteralPath $setup) | Should -BeFalse
+            }
+            finally {
+                $script:MetraUpdateApplyHandles = @{}
+                Remove-Item -LiteralPath $env:LOCALAPPDATA -Recurse -Force -ErrorAction SilentlyContinue
+                Remove-Item -LiteralPath $env:TEMP -Recurse -Force -ErrorAction SilentlyContinue
+                $env:LOCALAPPDATA = $realLocalAppData
+                $env:TEMP = $realTemp
+            }
+        }
+    }
+
     It 'openai_compat and recommend scripts are present' {
         Test-Path -LiteralPath (Join-Path (Get-MetraRoot) 'scripts\private\AskOpenAICompat.ps1') | Should -BeTrue
         Test-Path -LiteralPath (Join-Path (Get-MetraRoot) 'scripts\private\AskRecommend.ps1') | Should -BeTrue
@@ -3344,6 +3745,59 @@ Describe 'Metra Ops host' {
                 $env:LOCALAPPDATA = $realLocalAppData
             }
         }
+    }
+
+    It 'treats stale host state as not running even when PID exists' {
+        InModuleScope Metra {
+            $state = [PSCustomObject]@{
+                hostPid   = $PID
+                status    = 'running'
+                updatedAt = ([datetime]::UtcNow.AddMinutes(-10).ToString('o'))
+            }
+
+            Test-MetraOpsHostStateFresh -State $state -MaxAgeSeconds 120 | Should -BeFalse
+        }
+    }
+
+    It 'treats fresh host state as running evidence' {
+        InModuleScope Metra {
+            $state = [PSCustomObject]@{
+                hostPid   = $PID
+                status    = 'running'
+                updatedAt = ([datetime]::UtcNow.ToString('o'))
+            }
+
+            Test-MetraOpsHostStateFresh -State $state -MaxAgeSeconds 120 | Should -BeTrue
+        }
+    }
+
+    It 'uses a distinct unsupervised state when tray exits without killing desk' {
+        InModuleScope Metra {
+            $realLocalAppData = $env:LOCALAPPDATA
+            $env:LOCALAPPDATA = Join-Path ([IO.Path]::GetTempPath()) ("metra-host-" + [guid]::NewGuid().ToString('n'))
+            try {
+                Write-MetraOpsHostState -Status 'running' -OpsPort 7380 -RestartCount 0 `
+                    -StartedAt ([datetime]::UtcNow.ToString('o')) -ChildPid 4242
+                Write-MetraOpsHostState -Status 'unsupervised' -OpsPort 7380 -RestartCount 0 `
+                    -StartedAt ([datetime]::UtcNow.ToString('o')) -ChildPid 4242 `
+                    -LastFailure 'Tray host exited; desk process may still be running.'
+                $state = Get-MetraOpsHostState
+                $state.status | Should -Be 'unsupervised'
+                $state.childPid | Should -Be 4242
+                $state.lastFailure | Should -Match 'desk process may still be running'
+            }
+            finally {
+                Remove-Item -LiteralPath $env:LOCALAPPDATA -Recurse -Force -ErrorAction SilentlyContinue
+                $env:LOCALAPPDATA = $realLocalAppData
+            }
+        }
+    }
+
+    It 'requires fresh state before trusting a recycled host PID' {
+        $source = Get-Content -LiteralPath (Join-Path (Get-MetraRoot) 'scripts\private\OpsHost.ps1') -Raw
+        $source | Should -Match 'Test-MetraOpsHostStateFresh'
+        $source | Should -Match "Status 'unsupervised'"
+        $source | Should -Match 'opsPort'
     }
 
     It 'logs supervision events so a hidden tray leaves a trace' {

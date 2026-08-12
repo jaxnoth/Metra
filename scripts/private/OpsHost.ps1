@@ -3,7 +3,12 @@
 # Authority: browser can propose; host/session applies; Ops owns Ask; host owns supervision.
 
 function Get-MetraOpsHostDataDir {
-    $dir = Join-Path $env:LOCALAPPDATA 'Metra'
+    $base = $env:LOCALAPPDATA
+    if ([string]::IsNullOrWhiteSpace($base)) {
+        $base = Join-Path $HOME 'AppData\Local'
+    }
+
+    $dir = Join-Path $base 'Metra'
     if (-not (Test-Path -LiteralPath $dir)) {
         # Directory.CreateDirectory is literal-path safe; New-Item -LiteralPath is not on all hosts.
         [void][System.IO.Directory]::CreateDirectory($dir)
@@ -110,16 +115,28 @@ function New-MetraOpsShortcut {
         [void][System.IO.Directory]::CreateDirectory($dir)
     }
 
-    $wsh = New-Object -ComObject WScript.Shell
-    $shortcut = $wsh.CreateShortcut($LinkPath)
-    $shortcut.TargetPath = $TargetPath
-    $shortcut.WorkingDirectory = $WorkingDirectory
-    $shortcut.WindowStyle = $WindowStyle
-    $shortcut.Description = $Description
-    if ($IconPath -and (Test-Path -LiteralPath $IconPath)) {
-        $shortcut.IconLocation = "$IconPath,0"
+    $wsh = $null
+    $shortcut = $null
+    try {
+        $wsh = New-Object -ComObject WScript.Shell
+        $shortcut = $wsh.CreateShortcut($LinkPath)
+        $shortcut.TargetPath = $TargetPath
+        $shortcut.WorkingDirectory = $WorkingDirectory
+        $shortcut.WindowStyle = $WindowStyle
+        $shortcut.Description = $Description
+        if ($IconPath -and (Test-Path -LiteralPath $IconPath)) {
+            $shortcut.IconLocation = "$IconPath,0"
+        }
+        $shortcut.Save()
     }
-    $shortcut.Save()
+    finally {
+        if ($shortcut) {
+            try { [void][Runtime.InteropServices.Marshal]::ReleaseComObject($shortcut) } catch { }
+        }
+        if ($wsh) {
+            try { [void][Runtime.InteropServices.Marshal]::ReleaseComObject($wsh) } catch { }
+        }
+    }
 }
 
 function Install-MetraOpsStartMenuShortcuts {
@@ -318,13 +335,46 @@ function Get-MetraOpsHostState {
     }
 }
 
+function Test-MetraOpsHostStateFresh {
+    <#
+    .SYNOPSIS
+        True when host state.updatedAt is recent enough to trust against PID reuse.
+    #>
+    [CmdletBinding()]
+    param(
+        $State,
+        [int]$MaxAgeSeconds = 120
+    )
+
+    if (-not $State) { return $false }
+
+    $updatedRaw = Get-MetraProp -Object $State -Name 'updatedAt' -Default ''
+    if ([string]::IsNullOrWhiteSpace($updatedRaw)) { return $false }
+
+    $updated = [datetime]::MinValue
+    if (-not [datetime]::TryParse(
+            $updatedRaw,
+            [Globalization.CultureInfo]::InvariantCulture,
+            [Globalization.DateTimeStyles]::AssumeUniversal -bor [Globalization.DateTimeStyles]::AdjustToUniversal,
+            [ref]$updated
+        )) {
+        return $false
+    }
+
+    if ($updated.Kind -ne [DateTimeKind]::Utc) {
+        $updated = $updated.ToUniversalTime()
+    }
+
+    return (([datetime]::UtcNow - $updated).TotalSeconds -le $MaxAgeSeconds)
+}
+
 function Get-MetraOpsHostProcessId {
     <#
     .SYNOPSIS
-        Returns the live Ops host PID when the pid file matches Metra host state.
+        Returns the live Ops host PID when the pid file matches fresh Metra host state.
     .DESCRIPTION
         PID existence alone is not enough - Windows recycles PIDs. Require state.hostPid to match
-        so a stale ops-host.pid cannot block startup by pointing at an unrelated process.
+        and state.updatedAt to be recent so a stale ops-host.pid cannot block startup.
     #>
     $pidFile = Get-MetraOpsHostPidFile
     if (-not (Test-Path -LiteralPath $pidFile)) { return $null }
@@ -348,11 +398,14 @@ function Get-MetraOpsHostProcessId {
     if ($state) {
         $stateHostPid = [int](Get-MetraProp -Object $state -Name 'hostPid' -Default 0)
     }
-    if ($stateHostPid -eq $recorded) {
+    if (
+        $stateHostPid -eq $recorded -and
+        (Test-MetraOpsHostStateFresh -State $state)
+    ) {
         return $recorded
     }
 
-    # PID exists but does not match Metra state. Treat as stale to avoid blocking startup.
+    # PID exists but state is missing/stale or does not match Metra state.
     Remove-Item -LiteralPath $pidFile -Force -ErrorAction SilentlyContinue
     return $null
 }
@@ -370,13 +423,15 @@ function Open-MetraOpsDeskBrowser {
     )
 
     if ([string]::IsNullOrWhiteSpace($Url)) {
+        # Local Host open uses OperatorUrl (loopback), not Tailscale ShareUrl.
+        # Serve strips loopback authority; Settings / Save role need /api/local-session.
         if ($Port -gt 0) {
-            # Honor Tailscale / friendly reach prefs for explicit supervised ports.
             $binding = Get-MetraOpsDeskBindingForPort -Port $Port -MetraRoot $MetraRoot
-            $Url = [string]$binding.BrowserUrl
+            $Url = Get-MetraOpsOperatorOpenUrl -Binding $binding
         }
         else {
-            $Url = Get-MetraOpsDeskUrl -MetraRoot $MetraRoot
+            $binding = Resolve-MetraOpsDeskBinding -MetraRoot $MetraRoot
+            $Url = Get-MetraOpsOperatorOpenUrl -Binding $binding
         }
     }
     try {
@@ -458,9 +513,15 @@ function Get-MetraOpsChildProcessId {
 
     $recorded = 0
     if (-not [int]::TryParse((Get-Content -LiteralPath $pidFile -Raw).Trim(), [ref]$recorded)) {
+        Remove-Item -LiteralPath $pidFile -Force -ErrorAction SilentlyContinue
         return $null
     }
-    if (Get-Process -Id $recorded -ErrorAction SilentlyContinue) { return $recorded }
+
+    if (Get-Process -Id $recorded -ErrorAction SilentlyContinue) {
+        return $recorded
+    }
+
+    Remove-Item -LiteralPath $pidFile -Force -ErrorAction SilentlyContinue
     return $null
 }
 
@@ -534,18 +595,26 @@ function Stop-MetraOpsHost {
     }
 
     $hostPid = Get-MetraOpsHostProcessId
+    $stoppedHost = $false
+
     if ($hostPid -and $hostPid -ne $PID) {
         try {
             Stop-Process -Id $hostPid -Force -ErrorAction Stop
+            $stoppedHost = $true
             Write-Host "Stopped Metra Ops host (process $hostPid)." -ForegroundColor Green
         }
         catch {
             Write-Warning "Could not stop Ops host process $hostPid - $($_.Exception.Message)"
         }
     }
+    elseif ($hostPid -eq $PID) {
+        $stoppedHost = $true
+    }
 
-    Remove-Item -LiteralPath (Get-MetraOpsHostPidFile) -Force -ErrorAction SilentlyContinue
-    Write-MetraOpsHostState -Status 'stopped' -OpsPort $Port -RestartCount 0 -LastFailure $null -StartedAt ([datetime]::UtcNow.ToString('o'))
+    if ($stoppedHost -or -not $hostPid) {
+        Remove-Item -LiteralPath (Get-MetraOpsHostPidFile) -Force -ErrorAction SilentlyContinue
+        Write-MetraOpsHostState -Status 'stopped' -OpsPort $Port -RestartCount 0 -LastFailure $null -StartedAt ([datetime]::UtcNow.ToString('o'))
+    }
 }
 
 function Start-MetraOpsHost {
@@ -586,8 +655,21 @@ function Start-MetraOpsHost {
     $existingHost = Get-MetraOpsHostProcessId
     if ($existingHost -and $existingHost -ne $PID) {
         try { Install-MetraOpsStartMenuShortcuts -MetraRoot $MetraRoot | Out-Null } catch { }
+
+        $openPort = $Port
+        try {
+            $state = Get-MetraOpsHostState
+            $statePort = if ($state) { Get-MetraProp -Object $state -Name 'opsPort' -Default 0 } else { 0 }
+            if ($statePort -gt 0) {
+                $openPort = [int]$statePort
+            }
+        }
+        catch { }
+
         Write-Host "Metra Ops host already running (process $existingHost)." -ForegroundColor Green
-        if (-not $NoBrowser) { Open-MetraOpsDeskBrowser -Port $Port }
+        if (-not $NoBrowser) {
+            Open-MetraOpsDeskBrowser -Port $openPort -MetraRoot $MetraRoot
+        }
         return
     }
 
@@ -632,7 +714,12 @@ function Start-MetraOpsHost {
             $child = Start-MetraOpsChildProcess -MetraRoot $MetraRoot -Port $Port -NoRefresh:$NoRefresh -Quick:$Quick
             $script:MetraOpsChildPid = $child.Id
             $script:MetraOpsOwnedChild = $true
-            Write-MetraOpsHostState -Status 'running' -OpsPort $Port -RestartCount 0 -StartedAt $script:MetraOpsHostStartedAt
+            Write-MetraOpsHostState `
+                -Status 'running' `
+                -OpsPort $Port `
+                -RestartCount 0 `
+                -StartedAt $script:MetraOpsHostStartedAt `
+                -ChildPid $(if ($script:MetraOpsChildPid) { [int]$script:MetraOpsChildPid } else { 0 })
         }
         catch {
             Write-MetraOpsHostLog "Initial desk start failed - $($_.Exception.Message)" 'error'
@@ -642,9 +729,16 @@ function Start-MetraOpsHost {
         }
     }
     else {
-        Write-MetraOpsHostState -Status 'running' -OpsPort $Port -RestartCount 0 -StartedAt $script:MetraOpsHostStartedAt
-        # Desk already up (e.g. console ops) - tray supervises health only; does not own child restart.
+        # Desk already up, e.g. console ops. Tray supervises health and adopts it.
         $script:MetraOpsChildPid = Get-MetraOpsChildProcessId -Port $Port
+        $script:MetraOpsOwnedChild = $true
+
+        Write-MetraOpsHostState `
+            -Status 'running' `
+            -OpsPort $Port `
+            -RestartCount 0 `
+            -StartedAt $script:MetraOpsHostStartedAt `
+            -ChildPid $(if ($script:MetraOpsChildPid) { [int]$script:MetraOpsChildPid } else { 0 })
     }
 
     if (-not $NoBrowser) {
@@ -665,12 +759,22 @@ function Start-MetraOpsHost {
             $ensure = Start-MetraOpsDeskIfDown -Port $script:MetraOpsHostPort -MetraRoot $script:MetraOpsHostRoot
             if ($ensure.Ok) {
                 if ($ensure.Started) {
-                    $script:MetraOpsChildPid = $ensure.ChildPid
+                    if ($ensure.ChildPid) {
+                        $script:MetraOpsChildPid = $ensure.ChildPid
+                    }
+                    else {
+                        $script:MetraOpsChildPid = Get-MetraOpsChildProcessId -Port $script:MetraOpsHostPort
+                    }
                     $script:MetraOpsOwnedChild = $true
                     $script:MetraOpsFailureStreak = 0
                     $script:MetraOpsNextAttemptUtc = [datetime]::MinValue
                     $script:MetraOpsDeskStopped = $false
-                    Write-MetraOpsHostState -Status 'running' -OpsPort $script:MetraOpsHostPort -RestartCount $script:MetraOpsRestartCount -StartedAt $script:MetraOpsHostStartedAt
+                    Write-MetraOpsHostState `
+                        -Status 'running' `
+                        -OpsPort $script:MetraOpsHostPort `
+                        -RestartCount $script:MetraOpsRestartCount `
+                        -StartedAt $script:MetraOpsHostStartedAt `
+                        -ChildPid $(if ($script:MetraOpsChildPid) { [int]$script:MetraOpsChildPid } else { 0 })
                 }
                 Open-MetraOpsDeskBrowser -Port $script:MetraOpsHostPort
             }
@@ -689,10 +793,22 @@ function Start-MetraOpsHost {
             $script:MetraOpsDeskStopped = $false
             $ensure = Start-MetraOpsDeskIfDown -Port $script:MetraOpsHostPort -MetraRoot $script:MetraOpsHostRoot
             if ($ensure.Ok) {
-                $script:MetraOpsChildPid = $ensure.ChildPid
+                if ($ensure.Started -and $ensure.ChildPid) {
+                    $script:MetraOpsChildPid = $ensure.ChildPid
+                }
+                else {
+                    $script:MetraOpsChildPid = Get-MetraOpsChildProcessId -Port $script:MetraOpsHostPort
+                }
+
                 $script:MetraOpsOwnedChild = $true
                 $script:MetraOpsRestartCount++
-                Write-MetraOpsHostState -Status 'running' -OpsPort $script:MetraOpsHostPort -RestartCount $script:MetraOpsRestartCount -StartedAt $script:MetraOpsHostStartedAt
+
+                Write-MetraOpsHostState `
+                    -Status 'running' `
+                    -OpsPort $script:MetraOpsHostPort `
+                    -RestartCount $script:MetraOpsRestartCount `
+                    -StartedAt $script:MetraOpsHostStartedAt `
+                    -ChildPid $(if ($script:MetraOpsChildPid) { [int]$script:MetraOpsChildPid } else { 0 })
                 $notify.ShowBalloonTip(3000, 'Metra Ops', 'Desk restarted.', [System.Windows.Forms.ToolTipIcon]::Info)
             }
             else {
@@ -760,8 +876,14 @@ function Start-MetraOpsHost {
             if ([datetime]::UtcNow -ge $script:MetraOpsNextUpdateCheckUtc) {
                 $script:MetraOpsNextUpdateCheckUtc = [datetime]::UtcNow.AddHours(6)
                 try {
-                    $upd = Get-MetraProductUpdates -MetraRoot $script:MetraOpsHostRoot
-                    if ($upd.anyUpdate) {
+                    if (Get-Command Get-MetraProductUpdates -ErrorAction SilentlyContinue) {
+                        $upd = Get-MetraProductUpdates -MetraRoot $script:MetraOpsHostRoot
+                    }
+                    else {
+                        $upd = $null
+                    }
+
+                    if ($upd -and $upd.anyUpdate) {
                         $bits = @()
                         if ($upd.metra.updateAvailable) { $bits += "Metra $($upd.metra.available)" }
                         if ($upd.ollama.updateAvailable) { $bits += "Ollama $($upd.ollama.available)" }
@@ -784,7 +906,13 @@ function Start-MetraOpsHost {
 
             # Host owns apply: poll pending proposals even if the desk is mid-Ask.
             try {
-                $applied = @(Sync-MetraProposalHostPending -MaxCount 1 -Surface browser)
+                if (Get-Command Sync-MetraProposalHostPending -ErrorAction SilentlyContinue) {
+                    $applied = @(Sync-MetraProposalHostPending -MaxCount 1 -Surface browser)
+                }
+                else {
+                    $applied = @()
+                }
+
                 foreach ($item in $applied) {
                     if ($item.Ok) {
                         $notify.ShowBalloonTip(4000, 'Metra Ops', "Applied proposal $($item.Proposal.Id).", [System.Windows.Forms.ToolTipIcon]::Info)
@@ -874,7 +1002,22 @@ function Start-MetraOpsHost {
         Remove-Item -LiteralPath (Get-MetraOpsHostPidFile) -Force -ErrorAction SilentlyContinue
         $state = Get-MetraOpsHostState
         if ($state -and [string]$state.status -eq 'running') {
-            Write-MetraOpsHostState -Status 'stopped' -OpsPort $Port -RestartCount $script:MetraOpsRestartCount -StartedAt $script:MetraOpsHostStartedAt
+            $childPid = 0
+            try {
+                $childPid = [int](Get-MetraProp -Object $state -Name 'childPid' -Default 0)
+            }
+            catch { }
+            if (-not $childPid -and $script:MetraOpsChildPid) {
+                $childPid = [int]$script:MetraOpsChildPid
+            }
+
+            Write-MetraOpsHostState `
+                -Status 'unsupervised' `
+                -OpsPort $Port `
+                -RestartCount $script:MetraOpsRestartCount `
+                -StartedAt $script:MetraOpsHostStartedAt `
+                -ChildPid $childPid `
+                -LastFailure 'Tray host exited; desk process may still be running.'
         }
     }
 }

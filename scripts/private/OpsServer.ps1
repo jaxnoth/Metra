@@ -1,4 +1,9 @@
-# HTML Ops local HTTP server (loopback only). Face = ops/dist; brain = desk payload helpers.
+# HTML Ops local HTTP server. Face = ops/dist; brain = desk payload helpers.
+#
+# Reach is not authority:
+# - Share/Tailscale/Serve may view, ask, upload quarantine files, and create bounded candidate records.
+# - Local authority is required for settings, refresh, engine changes, promotion, editor open, updates, and sync-token issuance.
+# - OperatorUrl remains loopback even when BrowserUrl/ShareUrl is remote-friendly.
 
 function Get-MetraOpsDistPath {
     [CmdletBinding()]
@@ -52,7 +57,7 @@ function Read-MetraOpsRequestBytes {
     )
 
     if (-not $Request.HasEntityBody) { return [byte[]]@() }
-    if ($Request.ContentLength64 -gt $MaxBytes) {
+    if ($Request.ContentLength64 -ge 0 -and $Request.ContentLength64 -gt $MaxBytes) {
         throw [System.ArgumentException]::new('Request body too large.')
     }
     $ms = New-Object System.IO.MemoryStream
@@ -100,6 +105,12 @@ function ConvertFrom-MetraOpsMultipartUpload {
     if (-not $boundary) { $boundary = $boundaryMatch.Groups[2].Value.Trim() }
     if ([string]::IsNullOrWhiteSpace($boundary)) {
         throw 'multipart boundary missing'
+    }
+    if ($boundary.Length -gt 200) {
+        throw 'multipart boundary too long'
+    }
+    if ($boundary -match '[\r\n]') {
+        throw 'multipart boundary invalid'
     }
 
     $ascii = [System.Text.Encoding]::ASCII
@@ -235,10 +246,72 @@ function Find-MetraByteSequence {
     return -1
 }
 
+function Limit-MetraOpsText {
+    <#
+    .SYNOPSIS
+        Truncates text to a max length for remote-safe ledger / place fields.
+    #>
+    [CmdletBinding()]
+    param(
+        [AllowNull()][string]$Text,
+        [int]$MaxLength = 4000
+    )
+
+    if ($null -eq $Text) { return '' }
+    if ($Text.Length -le $MaxLength) { return $Text }
+    return $Text.Substring(0, $MaxLength)
+}
+
+function Get-MetraOpsQueryValue {
+    <#
+    .SYNOPSIS
+        Returns a decoded query-string value by name, or $null when absent.
+    #>
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory)]$Request,
+        [Parameter(Mandatory)][string]$Name
+    )
+
+    try {
+        $query = [string]$Request.Url.Query
+        if ([string]::IsNullOrWhiteSpace($query)) { return $null }
+        $trimmed = $query.TrimStart('?')
+        foreach ($pair in ($trimmed -split '&')) {
+            if ([string]::IsNullOrWhiteSpace($pair)) { continue }
+            $parts = $pair -split '=', 2
+            $key = [System.Uri]::UnescapeDataString($parts[0])
+            if ([string]::Equals($key, $Name, [System.StringComparison]::OrdinalIgnoreCase)) {
+                if ($parts.Count -gt 1) {
+                    return [System.Uri]::UnescapeDataString($parts[1])
+                }
+                return ''
+            }
+        }
+    }
+    catch { }
+
+    return $null
+}
+
+function Write-MetraOpsBadRequest {
+    param(
+        [Parameter(Mandatory)]$Response,
+        [Parameter(Mandatory)][string]$Message
+    )
+
+    Write-MetraOpsJsonResponse -Response $Response -StatusCode 400 -Object ([PSCustomObject]@{
+            error = $Message
+        })
+}
+
 function Test-MetraOpsRequestHasLocalAuthority {
     <#
     .SYNOPSIS
         True when same-machine (Serve-aware) or validated X-Metra-Local-Session.
+    .DESCRIPTION
+        Local authority is either true same-machine traffic or a host-issued session token.
+        Tailscale Serve reach alone must never satisfy this.
     #>
     [CmdletBinding()]
     param([Parameter(Mandatory)]$Request)
@@ -307,6 +380,7 @@ function Write-MetraOpsJsonResponse {
         $Response.StatusCode = $StatusCode
         $Response.ContentType = 'application/json; charset=utf-8'
         $Response.Headers['Cache-Control'] = 'no-store'
+        $Response.Headers['X-Content-Type-Options'] = 'nosniff'
         $Response.ContentLength64 = $bytes.Length
         $Response.OutputStream.Write($bytes, 0, $bytes.Length)
         $Response.OutputStream.Close()
@@ -326,6 +400,8 @@ function Write-MetraOpsTextResponse {
     try {
         $Response.StatusCode = $StatusCode
         $Response.ContentType = $ContentType
+        $Response.Headers['Cache-Control'] = 'no-store'
+        $Response.Headers['X-Content-Type-Options'] = 'nosniff'
         $Response.ContentLength64 = $bytes.Length
         $Response.OutputStream.Write($bytes, 0, $bytes.Length)
         $Response.OutputStream.Close()
@@ -350,6 +426,7 @@ function Write-MetraOpsFileResponse {
             $Response.Headers['Content-Disposition'] = "attachment; filename=`"$safe`""
         }
         $Response.Headers['Cache-Control'] = 'no-store'
+        $Response.Headers['X-Content-Type-Options'] = 'nosniff'
         $Response.ContentLength64 = $bytes.Length
         $Response.OutputStream.Write($bytes, 0, $bytes.Length)
         $Response.OutputStream.Close()
@@ -361,6 +438,9 @@ function Resolve-MetraOpsStaticPath {
     <#
     .SYNOPSIS
         Resolves a URL path to a file under DistPath, or $null when unsafe / outside root.
+    .DESCRIPTION
+        Rejects rooted / drive-qualified inputs early. Encoded traversal is caught after
+        UnescapeDataString + GetFullPath via Test-MetraPathWithinRoot (not substring '..').
     #>
     [CmdletBinding()]
     param(
@@ -368,35 +448,42 @@ function Resolve-MetraOpsStaticPath {
         [Parameter(Mandatory)][string]$UrlPath
     )
 
-    $rel = [System.Uri]::UnescapeDataString($UrlPath.TrimStart('/'))
-    if ([string]::IsNullOrWhiteSpace($rel) -or $rel -eq '/') {
-        $rel = 'index.html'
-    }
-
-    $rel = $rel -replace '/', [System.IO.Path]::DirectorySeparatorChar
-    if (
-        $rel.Contains('..') -or
-        [System.IO.Path]::IsPathRooted($rel) -or
-        $rel -match '^[a-zA-Z]:' -or
-        $rel.StartsWith('\') -or
-        $rel.StartsWith('/')
-    ) {
-        return $null
-    }
-
-    $candidate = Join-Path $DistPath $rel
     try {
-        $full = [System.IO.Path]::GetFullPath($candidate)
+        $raw = [string]$UrlPath
+        if ([string]::IsNullOrWhiteSpace($raw) -or $raw -eq '/') {
+            $raw = '/index.html'
+        }
+
+        $decoded = [System.Uri]::UnescapeDataString($raw.TrimStart('/'))
+        if ([string]::IsNullOrWhiteSpace($decoded)) {
+            $decoded = 'index.html'
+        }
+
+        # Normalize URL separators to local separators.
+        $rel = $decoded -replace '/', [System.IO.Path]::DirectorySeparatorChar
+
+        # Reject rooted / drive-qualified / UNC-like inputs before Join-Path.
+        if (
+            [System.IO.Path]::IsPathRooted($rel) -or
+            $rel -match '^[a-zA-Z]:' -or
+            $rel.StartsWith('\') -or
+            $rel.StartsWith('/')
+        ) {
+            return $null
+        }
+
         $root = [System.IO.Path]::GetFullPath($DistPath)
+        $candidate = [System.IO.Path]::GetFullPath((Join-Path $root $rel))
+
+        if (-not (Test-MetraPathWithinRoot -Path $candidate -Root $root)) {
+            return $null
+        }
+
+        return $candidate
     }
     catch {
         return $null
     }
-
-    if (-not (Test-MetraPathWithinRoot -Path $full -Root $root)) {
-        return $null
-    }
-    return $full
 }
 
 function Invoke-MetraOpsApi {
@@ -410,12 +497,13 @@ function Invoke-MetraOpsApi {
     $path = $Request.Url.AbsolutePath.TrimEnd('/')
     if ([string]::IsNullOrWhiteSpace($path)) { $path = '/' }
 
-    # Reach is split from authority.
+    # Reach is split from authority (see file header).
     # Ask-class remote (Tailscale reach): POST /api/ask, GET ask journal/engine, GET/POST capture
     # (create/dismiss/propose), POST /api/place/upload, POST /api/place, GET place/homes,
     # GET preferences/settings/snapshot/meta - no Assert-MetraOpsLocalAuthority.
     # Remote-safe writes are bounded: capture candidate ledger only; place uploads quarantine only
     # (size/ext/random id; never project-tree). Capture promote / place confirm/correct need local authority.
+    # Profile check-in is bearer-scoped (X-Metra-Profile-Sync), not local-session alone.
     # Local-authority gates: refresh, watch, preferences PUT, ask/engine POST, attention mutations,
     # place confirm/correct, settings, updates, open, profile issue-sync-token.
 
@@ -624,6 +712,7 @@ function Invoke-MetraOpsApi {
             }
             try {
                 $status = Get-MetraProfileStatus -MetraRoot $MetraRoot
+                $status | Add-Member -NotePropertyName hasSyncToken -NotePropertyValue ([bool](Test-MetraProfileSyncTokenConfigured)) -Force
                 if (Test-MetraOpsRequestHasLocalAuthority -Request $Request) {
                     $roster = Get-MetraProfileSatelliteRoster -PublisherHash ([string]$status.contentHash)
                     $status | Add-Member -NotePropertyName satellites -NotePropertyValue @($roster.Satellites) -Force
@@ -656,9 +745,10 @@ function Invoke-MetraOpsApi {
         }
 
         if ($method -eq 'POST' -and $path -eq '/api/profile/check-in') {
-            if (-not (Test-MetraOpsProfileSyncAuthorized -Request $Request)) {
+            # Satellite check-in is bearer-scoped so a local browser session cannot invent machine rows.
+            if (-not (Test-MetraOpsProfileSyncBearer -Request $Request)) {
                 Write-MetraOpsJsonResponse -Response $Response -StatusCode 403 -Object ([PSCustomObject]@{
-                        error      = 'Profile check-in requires operator machine, local session, or X-Metra-Profile-Sync bearer.'
+                        error      = 'Profile check-in requires X-Metra-Profile-Sync bearer.'
                         reasonCode = 'profileSyncUnauthorized'
                     })
                 return
@@ -711,10 +801,29 @@ function Invoke-MetraOpsApi {
                 $hashKey = ($status.contentHash -replace '[^a-fA-F0-9]', '')
                 if ([string]::IsNullOrWhiteSpace($hashKey)) { $hashKey = 'empty' }
                 $cached = Join-Path $cacheDir ("metra-profile-$hashKey.zip")
+                # Older builds wrote "$cached.tmp", which Export-MetraProfile treats as a folder
+                # (path must end in .zip). Drop leftover folders/files and any directory named *.zip.
+                $legacyTmp = "$cached.tmp"
+                if (Test-Path -LiteralPath $legacyTmp) {
+                    Remove-Item -LiteralPath $legacyTmp -Recurse -Force -ErrorAction SilentlyContinue
+                }
+                if (Test-Path -LiteralPath $cached) {
+                    $cachedItem = Get-Item -LiteralPath $cached -Force -ErrorAction SilentlyContinue
+                    if ($null -ne $cachedItem -and $cachedItem.PSIsContainer) {
+                        Remove-Item -LiteralPath $cached -Recurse -Force -ErrorAction SilentlyContinue
+                    }
+                }
                 if (-not (Test-Path -LiteralPath $cached)) {
-                    $tmp = "$cached.tmp"
-                    $null = Export-MetraProfile -Path $tmp
-                    Move-Item -LiteralPath $tmp -Destination $cached -Force
+                    $tmp = Join-Path $cacheDir ("metra-profile-$hashKey.partial.zip")
+                    try {
+                        $null = Export-MetraProfile -Path $tmp -Force -Quiet
+                        Move-Item -LiteralPath $tmp -Destination $cached -Force
+                    }
+                    finally {
+                        if (Test-Path -LiteralPath $tmp) {
+                            Remove-Item -LiteralPath $tmp -Force -ErrorAction SilentlyContinue
+                        }
+                    }
                 }
                 $zipPath = $cached
                 Write-MetraOpsFileResponse -Response $Response -FilePath $zipPath -ContentType 'application/zip' -DownloadFileName 'metra-profile.zip'
@@ -753,13 +862,9 @@ function Invoke-MetraOpsApi {
         }
 
         if ($method -eq 'GET' -and $path -eq '/api/updates') {
-            $force = $false
-            try {
-                $q = [string]$Request.Url.Query
-                if ($q -match '[?&]force=1' -or $q -match '[?&]force=true') { $force = $true }
-            }
-            catch { }
-            Write-MetraOpsJsonResponse -Response $Response -Object (Get-MetraProductUpdates -MetraRoot $MetraRoot -Force:$force) -Depth 8
+            $forceRaw = Get-MetraOpsQueryValue -Request $Request -Name 'force'
+            $force = $forceRaw -match '^(?i)(1|true|yes)$'
+            Write-MetraOpsJsonResponse -Response $Response -Object (Get-MetraOpsUpdatesApiPayload -MetraRoot $MetraRoot -Force:$force) -Depth 8
             return
         }
 
@@ -777,8 +882,15 @@ function Invoke-MetraOpsApi {
                         })
                     return
                 }
-                $result = Invoke-MetraProductUpdate -Target $target -MetraRoot $MetraRoot
-                Write-MetraOpsJsonResponse -Response $Response -Object $result -Depth 8
+                $started = Start-MetraProductUpdateApplyJob -Target $target -MetraRoot $MetraRoot
+                $statusCode = [int](Get-MetraProp -Object $started -Name 'StatusCode' -Default 500)
+                $payload = [PSCustomObject]@{
+                    accepted = [bool](Get-MetraProp -Object $started -Name 'Accepted' -Default $false)
+                    error    = Get-MetraProp -Object $started -Name 'Error' -Default $null
+                    message  = Get-MetraProp -Object $started -Name 'Message' -Default $null
+                    job      = Get-MetraProp -Object $started -Name 'Job' -Default $null
+                }
+                Write-MetraOpsJsonResponse -Response $Response -StatusCode $statusCode -Object $payload -Depth 8
             }
             catch {
                 Write-MetraOpsJsonResponse -Response $Response -StatusCode 400 -Object ([PSCustomObject]@{
@@ -1000,7 +1112,13 @@ function Invoke-MetraOpsApi {
             $rawImageIds = Get-MetraProp -Object $parsed -Name 'imageIds' -Default @()
             $imageIds = @($rawImageIds | ForEach-Object { [string]$_ } | Where-Object { $_ } | Select-Object -Unique)
             if ([string]::IsNullOrWhiteSpace($prompt) -and $imageIds.Count -eq 0) {
-                Write-MetraOpsJsonResponse -Response $Response -StatusCode 400 -Object ([PSCustomObject]@{ error = 'prompt required' })
+                Write-MetraOpsBadRequest -Response $Response -Message 'prompt required'
+                return
+            }
+            if ($prompt.Length -gt 20000) {
+                Write-MetraOpsJsonResponse -Response $Response -StatusCode 413 -Object ([PSCustomObject]@{
+                        error = 'prompt too large'
+                    })
                 return
             }
             $resolvedImages = @()
@@ -1139,19 +1257,14 @@ function Invoke-MetraOpsApi {
 
         if ($method -eq 'GET' -and $path -eq '/api/ask/journal') {
             $limit = 40
-            $sessionIdFilter = ''
-            $searchQuery = ''
-            try {
-                $q = [string]$Request.Url.Query
-                if ($q -match '[?&]limit=(\d+)') { $limit = [Math]::Min(100, [int]$Matches[1]) }
-                if ($q -match '[?&]sessionId=([^&]+)') {
-                    $sessionIdFilter = [uri]::UnescapeDataString($Matches[1])
-                }
-                if ($q -match '[?&]q=([^&]+)') {
-                    $searchQuery = [uri]::UnescapeDataString($Matches[1])
-                }
+            $limitRaw = Get-MetraOpsQueryValue -Request $Request -Name 'limit'
+            if ($limitRaw -match '^\d+$') {
+                $limit = [Math]::Min(100, [int]$limitRaw)
             }
-            catch { }
+            $sessionIdFilter = [string](Get-MetraOpsQueryValue -Request $Request -Name 'sessionId')
+            if ($null -eq $sessionIdFilter) { $sessionIdFilter = '' }
+            $searchQuery = [string](Get-MetraOpsQueryValue -Request $Request -Name 'q')
+            if ($null -eq $searchQuery) { $searchQuery = '' }
 
             if (-not [string]::IsNullOrWhiteSpace($searchQuery)) {
                 Write-MetraOpsJsonResponse -Response $Response -Object ([PSCustomObject]@{
@@ -1182,11 +1295,10 @@ function Invoke-MetraOpsApi {
 
         if ($method -eq 'GET' -and $path -eq '/api/capture') {
             $status = 'candidate'
-            try {
-                $q = [string]$Request.Url.Query
-                if ($q -match '[?&]status=(candidate|promoted|dismissed|all)') { $status = $Matches[1] }
+            $statusRaw = Get-MetraOpsQueryValue -Request $Request -Name 'status'
+            if ($statusRaw -match '^(candidate|promoted|dismissed|all)$') {
+                $status = $statusRaw.ToLowerInvariant()
             }
-            catch { }
             Write-MetraOpsJsonResponse -Response $Response -Object (@(Get-MetraCaptureLedger -MetraRoot $MetraRoot -Limit 40 -Status $status)) -Depth 10
             return
         }
@@ -1223,12 +1335,12 @@ function Invoke-MetraOpsApi {
             try {
                 $turnId = [string](Get-MetraProp -Object $parsed -Name 'turnId' -Default '')
                 $sessionId = [string](Get-MetraProp -Object $parsed -Name 'sessionId' -Default '')
-                $summary = [string](Get-MetraProp -Object $parsed -Name 'summary' -Default '')
-                $capBody = [string](Get-MetraProp -Object $parsed -Name 'body' -Default '')
+                $summary = Limit-MetraOpsText -Text (Get-MetraProp -Object $parsed -Name 'summary' -Default '') -MaxLength 500
+                $capBody = Limit-MetraOpsText -Text (Get-MetraProp -Object $parsed -Name 'body' -Default '') -MaxLength 8000
                 $source = [string](Get-MetraProp -Object $parsed -Name 'source' -Default '')
                 $placeId = [string](Get-MetraProp -Object $parsed -Name 'placeId' -Default '')
                 $homeId = [string](Get-MetraProp -Object $parsed -Name 'homeId' -Default '')
-                $text = [string](Get-MetraProp -Object $parsed -Name 'text' -Default '')
+                $text = Limit-MetraOpsText -Text (Get-MetraProp -Object $parsed -Name 'text' -Default '') -MaxLength 8000
                 $attachmentIds = @()
                 try {
                     $rawAtt = Get-MetraProp -Object $parsed -Name 'attachmentIds' -Default @()
@@ -1249,7 +1361,7 @@ function Invoke-MetraOpsApi {
                 $item = $null
                 if (-not [string]::IsNullOrWhiteSpace($turnId) -or $source -eq 'ask') {
                     if ([string]::IsNullOrWhiteSpace($turnId)) {
-                        Write-MetraOpsJsonResponse -Response $Response -StatusCode 400 -Object ([PSCustomObject]@{ error = 'turnId required for ask capture' })
+                        Write-MetraOpsBadRequest -Response $Response -Message 'turnId required for ask capture'
                         return
                     }
                     $item = Add-MetraCaptureFromAskTurn -TurnId $turnId -SessionId $sessionId -Summary $summary -Body $capBody -MetraRoot $MetraRoot
@@ -1259,7 +1371,7 @@ function Invoke-MetraOpsApi {
                 }
                 else {
                     if ([string]::IsNullOrWhiteSpace($summary)) {
-                        Write-MetraOpsJsonResponse -Response $Response -StatusCode 400 -Object ([PSCustomObject]@{ error = 'summary required for manual capture' })
+                        Write-MetraOpsBadRequest -Response $Response -Message 'summary required for manual capture'
                         return
                     }
                     $derived = New-MetraCaptureDerivedFrom -Type manual
@@ -1268,7 +1380,7 @@ function Invoke-MetraOpsApi {
                 Write-MetraOpsJsonResponse -Response $Response -Object $item -Depth 10
             }
             catch {
-                Write-MetraOpsJsonResponse -Response $Response -StatusCode 400 -Object ([PSCustomObject]@{ error = $_.Exception.Message })
+                Write-MetraOpsBadRequest -Response $Response -Message $_.Exception.Message
             }
             return
         }
@@ -1298,17 +1410,15 @@ function Invoke-MetraOpsApi {
                     Write-MetraOpsJsonResponse -Response $Response -Object $item -Depth 10
                     return
                 }
-                if ($null -ne $parsed -and $parsed.PSObject.Properties.Name -contains 'derivedFrom') {
-                    Write-MetraOpsJsonResponse -Response $Response -StatusCode 400 -Object ([PSCustomObject]@{
-                            error = 'derivedFrom is immutable after capture creation'
-                        })
+                if (Test-MetraPropExists -Object $parsed -Name 'derivedFrom') {
+                    Write-MetraOpsBadRequest -Response $Response -Message 'derivedFrom is immutable after capture creation'
                     return
                 }
                 $updParams = @{ Id = $capId; MetraRoot = $MetraRoot }
-                $sum = [string](Get-MetraProp -Object $parsed -Name 'summary' -Default '')
+                $sum = Limit-MetraOpsText -Text (Get-MetraProp -Object $parsed -Name 'summary' -Default '') -MaxLength 500
                 if (-not [string]::IsNullOrWhiteSpace($sum)) { $updParams.Summary = $sum }
-                if ($null -ne $parsed -and $parsed.PSObject.Properties.Name -contains 'body') {
-                    $updParams.Body = [string](Get-MetraProp -Object $parsed -Name 'body' -Default '')
+                if (Test-MetraPropExists -Object $parsed -Name 'body') {
+                    $updParams.Body = Limit-MetraOpsText -Text (Get-MetraProp -Object $parsed -Name 'body' -Default '') -MaxLength 8000
                 }
                 $sh = [string](Get-MetraProp -Object $parsed -Name 'suggestedHome' -Default '')
                 if (-not [string]::IsNullOrWhiteSpace($sh)) { $updParams.SuggestedHome = $sh }
@@ -1333,6 +1443,7 @@ function Invoke-MetraOpsApi {
             if ([string]::IsNullOrWhiteSpace($text)) {
                 $text = [string](Get-MetraProp -Object $parsed -Name 'query' -Default '')
             }
+            $text = Limit-MetraOpsText -Text $text -MaxLength 8000
             $attachments = @()
             try {
                 $rawAtt = Get-MetraProp -Object $parsed -Name 'attachments' -Default @()
@@ -1354,7 +1465,7 @@ function Invoke-MetraOpsApi {
             try {
                 $contentType = [string]$Request.ContentType
                 $meta = $null
-                if ($contentType -match 'multipart/form-data') {
+                if ($contentType -match '^\s*multipart/form-data\s*;') {
                     $bytes = Read-MetraOpsRequestBytes -Request $Request -MaxBytes 10485760
                     $part = ConvertFrom-MetraOpsMultipartUpload -Bytes $bytes -ContentType $contentType
                     $meta = Save-MetraPlaceUpload -FileName $part.FileName -Bytes $part.Bytes -ContentType $part.ContentType
@@ -1616,6 +1727,9 @@ function Stop-MetraOpsServer {
     <#
     .SYNOPSIS
         Stops a Metra Ops desk on a loopback port, including one orphaned by a closed console.
+    .DESCRIPTION
+        Does not call Stop-MetraAskEngine. The desk process finally block stops Ask for that session;
+        killing an orphaned listener must not tear down Ask belonging to another Ops process.
     #>
     [CmdletBinding()]
     param([int]$Port = 7380)
@@ -1645,7 +1759,6 @@ function Stop-MetraOpsServer {
     try {
         Stop-Process -Id $target -Force -ErrorAction Stop
         Write-Host "Stopped Metra Ops desk on port $Port (process $target)." -ForegroundColor Green
-        try { Stop-MetraAskEngine } catch { }
     }
     catch {
         throw "Could not stop process $target holding port $Port - $($_.Exception.Message)"
@@ -1695,12 +1808,16 @@ function Start-MetraOpsServer {
         }
     }
 
-    $url = [string]$binding.BrowserUrl
+    $shareUrl = [string]$binding.BrowserUrl
+    $operatorUrl = Get-MetraOpsOperatorOpenUrl -Binding $binding
     if (Test-MetraOpsDeskResponding -Port $Port) {
-        Write-Host ("Metra Ops desk already serving {0}" -f $url) -ForegroundColor Green
+        Write-Host ("Metra Ops desk already serving (operator: {0})" -f $operatorUrl) -ForegroundColor Green
+        if ($shareUrl -and $shareUrl -ne $operatorUrl) {
+            Write-Host ("Share URL: {0}" -f $shareUrl) -ForegroundColor Cyan
+        }
         Write-Host ("Restart it with: .\metra.ps1 ops -Stop -Port {0}" -f $Port) -ForegroundColor DarkGray
         if (-not $NoBrowser) {
-            try { Start-Process $url | Out-Null } catch { }
+            try { Start-Process $operatorUrl | Out-Null } catch { }
         }
         return
     }
@@ -1736,21 +1853,21 @@ function Start-MetraOpsServer {
     $pidFile = Get-MetraOpsPidFile -Port $Port
     Set-Content -LiteralPath $pidFile -Value $PID -Encoding ASCII
 
-    Write-Host ("Metra Ops desk: {0}" -f $url) -ForegroundColor Green
+    Write-Host ("Metra Ops desk (operator): {0}" -f $operatorUrl) -ForegroundColor Green
     $isTailscale = $false
     try { $isTailscale = [bool](Get-MetraProp -Object $binding -Name 'Tailscale' -Default $false) } catch { }
     if ($isTailscale) {
         $serveOn = $false
         try { $serveOn = [bool](Get-MetraProp -Object $binding -Name 'Serve' -Default $false) } catch { }
         if ($serveOn) {
-            Write-Host 'Tailscale Serve HTTPS share enabled (view/ask for peers). Propose and request-apply need X-Metra-Local-Session; tray Apply once still gates disk writes.' -ForegroundColor DarkYellow
+            Write-Host 'Tailscale Serve HTTPS share enabled (view/ask for peers). Settings / Save role / issue-sync-token use the operator loopback URL; tray Apply once still gates disk writes.' -ForegroundColor DarkYellow
         }
         else {
             Write-Host 'Tailscale reach enabled without Serve HTTPS (view/ask for peers). Clipboard APIs need a secure context - fix Serve or use loopback.' -ForegroundColor DarkYellow
             $serveErr = [string](Get-MetraProp -Object $binding -Name 'ServeError' -Default '')
             if ($serveErr) { Write-Warning $serveErr }
         }
-        Write-Host ("Share URL: {0}" -f $url) -ForegroundColor Cyan
+        Write-Host ("Share URL: {0}" -f $shareUrl) -ForegroundColor Cyan
     }
     else {
         Write-Host 'Loopback bind. Press Ctrl+C to stop.' -ForegroundColor DarkGray
@@ -1774,7 +1891,7 @@ function Start-MetraOpsServer {
 
     if (-not $NoBrowser) {
         try {
-            Start-Process $url | Out-Null
+            Start-Process $operatorUrl | Out-Null
         }
         catch {
             Write-Warning "Could not open browser: $($_.Exception.Message)"
@@ -1799,36 +1916,45 @@ function Start-MetraOpsServer {
                 break
             }
 
-            while (-not $async.IsCompleted) {
-                if (-not $listener.IsListening) { break }
-                # Timed wait lets Ctrl+C / pipeline stop run between polls.
-                if ($async.AsyncWaitHandle.WaitOne(250)) { break }
-            }
-
-            if (-not $listener.IsListening) { break }
-            if (-not $async.IsCompleted) { continue }
-
             try {
-                $context = $listener.EndGetContext($async)
-            }
-            catch {
-                break
-            }
+                while (-not $async.IsCompleted) {
+                    if (-not $listener.IsListening) { break }
+                    # Timed wait lets Ctrl+C / pipeline stop run between polls.
+                    if ($async.AsyncWaitHandle.WaitOne(250)) { break }
+                }
 
-            $req = $context.Request
-            $res = $context.Response
+                if (-not $listener.IsListening) { break }
+                if (-not $async.IsCompleted) { continue }
 
-            if ($req.HttpMethod -eq 'OPTIONS') {
-                $res.StatusCode = 404
-                $res.Close()
-                continue
-            }
+                try {
+                    $context = $listener.EndGetContext($async)
+                }
+                catch {
+                    break
+                }
 
-            if ($req.Url.AbsolutePath.StartsWith('/api/', [StringComparison]::OrdinalIgnoreCase)) {
-                Invoke-MetraOpsApi -Request $req -Response $res -MetraRoot $MetraRoot
+                $req = $context.Request
+                $res = $context.Response
+
+                if ($req.HttpMethod -eq 'OPTIONS') {
+                    # No CORS grant - just avoid treating preflight as a missing app route.
+                    $res.StatusCode = 204
+                    $res.Headers['Cache-Control'] = 'no-store'
+                    $res.Close()
+                    continue
+                }
+
+                if ($req.Url.AbsolutePath.StartsWith('/api/', [StringComparison]::OrdinalIgnoreCase)) {
+                    Invoke-MetraOpsApi -Request $req -Response $res -MetraRoot $MetraRoot
+                }
+                else {
+                    Invoke-MetraOpsStatic -Request $req -Response $res -DistPath $dist
+                }
             }
-            else {
-                Invoke-MetraOpsStatic -Request $req -Response $res -DistPath $dist
+            finally {
+                if ($async -and $async.AsyncWaitHandle) {
+                    try { $async.AsyncWaitHandle.Dispose() } catch { }
+                }
             }
         }
     }
