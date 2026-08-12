@@ -24,12 +24,38 @@ async function parseJson<T>(res: Response): Promise<T> {
 }
 
 let cachedSessionToken: string | null = null
+const SESSION_STORAGE_KEY = 'metraLocalSession'
 
-/** Prefer bridge-delivered Host token; else loopback /api/local-session. */
+/** Host may open ShareUrl with #metraLocalSession=<64-hex>; store then strip. */
+function consumeHashOrStoredSessionToken(): string | null {
+  try {
+    if (typeof window === 'undefined') return null
+    const hash = window.location.hash || ''
+    const match = hash.match(/metraLocalSession=([0-9a-f]{64})/i)
+    if (match?.[1]) {
+      const token = match[1]
+      sessionStorage.setItem(SESSION_STORAGE_KEY, token)
+      const clean = `${window.location.pathname}${window.location.search}`
+      window.history.replaceState(null, '', clean)
+      return token
+    }
+    const stored = sessionStorage.getItem(SESSION_STORAGE_KEY)
+    return stored && /^[0-9a-f]{64}$/i.test(stored) ? stored : null
+  } catch {
+    return null
+  }
+}
+
+/** Prefer bridge / hash bootstrap; else loopback /api/local-session. */
 export async function ensureLocalSessionToken(): Promise<string | null> {
   const bridge = getMetraBridge()
   if (bridge.sessionToken) {
     cachedSessionToken = bridge.sessionToken
+    return cachedSessionToken
+  }
+  const bootstrapped = consumeHashOrStoredSessionToken()
+  if (bootstrapped) {
+    cachedSessionToken = bootstrapped
     return cachedSessionToken
   }
   if (cachedSessionToken) return cachedSessionToken
@@ -262,9 +288,9 @@ export function fetchUpdates(force = false): Promise<import('./types').ProductUp
 
 export async function postProductUpdate(
   target: 'metra' | 'ollama',
-): Promise<import('./types').ProductUpdateResult> {
+): Promise<import('./types').ProductUpdateApplyResponse> {
   const token = await ensureLocalSessionToken()
-  return fetch(
+  const res = await fetch(
     '/api/updates',
     withSessionHeaders(
       {
@@ -274,7 +300,38 @@ export async function postProductUpdate(
       },
       token,
     ),
-  ).then((r) => parseJson(r))
+  )
+  let body: {
+    accepted?: boolean
+    error?: string | null
+    message?: string | null
+    job?: import('./types').ProductUpdateApplyJob | null
+  } = {}
+  try {
+    body = (await res.json()) as typeof body
+  } catch {
+    /* ignore */
+  }
+  if (res.status === 202 || res.status === 409 || res.status === 422) {
+    return {
+      accepted: Boolean(body.accepted),
+      error: body.error ?? null,
+      message: body.message ?? null,
+      job: body.job ?? null,
+      statusCode: res.status,
+    }
+  }
+  if (!res.ok) {
+    const detail = body.message || body.error || res.statusText || `HTTP ${res.status}`
+    throw new Error(String(detail))
+  }
+  return {
+    accepted: Boolean(body.accepted),
+    error: body.error ?? null,
+    message: body.message ?? null,
+    job: body.job ?? null,
+    statusCode: res.status,
+  }
 }
 
 export async function fetchProfileStatus(): Promise<import('./types').ProfileSyncStatus> {

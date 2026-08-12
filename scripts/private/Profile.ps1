@@ -325,6 +325,20 @@ function Get-MetraProfileSyncTokenSha256Hex {
     }
 }
 
+function Test-MetraProfileSyncTokenConfigured {
+    <#
+    .SYNOPSIS
+        True when HQ has a sync-token hash on disk (plaintext is never stored).
+    #>
+    [CmdletBinding()]
+    param([string]$DataDir)
+
+    $path = Get-MetraProfileSyncTokenHashPath -DataDir $DataDir
+    if (-not (Test-Path -LiteralPath $path)) { return $false }
+    $hash = (Get-Content -LiteralPath $path -Raw -Encoding UTF8).Trim()
+    return -not [string]::IsNullOrWhiteSpace($hash)
+}
+
 function Initialize-MetraProfileSyncToken {
     <#
     .SYNOPSIS
@@ -416,6 +430,23 @@ function Test-MetraProfileSyncToken {
     }
 }
 
+function Test-MetraOpsProfileSyncBearer {
+    <#
+    .SYNOPSIS
+        True when X-Metra-Profile-Sync matches the HQ profile sync token.
+    .DESCRIPTION
+        Satellite check-in uses bearer scope only. Local session / same-machine alone is not enough
+        to register another machine name on the HQ ledger.
+    #>
+    param(
+        [Parameter(Mandatory)]$Request
+    )
+
+    $syncToken = ''
+    try { $syncToken = [string]$Request.Headers['X-Metra-Profile-Sync'] } catch { }
+    return [bool](Test-MetraProfileSyncToken -SyncToken $syncToken)
+}
+
 function Test-MetraOpsProfileSyncAuthorized {
     <#
     .SYNOPSIS
@@ -435,13 +466,7 @@ function Test-MetraOpsProfileSyncAuthorized {
         return $true
     }
 
-    $syncToken = ''
-    try { $syncToken = [string]$Request.Headers['X-Metra-Profile-Sync'] } catch { }
-    if (Test-MetraProfileSyncToken -SyncToken $syncToken) {
-        return $true
-    }
-
-    return $false
+    return Test-MetraOpsProfileSyncBearer -Request $Request
 }
 
 function Get-MetraProfileSyncLocalState {
@@ -534,7 +559,9 @@ function Save-MetraProfileSatelliteCheckIn {
     [CmdletBinding()]
     param(
         [Parameter(Mandatory)][string]$MachineName,
-        [Parameter(Mandatory)][string]$LastAppliedHash,
+        [Parameter(Mandatory)]
+        [AllowEmptyString()]
+        [string]$LastAppliedHash,
         [string]$MetraVersion = '',
         [string]$Role = 'Satellite',
         [string]$Path = (Get-MetraProfileSatelliteRegistryPath),
@@ -545,9 +572,10 @@ function Save-MetraProfileSatelliteCheckIn {
     if ([string]::IsNullOrWhiteSpace($name)) {
         throw 'machineName is required for profile check-in.'
     }
-    $hash = $LastAppliedHash.Trim()
+    # First sync often has no applied pack yet; keep a stable sentinel for the roster.
+    $hash = if ($null -eq $LastAppliedHash) { '' } else { $LastAppliedHash.Trim() }
     if ([string]::IsNullOrWhiteSpace($hash)) {
-        throw 'lastAppliedHash is required for profile check-in.'
+        $hash = '(none)'
     }
     if ($MaxAgeDays -lt 1) {
         throw "MaxAgeDays must be >= 1 (got $MaxAgeDays)"

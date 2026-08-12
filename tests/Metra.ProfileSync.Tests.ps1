@@ -105,6 +105,23 @@ Describe 'Metra Profile Sync' {
         }
     }
 
+    It 'Export-MetraProfile .partial.zip is a real zip file (Ops cache staging)' {
+        $zip = Join-Path $env:TEMP ("metra-profile-partial-" + [guid]::NewGuid().ToString('N') + '.partial.zip')
+        try {
+            $null = Export-MetraProfile -Path $zip -Force -Quiet
+            Test-Path -LiteralPath $zip -PathType Leaf | Should -BeTrue
+            # Paths ending in .zip.tmp are folders - Ops must not stage that way.
+            $bad = Join-Path $env:TEMP ("metra-profile-bad-" + [guid]::NewGuid().ToString('N') + '.zip.tmp')
+            $null = Export-MetraProfile -Path $bad -Force -Quiet
+            (Get-Item -LiteralPath $bad).PSIsContainer | Should -BeTrue
+        }
+        finally {
+            if (Test-Path -LiteralPath $zip) { Remove-Item -LiteralPath $zip -Force -ErrorAction SilentlyContinue }
+            Get-ChildItem -LiteralPath $env:TEMP -Filter 'metra-profile-bad-*.zip.tmp' -ErrorAction SilentlyContinue |
+                Remove-Item -Recurse -Force -ErrorAction SilentlyContinue
+        }
+    }
+
     It 'profile sync token issue and verify' {
         $dataDir = Join-Path $env:TEMP ("metra-profile-sync-auth-" + [guid]::NewGuid().ToString('N'))
         $null = New-Item -ItemType Directory -Path $dataDir -Force

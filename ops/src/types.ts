@@ -231,6 +231,10 @@ export type SettingsPortfolio = {
   machineRole?: 'Hq' | 'Satellite' | 'Standalone' | null
   opsBaseUrl?: string | null
   bindingSummary?: string | null
+  /** Loopback desk URL for Save role / issue-sync-token (Host opens this). */
+  operatorUrl?: string | null
+  /** Tailscale / share URL for peers (view/ask). */
+  shareUrl?: string | null
   preferFriendlyUrl?: boolean | null
   bindTailscale?: boolean
 }
@@ -255,6 +259,38 @@ export type ProductUpdateItem = {
   releaseUrl?: string | null
 }
 
+export type ProductUpdateApplyPhase =
+  | 'starting'
+  | 'downloading'
+  | 'installing'
+  | 'verifying'
+  | 'done'
+
+export type ProductUpdateApplyState = 'running' | 'succeeded' | 'failed' | 'interrupted'
+
+export type ProductUpdateApplyResult = {
+  target: string
+  changed: boolean
+  versionBefore?: string | null
+  versionAfter?: string | null
+  restartRequired?: boolean
+  message?: string | null
+  status?: string | null
+  ok?: boolean
+}
+
+export type ProductUpdateApplyJob = {
+  jobId: string
+  target: 'metra' | 'ollama' | string
+  state: ProductUpdateApplyState
+  phase: ProductUpdateApplyPhase | string
+  message?: string | null
+  percent: number | null
+  startedAt?: string | null
+  finishedAt?: string | null
+  result?: ProductUpdateApplyResult | null
+}
+
 export type ProductUpdates = {
   checkedAt: string
   anyUpdate: boolean
@@ -263,8 +299,10 @@ export type ProductUpdates = {
   lastOllamaVersion?: string | null
   metra: ProductUpdateItem
   ollama: ProductUpdateItem
+  applyJob?: ProductUpdateApplyJob | null
 }
 
+/** Legacy sync CLI shape (still used by Invoke-MetraProductUpdate WhatIf). */
 export type ProductUpdateResult = {
   ok: boolean
   target: string
@@ -272,6 +310,15 @@ export type ProductUpdateResult = {
   message?: string | null
   restartRequired?: boolean
   updates?: ProductUpdates
+}
+
+/** POST /api/updates accept / conflict / not-applicable. */
+export type ProductUpdateApplyResponse = {
+  accepted: boolean
+  error?: string | null
+  message?: string | null
+  job?: ProductUpdateApplyJob | null
+  statusCode: number
 }
 
 export type ProfileSyncFile = {
@@ -299,6 +346,8 @@ export type ProfileSyncStatus = {
   maxWriteUtc?: string | null
   fileCount: number
   files: ProfileSyncFile[]
+  /** HQ has a sync-token hash; plaintext is shown only on Issue/Rotate mint. */
+  hasSyncToken?: boolean
   satellites?: ProfileSyncSatellite[]
 }
 

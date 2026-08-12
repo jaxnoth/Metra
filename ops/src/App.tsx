@@ -1429,14 +1429,35 @@ export default function App() {
     setError(null)
     setSettingsStatus(null)
     try {
-      const issued = await issueProfileSyncToken(rotate)
+      let issued = await issueProfileSyncToken(rotate)
+
+      // Issue with an existing hash does not return plaintext (by design). Offer rotate.
+      if (!issued.token && !rotate && issued.hasToken) {
+        const ok = window.confirm(
+          'A sync token already exists on this HQ. Metra stores only a hash, so the old plaintext cannot be shown again.\n\nRotate now to mint a new token and display it here?',
+        )
+        if (!ok) {
+          setProfileSyncTokenShown(null)
+          setSettingsStatus(
+            'Sync token already on HQ (hash only). Use Rotate sync token to mint a new one and display it.',
+          )
+          return
+        }
+        issued = await issueProfileSyncToken(true)
+      }
+
       if (issued.token) {
         setProfileSyncTokenShown(issued.token)
-        setSettingsStatus(issued.message || 'Sync token issued. Copy it for the satellite.')
-      } else {
-        setProfileSyncTokenShown(null)
-        setSettingsStatus(issued.message || 'Token already exists. Use Rotate to mint a new one.')
+        setSettingsStatus(
+          issued.message ||
+            'Sync token issued - copy it now. HQ stores only a hash; this plaintext is shown once.',
+        )
+        await loadProfileSyncStatus()
+        return
       }
+
+      setProfileSyncTokenShown(null)
+      setSettingsStatus(issued.message || 'Token already exists. Use Rotate to mint a new one.')
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e))
     } finally {
@@ -1454,8 +1475,10 @@ export default function App() {
     }
   }
 
+  const isApplyRunning = productUpdates?.applyJob?.state === 'running'
+
   async function onCheckUpdates() {
-    setBusy(true)
+    if (isApplyRunning) return
     setError(null)
     setSettingsStatus(null)
     try {
@@ -1463,31 +1486,84 @@ export default function App() {
       setSettingsStatus('Checked for updates.')
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e))
-    } finally {
-      setBusy(false)
     }
   }
 
   async function onUpdateProduct(target: 'metra' | 'ollama') {
-    setBusy(true)
+    if (isApplyRunning) return
     setError(null)
     setSettingsStatus(null)
     try {
       const result = await postProductUpdate(target)
-      if (result.updates) setProductUpdates(result.updates)
-      else await loadProductUpdates(true)
-      const baseMsg = result.message || (result.ok ? 'Update finished.' : 'Update failed.')
+      if (result.statusCode === 409) {
+        setError(result.message || 'A product update is already running.')
+        await loadProductUpdates(false)
+        return
+      }
+      if (result.statusCode === 422 || !result.accepted) {
+        setError(result.message || 'Update is not applicable.')
+        await loadProductUpdates(false)
+        return
+      }
       setSettingsStatus(
-        result.restartRequired ? `${baseMsg} Restart Metra Ops to finish.` : baseMsg,
+        result.message ||
+          (target === 'metra'
+            ? 'Metra update started. Ops may restart or interrupt during install.'
+            : 'Update started...'),
       )
-      if (!result.ok) setError(result.message || 'Update failed.')
-      await load()
+      await loadProductUpdates(false)
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e))
-    } finally {
-      setBusy(false)
     }
   }
+
+  useEffect(() => {
+    if (!isApplyRunning) return
+    let cancelled = false
+    const tick = async () => {
+      if (cancelled) return
+      try {
+        const updates = await fetchUpdates(false)
+        if (cancelled) return
+        setProductUpdates(updates)
+        const job = updates.applyJob
+        if (!job) return
+        if (job.state === 'running') {
+          if (job.message) setSettingsStatus(job.message)
+          return
+        }
+        if (job.state === 'succeeded') {
+          const needsRestart = Boolean(job.result?.restartRequired) || job.target === 'metra'
+          const restart = needsRestart ? ' Restart Metra Ops to finish.' : ''
+          setSettingsStatus((job.message || 'Update finished.') + restart)
+          await load()
+          return
+        }
+        if (job.state === 'failed') {
+          setError(job.message || 'Update failed.')
+          setSettingsStatus(job.message || 'Update failed.')
+          await load()
+          return
+        }
+        if (job.state === 'interrupted') {
+          setSettingsStatus(
+            job.message ||
+              'Ops restarted during update. Verify installed version and retry if necessary.',
+          )
+          await load()
+        }
+      } catch {
+        /* keep polling until terminal or Settings closes */
+      }
+    }
+    void tick()
+    const id = window.setInterval(() => void tick(), 2000)
+    return () => {
+      cancelled = true
+      window.clearInterval(id)
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- poll while applyJob running
+  }, [isApplyRunning, productUpdates?.applyJob?.jobId])
 
   async function onSavePortfolioFolders() {
     setBusy(true)
@@ -2860,18 +2936,41 @@ export default function App() {
               {settingsStatus}
             </p>
           ) : null}
+          {!hasLocalSession && (
+            <p className="warn" role="status">
+              This tab is on the share URL (Tailscale), so Save role and Issue sync token cannot run
+              here. Open the operator desk
+              {settingsPortfolio?.operatorUrl ? (
+                <>
+                  {' '}
+                  (
+                  <a href={settingsPortfolio.operatorUrl}>{settingsPortfolio.operatorUrl}</a>
+                  ){' '}
+                </>
+              ) : (
+                ' (loopback via Metra Host) '
+              )}
+              - Host opens that URL now - then Save role works in the UI.
+            </p>
+          )}
           <div className="settings-row">
             <div>
               <strong>Profile Sync</strong>
               <p className="muted">
-                HQ-published, satellite-pulled. Fingerprint is publisher-side - satellites update
-                after <code>profile sync</code> or upgrade pull. Download a pack here, or sync from
-                a laptop with <code>.\metra.ps1 profile sync</code>. No Apply-to-this-device over
-                Tailscale.
+                HQ-published, satellite-pulled. Pack fingerprint is not the sync token. Satellites
+                update after <code>profile sync</code> or upgrade pull. Download a pack here, or
+                sync from a laptop with <code>.\metra.ps1 profile sync</code>. No
+                Apply-to-this-device over Tailscale.
               </p>
               {profileSyncStatus ? (
                 <ul className="muted" style={{ margin: '0.4rem 0', paddingLeft: '1.1rem' }}>
-                  <li>Fingerprint: {profileSyncStatus.contentHash}</li>
+                  <li>Pack fingerprint: {profileSyncStatus.contentHash}</li>
+                  <li>
+                    Sync token:{' '}
+                    {profileSyncStatus.hasSyncToken
+                      ? 'configured on HQ (plaintext shown only when minted - Issue/Rotate)'
+                      : 'not issued yet'}
+                  </li>
                   <li>Last write: {profileSyncStatus.maxWriteUtc || '(none)'}</li>
                   <li>
                     Files: {profileSyncStatus.fileCount} (pack v
@@ -2879,7 +2978,16 @@ export default function App() {
                   </li>
                 </ul>
               ) : (
-                <p className="muted">Status unavailable (needs operator session).</p>
+                <p className="muted">
+                  Status unavailable - open the operator desk
+                  {settingsPortfolio?.operatorUrl ? (
+                    <>
+                      {' '}
+                      (<a href={settingsPortfolio.operatorUrl}>{settingsPortfolio.operatorUrl}</a>)
+                    </>
+                  ) : null}
+                  .
+                </p>
               )}
               <div style={{ marginTop: '0.6rem' }}>
                 <strong>Satellites</strong>
@@ -2904,14 +3012,24 @@ export default function App() {
                 </button>
                 <button
                   type="button"
-                  disabled={busy}
+                  disabled={busy || !hasLocalSession}
+                  title={
+                    hasLocalSession
+                      ? undefined
+                      : 'Requires Metra Host / loopback operator session'
+                  }
                   onClick={() => void onIssueProfileSyncToken(false)}
                 >
                   Issue sync token
                 </button>
                 <button
                   type="button"
-                  disabled={busy}
+                  disabled={busy || !hasLocalSession}
+                  title={
+                    hasLocalSession
+                      ? undefined
+                      : 'Requires Metra Host / loopback operator session'
+                  }
                   onClick={() => void onIssueProfileSyncToken(true)}
                 >
                   Rotate sync token
@@ -2922,7 +3040,8 @@ export default function App() {
               </div>
               {profileSyncTokenShown ? (
                 <div
-                  className="muted"
+                  className="warn"
+                  role="status"
                   style={{
                     marginTop: '0.5rem',
                     display: 'flex',
@@ -2932,12 +3051,18 @@ export default function App() {
                   }}
                 >
                   <span>
-                    Token: <code style={{ wordBreak: 'break-all' }}>{profileSyncTokenShown}</code>
+                    Sync token:{' '}
+                    <code style={{ wordBreak: 'break-all' }}>{profileSyncTokenShown}</code>
                   </span>
                   <button type="button" disabled={busy} onClick={() => void onCopyProfileSyncToken()}>
                     Copy
                   </button>
                 </div>
+              ) : profileSyncStatus?.hasSyncToken ? (
+                <p className="muted" style={{ marginTop: '0.5rem' }}>
+                  Token plaintext is not recoverable from HQ. Click Rotate sync token to mint a new
+                  one and show it here for the satellite.
+                </p>
               ) : null}
             </div>
           </div>
@@ -2977,9 +3102,29 @@ export default function App() {
               <p className="muted" style={{ marginTop: '0.35rem' }}>
                 Binding: {settingsPortfolio?.bindingSummary ?? 'unknown'}
               </p>
-              <button type="button" disabled={busy} onClick={() => void onSaveMachineRole()}>
+              <button
+                type="button"
+                disabled={busy || !hasLocalSession}
+                title={
+                  hasLocalSession
+                    ? undefined
+                    : 'Open the operator desk (loopback) to Save role'
+                }
+                onClick={() => void onSaveMachineRole()}
+              >
                 Save role
               </button>
+              {!hasLocalSession ? (
+                <p className="muted" style={{ marginTop: '0.35rem' }}>
+                  Role dropdown is draft-only on the share URL. Metra Host opens{' '}
+                  {settingsPortfolio?.operatorUrl ? (
+                    <a href={settingsPortfolio.operatorUrl}>{settingsPortfolio.operatorUrl}</a>
+                  ) : (
+                    'the loopback operator desk'
+                  )}{' '}
+                  so Save role works in Settings.
+                </p>
+              ) : null}
             </div>
           </div>
           <div className="settings-row">
@@ -3254,14 +3399,29 @@ export default function App() {
                         : null}
                     </li>
                   ) : null}
+                  {productUpdates.applyJob?.state === 'running' ? (
+                    <li style={{ marginBottom: '0.5rem' }}>
+                      Applying {productUpdates.applyJob.target}:{' '}
+                      {productUpdates.applyJob.message || productUpdates.applyJob.phase}
+                      {productUpdates.applyJob.target === 'metra'
+                        ? ' Metra may restart or interrupt Ops during install.'
+                        : null}
+                    </li>
+                  ) : null}
+                  {productUpdates.applyJob?.state === 'interrupted' ? (
+                    <li style={{ marginBottom: '0.5rem' }}>
+                      {productUpdates.applyJob.message ||
+                        'Ops restarted during update. Verify installed version and retry if necessary.'}
+                    </li>
+                  ) : null}
                   <li style={{ marginBottom: '0.5rem' }}>
-                    Metra: {productUpdates.metra.message || productUpdates.metra.status}
-                    {productUpdates.metra.canUpdate ? (
+                    Metra: {productUpdates.metra?.message || productUpdates.metra?.status || '—'}
+                    {productUpdates.metra?.canUpdate ? (
                       <>
                         {' '}
                         <button
                           type="button"
-                          disabled={busy}
+                          disabled={isApplyRunning}
                           onClick={() => void onUpdateProduct('metra')}
                         >
                           Update Metra
@@ -3270,13 +3430,13 @@ export default function App() {
                     ) : null}
                   </li>
                   <li style={{ marginBottom: '0.5rem' }}>
-                    Ollama: {productUpdates.ollama.message || productUpdates.ollama.status}
-                    {productUpdates.ollama.canUpdate ? (
+                    Ollama: {productUpdates.ollama?.message || productUpdates.ollama?.status || '—'}
+                    {productUpdates.ollama?.canUpdate ? (
                       <>
                         {' '}
                         <button
                           type="button"
-                          disabled={busy}
+                          disabled={isApplyRunning}
                           onClick={() => void onUpdateProduct('ollama')}
                         >
                           Update Ollama
@@ -3288,7 +3448,7 @@ export default function App() {
               ) : (
                 <p className="muted">Checking…</p>
               )}
-              <button type="button" disabled={busy} onClick={() => void onCheckUpdates()}>
+              <button type="button" disabled={isApplyRunning} onClick={() => void onCheckUpdates()}>
                 Check for updates
               </button>
             </div>
