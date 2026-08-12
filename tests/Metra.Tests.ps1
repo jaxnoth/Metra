@@ -200,8 +200,23 @@ Describe 'Test-MetraOpsRequestIsSameMachine Serve headers' {
         }
     }
 
-    It 'loopback with Tailscale-User-Login is remote' {
+    It 'peer Serve (foreign X-Forwarded-For) without session is remote' {
         InModuleScope Metra {
+            Mock Test-MetraOpsLocalSessionToken { $false }
+            $req = [PSCustomObject]@{
+                Headers        = @{
+                    'Tailscale-User-Login' = 'user@example.com'
+                    'X-Forwarded-For'      = '100.64.1.2'
+                }
+                RemoteEndPoint = [PSCustomObject]@{ Address = [System.Net.IPAddress]::Loopback }
+            }
+            Test-MetraOpsRequestIsSameMachine -Request $req | Should -BeFalse
+        }
+    }
+
+    It 'Serve with only Tailscale-User-Login (no forwarded client IP) is remote' {
+        InModuleScope Metra {
+            Mock Test-MetraOpsLocalSessionToken { $false }
             $req = [PSCustomObject]@{
                 Headers        = @{ 'Tailscale-User-Login' = 'user@example.com' }
                 RemoteEndPoint = [PSCustomObject]@{ Address = [System.Net.IPAddress]::Loopback }
@@ -210,27 +225,178 @@ Describe 'Test-MetraOpsRequestIsSameMachine Serve headers' {
         }
     }
 
-    It 'Serve headers deny even when a valid local session token is present' {
+    It 'Serve with valid local session token is local (identity beats transport)' {
         InModuleScope Metra {
-            Mock Test-MetraOpsLocalSessionToken { $true }
+            Mock Test-MetraOpsLocalSessionToken { param($SessionToken) $SessionToken -eq 'desk-token' }
             $req = [PSCustomObject]@{
                 Headers        = @{
-                    'Tailscale-User-Login'   = 'user@example.com'
+                    'Tailscale-User-Login'  = 'user@example.com'
                     'X-Metra-Local-Session' = 'desk-token'
                 }
                 RemoteEndPoint = [PSCustomObject]@{ Address = [System.Net.IPAddress]::Loopback }
             }
-            Test-MetraOpsRequestIsSameMachine -Request $req | Should -BeFalse
+            Test-MetraOpsRequestIsSameMachine -Request $req | Should -BeTrue
         }
     }
 
-    It 'loopback with non-loopback X-Forwarded-For is remote' {
+    It 'HQ Serve client IP owned by this host is local without session' {
         InModuleScope Metra {
+            Mock Test-MetraOpsLocalSessionToken { $false }
+            $mine = @([System.Net.Dns]::GetHostAddresses([System.Net.Dns]::GetHostName()) |
+                    Where-Object { -not [System.Net.IPAddress]::IsLoopback($_) } |
+                    Select-Object -First 1)
+            if ($mine.Count -lt 1) {
+                Set-ItResult -Skipped -Because 'no non-loopback host address available'
+                return
+            }
+            $req = [PSCustomObject]@{
+                Headers        = @{
+                    'Tailscale-User-Login' = 'user@example.com'
+                    'X-Forwarded-For'      = $mine[0].ToString()
+                }
+                RemoteEndPoint = [PSCustomObject]@{ Address = [System.Net.IPAddress]::Loopback }
+            }
+            Test-MetraOpsRequestIsSameMachine -Request $req | Should -BeTrue
+        }
+    }
+
+    It 'loopback with non-loopback foreign X-Forwarded-For is remote' {
+        InModuleScope Metra {
+            Mock Test-MetraOpsLocalSessionToken { $false }
             $req = [PSCustomObject]@{
                 Headers        = @{ 'X-Forwarded-For' = '100.64.1.2' }
                 RemoteEndPoint = [PSCustomObject]@{ Address = [System.Net.IPAddress]::Loopback }
             }
             Test-MetraOpsRequestIsSameMachine -Request $req | Should -BeFalse
+        }
+    }
+}
+
+Describe 'Test-MetraOpsRequestHasLocalAuthority session regardless of transport' {
+    It 'Serve-proxied request with valid X-Metra-Local-Session has local authority' {
+        InModuleScope Metra {
+            Mock Test-MetraOpsLocalSessionToken { param($SessionToken) $SessionToken -eq 'desk-token' }
+            $req = [PSCustomObject]@{
+                Headers        = @{
+                    'Tailscale-User-Login'  = 'user@example.com'
+                    'X-Metra-Local-Session' = 'desk-token'
+                }
+                RemoteEndPoint = [PSCustomObject]@{ Address = [System.Net.IPAddress]::Loopback }
+            }
+            Test-MetraOpsRequestIsSameMachine -Request $req | Should -BeTrue
+            Test-MetraOpsRequestHasLocalAuthority -Request $req | Should -BeTrue
+        }
+    }
+
+    It 'Serve-proxied peer without session has no local authority' {
+        InModuleScope Metra {
+            Mock Test-MetraOpsLocalSessionToken { $false }
+            $req = [PSCustomObject]@{
+                Headers        = @{
+                    'Tailscale-User-Login' = 'user@example.com'
+                    'X-Forwarded-For'      = '100.64.1.2'
+                }
+                RemoteEndPoint = [PSCustomObject]@{ Address = [System.Net.IPAddress]::Loopback }
+            }
+            Test-MetraOpsRequestHasLocalAuthority -Request $req | Should -BeFalse
+        }
+    }
+
+    It 'Serve-proxied HQ client IP has local authority without session' {
+        InModuleScope Metra {
+            Mock Test-MetraOpsLocalSessionToken { $false }
+            $mine = @([System.Net.Dns]::GetHostAddresses([System.Net.Dns]::GetHostName()) |
+                    Where-Object { -not [System.Net.IPAddress]::IsLoopback($_) } |
+                    Select-Object -First 1)
+            if ($mine.Count -lt 1) {
+                Set-ItResult -Skipped -Because 'no non-loopback host address available'
+                return
+            }
+            $req = [PSCustomObject]@{
+                Headers        = @{
+                    'Tailscale-User-Login' = 'user@example.com'
+                    'X-Forwarded-For'      = $mine[0].ToString()
+                }
+                RemoteEndPoint = [PSCustomObject]@{ Address = [System.Net.IPAddress]::Loopback }
+            }
+            Test-MetraOpsRequestHasLocalAuthority -Request $req | Should -BeTrue
+        }
+    }
+}
+
+Describe 'Get-MetraOpsDeskOpenUrl' {
+    It 'prefers ShareUrl and appends metraLocalSession hash without mutating binding' {
+        InModuleScope Metra {
+            $dataDir = Join-Path $TestDrive 'desk-open-share'
+            New-Item -ItemType Directory -Path $dataDir -Force | Out-Null
+            $tokenPath = Join-Path $dataDir 'ops-local-session.token'
+            Mock Get-MetraOpsLocalSessionTokenPath { $tokenPath }
+            $binding = [PSCustomObject]@{
+                ShareUrl    = 'https://metra.example.ts.net/'
+                BrowserUrl  = 'https://metra.example.ts.net/'
+                OperatorUrl = 'http://127.0.0.1:7410/'
+                Port        = 7410
+            }
+            $beforeShare = [string]$binding.ShareUrl
+            $beforeOp = [string]$binding.OperatorUrl
+            $open = Get-MetraOpsDeskOpenUrl -Binding $binding
+            $open | Should -Match '^https://metra\.example\.ts\.net/#metraLocalSession=[a-f0-9]{64}$'
+            [string]$binding.ShareUrl | Should -Be $beforeShare
+            [string]$binding.OperatorUrl | Should -Be $beforeOp
+            $open.Contains('metraLocalSession=') | Should -BeTrue
+            $beforeShare.Contains('metraLocalSession=') | Should -BeFalse
+        }
+    }
+
+    It 'falls back to OperatorUrl with hash when no memorable ShareUrl' {
+        InModuleScope Metra {
+            $dataDir = Join-Path $TestDrive 'desk-open-loopback'
+            New-Item -ItemType Directory -Path $dataDir -Force | Out-Null
+            $tokenPath = Join-Path $dataDir 'ops-local-session.token'
+            Mock Get-MetraOpsLocalSessionTokenPath { $tokenPath }
+            $binding = [PSCustomObject]@{
+                ShareUrl    = 'http://127.0.0.1:7411/'
+                BrowserUrl  = 'http://127.0.0.1:7411/'
+                OperatorUrl = 'http://127.0.0.1:7411/'
+                Port        = 7411
+            }
+            $open = Get-MetraOpsDeskOpenUrl -Binding $binding
+            $open | Should -Match '^http://127\.0\.0\.1:7411/#metraLocalSession=[a-f0-9]{64}$'
+        }
+    }
+
+    It 'mints token when missing and replaces malformed token' {
+        InModuleScope Metra {
+            $dataDir = Join-Path $TestDrive 'desk-open-mint'
+            New-Item -ItemType Directory -Path $dataDir -Force | Out-Null
+            $path = Join-Path $dataDir 'ops-local-session.token'
+            Mock Get-MetraOpsLocalSessionTokenPath { $path }
+            $binding = [PSCustomObject]@{
+                ShareUrl    = 'https://metra.example.ts.net/'
+                BrowserUrl  = 'https://metra.example.ts.net/'
+                OperatorUrl = 'http://127.0.0.1:7412/'
+                Port        = 7412
+            }
+            -not (Test-Path -LiteralPath $path) | Should -BeTrue
+            $open1 = Get-MetraOpsDeskOpenUrl -Binding $binding
+            $tok1 = ($open1 -split 'metraLocalSession=')[-1]
+            $tok1 | Should -Match '^[a-f0-9]{64}$'
+            'not-a-valid-token' | Set-Content -LiteralPath $path -Encoding utf8 -NoNewline
+            $open2 = Get-MetraOpsDeskOpenUrl -Binding $binding
+            $tok2 = ($open2 -split 'metraLocalSession=')[-1]
+            $tok2 | Should -Match '^[a-f0-9]{64}$'
+            $tok2 | Should -Not -Be 'not-a-valid-token'
+        }
+    }
+
+    It 'Test-MetraOpsMemorableDeskBaseUrl rejects OperatorUrl and loopback http' {
+        InModuleScope Metra {
+            Test-MetraOpsMemorableDeskBaseUrl -Url 'https://metra.example.ts.net/' -OperatorUrl 'http://127.0.0.1:7410/' |
+                Should -BeTrue
+            Test-MetraOpsMemorableDeskBaseUrl -Url 'http://127.0.0.1:7410/' -OperatorUrl 'http://127.0.0.1:7410/' |
+                Should -BeFalse
+            Test-MetraOpsMemorableDeskBaseUrl -Url 'http://metra.tailnet.ts.net/' -OperatorUrl 'http://127.0.0.1:7410/' |
+                Should -BeTrue
         }
     }
 }

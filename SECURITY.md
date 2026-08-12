@@ -73,7 +73,7 @@ Also: single registry project root; no `..` / absolute escape; reject symlink/re
 
 Default Ops bind is loopback. Opt-in Tailscale (or other non-loopback) bind is for **reach** (view / share / ask), not anonymous write authority. Same-origin Ops UI does not use wildcard CORS; there is no `Access-Control-Allow-Origin: *`.
 
-**Local authority** (`Test-MetraOpsRequestHasLocalAuthority` / `Assert-MetraOpsLocalAuthority`): same-machine (Serve-aware via `Test-MetraOpsRequestIsSameMachine`) or a validated Host-issued `X-Metra-Local-Session`. Gates refresh, watch, preferences PUT, ask/engine POST, attention mutations, place confirm/correct, settings, updates, open, and profile issue-sync-token. Capture promote passes `HasLocalAuthority` for project-tree writes.
+**Local authority** (`Test-MetraOpsRequestHasLocalAuthority` / `Assert-MetraOpsLocalAuthority`): same-machine (Serve-aware via `Test-MetraOpsRequestIsSameMachine`) or a validated Host-issued `X-Metra-Local-Session`. Transport (loopback, MagicDNS, Serve) is never an authority signal by itself. Host Open may land on the memorable ShareUrl with a `#metraLocalSession=` bootstrap that the client stores and strips; peers without that bootstrap stay Ask-class. Gates refresh, watch, preferences PUT, ask/engine POST, attention mutations, place confirm/correct, settings, updates, open, and profile issue-sync-token. Capture promote passes `HasLocalAuthority` for project-tree writes.
 
 **Ask-class remote** (Tailscale reach, no local-authority gate): `POST /api/ask`, GET ask journal/engine, GET/POST capture (create/dismiss/propose), `POST /api/place/upload`, `POST /api/place`, GET place/homes, GET preferences/settings/snapshot/meta.
 

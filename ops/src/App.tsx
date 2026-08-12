@@ -8,7 +8,7 @@ import {
   noteAttention,
   openProjectPath,
   postAsk,
-  ensureLocalSessionToken,
+  verifyLocalSessionAuthority,
   postCaptureAccepted,
   postCaptureDismiss,
   postCaptureFromAsk,
@@ -63,6 +63,27 @@ import type {
 } from './types'
 
 type TabId = 'route' | 'projects' | 'recent' | 'health' | 'settings'
+
+type SettingsPanelTab = 'share' | 'portfolio' | 'desk' | 'about'
+
+const SETTINGS_PANEL_TABS: { id: SettingsPanelTab; label: string }[] = [
+  { id: 'share', label: 'Share' },
+  { id: 'portfolio', label: 'Portfolio' },
+  { id: 'desk', label: 'Desk' },
+  { id: 'about', label: 'About' },
+]
+
+const SETTINGS_TAB_STORAGE_KEY = 'metraSettingsTab'
+
+function readStoredSettingsTab(): SettingsPanelTab {
+  try {
+    const v = sessionStorage.getItem(SETTINGS_TAB_STORAGE_KEY)
+    if (v === 'share' || v === 'portfolio' || v === 'desk' || v === 'about') return v
+  } catch {
+    /* ignore */
+  }
+  return 'share'
+}
 
 type RootDraft = {
   key: string
@@ -1145,16 +1166,38 @@ export default function App() {
     Array<CaptureProposal & { accepted: boolean }>
   >([])
   const [captureProposeOpen, setCaptureProposeOpen] = useState(false)
+  /** Verified local authority (session token and/or same-machine) - not mere token presence. */
   const [hasLocalSession, setHasLocalSession] = useState(false)
+  const [localAuthorityChecked, setLocalAuthorityChecked] = useState(false)
+  const [settingsPanelTab, setSettingsPanelTab] = useState<SettingsPanelTab>(readStoredSettingsTab)
+
+  function selectSettingsPanelTab(next: SettingsPanelTab) {
+    setSettingsPanelTab(next)
+    try {
+      sessionStorage.setItem(SETTINGS_TAB_STORAGE_KEY, next)
+    } catch {
+      /* ignore */
+    }
+  }
   const [captureDrafts, setCaptureDrafts] = useState<
     Record<string, { home: string; project: string; crossRootConfirm: boolean }>
   >({})
   const composerRef = useRef<HTMLTextAreaElement | null>(null)
   const chatEndRef = useRef<HTMLDivElement | null>(null)
 
+  // Probe once on mount (and when Host bootstrap hash may have been consumed). Do not tie to
+  // desk.generatedAt - snapshot refresh was clearing hasLocalSession and hiding Settings.
   useEffect(() => {
-    void ensureLocalSessionToken().then((t) => setHasLocalSession(Boolean(t)))
-  }, [desk?.generatedAt])
+    let cancelled = false
+    void verifyLocalSessionAuthority().then((ok) => {
+      if (cancelled) return
+      setHasLocalSession(ok)
+      setLocalAuthorityChecked(true)
+    })
+    return () => {
+      cancelled = true
+    }
+  }, [])
 
   useEffect(() => {
     chatEndRef.current?.scrollIntoView({ behavior: 'smooth', block: 'nearest' })
@@ -1403,12 +1446,13 @@ export default function App() {
   }
 
   useEffect(() => {
+    if (!hasLocalSession) return
     if (!settingsOpen && tab !== 'settings') return
     void loadSettingsPortfolio()
     void loadProductUpdates(false)
     void loadProfileSyncStatus()
-    // eslint-disable-next-line react-hooks/exhaustive-deps -- load when Settings opens
-  }, [settingsOpen, tab])
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- load when Settings opens after verified authority
+  }, [settingsOpen, tab, hasLocalSession])
 
   async function onDownloadProfilePack() {
     setBusy(true)
@@ -2791,8 +2835,8 @@ export default function App() {
           </p>
           {!hasLocalSession && (
             <p className="muted small">
-              No local Host session detected - ProjectBacklog promote is disabled until you open Ops
-              from Host/loopback.
+              No Host local session - ProjectBacklog promote is disabled until you open the desk from
+              Metra Host.
             </p>
           )}
           <ul className="list">
@@ -2931,36 +2975,69 @@ export default function App() {
       {showSettings && (
         <section className="panel">
           <h2>Settings</h2>
+          {!hasLocalSession ? (
+            <p className="muted" role="status">
+              {localAuthorityChecked
+                ? 'This Share tab is Ask-only until Host unlocks Settings. On HQ: tray Open desk (or restart Host) so this browser gets a local session - then refresh.'
+                : 'Checking Host session…'}
+            </p>
+          ) : null}
+          {hasLocalSession ? (
+            <>
           {settingsStatus ? (
             <p className="muted" role="status">
               {settingsStatus}
             </p>
           ) : null}
-          {!hasLocalSession && (
-            <p className="warn" role="status">
-              This tab is on the share URL (Tailscale), so Save role and Issue sync token cannot run
-              here. Open the operator desk
-              {settingsPortfolio?.operatorUrl ? (
-                <>
-                  {' '}
-                  (
-                  <a href={settingsPortfolio.operatorUrl}>{settingsPortfolio.operatorUrl}</a>
-                  ){' '}
-                </>
-              ) : (
-                ' (loopback via Metra Host) '
-              )}
-              - Host opens that URL now - then Save role works in the UI.
-            </p>
-          )}
+          <nav className="tabs settings-tabs" aria-label="Settings sections">
+            {SETTINGS_PANEL_TABS.map((t) => (
+              <button
+                key={t.id}
+                type="button"
+                className={`tab${settingsPanelTab === t.id ? ' active' : ''}`}
+                onClick={() => selectSettingsPanelTab(t.id)}
+              >
+                {t.label}
+              </button>
+            ))}
+          </nav>
+          {settingsPanelTab === 'share' ? (
+            <>
+          {settingsPortfolio?.shareUrl ? (
+            <div className="settings-row">
+              <div>
+                <strong>Main Metra / phone address</strong>
+                <p className="muted">
+                  Clean Share URL for satellites and peers (never includes a local-session hash).
+                </p>
+                <p style={{ margin: '0.35rem 0', wordBreak: 'break-all' }}>
+                  <code>{settingsPortfolio.shareUrl}</code>
+                </p>
+                <button
+                  type="button"
+                  disabled={busy}
+                  onClick={() => {
+                    void (async () => {
+                      try {
+                        await navigator.clipboard.writeText(String(settingsPortfolio.shareUrl))
+                        setSettingsStatus('Share address copied.')
+                      } catch {
+                        setError('Could not copy Share address.')
+                      }
+                    })()
+                  }}
+                >
+                  Copy Share address
+                </button>
+              </div>
+            </div>
+          ) : null}
           <div className="settings-row">
             <div>
               <strong>Profile Sync</strong>
               <p className="muted">
                 HQ-published, satellite-pulled. Pack fingerprint is not the sync token. Satellites
-                update after <code>profile sync</code> or upgrade pull. Download a pack here, or
-                sync from a laptop with <code>.\metra.ps1 profile sync</code>. No
-                Apply-to-this-device over Tailscale.
+                update after <code>profile sync</code> or upgrade pull.
               </p>
               {profileSyncStatus ? (
                 <ul className="muted" style={{ margin: '0.4rem 0', paddingLeft: '1.1rem' }}>
@@ -2978,16 +3055,7 @@ export default function App() {
                   </li>
                 </ul>
               ) : (
-                <p className="muted">
-                  Status unavailable - open the operator desk
-                  {settingsPortfolio?.operatorUrl ? (
-                    <>
-                      {' '}
-                      (<a href={settingsPortfolio.operatorUrl}>{settingsPortfolio.operatorUrl}</a>)
-                    </>
-                  ) : null}
-                  .
-                </p>
+                <p className="muted">Status unavailable.</p>
               )}
               <div style={{ marginTop: '0.6rem' }}>
                 <strong>Satellites</strong>
@@ -3016,7 +3084,7 @@ export default function App() {
                   title={
                     hasLocalSession
                       ? undefined
-                      : 'Requires Metra Host / loopback operator session'
+                      : 'Requires Host-opened local session'
                   }
                   onClick={() => void onIssueProfileSyncToken(false)}
                 >
@@ -3028,7 +3096,7 @@ export default function App() {
                   title={
                     hasLocalSession
                       ? undefined
-                      : 'Requires Metra Host / loopback operator session'
+                      : 'Requires Host-opened local session'
                   }
                   onClick={() => void onIssueProfileSyncToken(true)}
                 >
@@ -3105,28 +3173,16 @@ export default function App() {
               <button
                 type="button"
                 disabled={busy || !hasLocalSession}
-                title={
-                  hasLocalSession
-                    ? undefined
-                    : 'Open the operator desk (loopback) to Save role'
-                }
                 onClick={() => void onSaveMachineRole()}
               >
                 Save role
               </button>
-              {!hasLocalSession ? (
-                <p className="muted" style={{ marginTop: '0.35rem' }}>
-                  Role dropdown is draft-only on the share URL. Metra Host opens{' '}
-                  {settingsPortfolio?.operatorUrl ? (
-                    <a href={settingsPortfolio.operatorUrl}>{settingsPortfolio.operatorUrl}</a>
-                  ) : (
-                    'the loopback operator desk'
-                  )}{' '}
-                  so Save role works in Settings.
-                </p>
-              ) : null}
             </div>
           </div>
+            </>
+          ) : null}
+          {settingsPanelTab === 'portfolio' ? (
+            <>
           <div className="settings-row">
             <div>
               <strong>Projects folders</strong>
@@ -3215,6 +3271,10 @@ export default function App() {
               </div>
             </div>
           </div>
+            </>
+          ) : null}
+          {settingsPanelTab === 'desk' ? (
+            <>
           <div className="settings-row">
             <div>
               <strong>Ask</strong>
@@ -3377,6 +3437,10 @@ export default function App() {
               </select>
             </label>
           </div>
+            </>
+          ) : null}
+          {settingsPanelTab === 'about' ? (
+            <>
           <div className="settings-row">
             <div>
               <strong>Updates</strong>
@@ -3476,6 +3540,10 @@ export default function App() {
               Open Cursor
             </a>
           </div>
+            </>
+          ) : null}
+            </>
+          ) : null}
         </section>
       )}
     </div>

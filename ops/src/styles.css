@@ -391,6 +391,11 @@ input {
   margin-bottom: 1.25rem;
 }
 
+.settings-tabs {
+  margin-top: 0.25rem;
+  margin-bottom: 1rem;
+}
+
 .tab {
   border: 1px solid transparent;
   background: transparent;

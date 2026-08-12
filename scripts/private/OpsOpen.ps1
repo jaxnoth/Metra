@@ -8,7 +8,8 @@ function Test-MetraOpsRequestLooksProxiedThroughServe {
         True when request headers indicate Tailscale Serve (or similar) proxying.
     .DESCRIPTION
         Request origin may appear loopback when proxied through Tailscale Serve.
-        Treat Serve-header requests as remote for authorization purposes.
+        Treat Serve-header requests as remote for authorization purposes unless
+        identity (session) or this-machine client IP is proven separately.
     #>
     [CmdletBinding()]
     param([Parameter(Mandatory)]$Request)
@@ -43,28 +44,67 @@ function Test-MetraOpsRequestLooksProxiedThroughServe {
     return $false
 }
 
-function Test-MetraOpsRequestIsSameMachine {
+function Get-MetraOpsRequestForwardedClientAddress {
     <#
     .SYNOPSIS
-        True when the caller is this machine (loopback, local session, or own address).
+        Client IP from X-Forwarded-For / X-Real-IP only (no RemoteEndPoint fallback).
     .DESCRIPTION
-        Order: deny Serve proxying, allow loopback, allow a validated Host-issued
-        X-Metra-Local-Session token (primary identity for MagicDNS / non-loopback desk URLs),
-        then treat ownership of the remote IP as supplemental. Transport location alone
-        does not define authority - request identity does.
-        Launching an editor is operator-desktop reach. A different device does not qualify.
+        Tailscale Serve connects to loopback, so RemoteEndPoint is useless for peer vs HQ.
+        Missing forwarded headers means unknown client - callers must fail closed.
     #>
     [CmdletBinding()]
     param([Parameter(Mandatory)]$Request)
 
     try {
-        if (Test-MetraOpsRequestLooksProxiedThroughServe -Request $Request) {
-            return $false
+        $headers = $Request.Headers
+        foreach ($fwdName in @('X-Forwarded-For', 'X-Real-IP')) {
+            $raw = [string]$headers[$fwdName]
+            if ([string]::IsNullOrWhiteSpace($raw)) { continue }
+            $first = ($raw -split ',')[0].Trim()
+            if ([string]::IsNullOrWhiteSpace($first)) { continue }
+            try {
+                return [System.Net.IPAddress]::Parse($first)
+            }
+            catch { }
         }
+    }
+    catch { }
+    return $null
+}
 
-        $addr = $Request.RemoteEndPoint.Address
-        if ([System.Net.IPAddress]::IsLoopback($addr)) { return $true }
+function Test-MetraOpsIpAddressIsThisMachine {
+    <#
+    .SYNOPSIS
+        True when Address is loopback or one of this host's IPv4/IPv6 addresses.
+    #>
+    [CmdletBinding()]
+    param([Parameter(Mandatory)][System.Net.IPAddress]$Address)
 
+    if ([System.Net.IPAddress]::IsLoopback($Address)) { return $true }
+    try {
+        $mine = @([System.Net.Dns]::GetHostAddresses([System.Net.Dns]::GetHostName()))
+        foreach ($ip in $mine) {
+            if ($ip.Equals($Address)) { return $true }
+        }
+    }
+    catch { }
+    return $false
+}
+
+function Test-MetraOpsRequestIsSameMachine {
+    <#
+    .SYNOPSIS
+        True when the caller is this machine (session identity, loopback, or own address).
+    .DESCRIPTION
+        Order: validated Host-issued X-Metra-Local-Session (works through Serve), then
+        Serve client IP owned by this host (HQ MagicDNS without hash), then direct
+        loopback / own RemoteEndPoint. Bare Serve from a peer node stays false.
+        Transport location alone does not define authority - request identity does.
+    #>
+    [CmdletBinding()]
+    param([Parameter(Mandatory)]$Request)
+
+    try {
         # Identity signal (stronger than IP ownership for MagicDNS on this host).
         $sessionToken = ''
         try { $sessionToken = [string]$Request.Headers['X-Metra-Local-Session'] } catch { }
@@ -72,12 +112,20 @@ function Test-MetraOpsRequestIsSameMachine {
             return $true
         }
 
-        # Supplemental: caller IP is one of this machine's addresses (IPv4/IPv6).
-        $mine = @([System.Net.Dns]::GetHostAddresses([System.Net.Dns]::GetHostName()))
-        foreach ($ip in $mine) {
-            if ($ip.Equals($addr)) { return $true }
+        if (Test-MetraOpsRequestLooksProxiedThroughServe -Request $Request) {
+            # HQ browser through Serve: forwarded client IP is this machine's Tailscale address.
+            # Do not trust RemoteEndPoint - Serve always connects from loopback.
+            $client = Get-MetraOpsRequestForwardedClientAddress -Request $Request
+            if ($null -ne $client -and (Test-MetraOpsIpAddressIsThisMachine -Address $client)) {
+                return $true
+            }
+            return $false
         }
-        return $false
+
+        $addr = $Request.RemoteEndPoint.Address
+        if ([System.Net.IPAddress]::IsLoopback($addr)) { return $true }
+
+        return Test-MetraOpsIpAddressIsThisMachine -Address $addr
     }
     catch {
         return $false

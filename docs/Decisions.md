@@ -18,11 +18,17 @@ Entry shape:
 
 ---
 
-## 2026-08-12 - Host opens operator loopback for Settings authority
+## 2026-08-12 - Host Open uses memorable ShareUrl with local-session bootstrap
 
-- Decision: With Tailscale Serve, `BrowserUrl` / `ShareUrl` stay the peer reach URL. Local Host / Ops browser open uses `OperatorUrl` (`http://127.0.0.1:<port>/`) via `Get-MetraOpsOperatorOpenUrl`. Settings Save role, issue-sync-token, and other local-authority UI stay on that operator desk. Serve peers remain view/ask without inheriting loopback authority.
-- Why: Opening the Serve MagicDNS URL on HQ made Save role look broken - Serve strips same-machine authority and `/api/local-session` is loopback-only.
-- See: `scripts/private/OpsBinding.ps1`; `scripts/private/OpsHost.ps1`; `scripts/private/OpsServer.ps1`; Ops Settings
+- Decision: Metra Host Open prefers the memorable ShareUrl/MagicDNS desk address when available via `Get-MetraOpsDeskOpenUrl`. For the HQ operator, Host appends a local session bootstrap token in the URL hash (`#metraLocalSession=<64-hex>`). The browser client consumes a well-formed hash into sessionStorage, strips it from the address bar (hash is a one-time browser bootstrap mechanism, not a one-time-use credential), ignores malformed hashes while still stripping them, and uses `X-Metra-Local-Session` for Settings authority after verification. Reachable desk URL is not authorized local operator session - Serve is transport; the Host-minted token is the badge. Settings accepts a valid session regardless of transport; transport is never an authority signal. Anonymous browsers over Serve cannot mint local sessions (`GET /api/local-session` stays loopback-only). Peers opening the same ShareUrl without Host bootstrap receive Ask-class behavior and do not see Settings. Copyable Share address fields never include the local-session hash. OperatorUrl remains a loopback listen/recovery fact, not the primary desk address.
+- Why: MagicDNS exists to be memorable over IP. Opening only `127.0.0.1` for Settings inverted that product principle after Serve stripped same-machine checks.
+- Supersedes: 2026-08-12 Host opens operator loopback for Settings authority (same-day interim).
+- See: `Get-MetraOpsDeskOpenUrl` in `scripts/private/OpsBinding.ps1`; `Initialize-MetraOpsLocalSessionToken` in `scripts/private/OpsSession.ps1`; `Open-MetraOpsDeskBrowser` in `scripts/private/OpsHost.ps1`; `ops/src/api.ts`; Ops Settings
+
+## 2026-08-12 - Host opens operator loopback for Settings authority (superseded)
+
+- Superseded by: Host Open uses memorable ShareUrl with local-session bootstrap (same day).
+- Was: With Tailscale Serve, Host/Ops browser open used OperatorUrl loopback so `/api/local-session` could mint; ShareUrl stayed peer reach only.
 
 ## 2026-08-11 - Product update apply is async outside the Ops listener
 

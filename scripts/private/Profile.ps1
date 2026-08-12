@@ -196,10 +196,29 @@ function Get-MetraProfileLogicalName {
 }
 
 function Get-MetraProfileFileSha256Hex {
+    <#
+    .SYNOPSIS
+        Lowercase hex SHA256 of a file (no Get-FileHash dependency).
+    .DESCRIPTION
+        Ops Host child runspaces may not auto-load Microsoft.PowerShell.Utility,
+        so Get-FileHash can be missing. Use System.Security.Cryptography instead.
+    #>
     param([Parameter(Mandatory)][string]$Path)
 
-    $hash = Get-FileHash -LiteralPath $Path -Algorithm SHA256
-    return $hash.Hash.ToLowerInvariant()
+    $sha = [System.Security.Cryptography.SHA256]::Create()
+    try {
+        $stream = [System.IO.File]::OpenRead($Path)
+        try {
+            $bytes = $sha.ComputeHash($stream)
+        }
+        finally {
+            $stream.Dispose()
+        }
+    }
+    finally {
+        $sha.Dispose()
+    }
+    return (($bytes | ForEach-Object { $_.ToString('x2') }) -join '')
 }
 
 function Assert-MetraProfilePlanHashes {

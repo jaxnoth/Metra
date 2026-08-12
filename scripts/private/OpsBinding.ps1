@@ -1,6 +1,7 @@
 # Ops desk URL binding: prefer http://metra/ on port 80 when free; else 127.0.0.1:7380.
-# BrowserUrl / ShareUrl may be reachable by peers (Tailscale / friendly).
-# OperatorUrl must remain loopback because local-session authority and tray Apply are local-only.
+# BrowserUrl / ShareUrl may be reachable by peers (Tailscale / friendly) - clean addresses only.
+# OperatorUrl stays loopback (listen/recovery). Host Open uses Get-MetraOpsDeskOpenUrl
+# (memorable base + #metraLocalSession bootstrap). Serve is transport, not authority.
 # When Tailscale binding is enabled, BrowserUrl prefers Tailscale reachability even if friendly
 # host reservations exist (friendly prefixes may still be added as listeners).
 
@@ -443,10 +444,9 @@ function Get-MetraOpsFriendlyBinding {
 function Get-MetraOpsOperatorOpenUrl {
     <#
     .SYNOPSIS
-        Loopback URL Host/Ops open for local Settings, Save role, and issue-sync-token.
+        Loopback OperatorUrl for listen/recovery (not the primary Host Open desk address).
     .DESCRIPTION
-        Share/Tailscale BrowserUrl stays for peers. Local Host open must use OperatorUrl so
-        /api/local-session works (Serve strips loopback authority).
+        Prefer Get-MetraOpsDeskOpenUrl for Host/Ops browser open. OperatorUrl stays loopback.
     #>
     [CmdletBinding()]
     param(
@@ -464,6 +464,81 @@ function Get-MetraOpsOperatorOpenUrl {
     if ($port -le 0) { $port = Get-MetraOpsFallbackPort }
     if ($port -eq 80) { return 'http://127.0.0.1/' }
     return "http://127.0.0.1:$port/"
+}
+
+function Test-MetraOpsMemorableDeskBaseUrl {
+    <#
+    .SYNOPSIS
+        True when Url is a memorable peer/desk base (HTTPS, MagicDNS, or non-loopback share), not OperatorUrl.
+    #>
+    [CmdletBinding()]
+    param(
+        [AllowEmptyString()][string]$Url,
+        [AllowEmptyString()][string]$OperatorUrl = ''
+    )
+
+    if ([string]::IsNullOrWhiteSpace($Url)) { return $false }
+    $u = $Url.Trim()
+    $hashIdx = $u.IndexOf('#')
+    if ($hashIdx -ge 0) { $u = $u.Substring(0, $hashIdx) }
+    $u = $u.TrimEnd('/')
+    if ([string]::IsNullOrWhiteSpace($u)) { return $false }
+
+    $op = if ([string]::IsNullOrWhiteSpace($OperatorUrl)) { '' } else { $OperatorUrl.Trim().TrimEnd('/') }
+    if ($op -and $u.Equals($op, [System.StringComparison]::OrdinalIgnoreCase)) { return $false }
+
+    if ($u -match '^https://') { return $true }
+    if ($u -match '(?i)\.ts\.net(/|$)') { return $true }
+    if ($u -match '(?i)^https?://(127\.0\.0\.1|localhost)(:|/|$)') { return $false }
+    # PreferFriendly / other non-loopback http desk names
+    return $true
+}
+
+function Get-MetraOpsDeskOpenUrl {
+    <#
+    .SYNOPSIS
+        Host Open URL: memorable desk base when available, plus local-session hash bootstrap.
+    .DESCRIPTION
+        Prefer ShareUrl, then BrowserUrl, then OperatorUrl. Appends #metraLocalSession=<64-hex>.
+        Does not mutate binding ShareUrl/OperatorUrl. Callers must not log the returned URL
+        (token in fragment). Hash is a browser bootstrap; token remains Host-disk credential.
+    #>
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory)]$Binding
+    )
+
+    $tokenInit = Initialize-MetraOpsLocalSessionToken
+    $hostBootstrapToken = [string]$tokenInit.Token
+    if (-not (Test-MetraOpsLocalSessionTokenFormat -Value $hostBootstrapToken)) {
+        $tokenInit = Initialize-MetraOpsLocalSessionToken -Rotate
+        $hostBootstrapToken = [string]$tokenInit.Token
+    }
+    if (-not (Test-MetraOpsLocalSessionTokenFormat -Value $hostBootstrapToken)) {
+        throw 'Failed to mint a valid Metra Ops local session token for desk open.'
+    }
+
+    $operatorUrl = Get-MetraOpsOperatorOpenUrl -Binding $Binding
+    $shareUrl = ''
+    $browserUrl = ''
+    try { $shareUrl = [string](Get-MetraProp -Object $Binding -Name 'ShareUrl' -Default '') } catch { }
+    try { $browserUrl = [string](Get-MetraProp -Object $Binding -Name 'BrowserUrl' -Default '') } catch { }
+
+    $deskBaseUrl = $operatorUrl
+    if (Test-MetraOpsMemorableDeskBaseUrl -Url $shareUrl -OperatorUrl $operatorUrl) {
+        $deskBaseUrl = $shareUrl.Trim()
+    }
+    elseif (Test-MetraOpsMemorableDeskBaseUrl -Url $browserUrl -OperatorUrl $operatorUrl) {
+        $deskBaseUrl = $browserUrl.Trim()
+    }
+
+    $hashIdx = $deskBaseUrl.IndexOf('#')
+    if ($hashIdx -ge 0) { $deskBaseUrl = $deskBaseUrl.Substring(0, $hashIdx) }
+    $deskBaseUrl = $deskBaseUrl.Trim()
+    if (-not $deskBaseUrl.EndsWith('/')) { $deskBaseUrl += '/' }
+
+    $authorizedOpenUrl = '{0}#metraLocalSession={1}' -f $deskBaseUrl, $hostBootstrapToken
+    return $authorizedOpenUrl
 }
 
 function Get-MetraOpsDeskUrl {
