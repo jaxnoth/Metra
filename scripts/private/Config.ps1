@@ -90,6 +90,23 @@ function Get-MetraProp {
     )
 
     if ($null -eq $Object) { return $Default }
+
+    if ($Object -is [System.Collections.IDictionary]) {
+        if ($Object.Contains($Name)) {
+            $val = $Object[$Name]
+            if ($null -eq $val) { return $Default }
+            return $val
+        }
+        foreach ($key in $Object.Keys) {
+            if ([string]::Equals([string]$key, $Name, [System.StringComparison]::OrdinalIgnoreCase)) {
+                $val = $Object[$key]
+                if ($null -eq $val) { return $Default }
+                return $val
+            }
+        }
+        return $Default
+    }
+
     $prop = $Object.PSObject.Properties[$Name]
     if (-not $prop) { return $Default }
     if ($null -eq $prop.Value) { return $Default }

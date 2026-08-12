@@ -18,6 +18,32 @@ Entry shape:
 
 ---
 
+## 2026-08-12 - Metra Inspect Phase 1
+
+- Decision: Metra Inspect provides local AI-assisted inspection of git changes and plan documents using the configured Ask engine. Inspect is recommend-only and never modifies source code or plans.
+- Phase 1 supports two inputs: local git diffs and resolved Cursor plan markdown. Diff mode is the default. Plan mode supports recent-plan listing, latest-plan selection, unique filename fragment selection, and explicit path selection so operators do not have to copy full paths from `%USERPROFILE%\.cursor\plans\`.
+- Inspect uses existing project knowledge homes, including `AGENTS.md` and Decisions where available. It does not create a parallel inspect memory store.
+- Inspect reports structured findings with severity, confidence, category, evidence, recommendation, and provenance. Reports are persisted machine-locally under `%LOCALAPPDATA%\Metra\inspect\`.
+- During calibration, Bing remains the required comparison lane for Metra executable changes. `inspect pack` exists to make Bing comparison cheap for both plan and diff inspection. Any future narrowing or retirement of the Bing executable-change requirement requires a separate Decision.
+- Inspect fails closed for empty diffs, missing or ambiguous plans, ambiguous project roots, unavailable model transport, and non-JSON model output. It must not produce fake-success reports.
+- Why: Daily plan and change assessment needs a Metra-native advisory path without forcing awkward full-path copy. Keeping Inspect recommend-only and fail-closed preserves the Observe → Recommend → Human affirms pattern while calibration determines whether Metra Inspect becomes trustworthy enough to narrow the Bing gate later.
+- See: `.\metra.ps1 inspect`; `.\metra.ps1 inspect plan`; `.\metra.ps1 inspect plan -Latest`; `.\metra.ps1 inspect pack`; `scripts/private/Inspect.ps1`
+
+## 2026-08-12 - Metra Inspect coding loop (default agent workflow)
+
+- Decision: Meaningful implementation work uses a default **Inspect coding loop**: plan inspect before implement (when plan-driven); diff inspect after each coherent code batch; findings summarized in chat; operator affirms fix / defer / reject; agent fixes only affirmed items; re-inspect same mode until no High findings and operator ship / good enough. Inspect remains recommend-only - no CLI auto-fix and no agent auto-fix without operator confirmation in chat.
+- The loop lives in agent behavior and `.cursor/rules/metra-inspect-loop.mdc` (always-on), not in a mutating `inspect --fix` command. Ticket-ops-only turns and brainstorm-without-implement skip the loop. Ask engine unavailable fails closed.
+- Metra executable changes during calibration still require `inspect pack` and the Bing comparison lane after the loop is satisfied. Other projects end at operator ship unless pack/Bing is requested.
+- Why: Phase 1 Inspect proved useful as calibration; turning the soft re-inspect habit into an explicit Observe → Recommend → Human affirms loop catches issues before ship without violating recommend-only or auto-act boundaries.
+- See: `AGENTS.md` Inspect section; `.cursor/rules/metra-inspect-loop.mdc`
+
+## 2026-08-12 - Metra Inspect engine independence
+
+- Decision: Metra distinguishes implementation from inspection engines whenever practical. When coder and reviewer share an engine family, inspection results are advisory and require an additional validation lane before release (operator judgment, tests/verify, pack, Bing, or other external signals).
+- Preferred: Cursor Agent on a Cursor-hosted model; Metra Inspect on Ollama (`ask.engine`). Acceptable under quota pressure: Ollama model A for Agent, Ollama model B for Inspect.
+- Why: Prevents assuming inspect is independent when it is not. Preserves Observe → Recommend → Human affirms without forcing config changes today; safety net remains inspect + verify + operator judgment.
+- See: `AGENTS.md` Inspect (Engine independence); `.cursor/rules/metra-inspect-loop.mdc`; `.\metra.ps1 ask engine show`
+
 ## 2026-08-12 - Host Open uses memorable ShareUrl with local-session bootstrap
 
 - Decision: Metra Host Open prefers the memorable ShareUrl/MagicDNS desk address when available via `Get-MetraOpsDeskOpenUrl`. For the HQ operator, Host appends a local session bootstrap token in the URL hash (`#metraLocalSession=<64-hex>`). The browser client consumes a well-formed hash into sessionStorage, strips it from the address bar (hash is a one-time browser bootstrap mechanism, not a one-time-use credential), ignores malformed hashes while still stripping them, and uses `X-Metra-Local-Session` for Settings authority after verification. Reachable desk URL is not authorized local operator session - Serve is transport; the Host-minted token is the badge. Settings accepts a valid session regardless of transport; transport is never an authority signal. Anonymous browsers over Serve cannot mint local sessions (`GET /api/local-session` stays loopback-only). Peers opening the same ShareUrl without Host bootstrap receive Ask-class behavior and do not see Settings. Copyable Share address fields never include the local-session hash. OperatorUrl remains a loopback listen/recovery fact, not the primary desk address.

@@ -227,6 +227,74 @@ Describe 'OpenAI-compat completion helpers' {
             $script:CapturedBody | Should -Not -Match 'C:\\\\Users\\\\Stephen'
         }
     }
+
+    It 'metra-inspect context enables json_object response_format and inspect system prompt' {
+        InModuleScope Metra {
+            $script:CapturedBody = $null
+            Mock Invoke-RestMethod {
+                param($Body)
+                $script:CapturedBody = [string]$Body
+                [PSCustomObject]@{
+                    model   = 'qwen2.5:14b'
+                    choices = @([PSCustomObject]@{ message = [PSCustomObject]@{ content = '{"findings":[]}' } })
+                }
+            }
+            Mock Invoke-MetraAskSecretsScrubText {
+                param($Text)
+                [PSCustomObject]@{
+                    Refuse = $false; Matched = $false; Text = $Text; Notice = $null; Kinds = @(); Reason = $null
+                }
+            }
+            $settings = [PSCustomObject]@{
+                engine        = 'ollama'
+                ollamaBaseUrl = 'http://127.0.0.1:11434'
+                ollamaModel   = 'qwen2.5:14b'
+                model         = 'qwen2.5:14b'
+            }
+            $scrub = [PSCustomObject]@{ Matched = $false; Text = 'review'; Notice = $null; Kinds = @() }
+            $ctx = @{ purpose = 'metra-inspect' }
+            $null = Invoke-MetraAskOpenAICompatComplete -Settings $settings -Prompt 'review diff' `
+                -Cwd 'C:\Projects\_meta' -Context $ctx -PromptScrub $scrub -CtxScrub $scrub
+            $script:CapturedBody | Should -Match '"response_format"'
+            $script:CapturedBody | Should -Match 'json_object'
+            $script:CapturedBody | Should -Match 'Metra Inspect'
+            $script:CapturedBody | Should -Not -Match 'Metra Ask'
+            $script:CapturedBody | Should -Match '"temperature":0.1'
+        }
+    }
+
+    It 'retries inspect without response_format when endpoint rejects json_object' {
+        InModuleScope Metra {
+            $script:CallCount = 0
+            Mock Invoke-RestMethod {
+                $script:CallCount++
+                if ($script:CallCount -eq 1) {
+                    throw 'unknown field response_format'
+                }
+                [PSCustomObject]@{
+                    model   = 'qwen2.5:14b'
+                    choices = @([PSCustomObject]@{ message = [PSCustomObject]@{ content = '{"findings":[]}' } })
+                }
+            }
+            Mock Invoke-MetraAskSecretsScrubText {
+                param($Text)
+                [PSCustomObject]@{
+                    Refuse = $false; Matched = $false; Text = $Text; Notice = $null; Kinds = @(); Reason = $null
+                }
+            }
+            $settings = [PSCustomObject]@{
+                engine        = 'ollama'
+                ollamaBaseUrl = 'http://127.0.0.1:11434'
+                ollamaModel   = 'qwen2.5:14b'
+                model         = 'qwen2.5:14b'
+            }
+            $scrub = [PSCustomObject]@{ Matched = $false; Text = 'review'; Notice = $null; Kinds = @() }
+            $r = Invoke-MetraAskOpenAICompatComplete -Settings $settings -Prompt 'review diff' `
+                -Cwd 'C:\Projects\_meta' -Context @{ purpose = 'metra-inspect' } -PromptScrub $scrub -CtxScrub $scrub
+            $r.ok | Should -BeTrue
+            $script:CallCount | Should -Be 2
+        }
+    }
 }
 
 Describe 'Ollama model name match' {
