@@ -18,6 +18,18 @@ Entry shape:
 
 ---
 
+---
+
+## 2026-08-12 - Azure DevOps remote evidence
+
+- Decision: Metra exposes read-only Azure DevOps remote evidence via `.\metra.ps1 azdo` (status, repos, get, gaps, tree, search, ideas). Auth uses `METRA_AZDO_PAT` or gitignored `docs/azdo.local.json`; REST pins `api-version=7.1` and resolves each repo default branch from the API.
+- Gap mapping (`azdo gaps`) compares AzDO repos to the Metra registry and on-disk checkouts with capped bucket lists and full counts. Optional registry overrides: `azdoProject`, `azdoRepo`, `remoteUrl`. Stale checkout visibility (`MatchedPossiblyStale`) compares local HEAD to remote default-branch tip - report only, no auto-pull.
+- Bounded retrieval caps (`maxFileChars`, `maxTreeItems`, etc.) fail closed or truncate on every command. Coverage prints an advisory AzDO gap line from the last cached summary - visibility only, not a score and not a routing input.
+- Ask may add gated `azdo` evidence when checkout is missing, the operator passes `-Remote`, or the prompt matches remote keywords. Local AGENTS evidence remains authoritative unless those gates fire. Ambiguous multi-repo match fails closed without `-Repo` / `azdoRepo`.
+- `azdo ideas` produces pasteable coworker drafts from Experience/Ethos-pattern repos using Ask when available; no Capture, registry, or M365 auto-post.
+- Why: Portfolio operators need AzDO-vs-disk visibility and thin remote excerpts without cloning or letting advisory output drive routing.
+- See: `.\metra.ps1 azdo`; [docs/Azdo.md](Azdo.md); `scripts/private/Azdo.ps1`
+
 ## 2026-08-12 - Metra Inspect Phase 1
 
 - Decision: Metra Inspect provides local AI-assisted inspection of git changes and plan documents using the configured Ask engine. Inspect is recommend-only and never modifies source code or plans.

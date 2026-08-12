@@ -49,7 +49,7 @@ AI at work usually lands in one of two bad places:
 Precedence (live engine): ticket id > helpdesk vocabulary > solutions keywords > registry score; weak signals stay at Metra.
 Example: ask `1035666` -> TicketTracker (ticket-id), even when no project name appears in the ask.
 
-Generated 2026-08-11T14:00:54.7581739-04:00 by `.\metra.ps1 selfdoc` from live `Get-MetraRoutingAmbiguity` (present projects only).
+Generated 2026-08-12T15:13:42.1062244-04:00 by `.\metra.ps1 selfdoc` from live `Get-MetraRoutingAmbiguity` (present projects only).
 <!-- metra-selfdoc-routes-end -->
 
 Metra picks the matching place before work starts. It does not replace judgment, Cursor, iSupport, or Orion. After routing, it keeps help useful for the person doing the work, and keeps durable writing (tickets, commits, emails to others) ordinary and professional.

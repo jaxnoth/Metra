@@ -1,0 +1,20 @@
+{
+  "organization": "your-org",
+  "project": "",
+  "maxRepos": 200,
+  "maxSearchHits": 25,
+  "maxFileChars": 120000,
+  "maxAskFileChars": 16000,
+  "maxAskSearchHits": 3,
+  "maxTreeDepth": 4,
+  "maxTreeItems": 500,
+  "gapListLimit": 25,
+  "ideaRepoNamePatterns": [
+    "*Experience*",
+    "*Ethos*"
+  ],
+  "ideaPathPatterns": [
+    "**/cards/**",
+    "**/pages/**"
+  ]
+}

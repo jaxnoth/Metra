@@ -521,10 +521,18 @@ function Reduce-MetraInspectDiffFiles {
 
     $reduced = New-Object System.Collections.Generic.List[object]
     $docsCollapsed = New-Object System.Collections.Generic.List[string]
+    $omittedByFileCap = New-Object System.Collections.Generic.List[string]
+    $atFileCap = $false
     foreach ($f in $kept) {
-        if ($reduced.Count -ge $MaxFiles) { break }
         if ($f.class -eq 'docs') {
             [void]$docsCollapsed.Add([string]$f.path)
+            continue
+        }
+        if ($reduced.Count -ge $MaxFiles) {
+            $atFileCap = $true
+        }
+        if ($atFileCap) {
+            [void]$omittedByFileCap.Add([string]$f.path)
             continue
         }
         $content = [string]$f.content
@@ -568,6 +576,7 @@ function Reduce-MetraInspectDiffFiles {
         SkippedPaths     = @(@($skipped) | ForEach-Object { [string]$_.path })
         DocsCollapsed    = @($docsCollapsed.ToArray())
         Truncated        = $truncatedAny
+        OmittedByFileCap = @($omittedByFileCap.ToArray())
     }
 }
 
@@ -816,6 +825,52 @@ function Get-MetraInspectJsonTextCandidate {
     return $text
 }
 
+function Get-MetraInspectJsonPropertyNames {
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory = $false)]$Parsed
+    )
+
+    if ($null -eq $Parsed) { return @() }
+    if ($Parsed -is [hashtable] -or $Parsed -is [System.Collections.IDictionary]) {
+        return @($Parsed.Keys | ForEach-Object { [string]$_ })
+    }
+    if ($null -ne $Parsed.PSObject) {
+        return @($Parsed.PSObject.Properties.Name | ForEach-Object { [string]$_ })
+    }
+    return @()
+}
+
+function Test-MetraInspectWrongFindingsShape {
+    <#
+    .SYNOPSIS
+        True when JSON parsed but looks like a plan summary or other non-findings object.
+    #>
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory = $false)]$Parsed
+    )
+
+    $names = @(Get-MetraInspectJsonPropertyNames -Parsed $Parsed)
+    if ($names.Count -eq 0) { return $false }
+    if ($names -contains 'findings') { return $false }
+
+    $wrongKeys = @(
+        'overview', 'implementation_steps', 'implementationSteps', 'steps', 'plan', 'summary',
+        'title', 'description', 'sections', 'tasks', 'recommendations', 'phases', 'milestones'
+    )
+    foreach ($n in $names) {
+        if ($wrongKeys -contains $n) { return $true }
+    }
+
+    $severity = [string](Get-MetraProp -Object $Parsed -Name 'severity' -Default '')
+    if ($names.Count -ge 2 -and [string]::IsNullOrWhiteSpace($severity)) {
+        return $true
+    }
+
+    return $false
+}
+
 function ConvertTo-MetraInspectFindings {
     <#
     .SYNOPSIS
@@ -837,6 +892,7 @@ function ConvertTo-MetraInspectFindings {
             Ok       = $false
             Findings = @()
             Error    = 'Model output was not valid JSON.'
+            ShapeMismatch = $false
             Excerpt  = if ($Message.Length -gt 500) { $Message.Substring(0, 500) + '...' } else { $Message }
         }
     }
@@ -864,11 +920,25 @@ function ConvertTo-MetraInspectFindings {
         }
     }
     if ($null -eq $arr) {
+        $shapeMismatch = Test-MetraInspectWrongFindingsShape -Parsed $parsed
+        $propHint = (@(Get-MetraInspectJsonPropertyNames -Parsed $parsed) -join ', ')
+        $err = if ($shapeMismatch) {
+            @(
+                'Engine returned wrong JSON shape (expected {"findings":[...]}).'
+                if ($propHint) { "Got top-level keys: $propHint." }
+                'This often happens with Ollama on plan inspect.'
+                'Inspect retried once automatically; if this persists, try .\metra.ps1 ask engine set cursor or a stronger Ollama model.'
+            ) -join ' '
+        }
+        else {
+            'JSON did not contain a findings array.'
+        }
         return [PSCustomObject]@{
-            Ok       = $false
-            Findings = @()
-            Error    = 'JSON did not contain a findings array.'
-            Excerpt  = if ($Message.Length -gt 500) { $Message.Substring(0, 500) + '...' } else { $Message }
+            Ok            = $false
+            Findings      = @()
+            Error         = $err
+            ShapeMismatch = [bool]$shapeMismatch
+            Excerpt       = if ($Message.Length -gt 500) { $Message.Substring(0, 500) + '...' } else { $Message }
         }
     }
 
@@ -908,10 +978,11 @@ function ConvertTo-MetraInspectFindings {
     )
 
     return [PSCustomObject]@{
-        Ok       = $true
-        Findings = $norm
-        Error    = $null
-        Excerpt  = $null
+        Ok            = $true
+        Findings      = $norm
+        Error         = $null
+        ShapeMismatch = $false
+        Excerpt       = $null
     }
 }
 
@@ -1008,7 +1079,7 @@ function Build-MetraInspectPrompt {
 
     if ($Mode -eq 'plan') {
         $rubric = @'
-Evaluate this implementation plan for Metra portfolio work.
+Evaluate this implementation plan for Metra portfolio work. Review the plan for risks - do NOT summarize or rewrite the plan in your output.
 
 Focus on:
 - Scope discipline and phase boundaries
@@ -1068,25 +1139,72 @@ function Invoke-MetraInspectEngine {
         [Parameter(Mandatory)][string]$Cwd
     )
 
-    $engineResult = Invoke-MetraAskEngine -Prompt $Prompt -Cwd $Cwd -Context @{ purpose = 'metra-inspect' } -TimeoutSec 600
-    if (-not $engineResult.ok) {
-        $msg = [string](Get-MetraProp -Object $engineResult -Name 'message' -Default 'Ask engine failed.')
-        $err = [string](Get-MetraProp -Object $engineResult -Name 'error' -Default 'engine_error')
-        return [PSCustomObject]@{
-            Ok      = $false
-            Message = $msg
-            Error   = $err
-            Engine  = [string](Get-MetraProp -Object $engineResult -Name 'engine' -Default '')
-            Model   = [string](Get-MetraProp -Object $engineResult -Name 'model' -Default '')
+    $retrySuffix = @'
+
+RETRY - WRONG SHAPE: Your previous response was not inspect findings JSON. Do NOT summarize the plan. Do NOT use overview, implementation_steps, steps, plan, title, or summary keys.
+Return ONLY one object: {"findings":[...]} where each item has severity, confidence, category, file, line, finding, recommendation, evidence.
+If no issues: {"findings":[]}. No markdown. No prose outside JSON.
+'@
+
+    $currentPrompt = $Prompt
+    $lastParse = $null
+    $engine = ''
+    $model = ''
+
+    for ($attempt = 0; $attempt -lt 2; $attempt++) {
+        $engineResult = Invoke-MetraAskEngine -Prompt $currentPrompt -Cwd $Cwd -Context @{ purpose = 'metra-inspect' } -TimeoutSec 600
+        if (-not $engineResult.ok) {
+            $msg = [string](Get-MetraProp -Object $engineResult -Name 'message' -Default 'Ask engine failed.')
+            $err = [string](Get-MetraProp -Object $engineResult -Name 'error' -Default 'engine_error')
+            return [PSCustomObject]@{
+                Ok            = $false
+                Message       = $msg
+                Error         = $err
+                Excerpt       = $null
+                Engine        = [string](Get-MetraProp -Object $engineResult -Name 'engine' -Default '')
+                Model         = [string](Get-MetraProp -Object $engineResult -Name 'model' -Default '')
+                Findings      = @()
+                ShapeMismatch = $false
+                RetryAttempt  = $attempt
+            }
         }
+
+        $engine = [string](Get-MetraProp -Object $engineResult -Name 'engine' -Default '')
+        $model = [string](Get-MetraProp -Object $engineResult -Name 'model' -Default '')
+        $parsed = ConvertTo-MetraInspectFindings -Message ([string]$engineResult.message)
+        if ($parsed.Ok) {
+            return [PSCustomObject]@{
+                Ok            = $true
+                Message       = [string]$engineResult.message
+                Error         = $null
+                Excerpt       = $null
+                Engine        = $engine
+                Model         = $model
+                Findings      = @($parsed.Findings)
+                ShapeMismatch = $false
+                RetryAttempt  = $attempt
+            }
+        }
+
+        $lastParse = $parsed
+        if ($attempt -eq 0 -and $parsed.ShapeMismatch) {
+            Write-Verbose 'Inspect engine returned wrong JSON shape; retrying with findings-only prompt.'
+            $currentPrompt = $Prompt + "`n`n" + $retrySuffix
+            continue
+        }
+        break
     }
 
     return [PSCustomObject]@{
-        Ok      = $true
-        Message = [string]$engineResult.message
-        Error   = $null
-        Engine  = [string](Get-MetraProp -Object $engineResult -Name 'engine' -Default '')
-        Model   = [string](Get-MetraProp -Object $engineResult -Name 'model' -Default '')
+        Ok            = $false
+        Message       = [string]$lastParse.Error
+        Error         = 'parse_failed'
+        Excerpt       = [string]$lastParse.Excerpt
+        Engine        = $engine
+        Model         = $model
+        Findings      = @()
+        ShapeMismatch = [bool]$lastParse.ShapeMismatch
+        RetryAttempt  = 1
     }
 }
 
@@ -1185,13 +1303,13 @@ function Invoke-MetraInspectDiff {
     $prompt = Build-MetraInspectPrompt -Mode diff -AgentsText $agents -Payload $payload
     $engine = Invoke-MetraInspectEngine -Prompt $prompt -Cwd $ctx.Root
     if (-not $engine.Ok) {
+        if ($engine.Excerpt) {
+            throw ("Inspect failed: {0}`nExcerpt:`n{1}" -f $engine.Message, $engine.Excerpt)
+        }
         throw ("Inspect engine unavailable: {0}" -f $engine.Message)
     }
 
-    $parsed = ConvertTo-MetraInspectFindings -Message $engine.Message
-    if (-not $parsed.Ok) {
-        throw ("Inspect failed: {0}`nExcerpt:`n{1}" -f $parsed.Error, $parsed.Excerpt)
-    }
+    $parsed = [PSCustomObject]@{ Ok = $true; Findings = @($engine.Findings) }
 
     $inputHash = Get-MetraInspectInputHash -Parts @(
         $scrubbedFiles | ForEach-Object { [PSCustomObject]@{ path = $_.path; content = $_.content } }
@@ -1306,13 +1424,13 @@ function Invoke-MetraInspectPlan {
     $cwd = if ($ctx.Root) { $ctx.Root } else { (Get-MetraRoot) }
     $engine = Invoke-MetraInspectEngine -Prompt $prompt -Cwd $cwd
     if (-not $engine.Ok) {
+        if ($engine.Excerpt) {
+            throw ("Inspect failed: {0}`nExcerpt:`n{1}" -f $engine.Message, $engine.Excerpt)
+        }
         throw ("Inspect engine unavailable: {0}" -f $engine.Message)
     }
 
-    $parsed = ConvertTo-MetraInspectFindings -Message $engine.Message
-    if (-not $parsed.Ok) {
-        throw ("Inspect failed: {0}`nExcerpt:`n{1}" -f $parsed.Error, $parsed.Excerpt)
-    }
+    $parsed = [PSCustomObject]@{ Ok = $true; Findings = @($engine.Findings) }
 
     $inputHash = Get-MetraInspectInputHash -Parts @(
         [PSCustomObject]@{ path = $resolved.Path; content = $text }
@@ -1342,6 +1460,435 @@ function Invoke-MetraInspectPlan {
     return $report
 }
 
+function Get-MetraInspectBingPackProfile {
+    [CmdletBinding()]
+    param()
+    return [PSCustomObject]@{
+        MaxFiles         = 32
+        MaxBytesPerFile  = 48000
+        MaxPackBodyChars = 250000
+        MaxPlanBytes     = 250000
+    }
+}
+
+function Get-MetraInspectPesterTestCatalogText {
+    <#
+    .SYNOPSIS
+        Extracts Describe/It names from *.Tests.ps1 on disk for Bing acceptance review.
+    #>
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory)][string]$Root,
+        [Parameter(Mandatory)][string[]]$RelativePaths
+    )
+
+    $paths = @(
+        $RelativePaths |
+            Where-Object { -not [string]::IsNullOrWhiteSpace([string]$_) } |
+            ForEach-Object { ([string]$_).Replace('\', '/') } |
+            Where-Object { $_ -match '(?i)\.Tests\.ps1$' } |
+            Sort-Object -Unique
+    )
+
+    $sb = New-Object System.Text.StringBuilder
+    [void]$sb.AppendLine('## Test catalog (Describe / It names)')
+    [void]$sb.AppendLine('Full test names from disk; use for acceptance review when the diff appendix is truncated.')
+    [void]$sb.AppendLine('')
+
+    if ($paths.Count -eq 0) {
+        [void]$sb.AppendLine('(no *.Tests.ps1 in pack scope)')
+        return $sb.ToString().TrimEnd()
+    }
+
+    foreach ($rel in $paths) {
+        $full = Join-Path $Root ($rel -replace '/', [System.IO.Path]::DirectorySeparatorChar)
+        if (-not (Test-Path -LiteralPath $full -PathType Leaf)) { continue }
+
+        $raw = $null
+        try {
+            $raw = Get-Content -LiteralPath $full -Raw -Encoding utf8 -ErrorAction Stop
+        }
+        catch {
+            continue
+        }
+        if ($null -eq $raw) { $raw = '' }
+
+        [void]$sb.AppendLine("### $rel")
+        foreach ($line in @($raw -split "`r?`n")) {
+            if ($line -match "Describe\s+['`"]([^'`"]+)['`"]") {
+                [void]$sb.AppendLine("- Describe '$($Matches[1])'")
+            }
+            foreach ($m in [regex]::Matches($line, "\bIt\s+['`"]([^'`"]+)['`"]")) {
+                [void]$sb.AppendLine("  - It '$($m.Groups[1].Value)'")
+            }
+        }
+        [void]$sb.AppendLine('')
+    }
+
+    return $sb.ToString().TrimEnd()
+}
+
+function Format-MetraInspectPackManifest {
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory)][string]$Profile,
+        [int]$MaxFiles,
+        [int]$MaxBytesPerFile,
+        [int]$MaxPackBodyChars,
+        [string[]]$FilesIncluded = @(),
+        [string[]]$PerFileTruncated = @(),
+        [string[]]$OmittedByFileCap = @(),
+        [string[]]$DocsCollapsed = @(),
+        [switch]$PackBodyTruncated,
+        [int]$PackBodyChars = 0
+    )
+
+    $sb = New-Object System.Text.StringBuilder
+    [void]$sb.AppendLine("Pack profile: $Profile (MaxFiles=$MaxFiles, MaxBytesPerFile=$MaxBytesPerFile, MaxPackBodyChars=$MaxPackBodyChars)")
+    [void]$sb.AppendLine("Appendix chars: $PackBodyChars$(if ($PackBodyTruncated) { ' (truncated at cap)' } else { '' })")
+    if (@($PerFileTruncated).Count -gt 0) {
+        [void]$sb.AppendLine(('Per-file truncated: ' + (($PerFileTruncated | ForEach-Object { $_ }) -join ', ')))
+    }
+    if (@($OmittedByFileCap).Count -gt 0) {
+        [void]$sb.AppendLine(('Omitted by file cap: ' + (($OmittedByFileCap | ForEach-Object { $_ }) -join ', ')))
+    }
+    if (@($DocsCollapsed).Count -gt 0) {
+        [void]$sb.AppendLine(('Docs collapsed (paths only): ' + (($DocsCollapsed | ForEach-Object { $_ }) -join ', ')))
+    }
+    if (@($FilesIncluded).Count -gt 0) {
+        [void]$sb.AppendLine(('Files in appendix: ' + (($FilesIncluded | ForEach-Object { $_ }) -join ', ')))
+    }
+    return $sb.ToString().TrimEnd()
+}
+
+function Build-MetraInspectPackDiffAppendix {
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory)][string]$Root,
+        [Parameter(Mandatory)][object[]]$Files,
+        [ValidateSet('bing', 'default')][string]$Profile = 'bing'
+    )
+
+    $maxFiles = 24
+    $maxBytesPerFile = 24000
+    $maxPackBodyChars = 80000
+    if ($Profile -eq 'bing') {
+        $bing = Get-MetraInspectBingPackProfile
+        $maxFiles = [int]$bing.MaxFiles
+        $maxBytesPerFile = [int]$bing.MaxBytesPerFile
+        $maxPackBodyChars = [int]$bing.MaxPackBodyChars
+    }
+
+    $reduced = Reduce-MetraInspectDiffFiles -Files $Files -MaxFiles $maxFiles -MaxBytesPerFile $maxBytesPerFile
+    $scrubbedFiles = @(ConvertTo-MetraInspectScrubbedDiffParts -Files $reduced.Files)
+    $packFileList = @($scrubbedFiles | ForEach-Object { $_.path })
+    $packBody = (
+        $scrubbedFiles | ForEach-Object {
+            "### $($_.path) [$($_.class)]`n$($_.content)"
+        }
+    ) -join "`n`n"
+
+    $packBodyTruncated = $false
+    if ($maxPackBodyChars -gt 0 -and $packBody.Length -gt $maxPackBodyChars) {
+        $packBody = $packBody.Substring(0, $maxPackBodyChars) + "`n...[truncated]..."
+        $packBodyTruncated = $true
+    }
+
+    $perFileTruncated = @(
+        $scrubbedFiles |
+            Where-Object { [string]$_.content -match '\[truncated\]' } |
+            ForEach-Object { [string]$_.path }
+    )
+
+    $allPaths = @($Files | ForEach-Object { ([string]$_.path).Replace('\', '/') })
+    $testCatalog = Get-MetraInspectPesterTestCatalogText -Root $Root -RelativePaths $allPaths
+    $manifest = Format-MetraInspectPackManifest -Profile $Profile `
+        -MaxFiles $maxFiles -MaxBytesPerFile $maxBytesPerFile -MaxPackBodyChars $maxPackBodyChars `
+        -FilesIncluded $packFileList -PerFileTruncated $perFileTruncated `
+        -OmittedByFileCap @($(Get-MetraProp -Object $reduced -Name 'OmittedByFileCap' -Default @()) | ForEach-Object { $_ }) `
+        -DocsCollapsed @($(Get-MetraProp -Object $reduced -Name 'DocsCollapsed' -Default @()) | ForEach-Object { $_ }) `
+        -PackBodyTruncated:$packBodyTruncated -PackBodyChars $packBody.Length
+
+    return [PSCustomObject]@{
+        Body              = $packBody
+        FileList          = $packFileList
+        Manifest          = $manifest
+        TestCatalog       = $testCatalog
+        PackBodyTruncated = $packBodyTruncated
+        Reduced           = $reduced
+        ScrubbedFiles     = $scrubbedFiles
+    }
+}
+
+function Format-MetraInspectPackMarkdown {
+    [CmdletBinding()]
+    param(
+        [ValidateSet('diff', 'plan')][string]$Mode,
+        [object[]]$Findings = @(),
+        [string]$PackBody,
+        [string[]]$PackFileList = @(),
+        [string]$AssessedReportPath,
+        [string]$InspectedAtUtc,
+        [string]$Engine,
+        [string]$Model,
+        [switch]$BingOnly,
+        [switch]$Stale,
+        [string]$StaleDetail,
+        [string]$PlanPath,
+        [string]$Project,
+        [string]$Root,
+        [string[]]$AssessedFilesFallback = @(),
+        [string]$PackManifest,
+        [string]$TestCatalog
+    )
+
+    $sb = New-Object System.Text.StringBuilder
+    [void]$sb.AppendLine('# Metra Inspect pack (Bing comparison lane)')
+    [void]$sb.AppendLine('')
+    if ($BingOnly) {
+        [void]$sb.AppendLine('Bing-only: no Ask engine run.')
+    }
+    [void]$sb.AppendLine("Mode: $Mode")
+    if ($BingOnly) {
+        [void]$sb.AppendLine('Assessed report: (none - Bing-only pack)')
+        [void]$sb.AppendLine("PackedAtUtc: $InspectedAtUtc")
+        [void]$sb.AppendLine('Model: (none - Bing-only pack)')
+    }
+    else {
+        [void]$sb.AppendLine("Assessed report: $AssessedReportPath")
+        [void]$sb.AppendLine("InspectedAtUtc: $InspectedAtUtc")
+        [void]$sb.AppendLine("Model: $Engine / $Model")
+    }
+    if (-not [string]::IsNullOrWhiteSpace($Project)) {
+        $rootBit = if (-not [string]::IsNullOrWhiteSpace($Root)) { " ($Root)" } else { '' }
+        [void]$sb.AppendLine("Project: $Project$rootBit")
+    }
+    if (-not [string]::IsNullOrWhiteSpace($PackManifest)) {
+        [void]$sb.AppendLine('')
+        [void]$sb.AppendLine($PackManifest)
+    }
+    if ($Stale) {
+        [void]$sb.AppendLine('')
+        [void]$sb.AppendLine('WARNING: Findings are from the assessed report; appendix body is rebuilt from current disk (not the assessed snapshot).')
+        [void]$sb.AppendLine($StaleDetail)
+        [void]$sb.AppendLine('Re-run inspect, then pack, if you need findings that match current disk.')
+    }
+    [void]$sb.AppendLine('')
+    if ($Mode -eq 'diff') {
+        [void]$sb.AppendLine('Bing preamble: harden for validation, ShouldProcess honesty, path safety, fail-closed edges, credential exposure, error handling.')
+    }
+    else {
+        [void]$sb.AppendLine('Bing preamble: review plan for scope discipline, root isolation, recommend-only / no auto-act, naming collisions, phase boundaries, fail-closed edges, acceptance criteria.')
+    }
+    [void]$sb.AppendLine('')
+    [void]$sb.AppendLine('## Findings')
+    if ($BingOnly) {
+        [void]$sb.AppendLine('(none - Bing-only pack; no Ask engine run)')
+    }
+    else {
+        foreach ($f in @($Findings)) {
+            $lineBit = if ($null -ne $f.line -and "$($f.line)" -ne '') { ":$($f.line)" } else { '' }
+            [void]$sb.AppendLine(("- [{0}/{1}] {2} {3}{4}: {5}" -f $f.severity, $f.confidence, $f.category, $f.file, $lineBit, $f.finding))
+            if ($f.recommendation) { [void]$sb.AppendLine("  Recommendation: $($f.recommendation)") }
+            if ($f.evidence) { [void]$sb.AppendLine("  Evidence: $($f.evidence)") }
+        }
+        if (@($Findings).Count -eq 0) {
+            [void]$sb.AppendLine('(none)')
+        }
+    }
+
+    [void]$sb.AppendLine('')
+    if ($Mode -eq 'plan') {
+        [void]$sb.AppendLine('## Plan (current disk scrub)')
+        [void]$sb.AppendLine("Path: $PlanPath")
+        [void]$sb.AppendLine('')
+        [void]$sb.AppendLine($(if ($null -eq $PackBody) { '' } else { $PackBody }))
+    }
+    else {
+        [void]$sb.AppendLine('## Diff (current disk scrub)')
+        $filesLine = @($PackFileList)
+        if ($filesLine.Count -eq 0) {
+            $filesLine = @($AssessedFilesFallback | ForEach-Object { $_ })
+        }
+        [void]$sb.AppendLine(('Files: ' + (($filesLine | ForEach-Object { $_ }) -join ', ')))
+        [void]$sb.AppendLine('')
+        if ([string]::IsNullOrWhiteSpace($PackBody)) {
+            [void]$sb.AppendLine('(body unavailable - re-run inspect)')
+        }
+        else {
+            [void]$sb.AppendLine($PackBody)
+        }
+        if (-not [string]::IsNullOrWhiteSpace($TestCatalog)) {
+            [void]$sb.AppendLine('')
+            [void]$sb.AppendLine($TestCatalog)
+        }
+    }
+
+    return $sb.ToString()
+}
+
+function Write-MetraInspectPackArtifact {
+    [CmdletBinding(SupportsShouldProcess)]
+    param(
+        [Parameter(Mandatory)][string]$PackText,
+        [ValidateSet('diff', 'plan')][string]$Mode,
+        [switch]$Stale
+    )
+
+    $packPath = Join-Path (Get-MetraInspectStateRoot) ("pack-{0}.md" -f $Mode)
+    if (-not $PSCmdlet.ShouldProcess($packPath, 'Write inspect pack and copy to clipboard')) {
+        return [PSCustomObject]@{
+            Path    = $packPath
+            Stale   = $Stale
+            Mode    = $Mode
+            Text    = $PackText
+            Skipped = $true
+        }
+    }
+
+    Write-MetraAtomicUtf8Text -Path $packPath -Text $PackText
+
+    if ($PackText.Length -gt 100000) {
+        Write-Host 'Pack is large; prefer opening the pack file in Bing instead of clipboard paste.' -ForegroundColor Yellow
+    }
+
+    try {
+        Set-Clipboard -Value $PackText -ErrorAction Stop
+        Write-Host 'Bing comparison pack copied to clipboard.'
+    }
+    catch {
+        Write-Host 'Clipboard unavailable; pack written to file only.'
+    }
+    Write-Host ("Pack file: {0}" -f $packPath)
+    return [PSCustomObject]@{
+        Path    = $packPath
+        Stale   = $Stale
+        Mode    = $Mode
+        Text    = $PackText
+        Skipped = $false
+    }
+}
+
+function Invoke-MetraInspectPackOnly {
+    [CmdletBinding(SupportsShouldProcess)]
+    param(
+        [ValidateSet('diff', 'plan')][string]$Mode = 'diff',
+        [string]$Name,
+        [switch]$Latest,
+        [string]$Path,
+        [string]$Fragment,
+        [string]$Base
+    )
+
+    $packBody = $null
+    $packFileList = @()
+    $planPathOut = $null
+    $project = $null
+    $root = $null
+    $appendix = $null
+    $packManifest = $null
+    $packedAtUtc = [datetime]::UtcNow.ToString('o')
+    $bingProfile = Get-MetraInspectBingPackProfile
+
+    if ($Mode -eq 'diff') {
+        $ctx = Resolve-MetraInspectProjectContext -Name $Name -Mode diff
+        if (-not $ctx.Ok) { throw $ctx.Error }
+        $project = [string]$ctx.Project
+        $root = [string]$ctx.Root
+
+        $diff = Get-MetraInspectGitDiffFiles -Root $ctx.Root -Base $Base
+        if ($diff.Empty) {
+            throw 'Nothing to pack (no tracked diffs and no includable untracked files).'
+        }
+        if ($diff.WorkingTreeDirty -and $diff.Warning) {
+            Write-Host ("WARNING: {0}" -f $diff.Warning) -ForegroundColor Yellow
+        }
+
+        $appendix = Build-MetraInspectPackDiffAppendix -Root $ctx.Root -Files $diff.Files -Profile bing
+        $packFileList = @($appendix.FileList)
+        $packBody = [string]$appendix.Body
+        $packManifest = [string]$appendix.Manifest
+        if ($appendix.PackBodyTruncated) {
+            Write-Host 'WARNING: Diff appendix truncated at Bing pack body cap; see Test catalog section for full Describe/It names.' -ForegroundColor Yellow
+        }
+    }
+    else {
+        if ([string]::IsNullOrWhiteSpace($Name)) {
+            throw 'Plan pack-only requires -Name <Project>.'
+        }
+
+        $resolved = Resolve-MetraInspectPlanPath -Latest:$Latest -Path $Path -Fragment $Fragment
+        if ($resolved.ListOnly) {
+            Write-Host 'Recent plans (use -Latest, a filename fragment, or -Path; -Name required for non-list):'
+            if (@($resolved.Matches).Count -eq 0) {
+                Write-Host '  (none found)'
+                return [PSCustomObject]@{ Listed = $true; Matches = @() }
+            }
+            foreach ($m in @($resolved.Matches)) {
+                Write-Host ("  {0:u}  {1}" -f $m.LastWriteTimeUtc, $m.Path)
+            }
+            return [PSCustomObject]@{ Listed = $true; Matches = @($resolved.Matches) }
+        }
+        if (-not $resolved.Ok) {
+            if (@($resolved.Matches).Count -gt 0) {
+                Write-Host $resolved.Error -ForegroundColor Yellow
+                foreach ($m in @($resolved.Matches)) {
+                    Write-Host ("  {0}" -f $m.Path)
+                }
+            }
+            throw $resolved.Error
+        }
+
+        Write-Host ("Resolved plan: {0}" -f $resolved.Path)
+
+        $ctx = Resolve-MetraInspectProjectContext -Name $Name -Mode plan
+        if (-not $ctx.Ok) { throw $ctx.Error }
+        if ($ctx.Warning) { Write-Host $ctx.Warning -ForegroundColor Yellow }
+        $project = [string]$ctx.Project
+        $root = [string]$ctx.Root
+        $planPathOut = [string]$resolved.Path
+
+        $planFull = [System.IO.Path]::GetFullPath($planPathOut)
+        $planAllowed = $false
+        foreach ($planRoot in @(Get-MetraInspectPlanRoots)) {
+            if (Test-MetraPathWithinRoot -Path $planFull -Root $planRoot) {
+                $planAllowed = $true
+                break
+            }
+        }
+        if (-not $planAllowed) {
+            throw "Pack planPath must be under a known plan root: $planFull"
+        }
+        if (-not (Test-Path -LiteralPath $planFull -PathType Leaf)) {
+            throw "Pack planPath missing on disk: $planFull"
+        }
+
+        $planText = Get-MetraInspectScrubbedPlanText -Path $planFull -MaxBytes ([int]$bingProfile.MaxPlanBytes)
+        $packBody = [string]$planText.Text
+        $packManifest = Format-MetraInspectPackManifest -Profile bing `
+            -MaxFiles 0 -MaxBytesPerFile 0 -MaxPackBodyChars ([int]$bingProfile.MaxPlanBytes) `
+            -FilesIncluded @([string]$planPathOut) -PackBodyTruncated:([bool]$planText.Truncated) -PackBodyChars $packBody.Length
+    }
+
+    if ($WhatIfPreference) {
+        Write-Host ("WhatIf: would write Bing-only pack mode={0} project={1}" -f $Mode, $project)
+        return [PSCustomObject]@{
+            WhatIf  = $true
+            Mode    = $Mode
+            Project = $project
+            Root    = $root
+            Skipped = $true
+        }
+    }
+
+    $packText = Format-MetraInspectPackMarkdown -Mode $Mode -Findings @() -PackBody $packBody -PackFileList $packFileList `
+        -BingOnly -Project $project -Root $root -PlanPath $planPathOut -InspectedAtUtc $packedAtUtc `
+        -PackManifest $packManifest `
+        -TestCatalog $(if ($Mode -eq 'diff' -and $appendix) { [string]$appendix.TestCatalog } else { $null })
+
+    return Write-MetraInspectPackArtifact -PackText $packText -Mode $Mode -Stale:$false
+}
+
 function Invoke-MetraInspectPack {
     [CmdletBinding(SupportsShouldProcess)]
     param(
@@ -1368,6 +1915,10 @@ function Invoke-MetraInspectPack {
     $staleDetail = $null
     $packBody = $null
     $packFileList = @()
+    $appendix = $null
+    $packManifest = $null
+    $testCatalog = $null
+    $bingProfile = Get-MetraInspectBingPackProfile
 
     try {
         if ($Mode -eq 'diff' -and $report.provenance.root) {
@@ -1379,19 +1930,16 @@ function Invoke-MetraInspectPack {
                 $packBody = '(current tree empty - body omitted)'
             }
             else {
-                $reduced = Reduce-MetraInspectDiffFiles -Files $diff.Files
-                $scrubbedFiles = @(ConvertTo-MetraInspectScrubbedDiffParts -Files $reduced.Files)
-                $packFileList = @($scrubbedFiles | ForEach-Object { $_.path })
-                $packBody = (
-                    $scrubbedFiles | ForEach-Object {
-                        "### $($_.path) [$($_.class)]`n$($_.content)"
-                    }
-                ) -join "`n`n"
-                if ($packBody.Length -gt 80000) {
-                    $packBody = $packBody.Substring(0, 80000) + "`n...[truncated]..."
+                $appendix = Build-MetraInspectPackDiffAppendix -Root ([string]$report.provenance.root) -Files $diff.Files -Profile bing
+                $packFileList = @($appendix.FileList)
+                $packBody = [string]$appendix.Body
+                $packManifest = [string]$appendix.Manifest
+                $testCatalog = [string]$appendix.TestCatalog
+                if ($appendix.PackBodyTruncated) {
+                    Write-Host 'WARNING: Diff appendix truncated at Bing pack body cap; see Test catalog section for full Describe/It names.' -ForegroundColor Yellow
                 }
                 $hash = Get-MetraInspectInputHash -Parts @(
-                    $scrubbedFiles | ForEach-Object { [PSCustomObject]@{ path = $_.path; content = $_.content } }
+                    $appendix.ScrubbedFiles | ForEach-Object { [PSCustomObject]@{ path = $_.path; content = $_.content } }
                 )
                 if ($hash -ne [string]$pointer.inputHash) {
                     $stale = $true
@@ -1413,9 +1961,12 @@ function Invoke-MetraInspectPack {
                 throw "Pack planPath must be under a known plan root: $planFull"
             }
             if (Test-Path -LiteralPath $planFull -PathType Leaf) {
-                $planText = Get-MetraInspectScrubbedPlanText -Path $planFull
+                $planText = Get-MetraInspectScrubbedPlanText -Path $planFull -MaxBytes ([int]$bingProfile.MaxPlanBytes)
                 $text = [string]$planText.Text
                 $packBody = $text
+                $packManifest = Format-MetraInspectPackManifest -Profile bing `
+                    -MaxFiles 0 -MaxBytesPerFile 0 -MaxPackBodyChars ([int]$bingProfile.MaxPlanBytes) `
+                    -FilesIncluded @($planFull) -PackBodyTruncated:([bool]$planText.Truncated) -PackBodyChars $text.Length
                 $hash = Get-MetraInspectInputHash -Parts @(
                     [PSCustomObject]@{ path = $planFull; content = $text }
                     [PSCustomObject]@{ path = 'project'; content = [string]$report.provenance.project }
@@ -1444,109 +1995,50 @@ function Invoke-MetraInspectPack {
         }
     }
 
-    $sb = New-Object System.Text.StringBuilder
-    [void]$sb.AppendLine('# Metra Inspect pack (Bing comparison lane)')
-    [void]$sb.AppendLine('')
-    [void]$sb.AppendLine("Mode: $Mode")
-    [void]$sb.AppendLine("Assessed report: $reportFull")
-    [void]$sb.AppendLine("InspectedAtUtc: $($report.provenance.inspectedAtUtc)")
-    [void]$sb.AppendLine("Model: $($report.provenance.engine) / $($report.provenance.model)")
     if ($stale) {
-        [void]$sb.AppendLine('')
-        [void]$sb.AppendLine('WARNING: Findings are from the assessed report; appendix body is rebuilt from current disk (not the assessed snapshot).')
-        [void]$sb.AppendLine($staleDetail)
-        [void]$sb.AppendLine('Re-run inspect, then pack, if you need findings that match current disk.')
         Write-Host "WARNING: $staleDetail" -ForegroundColor Yellow
         Write-Host 'Findings are assessed; appendix body is current disk scrub.' -ForegroundColor Yellow
     }
-    [void]$sb.AppendLine('')
-    if ($Mode -eq 'diff') {
-        [void]$sb.AppendLine('Bing preamble: harden for validation, ShouldProcess honesty, path safety, fail-closed edges, credential exposure, error handling.')
-    }
-    else {
-        [void]$sb.AppendLine('Bing preamble: review plan for scope discipline, root isolation, recommend-only / no auto-act, naming collisions, phase boundaries, fail-closed edges, acceptance criteria.')
-    }
-    [void]$sb.AppendLine('')
-    [void]$sb.AppendLine('## Findings')
-    foreach ($f in @($report.findings)) {
-        $lineBit = if ($null -ne $f.line -and "$($f.line)" -ne '') { ":$($f.line)" } else { '' }
-        [void]$sb.AppendLine(("- [{0}/{1}] {2} {3}{4}: {5}" -f $f.severity, $f.confidence, $f.category, $f.file, $lineBit, $f.finding))
-        if ($f.recommendation) { [void]$sb.AppendLine("  Recommendation: $($f.recommendation)") }
-        if ($f.evidence) { [void]$sb.AppendLine("  Evidence: $($f.evidence)") }
-    }
-    if (@($report.findings).Count -eq 0) {
-        [void]$sb.AppendLine('(none)')
-    }
 
-    [void]$sb.AppendLine('')
-    if ($Mode -eq 'plan') {
-        [void]$sb.AppendLine('## Plan (current disk scrub)')
-        [void]$sb.AppendLine("Path: $($report.provenance.planPath)")
-        [void]$sb.AppendLine('')
-        if ([string]::IsNullOrWhiteSpace($packBody) -and $report.provenance.planPath) {
-            # Rebuild failed earlier without throw - try once more under confine.
-            $fbRaw = [string]$report.provenance.planPath
-            $fbFull = [System.IO.Path]::GetFullPath($ExecutionContext.SessionState.Path.GetUnresolvedProviderPathFromPSPath($fbRaw))
-            $fbAllowed = $false
-            foreach ($planRoot in @(Get-MetraInspectPlanRoots)) {
-                if (Test-MetraPathWithinRoot -Path $fbFull -Root $planRoot) {
-                    $fbAllowed = $true
-                    break
-                }
-            }
-            if (-not $fbAllowed) {
-                throw "Pack planPath must be under a known plan root: $fbFull"
-            }
-            if (Test-Path -LiteralPath $fbFull -PathType Leaf) {
-                $packBody = [string](Get-MetraInspectScrubbedPlanText -Path $fbFull).Text
+    if ($Mode -eq 'plan' -and [string]::IsNullOrWhiteSpace($packBody)) {
+        $planPathProv = [string](Get-MetraProp -Object $report.provenance -Name 'planPath' -Default '')
+        if (-not [string]::IsNullOrWhiteSpace($planPathProv)) {
+        # Rebuild failed earlier without throw - try once more under confine.
+        $fbRaw = $planPathProv
+        $fbFull = [System.IO.Path]::GetFullPath($ExecutionContext.SessionState.Path.GetUnresolvedProviderPathFromPSPath($fbRaw))
+        $fbAllowed = $false
+        foreach ($planRoot in @(Get-MetraInspectPlanRoots)) {
+            if (Test-MetraPathWithinRoot -Path $fbFull -Root $planRoot) {
+                $fbAllowed = $true
+                break
             }
         }
-        [void]$sb.AppendLine($(if ($null -eq $packBody) { '' } else { $packBody }))
-    }
-    else {
-        [void]$sb.AppendLine('## Diff (current disk scrub)')
-        if ($packFileList.Count -eq 0) {
-            $packFileList = @(@(Get-MetraProp -Object $report.provenance -Name 'assessedFiles' -Default @()) | ForEach-Object { $_ })
+        if (-not $fbAllowed) {
+            throw "Pack planPath must be under a known plan root: $fbFull"
         }
-        [void]$sb.AppendLine(('Files: ' + (($packFileList | ForEach-Object { $_ }) -join ', ')))
-        [void]$sb.AppendLine('')
-        if ([string]::IsNullOrWhiteSpace($packBody)) {
-            [void]$sb.AppendLine('(body unavailable - re-run inspect)')
+        if (Test-Path -LiteralPath $fbFull -PathType Leaf) {
+            $planText = Get-MetraInspectScrubbedPlanText -Path $fbFull -MaxBytes ([int]$bingProfile.MaxPlanBytes)
+            $packBody = [string]$planText.Text
+            if (-not $packManifest) {
+                $packManifest = Format-MetraInspectPackManifest -Profile bing `
+                    -MaxFiles 0 -MaxBytesPerFile 0 -MaxPackBodyChars ([int]$bingProfile.MaxPlanBytes) `
+                    -FilesIncluded @($fbFull) -PackBodyTruncated:([bool]$planText.Truncated) -PackBodyChars $packBody.Length
+            }
         }
-        else {
-            [void]$sb.AppendLine($packBody)
         }
     }
 
-    $packText = $sb.ToString()
-    $packPath = Join-Path (Get-MetraInspectStateRoot) ("pack-{0}.md" -f $Mode)
-    if (-not $PSCmdlet.ShouldProcess($packPath, 'Write inspect pack and copy to clipboard')) {
-        return [PSCustomObject]@{
-            Path    = $packPath
-            Stale   = $stale
-            Mode    = $Mode
-            Text    = $packText
-            Skipped = $true
-        }
-    }
+    $assessedFilesFallback = @(@(Get-MetraProp -Object $report.provenance -Name 'assessedFiles' -Default @()) | ForEach-Object { $_ })
+    $packText = Format-MetraInspectPackMarkdown -Mode $Mode -Findings @($report.findings) -PackBody $packBody -PackFileList $packFileList `
+        -AssessedReportPath $reportFull -InspectedAtUtc ([string]$report.provenance.inspectedAtUtc) `
+        -Engine ([string]$report.provenance.engine) -Model ([string]$report.provenance.model) `
+        -Stale:$stale -StaleDetail $staleDetail `
+        -PlanPath ([string](Get-MetraProp -Object $report.provenance -Name 'planPath' -Default '')) `
+        -Project ([string](Get-MetraProp -Object $report.provenance -Name 'project' -Default '')) `
+        -Root ([string](Get-MetraProp -Object $report.provenance -Name 'root' -Default '')) `
+        -AssessedFilesFallback $assessedFilesFallback -PackManifest $packManifest -TestCatalog $testCatalog
 
-    Write-MetraAtomicUtf8Text -Path $packPath -Text $packText
-
-    try {
-        Set-Clipboard -Value $packText -ErrorAction Stop
-        Write-Host "Bing comparison pack copied to clipboard."
-    }
-    catch {
-        Write-Host "Clipboard unavailable; pack written to file only."
-    }
-    Write-Host ("Pack file: {0}" -f $packPath)
-    return [PSCustomObject]@{
-        Path    = $packPath
-        Stale   = $stale
-        Mode    = $Mode
-        Text    = $packText
-        Skipped = $false
-    }
+    return Write-MetraInspectPackArtifact -PackText $packText -Mode $Mode -Stale:$stale
 }
 
 function Show-MetraInspectCli {
@@ -1582,7 +2074,18 @@ function Show-MetraInspectCli {
     $packMode = $null
 
     $i = 0
-    if ($argsRest.Count -gt 0 -and $argsRest[0] -ieq 'pack') {
+    if ($argsRest.Count -gt 0 -and $argsRest[0] -ieq 'pack-only') {
+        $mode = 'pack-only'
+        $i = 1
+        if ($argsRest.Count -gt 1 -and $argsRest[1] -ieq 'plan') {
+            $packMode = 'plan'
+            $i = 2
+        }
+        else {
+            $packMode = 'diff'
+        }
+    }
+    elseif ($argsRest.Count -gt 0 -and $argsRest[0] -ieq 'pack') {
         $mode = 'pack'
         $i = 1
         if ($argsRest.Count -gt 1 -and $argsRest[1] -ieq 'plan') {
@@ -1623,7 +2126,7 @@ function Show-MetraInspectCli {
         if ($tok -like '-*') {
             throw "Unknown inspect argument: $tok"
         }
-        if ($mode -eq 'plan' -and [string]::IsNullOrWhiteSpace($fragment)) {
+        if (($mode -eq 'plan' -or ($mode -eq 'pack-only' -and $packMode -eq 'plan')) -and [string]::IsNullOrWhiteSpace($fragment)) {
             $fragment = $tok
             $i++
             continue
@@ -1639,6 +2142,9 @@ function Show-MetraInspectCli {
     if ($WhatIfPreference) { $common.WhatIf = $true }
 
     switch ($mode) {
+        'pack-only' {
+            return Invoke-MetraInspectPackOnly -Mode $packMode -Name $projectName -Latest:$latest -Path $planPath -Fragment $fragment -Base $baseRev @common
+        }
         'pack' {
             return Invoke-MetraInspectPack -Mode $packMode @common
         }
