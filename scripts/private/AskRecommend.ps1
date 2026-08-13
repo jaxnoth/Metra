@@ -547,33 +547,14 @@ function Set-MetraAskEngine {
             -BaseUrl $settings.ollamaBaseUrl -Model $model -SizeBand $band
     }
     if ($Engine -eq 'cursor') {
-        # Cursor Ask defaults to Auto Cost (auto-smart + optimizeFor=cost) - legacy Auto
-        # behavior on Cursor Models pool. Balance/Intelligence remain available via
-        # -Model auto-balance / auto-intelligence. Specific pins via -Model <id>.
-        $cursorModel = if (-not [string]::IsNullOrWhiteSpace($Model)) { $Model.Trim() } else { 'auto-smart' }
-        $optimizeFor = 'cost'
-        $ml = $cursorModel.ToLowerInvariant()
-        if ($ml -in @('auto-cost', 'auto cost', 'cost', 'auto')) {
-            $cursorModel = 'auto-smart'
-            $optimizeFor = 'cost'
-        }
-        elseif ($ml -in @('auto-balance', 'auto balance', 'balance', 'balanced')) {
-            $cursorModel = 'auto-smart'
-            $optimizeFor = 'balanced'
-        }
-        elseif ($ml -in @('auto-intelligence', 'auto intelligence', 'intelligence')) {
-            $cursorModel = 'auto-smart'
-            $optimizeFor = 'intelligence'
-        }
-        elseif ($ml -eq 'auto-smart') {
-            $optimizeFor = 'cost'
-        }
+        # Default pin composer-2.5; auto-* still maps to auto-smart router tiers.
+        $resolved = Resolve-MetraAskCursorModelSelection -Model $Model -OptimizeFor 'cost'
         $cursorObj = [ordered]@{
             port  = $settings.cursorPort
-            model = $cursorModel
+            model = $resolved.cursorModel
         }
-        if ($cursorModel -eq 'auto-smart') {
-            $cursorObj['optimizeFor'] = $optimizeFor
+        if ($resolved.cursorModel -eq 'auto-smart') {
+            $cursorObj['optimizeFor'] = $resolved.cursorOptimizeFor
         }
         $patch['cursor'] = [PSCustomObject]$cursorObj
     }

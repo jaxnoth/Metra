@@ -3835,13 +3835,14 @@ Describe 'Metra Ops host' {
 
     It 'installs Start Menu shortcuts with the Metra icon' {
         $result = Install-MetraOpsStartMenuShortcuts
-        $opsLink = Join-Path $result.Folder 'Metra Ops.lnk'
+        $opsLink = Join-Path $result.Folder 'Metra Ops Tray Host.lnk'
         Test-Path -LiteralPath $opsLink | Should -BeTrue
         $result.IconPath | Should -Not -BeNullOrEmpty
         $wsh = New-Object -ComObject WScript.Shell
         $shortcut = $wsh.CreateShortcut($opsLink)
         $shortcut.IconLocation | Should -Match 'metra\.ico'
         $shortcut.TargetPath | Should -Match 'Metra-Ops\.cmd'
+        $shortcut.Arguments | Should -Match 'NoBrowser'
     }
 
     It 'Stop-MetraOpsHost is safe when nothing is running' {

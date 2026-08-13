@@ -10,6 +10,51 @@ function Get-MetraAskModelPinTable {
     }
 }
 
+function Resolve-MetraAskCursorModelSelection {
+    <#
+    .SYNOPSIS
+        Normalizes Cursor Ask model + optimizeFor from config or CLI input.
+    .NOTES
+        Default pin is composer-2.5 (Ask API slug). IDE agent names like
+        composer-2.5-fast are aliased. auto-* tokens still map to auto-smart.
+    #>
+    [CmdletBinding()]
+    param(
+        [string]$Model,
+        [string]$OptimizeFor = 'cost'
+    )
+
+    $cursorModel = if ([string]::IsNullOrWhiteSpace($Model)) { 'composer-2.5' } else { $Model.Trim() }
+    $cursorOptimizeFor = if ([string]::IsNullOrWhiteSpace($OptimizeFor)) { 'cost' } else { $OptimizeFor.Trim().ToLowerInvariant() }
+    $cursorModelLower = $cursorModel.ToLowerInvariant()
+
+    if ($cursorModelLower -eq 'composer-2.5-fast') {
+        $cursorModel = 'composer-2.5'
+    }
+    elseif ($cursorModelLower -in @('auto-cost', 'auto cost', 'cost', 'auto')) {
+        $cursorModel = 'auto-smart'
+        $cursorOptimizeFor = 'cost'
+    }
+    elseif ($cursorModelLower -in @('auto-balance', 'auto balance', 'balance', 'balanced')) {
+        $cursorModel = 'auto-smart'
+        $cursorOptimizeFor = 'balanced'
+    }
+    elseif ($cursorModelLower -in @('auto-intelligence', 'auto intelligence', 'intelligence')) {
+        $cursorModel = 'auto-smart'
+        $cursorOptimizeFor = 'intelligence'
+    }
+    if ($cursorModel -eq 'auto-smart' -and $cursorOptimizeFor -notin @('cost', 'balanced', 'intelligence')) {
+        $cursorOptimizeFor = 'cost'
+    }
+
+    $displayModel = if ($cursorModel -eq 'auto-smart') { "auto-smart/$cursorOptimizeFor" } else { $cursorModel }
+    return [PSCustomObject]@{
+        cursorModel       = $cursorModel
+        cursorOptimizeFor = $cursorOptimizeFor
+        model             = $displayModel
+    }
+}
+
 function Get-MetraAskConfigPath {
     <#
     .SYNOPSIS
@@ -64,33 +109,19 @@ function Get-MetraAskSettings {
     $pins = Get-MetraAskModelPinTable
     $cursor = Get-MetraProp -Object $ask -Name 'cursor' -Default $null
     $cursorPort = 7381
-    # Default: Cursor Router Auto Cost (legacy Auto - Cursor Models pool).
-    $cursorModel = 'auto-smart'
-    $cursorOptimizeFor = 'cost'
+    $rawCursorModel = $null
+    $rawCursorOptimizeFor = 'cost'
     if ($null -ne $cursor) {
         $p = Get-MetraProp -Object $cursor -Name 'port' -Default 7381
         if ($p -as [int]) { $cursorPort = [int]$p }
-        $m = [string](Get-MetraProp -Object $cursor -Name 'model' -Default 'auto-smart')
-        if (-not [string]::IsNullOrWhiteSpace($m)) { $cursorModel = $m.Trim() }
+        $m = [string](Get-MetraProp -Object $cursor -Name 'model' -Default '')
+        if (-not [string]::IsNullOrWhiteSpace($m)) { $rawCursorModel = $m.Trim() }
         $of = [string](Get-MetraProp -Object $cursor -Name 'optimizeFor' -Default 'cost')
-        if (-not [string]::IsNullOrWhiteSpace($of)) { $cursorOptimizeFor = $of.Trim().ToLowerInvariant() }
+        if (-not [string]::IsNullOrWhiteSpace($of)) { $rawCursorOptimizeFor = $of.Trim().ToLowerInvariant() }
     }
-    $cursorModelLower = $cursorModel.ToLowerInvariant()
-    if ($cursorModelLower -in @('auto-cost', 'auto cost', 'cost', 'auto')) {
-        $cursorModel = 'auto-smart'
-        $cursorOptimizeFor = 'cost'
-    }
-    elseif ($cursorModelLower -in @('auto-balance', 'auto balance', 'balance', 'balanced')) {
-        $cursorModel = 'auto-smart'
-        $cursorOptimizeFor = 'balanced'
-    }
-    elseif ($cursorModelLower -in @('auto-intelligence', 'auto intelligence', 'intelligence')) {
-        $cursorModel = 'auto-smart'
-        $cursorOptimizeFor = 'intelligence'
-    }
-    if ($cursorModel -eq 'auto-smart' -and $cursorOptimizeFor -notin @('cost', 'balanced', 'intelligence')) {
-        $cursorOptimizeFor = 'cost'
-    }
+    $cursorResolved = Resolve-MetraAskCursorModelSelection -Model $rawCursorModel -OptimizeFor $rawCursorOptimizeFor
+    $cursorModel = $cursorResolved.cursorModel
+    $cursorOptimizeFor = $cursorResolved.cursorOptimizeFor
 
     $ollama = Get-MetraProp -Object $ask -Name 'ollama' -Default $null
     $ollamaBase = 'http://127.0.0.1:11434'
@@ -980,29 +1011,136 @@ function Stop-MetraAskEngine {
     }
 }
 
+function Restart-MetraAskSidecarAfterKeyChange {
+    <#
+    .SYNOPSIS
+        Recycles the Cursor Ask sidecar when ask.engine is cursor (key is process env at start).
+    #>
+    [CmdletBinding()]
+    param([string]$MetraRoot = (Get-MetraRoot))
+
+    $settings = Get-MetraAskSettings -MetraRoot $MetraRoot
+    if ($settings.engine -ne 'cursor') {
+        return [PSCustomObject]@{
+            sidecarRestarted       = $null
+            sidecarRestartWarning  = $null
+        }
+    }
+    try {
+        $null = Stop-MetraAskEngine -MetraRoot $MetraRoot
+        $null = Start-MetraAskEngine -MetraRoot $MetraRoot
+        return [PSCustomObject]@{
+            sidecarRestarted       = $true
+            sidecarRestartWarning  = $null
+        }
+    }
+    catch {
+        $msg = "Ask sidecar restart failed after key change: $($_.Exception.Message). Run Stop-MetraAskEngine; Start-MetraAskEngine manually."
+        Write-Warning $msg
+        return [PSCustomObject]@{
+            sidecarRestarted       = $false
+            sidecarRestartWarning  = $msg
+        }
+    }
+}
+
 function Set-MetraCursorApiKey {
     <#
     .SYNOPSIS
         Sets CURSOR_API_KEY in User environment (never prints the value).
+    .NOTES
+        Restarts the Cursor Ask sidecar when ask.engine is cursor. Use -WhatIf to preview.
     #>
-    [CmdletBinding(DefaultParameterSetName = 'Set')]
+    [CmdletBinding(SupportsShouldProcess = $true, ConfirmImpact = 'Medium', DefaultParameterSetName = 'Set')]
     param(
         [Parameter(Mandatory, ParameterSetName = 'Set')][string]$ApiKey,
         [Parameter(Mandatory, ParameterSetName = 'Clear')][switch]$Clear
     )
 
     if ($PSCmdlet.ParameterSetName -eq 'Clear') {
+        if (-not $PSCmdlet.ShouldProcess('User CURSOR_API_KEY', 'Clear and restart Ask sidecar')) {
+            return [PSCustomObject]@{ status = 'cancelled' }
+        }
+        if ($WhatIfPreference) {
+            return [PSCustomObject]@{ status = 'whatif'; action = 'clear'; sidecarRestarted = $null }
+        }
+        $priorKey = [Environment]::GetEnvironmentVariable('CURSOR_API_KEY', 'User')
         [Environment]::SetEnvironmentVariable('CURSOR_API_KEY', $null, 'User')
         Remove-Item Env:CURSOR_API_KEY -ErrorAction SilentlyContinue
-        return [PSCustomObject]@{ status = 'cleared' }
+        $result = [PSCustomObject]@{ status = 'cleared' }
+        $restart = Restart-MetraAskSidecarAfterKeyChange
+        if ($null -ne $restart.sidecarRestarted -and -not $restart.sidecarRestarted) {
+            if ($priorKey) {
+                [Environment]::SetEnvironmentVariable('CURSOR_API_KEY', $priorKey, 'User')
+                $env:CURSOR_API_KEY = $priorKey
+                $rollbackRestart = Restart-MetraAskSidecarAfterKeyChange
+                $result | Add-Member -NotePropertyName keyRollback -NotePropertyValue $true -Force
+                $result.status = 'rolled_back'
+                if ($rollbackRestart.sidecarRestartWarning) {
+                    $restart.sidecarRestartWarning = "$($rollbackRestart.sidecarRestartWarning) Rolled back to prior key."
+                }
+                elseif ($restart.sidecarRestartWarning) {
+                    $restart.sidecarRestartWarning = "$($restart.sidecarRestartWarning) Rolled back to prior key."
+                }
+            }
+            elseif ($restart.sidecarRestartWarning) {
+                try { $null = Stop-MetraAskEngine } catch { }
+                try { $null = Start-MetraAskEngine } catch { }
+                $result.status = 'failed'
+                $restart.sidecarRestarted = $false
+                $restart.sidecarRestartWarning = "$($restart.sidecarRestartWarning) Ask sidecar recycle attempted; verify Ask before use."
+            }
+        }
+        $result | Add-Member -NotePropertyName sidecarRestarted -NotePropertyValue $restart.sidecarRestarted -Force
+        if ($restart.sidecarRestartWarning) {
+            $result | Add-Member -NotePropertyName sidecarRestartWarning -NotePropertyValue $restart.sidecarRestartWarning -Force
+        }
+        return $result
     }
     $trimmed = $ApiKey.Trim()
     if ([string]::IsNullOrWhiteSpace($trimmed)) {
         throw 'ApiKey is empty. Pass -Clear to remove the User-scope key.'
     }
+    if (-not $PSCmdlet.ShouldProcess('User CURSOR_API_KEY', 'Set and restart Ask sidecar')) {
+        return [PSCustomObject]@{ status = 'cancelled' }
+    }
+    if ($WhatIfPreference) {
+        return [PSCustomObject]@{ status = 'whatif'; action = 'set'; scope = 'User'; sidecarRestarted = $null }
+    }
+    $priorKey = [Environment]::GetEnvironmentVariable('CURSOR_API_KEY', 'User')
     [Environment]::SetEnvironmentVariable('CURSOR_API_KEY', $trimmed, 'User')
     $env:CURSOR_API_KEY = $trimmed
-    return [PSCustomObject]@{ status = 'set'; scope = 'User' }
+    $result = [PSCustomObject]@{ status = 'set'; scope = 'User' }
+    $restart = Restart-MetraAskSidecarAfterKeyChange
+    if ($null -ne $restart.sidecarRestarted -and -not $restart.sidecarRestarted) {
+        if ($priorKey) {
+            [Environment]::SetEnvironmentVariable('CURSOR_API_KEY', $priorKey, 'User')
+            $env:CURSOR_API_KEY = $priorKey
+        }
+        else {
+            [Environment]::SetEnvironmentVariable('CURSOR_API_KEY', $null, 'User')
+            Remove-Item Env:CURSOR_API_KEY -ErrorAction SilentlyContinue
+        }
+        $rollbackRestart = Restart-MetraAskSidecarAfterKeyChange
+        $result | Add-Member -NotePropertyName keyRollback -NotePropertyValue $true -Force
+        $result.status = 'rolled_back'
+        if ($rollbackRestart.sidecarRestartWarning) {
+            $restart.sidecarRestartWarning = "$($restart.sidecarRestartWarning) Rolled back to prior key."
+        }
+        elseif ($restart.sidecarRestartWarning) {
+            $restart.sidecarRestartWarning = "$($restart.sidecarRestartWarning) Rolled back to prior key."
+        }
+        else {
+            $restart.sidecarRestartWarning = 'Ask sidecar restart failed; rolled back to prior key.'
+        }
+    }
+    if ($null -ne $restart.sidecarRestarted) {
+        $result | Add-Member -NotePropertyName sidecarRestarted -NotePropertyValue $restart.sidecarRestarted -Force
+    }
+    if ($restart.sidecarRestartWarning) {
+        $result | Add-Member -NotePropertyName sidecarRestartWarning -NotePropertyValue $restart.sidecarRestartWarning -Force
+    }
+    return $result
 }
 
 function Get-MetraAskEngineMenu {

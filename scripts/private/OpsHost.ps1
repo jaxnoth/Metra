@@ -55,7 +55,15 @@ function Write-MetraOpsHostLog {
 
 function Get-MetraOpsHostStartupShortcutPath {
     $startup = [Environment]::GetFolderPath('Startup')
-    return Join-Path $startup 'Metra Ops.lnk'
+    return Join-Path $startup 'Metra Ops Tray Host.lnk'
+}
+
+function Remove-MetraOpsLegacyShortcut {
+    param([Parameter(Mandatory)][string]$LinkPath)
+
+    if (Test-Path -LiteralPath $LinkPath) {
+        Remove-Item -LiteralPath $LinkPath -Force -ErrorAction SilentlyContinue
+    }
 }
 
 function Test-MetraOpsHostStartupEnabled {
@@ -105,6 +113,7 @@ function New-MetraOpsShortcut {
         [Parameter(Mandatory)][string]$TargetPath,
         [Parameter(Mandatory)][string]$WorkingDirectory,
         [string]$Description = 'Metra Ops',
+        [string]$Arguments = '',
         [string]$IconPath = $null,
         [int]$WindowStyle = 1
     )
@@ -124,6 +133,9 @@ function New-MetraOpsShortcut {
         $shortcut.WorkingDirectory = $WorkingDirectory
         $shortcut.WindowStyle = $WindowStyle
         $shortcut.Description = $Description
+        if ($Arguments) {
+            $shortcut.Arguments = $Arguments
+        }
         if ($IconPath -and (Test-Path -LiteralPath $IconPath)) {
             $shortcut.IconLocation = "$IconPath,0"
         }
@@ -145,8 +157,10 @@ function Install-MetraOpsStartMenuShortcuts {
         Creates or refreshes per-user Start Menu shortcuts for Metra Ops with the brand icon.
     .DESCRIPTION
         Windows cannot brand a .cmd file itself - Start Menu needs .lnk files with IconLocation.
-        Idempotent. Matches installer layout: Programs\Metra\Metra Ops (+ console escape hatch)
-        and a top-level Programs\Metra Ops entry for search.
+        Idempotent. Tray host only (-NoBrowser): starts the user-session supervisor and desk
+        without forcing a browser window. Open the desk from the tray menu when you want it.
+        Layout: Programs\Metra\Metra Ops Tray Host (+ console escape hatch) and a top-level
+        Programs\Metra Ops Tray Host entry for Start search / pin.
     #>
     [CmdletBinding()]
     param(
@@ -163,24 +177,31 @@ function Install-MetraOpsStartMenuShortcuts {
     $folder = Get-MetraOpsStartMenuFolder
     $programs = [Environment]::GetFolderPath('Programs')
     $links = [System.Collections.Generic.List[string]]::new()
+    $trayArgs = '-NoBrowser'
 
-    $mainFolderLink = Join-Path $folder 'Metra Ops.lnk'
+    # Retire pre-tray-host naming (browser-first "Metra Ops" shortcuts).
+    Remove-MetraOpsLegacyShortcut -LinkPath (Join-Path $folder 'Metra Ops.lnk')
+    Remove-MetraOpsLegacyShortcut -LinkPath (Join-Path $programs 'Metra Ops.lnk')
+
+    $mainFolderLink = Join-Path $folder 'Metra Ops Tray Host.lnk'
     New-MetraOpsShortcut `
         -LinkPath $mainFolderLink `
         -TargetPath $opsCmd `
         -WorkingDirectory $MetraRoot `
-        -Description 'Metra Ops host (user-session tray)' `
+        -Arguments $trayArgs `
+        -Description 'Metra Ops tray host (supervises desk; open browser from tray menu)' `
         -IconPath $icoPath `
         -WindowStyle 7
     [void]$links.Add($mainFolderLink)
 
-    # Top-level Programs entry (Start search / pin-friendly), same target as installer {autoprograms}.
-    $topLink = Join-Path $programs 'Metra Ops.lnk'
+    # Top-level Programs entry (Start search / pin-friendly).
+    $topLink = Join-Path $programs 'Metra Ops Tray Host.lnk'
     New-MetraOpsShortcut `
         -LinkPath $topLink `
         -TargetPath $opsCmd `
         -WorkingDirectory $MetraRoot `
-        -Description 'Metra Ops host (user-session tray)' `
+        -Arguments $trayArgs `
+        -Description 'Metra Ops tray host (supervises desk; open browser from tray menu)' `
         -IconPath $icoPath `
         -WindowStyle 7
     [void]$links.Add($topLink)
@@ -228,11 +249,14 @@ function Set-MetraOpsHostStartup {
         throw "Missing Metra-Ops.cmd under $MetraRoot"
     }
 
+    Remove-MetraOpsLegacyShortcut -LinkPath (Join-Path (Split-Path -Parent $lnkPath) 'Metra Ops.lnk')
+
     New-MetraOpsShortcut `
         -LinkPath $lnkPath `
         -TargetPath $cmd `
         -WorkingDirectory $MetraRoot `
-        -Description 'Metra Ops host (user-session tray)' `
+        -Arguments '-NoBrowser' `
+        -Description 'Metra Ops tray host (supervises desk; open browser from tray menu)' `
         -IconPath (Get-MetraOpsHostIconPath -MetraRoot $MetraRoot) `
         -WindowStyle 7
 }

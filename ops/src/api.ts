@@ -187,6 +187,7 @@ export type TicketWatchResult = {
 
 export type WatchTicketsResponse = {
   ok: boolean
+  skipped?: boolean
   watch: TicketWatchResult
   desk: DeskPayload
 }

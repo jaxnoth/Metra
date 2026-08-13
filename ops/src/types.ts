@@ -37,6 +37,16 @@ export type AttentionItem = {
   closedAt?: string | null
   closedBy?: string
   note?: string
+  /** Body of Metra AI Recommendation from iSupport or local draft. */
+  existingRecommendation?: string
+  /** isupport | local-draft */
+  recommendationSource?: string
+  /** True when recommendation body is redacted for remote snapshot reach. */
+  hasExistingRecommendation?: boolean
+  /** Full iSupport status label (Open, Waiting on Customer, etc.). */
+  ticketStatus?: string
+  /** Short code for list rows (O, W, UR, etc.). */
+  ticketStatusCode?: string
 }
 
 /** @deprecated Prefer AttentionItem; kept for nextAttention nullability. */
@@ -161,6 +171,8 @@ export type Preferences = {
   editorCommand?: string
   /** When false, Scan tickets is disabled. Portfolio refresh never covers tickets. */
   ticketWatchEnabled?: boolean
+  /** Auto-scan interval when Ticket Watch is on (0 = manual only). From ticket-watch.local.json. */
+  ticketWatchAutoScanMinutes?: number
   updatedAt?: string | null
 }
 
@@ -242,7 +254,12 @@ export type SettingsPortfolio = {
 export type SettingsSaveResult = {
   ok: boolean
   rootsSaved?: boolean
+  partialSuccess?: boolean
   portfolio: SettingsPortfolio
+  sidecarRestarted?: boolean | null
+  sidecarRestartWarning?: string | null
+  cursorKey?: { status?: string; keyRollback?: boolean }
+  cursorKeyStatus?: string
 }
 
 export type ProductUpdateItem = {

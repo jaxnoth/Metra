@@ -2727,9 +2727,30 @@ function ConvertTo-MetraDeskPayload {
         -MetraRoot $MetraRoot
 
     $prefs = Get-MetraDeskPreferences -MetraRoot $MetraRoot
-    $visibleCount = Normalize-MetraAttentionVisibleCount -Value (
-        Get-MetraProp -Object $prefs -Name 'attentionVisibleCount' -Default 1
-    )
+    $ticketWatchAutoScanMinutes = 5
+    try {
+        $twCfg = Get-MetraTicketWatchConfig -MetraRoot $MetraRoot
+        if ($null -ne (Get-MetraProp -Object $twCfg -Name 'autoScanIntervalMinutes' -Default $null)) {
+            $ticketWatchAutoScanMinutes = [int]$twCfg.autoScanIntervalMinutes
+        }
+    }
+    catch { }
+    $deskPreferences = [PSCustomObject]@{
+        deskMode                    = [string]$prefs.deskMode
+        machineRole                 = $prefs.machineRole
+        opsPort                     = $prefs.opsPort
+        browserHost                 = $prefs.browserHost
+        preferFriendlyUrl           = $prefs.preferFriendlyUrl
+        bindTailscale               = [bool]$prefs.bindTailscale
+        attentionVisibleCount       = Normalize-MetraAttentionVisibleCount -Value (
+            Get-MetraProp -Object $prefs -Name 'attentionVisibleCount' -Default 1
+        )
+        editorCommand               = [string]$prefs.editorCommand
+        ticketWatchEnabled          = [bool]$prefs.ticketWatchEnabled
+        ticketWatchAutoScanMinutes  = $ticketWatchAutoScanMinutes
+        updatedAt                   = $prefs.updatedAt
+    }
+    $visibleCount = $deskPreferences.attentionVisibleCount
 
     $ranked = @(Get-MetraAttentionActiveItems -Memory $memory)
     $held = @(
@@ -2750,6 +2771,23 @@ function ConvertTo-MetraDeskPayload {
     $nextAttention = $null
     if ($activeViews.Count -gt 0) {
         $nextAttention = $activeViews[0]
+    }
+
+    $hasLocalAuthority = $false
+    if ($null -ne $Request) {
+        try {
+            $hasLocalAuthority = Test-MetraOpsRequestHasLocalAuthority -Request $Request
+        }
+        catch {
+            $hasLocalAuthority = $false
+        }
+    }
+    if (-not $hasLocalAuthority) {
+        $activeViews = @($activeViews | ForEach-Object { Protect-MetraDeskAttentionViewForRemote -View $_ })
+        $heldViews = @($heldViews | ForEach-Object { Protect-MetraDeskAttentionViewForRemote -View $_ })
+        if ($nextAttention) {
+            $nextAttention = Protect-MetraDeskAttentionViewForRemote -View $nextAttention
+        }
     }
 
     $attentionCount = $activeViews.Count
@@ -2815,7 +2853,7 @@ function ConvertTo-MetraDeskPayload {
 
     $editorInfo = $null
     try {
-        $resolvedEditor = Resolve-MetraOpsEditor -Preference ([string](Get-MetraProp -Object $prefs -Name 'editorCommand' -Default 'auto')) -MetraRoot $MetraRoot
+        $resolvedEditor = Resolve-MetraOpsEditor -Preference ([string](Get-MetraProp -Object $deskPreferences -Name 'editorCommand' -Default 'auto')) -MetraRoot $MetraRoot
         $editorInfo = [PSCustomObject]@{
             preference = [string]$resolvedEditor.Preference
             kind       = [string]$resolvedEditor.Kind
@@ -2872,7 +2910,7 @@ function ConvertTo-MetraDeskPayload {
         }
         recent             = $recent
         captures           = $captures
-        preferences        = $prefs
+        preferences        = $deskPreferences
         ask                = [PSCustomObject]@{
             enabled       = [bool]$askCapability.enabled
             selected      = [bool]$askCapability.selected

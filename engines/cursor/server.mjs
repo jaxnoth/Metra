@@ -12,12 +12,11 @@ const PORT = Number(process.env.METRA_ASK_PORT || 7381)
 const ENGINE = 'cursor'
 
 /**
- * Cursor Ask defaults to Auto Cost (Cursor Router) - legacy Auto behavior on the
- * Cursor Models pool. Balance/Intelligence remain available via optimize_for.
- * Wire: auto-smart + optimize_for=cost.
+ * Cursor Ask defaults to composer-2.5 (Ask API slug). auto-* tokens still map
+ * to auto-smart router tiers. IDE agent names like composer-2.5-fast are aliased.
  */
 function resolveModelSelection() {
-  const rawId = String(process.env.METRA_ASK_MODEL || 'auto-smart').trim()
+  const rawId = String(process.env.METRA_ASK_MODEL || 'composer-2.5').trim()
   const rawOpt = String(process.env.METRA_ASK_OPTIMIZE_FOR || 'cost')
     .trim()
     .toLowerCase()
@@ -33,6 +32,7 @@ function resolveModelSelection() {
     'auto-intelligence': 'auto-smart',
     'auto intelligence': 'auto-smart',
     intelligence: 'auto-smart',
+    'composer-2.5-fast': 'composer-2.5',
   }
   const aliasOptimize = {
     'auto-cost': 'cost',
@@ -48,7 +48,7 @@ function resolveModelSelection() {
     intelligence: 'intelligence',
   }
   const rawLower = rawId.toLowerCase()
-  const id = aliasMap[rawLower] || rawId || 'auto-smart'
+  const id = aliasMap[rawLower] || rawId || 'composer-2.5'
   if (id === 'auto-smart') {
     const fromAlias = aliasOptimize[rawLower]
     const optimizeFor = fromAlias
