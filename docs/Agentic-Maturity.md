@@ -6,7 +6,7 @@ This is a **workflow governance** model. It asks how complete the system around 
 
 **Completeness** here means: the workflow reliably reaches its **declared target level** with the evidence and gates that level requires. Higher is not always better. Maxing every workflow to L6 is usually wrong.
 
-Related: [Decisions.md](Decisions.md) (portfolio policy), [Context-Routing.md](Context-Routing.md) (route-first harness), [Integrations.md](Integrations.md) (engines and MCP), gitignored `Future-Development.local.md` (parking lot / Best path). External decode aids: [What Counts as Agentic AI](https://buildingagenticai.com/blog/what-counts-as-agentic-ai/), [The AI Agent Production Readiness Checklist](https://buildingagenticai.com/blog/ai-agent-production-readiness-checklist/), [Agentic Engineering](https://newsletter.systemdesign.one/p/agentic-engineering), [Karpathy-style gen-verify loop](https://www.aibuilderclub.com/blog/loop-engineering-karpathy) - crosswalks only; Metra L-numbers win in scorecards.
+Related: [Decisions.md](Decisions.md) (portfolio policy), [Context-Routing.md](Context-Routing.md) (route-first harness), [Integrations.md](Integrations.md) (engines and MCP), gitignored `Future-Development.local.md` (parking lot / Best path). External decode aids: [What Counts as Agentic AI](https://buildingagenticai.com/blog/what-counts-as-agentic-ai/), [The AI Agent Production Readiness Checklist](https://buildingagenticai.com/blog/ai-agent-production-readiness-checklist/), [Agentic Engineering](https://newsletter.systemdesign.one/p/agentic-engineering), [Karpathy-style gen-verify loop](https://www.aibuilderclub.com/blog/loop-engineering-karpathy), [Graph Engineering roadmap (0xRafy)](https://x.com/0xRafy/article/2079542513317118268), Anthropic AI DevCon context-engineering / out-of-band consolidation ("dreaming") talk (2026) - crosswalks only; Metra L-numbers win in scorecards.
 
 ---
 
@@ -160,6 +160,67 @@ External vocabulary from [Giving Your Agent Memory](https://buildingagenticai.co
 
 Article rules Metra already follows: separate stores by job; no vector DB from day one; durable writes are explicit (Capture / promote / Host) - Capture never silent into Ask prompts; scope by operator machine / Ask-class vs Host (same isolation idea as their `user_id` rule). Observation cheap, governance deliberate. Soft gaps shipped for Ops: summarization + explicit episodic recall - still not a Universal Memory Engine.
 
+### Context engineering timeline (crosswalk, not a product change)
+
+External vocabulary from Anthropic applied-AI context-engineering guidance (AI DevCon 2026; Lamis). Maps the **progressive disclosure** path Metra already uses - **do not** collapse Portfolio Operations Principles into one agent-writable memory store.
+
+| Their stage | What it solves | Metra home |
+|-------------|----------------|------------|
+| Always-on markdown steer | Session alignment | `.cursor/rules`, project `AGENTS.md`, `Decisions.md` |
+| In-band memory tools | Agent reads/writes during task | Session Journal notes; `capture note`; local `note` - not always-on injection |
+| Skills (progressive disclosure) | Context bloat on procedures | Planned procedure `SKILL.md` packs (Future-Dev **A4** / human ladder **6**); `ctx` + routing metadata for map |
+| Filesystem memory + search | Large durable context | Git-tracked homes per fact type; `Grep`/`Read`/`routing`/`ctx` - not one store |
+| Production guardrails | Fleet scale, bad writes, staleness | Root isolation; OCC cap; Capture never auto-loads; `decisions review`; git versioning on tracked files |
+
+Production scars from the same talk that Metra already encodes: **permission tiers** (org policy vs project playbook vs scratch), **versioning + provenance** on durable writes, **concurrency** on shared edits (git / iSupport executors today - not agent hash-commit yet). **In-band memory** competes with task completion and lacks cross-session visibility - prefer **out-of-band consolidation** (below) for fleet learning.
+
+Future-Dev bites (gitignored parking lot): procedure skills **A4**, writing-style harvest **A8**, transcript consolidation **A14** - see `docs/Future-Development.local.md` agent lane.
+
+### Graph engineering (crosswalk, not a framework mandate)
+
+External vocabulary from [Graph Engineering with Claude (0xRafy)](https://x.com/0xRafy/article/2079542513317118268). **Graph = who runs when**; pairs with context engineering above (**what each node sees**). Metra is already graph-shaped policy + CLI + Cursor harness - **do not** add LangGraph/CrewAI as Metra orchestration (Future-Dev Bucket E).
+
+| Pattern | Meaning | Metra home | Typical level |
+|---------|---------|------------|---------------|
+| Node | One job in, state out | Project CLI call, Inspect engine pass, `brief`, one playbook phase | L3 |
+| Edge | Unconditional handoff | route -> `AGENTS.md` -> work -> return to TicketTracker | L2-L3 |
+| Router | Classify, pick specialist | `metra.ps1 routing`, sticky primary, ticket-id precedence | L2 |
+| Sequential chain | A -> B -> C always | Ticket-ops path; simple extract-transform pipelines | L3 |
+| Parallel fan-out | Same input, merge later | Cursor `Task` subagents; bounded multi-read when evidence requires | L4 partial |
+| Loop + gate | Build, separate review, retry | Inspect coding loop; playbook done-when + re-check; **reviewer != implementer** when engines differ | L5 |
+| Human-in-the-loop | Pause before irreversible | `post`/`recommend`/`resolve` ask; Live confirm; Host Propose-Confirm-Apply; Inspect recommend-only | Ceiling |
+| Fallback edge | Graceful failure path | On hard stop tables; `-WhatIf`; fail-closed playbooks | Partial - document per workflow |
+
+**Model tiering (their scar):** cheap classify (`routing`/registry) before expensive reason (Cursor agent / Sonnet-class work / Inspect on diffs). Do not burn flagship tokens on routing.
+
+**Anti-patterns they name - Metra equivalents:**
+
+| Their break | Metra refuse |
+|-------------|--------------|
+| Monolith node | One chat doing route + investigate + write + review without gates |
+| No shared state | Starting each hop with no ticket id / primary project / evidence refs |
+| No fallback | Shrugging after failed Live/telnet instead of On hard stop |
+| Expensive router | Re-deriving portfolio map from scratch every turn instead of `routing`/`ctx` |
+| No review gate | Auto `post`/commit from inspect or chat without operator affirm |
+
+**Ticket investigate as a reference graph (documentation, not new runtime):** classify (TicketTracker `brief`) -> route -> one technical project (tools + done-when) -> optional Inspect review -> durable write via TicketTracker only. Score on the workflow template below; Target L5 when done-when + re-check hold.
+
+### Out-of-band consolidation ("dreaming" crosswalk)
+
+Anthropic's **dreaming** label: batch process over **transcripts + memory homes** that proposes curriculum updates with prevalence evidence; operator accepts/rejects. Metra's **governance half** already exists; the **fleet-visibility half** is the gap.
+
+| Dreaming step | Metra today | Gap / Future-Dev |
+|---------------|-------------|------------------|
+| Transcript corpus | `chats`, Ask Journal, Cursor agent transcripts | No bounded batch pipeline |
+| Tool/metadata scrutiny | Inspect reports; playbook On hard stop | Not cross-session automated |
+| Pattern -> proposed edits | `decisions harvest -Preview`, `capture list` | No prevalence stats |
+| Accept / reject | `decisions promote`, `profile promote`, `capture promote`, git commit | Yes - keep |
+| Stale pass | `decisions review` (visibility) | No auto-prune; human/editorial |
+
+**Hard offs (same as memory stores):** no Universal Memory Engine; no auto-promote into always-on rules or Ask prompts; no agent writes to org-wide context without classified home + affirm. Consolidation outputs **candidates only** - Capture, Decision Registry harvest, OCC lines, or human-reviewed `AGENTS.md`/solutions diffs.
+
+**In-band vs out-of-band:** session agents may note locally (`capture note`, `note`) for fast next-run uplift; **cross-session learning** belongs in out-of-band consolidation (Future-Dev **A14**) so task work does not compete with memory curation in the same turn budget.
+
 ### Autonomy ladder (external) vs Metra L1-L6
 
 Their autonomy rungs (0-5) are **tradeoff dials**, not maturity prestige. Map roughly; never equate level numbers in chat without saying which ladder.
@@ -230,6 +291,9 @@ When a Metra workflow claims higher autonomy (Target L5/L6 or unattended watch),
 - Letting irreversible actions run free because "the loop decided."
 - Averaging a production-readiness checklist into a ship percentage (one hard-block red holds the launch).
 - Treating a meeting nod as a green check (no artifact, no named answerer).
+- Adding LangGraph/CrewAI (or similar) as Metra orchestration when policy + CLI + Cursor already form the graph.
+- Auto-applying "dreaming" or harvest output into always-on rules without operator affirm and classified home.
+- Letting one session agent update portfolio-wide context (OCC/Decisions/registry) without promote gates.
 
 ---
 
