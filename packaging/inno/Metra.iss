@@ -67,8 +67,8 @@ FinishedLabel=You're set.%n%nOpen Metra Ops from the Start Menu when you're read
 Source: "..\stage\*"; DestDir: "{app}"; Flags: ignoreversion recursesubdirs createallsubdirs
 
 [Icons]
-Name: "{group}\Metra Ops"; Filename: "{app}\Metra-Ops.cmd"; WorkingDir: "{app}"; IconFilename: "{app}\docs\assets\metra.ico"
-Name: "{autoprograms}\Metra Ops"; Filename: "{app}\Metra-Ops.cmd"; WorkingDir: "{app}"; IconFilename: "{app}\docs\assets\metra.ico"
+Name: "{group}\Metra Ops Tray Host"; Filename: "{app}\Metra-Ops.cmd"; Parameters: "-NoBrowser"; WorkingDir: "{app}"; IconFilename: "{app}\docs\assets\metra.ico"
+Name: "{autoprograms}\Metra Ops Tray Host"; Filename: "{app}\Metra-Ops.cmd"; Parameters: "-NoBrowser"; WorkingDir: "{app}"; IconFilename: "{app}\docs\assets\metra.ico"
 Name: "{group}\Metra Ops (console)"; Filename: "{app}\Metra-Ops-Console.cmd"; WorkingDir: "{app}"; IconFilename: "{app}\docs\assets\metra.ico"
 Name: "{group}\Metra Setup"; Filename: "{app}\{#MyAppExeName}"; WorkingDir: "{app}"; IconFilename: "{app}\docs\assets\metra.ico"
 Name: "{autoprograms}\Metra Setup"; Filename: "{app}\{#MyAppExeName}"; WorkingDir: "{app}"; IconFilename: "{app}\docs\assets\metra.ico"

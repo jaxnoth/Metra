@@ -19,6 +19,42 @@ Describe 'Ask engine settings' {
         }
     }
 
+    It 'defaults cursor model to composer-2.5 when omitted' {
+        InModuleScope Metra -Parameters @{ Drive = $TestDrive } {
+            $root = Join-Path $Drive 'ask-cursor-default'
+            New-Item -ItemType Directory -Path $root -Force | Out-Null
+            @{
+                ask = @{
+                    enabled = $true
+                    engine  = 'cursor'
+                    cursor  = @{ port = 7381 }
+                }
+            } | ConvertTo-Json -Depth 6 |
+                Set-Content -LiteralPath (Join-Path $root 'metra.config.json') -Encoding UTF8
+            $s = Get-MetraAskSettings -MetraRoot $root
+            $s.cursorModel | Should -Be 'composer-2.5'
+            $s.model | Should -Be 'composer-2.5'
+        }
+    }
+
+    It 'aliases composer-2.5-fast to composer-2.5' {
+        InModuleScope Metra -Parameters @{ Drive = $TestDrive } {
+            $root = Join-Path $Drive 'ask-composer-fast'
+            New-Item -ItemType Directory -Path $root -Force | Out-Null
+            @{
+                ask = @{
+                    enabled = $true
+                    engine  = 'cursor'
+                    cursor  = @{ model = 'composer-2.5-fast'; port = 7381 }
+                }
+            } | ConvertTo-Json -Depth 6 |
+                Set-Content -LiteralPath (Join-Path $root 'metra.config.json') -Encoding UTF8
+            $s = Get-MetraAskSettings -MetraRoot $root
+            $s.cursorModel | Should -Be 'composer-2.5'
+            $s.model | Should -Be 'composer-2.5'
+        }
+    }
+
     It 'normalizes cursor auto-cost to auto-smart/cost' {
         InModuleScope Metra -Parameters @{ Drive = $TestDrive } {
             $root = Join-Path $Drive 'ask-auto-cost'

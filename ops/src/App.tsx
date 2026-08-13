@@ -60,6 +60,7 @@ import type {
   PlaceHome,
   PlaceRecommendation,
   PlaceUploadMeta,
+  SettingsSaveResult,
 } from './types'
 
 type TabId = 'route' | 'projects' | 'recent' | 'health' | 'settings'
@@ -282,15 +283,139 @@ function attentionItemKey(item: AttentionItem): string {
   return item.key || item.id
 }
 
+function insertTicketStatusMark(headline: string, code: string | undefined): string {
+  const mark = code?.trim()
+  if (!mark) return headline
+  const badge = `[${mark}] `
+  const ticketMatch = headline.match(/^(Ticket\s+\d+\s*:\s*)(.*)$/i)
+  if (ticketMatch) return `${ticketMatch[1]}${badge}${ticketMatch[2]}`
+  return `${badge}${headline}`
+}
+
+function attentionHeadline(item: AttentionItem): string {
+  const base = (item.summary || item.content || item.key || item.id || 'Item').trim()
+  if (item.kind === 'ticket') {
+    return insertTicketStatusMark(base, item.ticketStatusCode)
+  }
+  return base
+}
+
+const TICKET_SCAN_LAST_KEY = 'metra.ticketWatch.lastAutoScanUtc'
+
+function shouldRunInitialTicketAutoScan(intervalMinutes: number): boolean {
+  try {
+    const raw = localStorage.getItem(TICKET_SCAN_LAST_KEY)
+    if (!raw) return true
+    const last = Number.parseInt(raw, 10)
+    if (!Number.isFinite(last)) return true
+    return Date.now() - last >= intervalMinutes * 60 * 1000
+  } catch {
+    return true
+  }
+}
+
+function markTicketAutoScanRan() {
+  try {
+    localStorage.setItem(TICKET_SCAN_LAST_KEY, String(Date.now()))
+  } catch {
+    /* ignore */
+  }
+}
+
+function cursorKeySettingsFailed(result: SettingsSaveResult): boolean {
+  const keyStatus = result.cursorKey?.status ?? result.cursorKeyStatus
+  return !result.ok || keyStatus === 'rolled_back' || keyStatus === 'cancelled' || keyStatus === 'failed'
+}
+
+function formatCursorKeySettingsStatus(
+  result: SettingsSaveResult,
+  successLabel: string,
+): string {
+  if (cursorKeySettingsFailed(result)) {
+    const keyMsg =
+      result.sidecarRestartWarning ||
+      `Cursor API key change failed${result.cursorKey?.status ? ` (${result.cursorKey.status})` : ''}.`
+    if (result.rootsSaved) {
+      return `Project folders saved. ${keyMsg}`
+    }
+    return keyMsg
+  }
+  let status = successLabel
+  if (result.sidecarRestarted === false) {
+    status += ' Warning: Ask sidecar restart failed.'
+  }
+  if (result.sidecarRestartWarning) {
+    status += ` ${result.sidecarRestartWarning}`
+  }
+  return status
+}
+// Best-effort cross-tab dedupe only (localStorage is not atomic). Host scan lease serializes scans.
+const TICKET_SCAN_LOCK_KEY = 'metra.ticketWatch.autoScanLock'
+const TICKET_SCAN_TAB_KEY = 'metra.ticketWatch.autoScanTabId'
+const TICKET_SCAN_LOCK_MS = 90_000
+
+function getTicketScanTabId(): string {
+  try {
+    let tabId = sessionStorage.getItem(TICKET_SCAN_TAB_KEY)
+    if (!tabId) {
+      tabId =
+        typeof crypto !== 'undefined' && 'randomUUID' in crypto
+          ? crypto.randomUUID()
+          : `tab-${Date.now()}-${Math.random().toString(36).slice(2)}`
+      sessionStorage.setItem(TICKET_SCAN_TAB_KEY, tabId)
+    }
+    return tabId
+  } catch {
+    return `tab-${Date.now()}`
+  }
+}
+
+function tryAcquireTicketScanLock(): boolean {
+  try {
+    const tabId = getTicketScanTabId()
+    const now = Date.now()
+    const raw = localStorage.getItem(TICKET_SCAN_LOCK_KEY)
+    if (raw) {
+      const parsed = JSON.parse(raw) as { until?: number; tab?: string }
+      if (typeof parsed.until === 'number' && parsed.until > now && parsed.tab !== tabId) {
+        return false
+      }
+    }
+    const candidate = JSON.stringify({ until: now + TICKET_SCAN_LOCK_MS, tab: tabId })
+    localStorage.setItem(TICKET_SCAN_LOCK_KEY, candidate)
+    const verify = localStorage.getItem(TICKET_SCAN_LOCK_KEY)
+    if (verify !== candidate) return false
+    const parsedVerify = JSON.parse(verify) as { until?: number; tab?: string }
+    return parsedVerify.tab === tabId
+  } catch {
+    return false
+  }
+}
+
+function releaseTicketScanLock() {
+  try {
+    const tabId = getTicketScanTabId()
+    const raw = localStorage.getItem(TICKET_SCAN_LOCK_KEY)
+    if (!raw) return
+    const parsed = JSON.parse(raw) as { tab?: string }
+    if (parsed.tab === tabId) localStorage.removeItem(TICKET_SCAN_LOCK_KEY)
+  } catch {
+    /* ignore */
+  }
+}
+
 function attentionPickerLabel(item: AttentionItem): string {
   const kind = kindLabel(item.kind)
-  const summary = (item.summary || item.content || item.key || item.id || 'Item').trim()
+  const summary = attentionHeadline(item)
   const max = 96
   const text = summary.length > max ? `${summary.slice(0, max - 1)}…` : summary
-  if (kind && !summary.toLowerCase().startsWith(kind.toLowerCase())) {
-    return `${kind}: ${text}`
+  const recMark =
+    item.existingRecommendation?.trim() || item.hasExistingRecommendation ? ' · rec' : ''
+  const rawBase = (item.summary || item.content || item.key || item.id || 'Item').trim()
+  if (kind && !rawBase.toLowerCase().startsWith(kind.toLowerCase())) {
+    return `${kind}: ${text}${recMark}`
   }
-  return text
+  return `${text}${recMark}`
 }
 
 function PresenceBrand({
@@ -352,8 +477,27 @@ function AttentionCard({
 
   return (
     <div className={primary ? 'attention-card attention-card-primary' : 'attention-card'}>
-      <p className="attention">{item.summary || item.content}</p>
+      <p className="attention">{attentionHeadline(item)}</p>
       {item.detail && <p className="muted attention-detail">{item.detail}</p>}
+      {(item.existingRecommendation?.trim() || item.hasExistingRecommendation) && (
+        <div className="attention-existing-rec" style={{ marginBottom: '0.75rem' }}>
+          <p className="muted">
+            Existing Metra AI recommendation
+            {item.recommendationSource === 'isupport'
+              ? ' (iSupport)'
+              : item.recommendationSource === 'local-draft'
+                ? ' (local draft)'
+                : ''}
+          </p>
+          {item.existingRecommendation?.trim() ? (
+            <pre className="attention-recommend-preview" style={{ whiteSpace: 'pre-wrap' }}>
+              {item.existingRecommendation.trim()}
+            </pre>
+          ) : (
+            <p className="muted">Recommendation text requires local Ops authority.</p>
+          )}
+        </div>
+      )}
       {item.whyNext && <p className="attention-why">{item.whyNext}</p>}
       {advanced && (
         <>
@@ -687,9 +831,12 @@ function ResolveActions({
         </div>
       )}
       {recommendPreview && (
-        <pre className="attention-recommend-preview" style={{ whiteSpace: 'pre-wrap' }}>
-          {recommendPreview}
-        </pre>
+        <div style={{ marginBottom: '0.75rem' }}>
+          <p className="muted">New recommendation preview (not yet in iSupport)</p>
+          <pre className="attention-recommend-preview" style={{ whiteSpace: 'pre-wrap' }}>
+            {recommendPreview}
+          </pre>
+        </div>
       )}
       <label className="attention-feedback">
         <span className="muted">
@@ -1147,6 +1294,10 @@ export default function App() {
   const [settingsStatus, setSettingsStatus] = useState<string | null>(null)
   const [resolveStatus, setResolveStatus] = useState<string | null>(null)
   const [ticketWatchStatus, setTicketWatchStatus] = useState<string | null>(null)
+  const ticketScanInFlight = useRef(false)
+  const ticketScanFailCount = useRef(0)
+  const TICKET_SCAN_MAX_FAILS = 3
+  const [ticketScanPaused, setTicketScanPaused] = useState(false)
   const [selectedAttentionKey, setSelectedAttentionKey] = useState<string | null>(null)
   const [attentionShowAll, setAttentionShowAll] = useState(false)
   const [selectedHeldKey, setSelectedHeldKey] = useState<string | null>(null)
@@ -1220,6 +1371,79 @@ export default function App() {
   const deskMode: DeskMode = desk?.preferences?.deskMode ?? 'general'
   const advanced = deskMode === 'advanced'
   const ticketWatchEnabled = desk?.preferences?.ticketWatchEnabled !== false
+  const ticketWatchAutoScanMinutes = desk?.preferences?.ticketWatchAutoScanMinutes ?? 5
+
+  const formatTicketWatchStatus = useCallback((w: Awaited<ReturnType<typeof watchTickets>>['watch']) => {
+    if (w.warning) return w.warning
+    if (!w.available) return 'TicketTracker not available - ticket scan skipped.'
+    const draftBit =
+      w.draftAvailable || w.draftsWritten > 0 ? ` Draft available (${w.draftsWritten}).` : ''
+    const evidenceStatus = (() => {
+      if (!(w.nextEvidenceAvailable || (w.evidenceSuggestions ?? 0) > 0)) return ''
+      if (w.readyForRecommendation) {
+        return ` Next evidence (${w.evidenceSuggestions}). Ready for recommendation.`
+      }
+      return ` Next evidence (${w.evidenceSuggestions}).`
+    })()
+    return `Tickets (${w.scope}): scanned ${w.scanned} - added ${w.added}, refreshed ${w.refreshed}, unchanged ${w.unchanged}.${draftBit}${evidenceStatus} No iSupport writes.`
+  }, [])
+
+  const runTicketWatchScan = useCallback(
+    async (opts?: { quiet?: boolean }) => {
+      if (!ticketWatchEnabled || ticketScanInFlight.current) return
+      if (opts?.quiet && !hasLocalSession) return
+      if (opts?.quiet && ticketScanPaused) return
+      if (opts?.quiet && !tryAcquireTicketScanLock()) return
+      ticketScanInFlight.current = true
+      if (!opts?.quiet) {
+        setBusy(true)
+        setError(null)
+        setTicketWatchStatus(null)
+        setTicketScanPaused(false)
+        ticketScanFailCount.current = 0
+      }
+      try {
+        const res = await watchTickets(false)
+        setDesk(res.desk)
+        ticketScanFailCount.current = 0
+        setTicketScanPaused(false)
+        if (opts?.quiet && !res.skipped && res.ok) markTicketAutoScanRan()
+        const msg = formatTicketWatchStatus(res.watch)
+        if (!opts?.quiet) {
+          setTicketWatchStatus(msg)
+        } else if (res.watch.added > 0 || res.watch.refreshed > 0) {
+          setTicketWatchStatus(`Auto-scan: ${msg}`)
+        }
+      } catch (e) {
+        const errMsg = e instanceof Error ? e.message : String(e)
+        const nonRetriable =
+          /403|401|forbidden|local authority|local session/i.test(errMsg)
+        if (!(opts?.quiet && nonRetriable)) {
+          ticketScanFailCount.current += 1
+        }
+        const paused = opts?.quiet && !nonRetriable && ticketScanFailCount.current >= TICKET_SCAN_MAX_FAILS
+        if (paused) {
+          setTicketScanPaused(true)
+        }
+        const failLabel = paused
+          ? `Auto-scan paused after ${TICKET_SCAN_MAX_FAILS} failures. Use Scan tickets to retry. Last: ${errMsg}`
+          : ticketScanFailCount.current > 1
+            ? `Auto-scan failed (${ticketScanFailCount.current}x): ${errMsg}`
+            : `Auto-scan failed: ${errMsg}`
+        if (opts?.quiet) {
+          setTicketWatchStatus(failLabel)
+        } else {
+          setError(errMsg)
+          setTicketWatchStatus(null)
+        }
+      } finally {
+        if (opts?.quiet) releaseTicketScanLock()
+        ticketScanInFlight.current = false
+        if (!opts?.quiet) setBusy(false)
+      }
+    },
+    [formatTicketWatchStatus, ticketWatchEnabled, ticketScanPaused, hasLocalSession],
+  )
 
   const load = useCallback(async () => {
     setError(null)
@@ -1234,6 +1458,22 @@ export default function App() {
   useEffect(() => {
     void load()
   }, [load])
+
+  useEffect(() => {
+    if (!desk || !ticketWatchEnabled || ticketScanPaused || !hasLocalSession) return
+    const mins = ticketWatchAutoScanMinutes
+    if (!mins || mins <= 0) return
+
+    if (shouldRunInitialTicketAutoScan(mins)) {
+      void runTicketWatchScan({ quiet: true })
+    }
+
+    const intervalMs = mins * 60 * 1000
+    const timer = window.setInterval(() => {
+      void runTicketWatchScan({ quiet: true })
+    }, intervalMs)
+    return () => window.clearInterval(timer)
+  }, [desk != null, ticketWatchEnabled, ticketWatchAutoScanMinutes, ticketScanPaused, hasLocalSession, runTicketWatchScan])
 
   useEffect(() => {
     if (!advanced && tab !== 'route' && tab !== 'settings') {
@@ -1272,38 +1512,7 @@ export default function App() {
       setTicketWatchStatus('Ticket Watch is off - turn it on to scan tickets.')
       return
     }
-    setBusy(true)
-    setError(null)
-    setTicketWatchStatus(null)
-    try {
-      const res = await watchTickets(false)
-      setDesk(res.desk)
-      const w = res.watch
-      if (w.warning) {
-        setTicketWatchStatus(w.warning)
-      } else if (!w.available) {
-        setTicketWatchStatus('TicketTracker not available - ticket scan skipped.')
-      } else {
-        const draftBit =
-          w.draftAvailable || w.draftsWritten > 0
-            ? ` Draft available (${w.draftsWritten}).`
-            : ''
-        const evidenceStatus = (() => {
-          if (!(w.nextEvidenceAvailable || (w.evidenceSuggestions ?? 0) > 0)) return ''
-          if (w.readyForRecommendation) {
-            return ` Next evidence (${w.evidenceSuggestions}). Ready for recommendation.`
-          }
-          return ` Next evidence (${w.evidenceSuggestions}).`
-        })()
-        setTicketWatchStatus(
-          `Tickets (${w.scope}): scanned ${w.scanned} - added ${w.added}, refreshed ${w.refreshed}, unchanged ${w.unchanged}.${draftBit}${evidenceStatus} No iSupport writes.`,
-        )
-      }
-    } catch (e) {
-      setError(e instanceof Error ? e.message : String(e))
-    } finally {
-      setBusy(false)
-    }
+    await runTicketWatchScan({ quiet: false })
   }
 
   async function onToggleTicketWatch(next: boolean) {
@@ -1314,7 +1523,7 @@ export default function App() {
       setDesk((prev) => (prev ? { ...prev, preferences: prefs } : prev))
       setTicketWatchStatus(
         next
-          ? 'Ticket Watch on - Scan tickets is available. Portfolio refresh still ignores tickets.'
+          ? `Ticket Watch on - auto-scans every ${ticketWatchAutoScanMinutes} min when the desk is open. Portfolio refresh never covers tickets.`
           : 'Ticket Watch off - Scan tickets disabled. Portfolio refresh never covers tickets.',
       )
     } catch (e) {
@@ -1701,8 +1910,21 @@ export default function App() {
     try {
       const result = await putSettings({ cursorApiKey: cursorKeyDraft.trim() })
       setSettingsPortfolio(result.portfolio)
-      setCursorKeyDraft('')
-      setSettingsStatus('Cursor API key saved for Ask (User environment).')
+      if (cursorKeySettingsFailed(result)) {
+        const msg = formatCursorKeySettingsStatus(result, 'Cursor API key save failed.')
+        if (result.rootsSaved) {
+          setError(null)
+          setSettingsStatus(msg)
+        } else {
+          setError(msg)
+          setSettingsStatus(null)
+        }
+      } else {
+        setCursorKeyDraft('')
+        setSettingsStatus(
+          formatCursorKeySettingsStatus(result, 'Cursor API key saved for Ask (User environment).'),
+        )
+      }
       await loadAskEnginePanel()
       await load()
     } catch (e) {
@@ -1719,8 +1941,19 @@ export default function App() {
     try {
       const result = await putSettings({ clearCursorApiKey: true })
       setSettingsPortfolio(result.portfolio)
-      setCursorKeyDraft('')
-      setSettingsStatus('Cursor API key cleared.')
+      if (cursorKeySettingsFailed(result)) {
+        const msg = formatCursorKeySettingsStatus(result, 'Cursor API key clear failed.')
+        if (result.rootsSaved) {
+          setError(null)
+          setSettingsStatus(msg)
+        } else {
+          setError(msg)
+          setSettingsStatus(null)
+        }
+      } else {
+        setCursorKeyDraft('')
+        setSettingsStatus(formatCursorKeySettingsStatus(result, 'Cursor API key cleared.'))
+      }
       await loadAskEnginePanel()
       await load()
     } catch (e) {
@@ -2565,7 +2798,7 @@ export default function App() {
                   </button>
                   <label
                     className="switch"
-                    title="Enable gate for Scan tickets. Portfolio refresh never covers tickets."
+                    title={`Enable Ticket Watch (auto-scans every ${ticketWatchAutoScanMinutes} min). Portfolio refresh never covers tickets.`}
                   >
                     <input
                       type="checkbox"
@@ -2582,7 +2815,7 @@ export default function App() {
                     disabled={busy || !ticketWatchEnabled}
                     title={
                       ticketWatchEnabled
-                        ? 'Mine-scope tickets into Attention. No iSupport writes.'
+                        ? `Mine-scope tickets into Attention (auto every ${ticketWatchAutoScanMinutes} min). No iSupport writes.`
                         : 'Turn Ticket Watch on to scan tickets.'
                     }
                     onClick={() => void onScanTickets()}

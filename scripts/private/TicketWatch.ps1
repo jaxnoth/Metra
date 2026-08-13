@@ -76,6 +76,7 @@ function Get-MetraTicketWatchConfig {
         top                 = 0
         syncOnScan          = $true
         syncOnSnapshot      = $false   # legacy; portfolio snapshot no longer runs ticket intake
+        autoScanIntervalMinutes = 5    # Ops desk polls when Ticket Watch is on (0 = manual only)
         scope               = 'mine'
         productCues              = @()      # local escape hatch; not a TicketWatch catalog
         vocabularyMinSightings   = 2        # subject-DF floor for non-acronym proposals
@@ -107,6 +108,10 @@ function Get-MetraTicketWatchConfig {
         }
         if ($null -ne (Get-MetraProp -Object $raw -Name 'syncOnSnapshot' -Default $null)) {
             $defaults.syncOnSnapshot = [bool]$raw.syncOnSnapshot
+        }
+        if ($null -ne (Get-MetraProp -Object $raw -Name 'autoScanIntervalMinutes' -Default $null)) {
+            $mins = [int]$raw.autoScanIntervalMinutes
+            if ($mins -ge 0) { $defaults.autoScanIntervalMinutes = $mins }
         }
         $scopeRaw = [string](Get-MetraProp -Object $raw -Name 'scope' -Default '')
         if ($scopeRaw) {
@@ -1504,6 +1509,96 @@ function Test-MetraTicketAttentionEligible {
     return $false
 }
 
+function Get-MetraTicketTrackerPersonFilters {
+    <#
+    .SYNOPSIS
+        Reads TicketTracker meFilter / assigneeFilter for Attention assignee ranking.
+    #>
+    [CmdletBinding()]
+    param()
+
+    $meFilter = ''
+    $assigneeFilter = ''
+    try {
+        $settings = Get-TicketTrackerSettings
+        if ($settings.PSObject.Properties['meFilter'] -and $settings.meFilter) {
+            $meFilter = [string]$settings.meFilter
+        }
+        if ($settings.PSObject.Properties['assigneeFilter'] -and $settings.assigneeFilter) {
+            $assigneeFilter = [string]$settings.assigneeFilter
+        }
+    }
+    catch { }
+
+    return [PSCustomObject]@{
+        MeFilter       = $meFilter
+        AssigneeFilter = $assigneeFilter
+    }
+}
+
+function Test-MetraTicketAssigneeMatchesMe {
+    <#
+    .SYNOPSIS
+        True when the ticket assignee matches meFilter (assignee only, not customer).
+        When meFilter is empty, falls back to assigneeFilter.
+    #>
+    [CmdletBinding()]
+    param(
+        [string]$Assignee = '',
+        [string]$MeFilter = '',
+        [string]$AssigneeFilter = ''
+    )
+
+    $assignee = ([string]$Assignee).Trim()
+    if (-not $assignee) { return $false }
+    if ($MeFilter -and ($assignee -like $MeFilter)) { return $true }
+    if (-not $MeFilter -and $AssigneeFilter -and ($assignee -like $AssigneeFilter)) { return $true }
+    return $false
+}
+
+function Get-MetraTicketAttentionAssigneeRank {
+    <#
+    .SYNOPSIS
+        Lower number = higher Attention priority. Assigned-to-me tickets sort above others.
+    #>
+    [CmdletBinding()]
+    param(
+        [string]$Assignee = '',
+        [string]$MeFilter = '',
+        [string]$AssigneeFilter = ''
+    )
+
+    if (-not $MeFilter -and -not $AssigneeFilter) { return 1 }
+    if (Test-MetraTicketAssigneeMatchesMe -Assignee $Assignee -MeFilter $MeFilter -AssigneeFilter $AssigneeFilter) {
+        return 0
+    }
+    return 1
+}
+
+function Get-MetraAttentionItemAssigneeRank {
+    [CmdletBinding()]
+    param($Item)
+
+    if ([string]$Item.kind -ne 'ticket') { return 0 }
+
+    $explicit = Get-MetraProp -Object $Item -Name 'assigneeRank' -Default $null
+    if ($null -ne $explicit -and "$explicit" -ne '') {
+        try { return [int]$explicit } catch { }
+    }
+
+    $assignee = [string](Get-MetraProp -Object $Item -Name 'ticketAssignee' -Default '')
+    if (-not $assignee) {
+        $detail = [string](Get-MetraProp -Object $Item -Name 'detail' -Default '')
+        if ($detail -match '(?i)\bassigned to (.+?)(?:\s*-\s*updated|\s*-\s*Has Metra|\s*$)') {
+            $assignee = $Matches[1].Trim()
+        }
+    }
+
+    $filters = Get-MetraTicketTrackerPersonFilters
+    return (Get-MetraTicketAttentionAssigneeRank -Assignee $assignee `
+        -MeFilter ([string]$filters.MeFilter) -AssigneeFilter ([string]$filters.AssigneeFilter))
+}
+
 function ConvertTo-MetraTicketWatchNormalizedTicket {
     <#
     .SYNOPSIS
@@ -1562,15 +1657,121 @@ function ConvertTo-MetraTicketWatchNormalizedTicket {
     }
 }
 
+function Get-MetraTicketWatchRecommendationFingerprint {
+    <#
+    .SYNOPSIS
+        Stable fingerprint for evidenceSignature (SHA-256 of normalized body).
+    #>
+    [CmdletBinding()]
+    param([string]$Recommendation = '')
+
+    $text = ([string]$Recommendation).Trim()
+    if (-not $text) { return '' }
+    $norm = ($text -replace '\s+', ' ').Trim()
+    $bytes = [System.Text.Encoding]::UTF8.GetBytes($norm)
+    $hash = [System.Security.Cryptography.SHA256]::HashData($bytes)
+    return ([BitConverter]::ToString($hash) -replace '-', '').ToLowerInvariant()
+}
+
+function Get-MetraTicketWatchLocalRecommendDraftBody {
+    [CmdletBinding()]
+    param([string]$NoteText = '')
+
+    if ([string]::IsNullOrWhiteSpace($NoteText)) { return '' }
+    $body = [string]$NoteText
+    if ($body -match '(?is)^\s*\[recommend-draft\]\s*\r?\n(.*)$') {
+        $body = $Matches[1]
+    }
+    $body = [regex]::Replace($body, '(?im)^\s*M3 Preview[^\r\n]*\r?\n', '')
+    $body = [regex]::Replace($body, '(?im)^\s*Affirm A[^\r\n]*\r?\n', '')
+    return $body.Trim()
+}
+
+function Get-MetraTicketWatchScrubbedRecommendationText {
+    [CmdletBinding()]
+    param([string]$Text)
+
+    $text = ([string]$Text).Trim()
+    if (-not $text) { return '' }
+    try {
+        $scrub = Invoke-MetraAskSecretsScrubText -Text $text
+        return [string]$scrub.Text
+    }
+    catch {
+        Write-Warning "Recommendation scrub failed: $($_.Exception.Message)"
+        return ''
+    }
+}
+
+function Get-MetraTicketWatchExistingRecommendation {
+    <#
+    .SYNOPSIS
+        Returns iSupport description recommendation and/or local recommend-draft (iSupport wins).
+    #>
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory)]$Ticket,
+        [string]$TicketId = ''
+    )
+
+    $id = [string]$TicketId
+    if (-not $id) {
+        $id = [string](Get-MetraProp -Object $Ticket -Name 'Id' -Default '')
+        if (-not $id) { $id = [string](Get-MetraProp -Object $Ticket -Name 'id' -Default '') }
+    }
+
+    $isupport = ''
+    $getRec = Get-Command Get-ISupportAiRecommendation -ErrorAction SilentlyContinue
+    if ($getRec) {
+        $desc = [string](Get-MetraProp -Object $Ticket -Name 'Description' -Default '')
+        if (-not $desc) { $desc = [string](Get-MetraProp -Object $Ticket -Name 'description' -Default '') }
+        if ($desc) {
+            try { $isupport = [string](& $getRec -ExistingProblem $desc) } catch { $isupport = '' }
+        }
+    }
+
+    $local = ''
+    if ($id) {
+        try {
+            $draftNote = Get-MetraTicketWatchLatestNoteText -TicketId $id -Tag 'recommend-draft'
+            $local = Get-MetraTicketWatchLocalRecommendDraftBody -NoteText $draftNote
+        }
+        catch { $local = '' }
+    }
+
+    if ($isupport) {
+        $isupport = Get-MetraTicketWatchScrubbedRecommendationText -Text $isupport
+        if ($isupport) {
+            return [PSCustomObject]@{
+                Text   = $isupport
+                Source = 'isupport'
+            }
+        }
+    }
+    if ($local) {
+        $local = Get-MetraTicketWatchScrubbedRecommendationText -Text $local
+        return [PSCustomObject]@{
+            Text   = $local
+            Source = 'local-draft'
+        }
+    }
+    return [PSCustomObject]@{
+        Text   = ''
+        Source = ''
+    }
+}
+
 function New-MetraTicketAttentionEvidenceSignature {
     [CmdletBinding()]
     param(
         [Parameter(Mandatory)][string]$TicketId,
         [string]$Updated = '',
-        [string]$Status = ''
+        [string]$Status = '',
+        [string]$RecommendationFingerprint = ''
     )
 
-    return ('ticket:{0}|updated:{1}|status:{2}' -f $TicketId.Trim(), ([string]$Updated).Trim(), ([string]$Status).Trim())
+    $rec = Get-MetraTicketWatchRecommendationFingerprint -Recommendation $RecommendationFingerprint
+    return ('ticket:{0}|updated:{1}|status:{2}|rec:{3}' -f $TicketId.Trim(), ([string]$Updated).Trim(), ([string]$Status).Trim(), $rec)
 }
 
 function Format-MetraTicketPriorityLabel {
@@ -1593,6 +1794,33 @@ function Test-MetraTicketStatusIsActive {
     $s = ([string]$Status).Trim()
     if (-not $s) { return $true }
     return ($s -notmatch '(?i)^(closed|resolved|cancelled|canceled)\b')
+}
+
+function Get-MetraTicketAttentionStatusCode {
+    <#
+    .SYNOPSIS
+        Short iSupport status code for Attention list rows (O, W, UR, etc.).
+    #>
+    [CmdletBinding()]
+    param([string]$Status = '')
+
+    $s = ([string]$Status).Trim()
+    if (-not $s) { return '' }
+    if ($s -match '(?i)^update from representative') { return 'UR' }
+    if ($s -match '(?i)^update from customer') { return 'UC' }
+    if ($s -match '(?i)^waiting on customer') { return 'W' }
+    if ($s -match '(?i)^open\b') { return 'O' }
+    if ($s -match '(?i)^reopened\b') { return 'R' }
+    if ($s -match '(?i)^in\s*progress\b') { return 'IP' }
+    if ($s -match '(?i)^pending\b') { return 'P' }
+    if ($s -match '(?i)^on\s*hold\b') { return 'H' }
+    if ($s -match '(?i)^assigned\b') { return 'A' }
+    if ($s -match '(?i)^new\b') { return 'N' }
+    if ($s -match '(?i)^active\b') { return 'A' }
+    if ($s -match '(?i)^scheduled\b') { return 'S' }
+    if ($s -match '(?i)^closed\b') { return 'C' }
+    if ($s -match '^(\w)') { return $Matches[1].ToUpperInvariant() }
+    return ''
 }
 
 function Get-MetraTicketAttentionStatusRank {
@@ -1698,6 +1926,10 @@ function ConvertTo-MetraTicketAttentionQueueItem {
     $content = if ($subject) { "Ticket $id`: $subject" } else { "Ticket $id needs triage" }
     if (-not $subject -and $priorityLabel) { $content = "$content - $priorityLabel" }
 
+    $recInfo = Get-MetraTicketWatchExistingRecommendation -Ticket $Ticket -TicketId $id
+    $recText = [string](Get-MetraProp -Object $recInfo -Name 'Text' -Default '')
+    $recSource = [string](Get-MetraProp -Object $recInfo -Name 'Source' -Default '')
+
     $detailParts = @()
     if ($status) { $detailParts += $status }
     if ($priorityLabel) { $detailParts += $priorityLabel }
@@ -1718,6 +1950,15 @@ function ConvertTo-MetraTicketAttentionQueueItem {
         }
         $detailParts += "updated $updatedText"
     }
+    if ($recText) {
+        $detailParts += 'Has Metra AI recommendation'
+    }
+
+    $filters = Get-MetraTicketTrackerPersonFilters
+    $assigneeRank = Get-MetraTicketAttentionAssigneeRank -Assignee $assignee `
+        -MeFilter ([string]$filters.MeFilter) -AssigneeFilter ([string]$filters.AssigneeFilter)
+    $assignedToMe = Test-MetraTicketAssigneeMatchesMe -Assignee $assignee `
+        -MeFilter ([string]$filters.MeFilter) -AssigneeFilter ([string]$filters.AssigneeFilter)
 
     return [PSCustomObject]@{
         id                = "ticket:$id"
@@ -1726,10 +1967,16 @@ function ConvertTo-MetraTicketAttentionQueueItem {
         content           = $content
         detail            = ($detailParts -join ' - ')
         ticketStatus      = $status
+        ticketStatusCode  = (Get-MetraTicketAttentionStatusCode -Status $status)
+        ticketAssignee    = $assignee
+        assigneeRank      = $assigneeRank
+        assignedToMe      = $assignedToMe
         statusRank        = (Get-MetraTicketAttentionStatusRank -Status $status)
         command           = ".\TicketTracker.ps1 brief $id"
         source            = 'TicketTracker'
-        evidenceSignature = (New-MetraTicketAttentionEvidenceSignature -TicketId $id -Updated $updated -Status $status)
+        existingRecommendation = $recText
+        recommendationSource = $recSource
+        evidenceSignature = (New-MetraTicketAttentionEvidenceSignature -TicketId $id -Updated $updated -Status $status -RecommendationFingerprint $recText)
     }
 }
 
@@ -1755,9 +2002,6 @@ function Update-MetraTicketAttentionDisplayFields {
 
     $detail = [string](Get-MetraProp -Object $MemItem -Name 'detail' -Default '')
     $hasSubject = $content -match '(?i)^Ticket\s+\d+\s*:'
-    # Thin rows need TT fill. Subject+detail rows already carry status for sort
-    # (ticketStatus, detail prefix, or evidenceSignature |status:).
-    if ($hasSubject -and $detail) { return $MemItem }
 
     $tt = Resolve-MetraTicketTrackerModule
     if (-not $tt) { return $MemItem }
@@ -1769,13 +2013,42 @@ function Update-MetraTicketAttentionDisplayFields {
         if ($ticket.Count -eq 0) { return $MemItem }
         $qi = ConvertTo-MetraTicketAttentionQueueItem -Ticket $ticket[0] -TicketTrackerPath $tt.Path
         if (-not $qi) { return $MemItem }
-        $MemItem.content = [string]$qi.content
-        if ($MemItem.PSObject.Properties['detail']) { $MemItem.detail = [string]$qi.detail }
-        else { $MemItem | Add-Member -NotePropertyName detail -NotePropertyValue ([string]$qi.detail) -Force }
+        if (-not ($hasSubject -and $detail)) {
+            $MemItem.content = [string]$qi.content
+            if ($MemItem.PSObject.Properties['detail']) { $MemItem.detail = [string]$qi.detail }
+            else { $MemItem | Add-Member -NotePropertyName detail -NotePropertyValue ([string]$qi.detail) -Force }
+        }
+        $recText = [string](Get-MetraProp -Object $qi -Name 'existingRecommendation' -Default '')
+        $recSource = [string](Get-MetraProp -Object $qi -Name 'recommendationSource' -Default '')
+        if ($MemItem.PSObject.Properties['existingRecommendation']) { $MemItem.existingRecommendation = $recText }
+        else { $MemItem | Add-Member -NotePropertyName existingRecommendation -NotePropertyValue $recText -Force }
+        if ($MemItem.PSObject.Properties['recommendationSource']) { $MemItem.recommendationSource = $recSource }
+        else { $MemItem | Add-Member -NotePropertyName recommendationSource -NotePropertyValue $recSource -Force }
         $ticketStatus = [string](Get-MetraProp -Object $qi -Name 'ticketStatus' -Default '')
+        $ticketStatusCode = [string](Get-MetraProp -Object $qi -Name 'ticketStatusCode' -Default '')
+        if (-not $ticketStatusCode -and $ticketStatus) {
+            $ticketStatusCode = Get-MetraTicketAttentionStatusCode -Status $ticketStatus
+        }
         $statusRank = Get-MetraProp -Object $qi -Name 'statusRank' -Default $null
         if ($MemItem.PSObject.Properties['ticketStatus']) { $MemItem.ticketStatus = $ticketStatus }
         else { $MemItem | Add-Member -NotePropertyName ticketStatus -NotePropertyValue $ticketStatus -Force }
+        if ($MemItem.PSObject.Properties['ticketStatusCode']) { $MemItem.ticketStatusCode = $ticketStatusCode }
+        else { $MemItem | Add-Member -NotePropertyName ticketStatusCode -NotePropertyValue $ticketStatusCode -Force }
+        $ticketAssignee = [string](Get-MetraProp -Object $qi -Name 'ticketAssignee' -Default '')
+        $filters = Get-MetraTicketTrackerPersonFilters
+        $assigneeRank = Get-MetraProp -Object $qi -Name 'assigneeRank' -Default $null
+        if ($null -eq $assigneeRank -or "$assigneeRank" -eq '') {
+            $assigneeRank = Get-MetraTicketAttentionAssigneeRank -Assignee $ticketAssignee `
+                -MeFilter ([string]$filters.MeFilter) -AssigneeFilter ([string]$filters.AssigneeFilter)
+        }
+        $assignedToMe = Test-MetraTicketAssigneeMatchesMe -Assignee $ticketAssignee `
+            -MeFilter ([string]$filters.MeFilter) -AssigneeFilter ([string]$filters.AssigneeFilter)
+        if ($MemItem.PSObject.Properties['ticketAssignee']) { $MemItem.ticketAssignee = $ticketAssignee }
+        else { $MemItem | Add-Member -NotePropertyName ticketAssignee -NotePropertyValue $ticketAssignee -Force }
+        if ($MemItem.PSObject.Properties['assigneeRank']) { $MemItem.assigneeRank = $assigneeRank }
+        else { $MemItem | Add-Member -NotePropertyName assigneeRank -NotePropertyValue $assigneeRank -Force }
+        if ($MemItem.PSObject.Properties['assignedToMe']) { $MemItem.assignedToMe = $assignedToMe }
+        else { $MemItem | Add-Member -NotePropertyName assignedToMe -NotePropertyValue $assignedToMe -Force }
         if ($MemItem.PSObject.Properties['statusRank']) { $MemItem.statusRank = $statusRank }
         else { $MemItem | Add-Member -NotePropertyName statusRank -NotePropertyValue $statusRank -Force }
         if ($qi.command) { $MemItem.command = [string]$qi.command }
@@ -1891,6 +2164,12 @@ function Get-MetraTicketWatchCandidates {
     $sorted = @(
         $eligible | Sort-Object -Property @{
             Expression = {
+                Get-MetraTicketAttentionAssigneeRank -Assignee ([string](Get-MetraProp -Object $_ -Name 'Assignee' -Default '')) `
+                    -MeFilter $meFilter -AssigneeFilter $assigneeFilter
+            }
+            Descending = $false
+        }, @{
+            Expression = {
                 Get-MetraTicketAttentionStatusRank -Status ([string](Get-MetraProp -Object $_ -Name 'Status' -Default ''))
             }
             Descending = $false
@@ -1923,6 +2202,110 @@ function Get-MetraTicketWatchCandidates {
         Scope        = $Scope
         ScopeWarning = $scopeWarning
         FailClosed   = $false
+    }
+}
+
+$script:MetraTicketWatchScanLeaseId = $null
+
+function Get-MetraTicketWatchScanLeasePath {
+    Join-Path $env:LOCALAPPDATA 'Metra\ticket-watch-scan.lease'
+}
+
+function Test-MetraTicketWatchScanLeaseActive {
+    param([string]$Path)
+
+    if (-not (Test-Path -LiteralPath $Path)) { return $false }
+    try {
+        $lease = Get-Content -Raw -LiteralPath $Path | ConvertFrom-Json
+        $untilText = [string](Get-MetraProp -Object $lease -Name 'untilUtc' -Default '')
+        if (-not $untilText) { return $false }
+        $until = [datetime]::Parse($untilText, $null, [System.Globalization.DateTimeStyles]::RoundtripKind)
+        if ([datetime]::UtcNow -ge $until.ToUniversalTime()) { return $false }
+        $holderPid = [int](Get-MetraProp -Object $lease -Name 'pid' -Default 0)
+        if ($holderPid -le 0) { return $true }
+        $alive = $false
+        try { $null = Get-Process -Id $holderPid -ErrorAction Stop; $alive = $true } catch { }
+        return $alive
+    }
+    catch {
+        return $false
+    }
+}
+
+function Enter-MetraTicketWatchScanLease {
+    [CmdletBinding()]
+    param([int]$Minutes = 15)
+
+    $path = Get-MetraTicketWatchScanLeasePath
+    $dir = Split-Path -Parent $path
+    if (-not (Test-Path -LiteralPath $dir)) {
+        New-Item -ItemType Directory -Path $dir -Force | Out-Null
+    }
+    if (Test-MetraTicketWatchScanLeaseActive -Path $path) {
+        return $false
+    }
+    if (Test-Path -LiteralPath $path) {
+        Remove-Item -LiteralPath $path -Force -ErrorAction SilentlyContinue
+    }
+    $leaseId = [guid]::NewGuid().ToString('D')
+    $payload = (@{
+        leaseId  = $leaseId
+        pid      = $PID
+        untilUtc = [datetime]::UtcNow.AddMinutes($Minutes).ToString('o')
+    } | ConvertTo-Json -Compress)
+    try {
+        $fs = [System.IO.File]::Open(
+            $path,
+            [System.IO.FileMode]::CreateNew,
+            [System.IO.FileAccess]::Write,
+            [System.IO.FileShare]::None)
+        try {
+            $bytes = [System.Text.Encoding]::UTF8.GetBytes($payload)
+            $fs.Write($bytes, 0, $bytes.Length)
+        }
+        finally {
+            $fs.Dispose()
+        }
+        $script:MetraTicketWatchScanLeaseId = $leaseId
+        return $true
+    }
+    catch [System.IO.IOException] {
+        return $false
+    }
+}
+
+function Exit-MetraTicketWatchScanLease {
+    param([string]$LeaseId)
+
+    $expected = if ($LeaseId) { $LeaseId } else { $script:MetraTicketWatchScanLeaseId }
+    if (-not $expected) { return }
+
+    $path = Get-MetraTicketWatchScanLeasePath
+    if (-not (Test-Path -LiteralPath $path)) {
+        if ($script:MetraTicketWatchScanLeaseId -eq $expected) {
+            $script:MetraTicketWatchScanLeaseId = $null
+        }
+        return
+    }
+    try {
+        $lease = Get-Content -Raw -LiteralPath $path | ConvertFrom-Json
+        $currentId = [string](Get-MetraProp -Object $lease -Name 'leaseId' -Default '')
+        if ($currentId) {
+            if ($currentId -ne $expected) { return }
+        }
+        else {
+            $holderPid = [int](Get-MetraProp -Object $lease -Name 'pid' -Default 0)
+            if ($holderPid -ne $PID) { return }
+        }
+        Remove-Item -LiteralPath $path -Force -ErrorAction SilentlyContinue
+    }
+    catch {
+        return
+    }
+    finally {
+        if ($script:MetraTicketWatchScanLeaseId -eq $expected) {
+            $script:MetraTicketWatchScanLeaseId = $null
+        }
     }
 }
 

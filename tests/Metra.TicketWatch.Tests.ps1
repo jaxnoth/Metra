@@ -18,16 +18,18 @@ Describe 'Ticket watch Attention helpers' {
         }
     }
 
-    It 'builds evidence signatures from id, Updated, and Status only' {
+    It 'builds evidence signatures from id, Updated, Status, and recommendation fingerprint' {
         InModuleScope Metra {
             $a = New-MetraTicketAttentionEvidenceSignature -TicketId '123456' -Updated '2026-08-06T08:32:14' -Status 'Open'
             $b = New-MetraTicketAttentionEvidenceSignature -TicketId '123456' -Updated '2026-08-06T08:32:14' -Status 'Open'
             $c = New-MetraTicketAttentionEvidenceSignature -TicketId '123456' -Updated '2026-08-06T09:00:00' -Status 'Open'
             $d = New-MetraTicketAttentionEvidenceSignature -TicketId '123456' -Updated '2026-08-06T08:32:14' -Status 'Closed'
+            $e = New-MetraTicketAttentionEvidenceSignature -TicketId '123456' -Updated '2026-08-06T08:32:14' -Status 'Open' -RecommendationFingerprint 'Check similar tickets'
             $a | Should -Be $b
             $a | Should -Not -Be $c
             $a | Should -Not -Be $d
-            $a | Should -Be 'ticket:123456|updated:2026-08-06T08:32:14|status:Open'
+            $a | Should -Not -Be $e
+            $a | Should -Be 'ticket:123456|updated:2026-08-06T08:32:14|status:Open|rec:'
         }
     }
 
@@ -252,8 +254,80 @@ Describe 'Ticket watch Attention helpers' {
         }
     }
 
+    It 'maps iSupport status labels to short Attention codes' {
+        InModuleScope Metra {
+            Get-MetraTicketAttentionStatusCode -Status 'Open' | Should -Be 'O'
+            Get-MetraTicketAttentionStatusCode -Status 'Waiting on Customer' | Should -Be 'W'
+            Get-MetraTicketAttentionStatusCode -Status 'Update from Customer' | Should -Be 'UC'
+            Get-MetraTicketAttentionStatusCode -Status 'Update from Representative' | Should -Be 'UR'
+            Get-MetraTicketAttentionStatusCode -Status 'Reopened' | Should -Be 'R'
+            Get-MetraTicketAttentionStatusCode -Status 'In Progress' | Should -Be 'IP'
+            Get-MetraTicketAttentionStatusCode -Status 'Pending' | Should -Be 'P'
+            Get-MetraTicketAttentionStatusCode -Status 'On Hold' | Should -Be 'H'
+            Get-MetraTicketAttentionStatusCode -Status '' | Should -Be ''
+        }
+    }
+
+    It 'ranks tickets assigned to me above customer-only and other assignees' {
+        InModuleScope Metra {
+            $mine = ConvertTo-MetraTicketAttentionQueueItem -Ticket ([PSCustomObject]@{
+                    Id = '1'; Subject = 'My ticket'; Status = 'Open'; Priority = '2'
+                    Customer = 'A'; Assignee = 'Swan, Stephen'; Updated = (Get-Date).AddHours(-2).ToString('o')
+                })
+            $customerOnly = ConvertTo-MetraTicketAttentionQueueItem -Ticket ([PSCustomObject]@{
+                    Id = '2'; Subject = 'I requested'; Status = 'Update from Customer'; Priority = '1'
+                    Customer = 'Swan, Stephen'; Assignee = 'Other, Person'; Updated = (Get-Date).ToString('o')
+                })
+            $other = ConvertTo-MetraTicketAttentionQueueItem -Ticket ([PSCustomObject]@{
+                    Id = '3'; Subject = 'Someone else'; Status = 'Open'; Priority = '1'
+                    Customer = 'B'; Assignee = 'Other, Person'; Updated = (Get-Date).AddHours(1).ToString('o')
+                })
+
+            Mock Get-MetraTicketTrackerPersonFilters {
+                return [PSCustomObject]@{ MeFilter = '*Swan*'; AssigneeFilter = '' }
+            }
+
+            $mine.assigneeRank | Should -Be 0
+            $customerOnly.assigneeRank | Should -Be 1
+            $other.assigneeRank | Should -Be 1
+
+            $mem = [PSCustomObject]@{
+                items = @(
+                    [PSCustomObject]@{
+                        key = 'ticket:2'; kind = 'ticket'; content = $customerOnly.content
+                        ticketStatus = $customerOnly.ticketStatus; statusRank = $customerOnly.statusRank
+                        ticketAssignee = $customerOnly.ticketAssignee; assigneeRank = $customerOnly.assigneeRank
+                        evidenceSignature = $customerOnly.evidenceSignature
+                        confidence = 'fresh'; state = 'active'; notRecheckedSince = $null
+                    }
+                    [PSCustomObject]@{
+                        key = 'ticket:3'; kind = 'ticket'; content = $other.content
+                        ticketStatus = $other.ticketStatus; statusRank = $other.statusRank
+                        ticketAssignee = $other.ticketAssignee; assigneeRank = $other.assigneeRank
+                        evidenceSignature = $other.evidenceSignature
+                        confidence = 'fresh'; state = 'active'; notRecheckedSince = $null
+                    }
+                    [PSCustomObject]@{
+                        key = 'ticket:1'; kind = 'ticket'; content = $mine.content
+                        ticketStatus = $mine.ticketStatus; statusRank = $mine.statusRank
+                        ticketAssignee = $mine.ticketAssignee; assigneeRank = $mine.assigneeRank
+                        evidenceSignature = $mine.evidenceSignature
+                        confidence = 'fresh'; state = 'active'; notRecheckedSince = $null
+                    }
+                )
+            }
+            $ranked = Get-MetraAttentionActiveItems -Memory $mem
+            $ranked[0].key | Should -Be 'ticket:1'
+            $ranked[1].key | Should -Be 'ticket:2'
+            $ranked[2].key | Should -Be 'ticket:3'
+        }
+    }
+
     It 'ranks Update from above Open and Open above Waiting on Customer' {
         InModuleScope Metra {
+            Mock Get-MetraTicketTrackerPersonFilters {
+                return [PSCustomObject]@{ MeFilter = '*S*'; AssigneeFilter = '' }
+            }
             (Get-MetraTicketAttentionStatusRank -Status 'Update from Representative') |
                 Should -BeLessThan (Get-MetraTicketAttentionStatusRank -Status 'Open')
             (Get-MetraTicketAttentionStatusRank -Status 'Update from Customer') |
@@ -839,6 +913,79 @@ Solutions index hits:
             $notMine.ok | Should -BeFalse
             $notMine.mineEligible | Should -BeFalse
             $notMine.warning | Should -Match 'Mine'
+        }
+    }
+}
+
+Describe 'Protect-MetraDeskAttentionViewForRemote' {
+    It 'strips recommendation body and sets hasExistingRecommendation for remote snapshot' {
+        . (Join-Path $PSScriptRoot '..\scripts\private\AttentionMemory.ps1')
+        $view = [PSCustomObject]@{
+            id = 'ticket-1'
+            kind = 'ticket'
+            content = 'Ticket 1036002 disk alert'
+            existingRecommendation = 'Secret ticket recommendation body'
+            recommendationSource = 'isupport'
+            askPrompt = 'Ask with Secret ticket recommendation body embedded'
+        }
+        $redacted = Protect-MetraDeskAttentionViewForRemote -View $view
+        $redacted.existingRecommendation | Should -BeNullOrEmpty
+        $redacted.hasExistingRecommendation | Should -BeTrue
+        $redacted.askPrompt | Should -Not -Match 'Secret ticket recommendation body'
+        $redacted.askPrompt | Should -Match 'require local Ops authority'
+    }
+}
+
+Describe 'Enter-MetraTicketWatchScanLease' {
+    It 'creates lease directory and acquires a host scan lease' {
+        . (Join-Path $PSScriptRoot '..\scripts\private\TicketWatch.ps1')
+        $leasePath = Get-MetraTicketWatchScanLeasePath
+        $leaseDir = Split-Path -Parent $leasePath
+        if (Test-Path -LiteralPath $leasePath) {
+            Remove-Item -LiteralPath $leasePath -Force
+        }
+        if (Test-Path -LiteralPath $leaseDir) {
+            Remove-Item -LiteralPath $leaseDir -Recurse -Force
+        }
+        try {
+            Enter-MetraTicketWatchScanLease -Minutes 1 | Should -BeTrue
+            Test-Path -LiteralPath $leasePath | Should -BeTrue
+            $lease = Get-Content -Raw -LiteralPath $leasePath | ConvertFrom-Json
+            $lease.leaseId | Should -Not -BeNullOrEmpty
+            Enter-MetraTicketWatchScanLease -Minutes 1 | Should -BeFalse
+        }
+        finally {
+            Exit-MetraTicketWatchScanLease
+            if (Test-Path -LiteralPath $leaseDir) {
+                Remove-Item -LiteralPath $leaseDir -Recurse -Force -ErrorAction SilentlyContinue
+            }
+        }
+    }
+
+    It 'Exit-MetraTicketWatchScanLease does not remove another holder lease' {
+        . (Join-Path $PSScriptRoot '..\scripts\private\TicketWatch.ps1')
+        $leasePath = Get-MetraTicketWatchScanLeasePath
+        $leaseDir = Split-Path -Parent $leasePath
+        if (-not (Test-Path -LiteralPath $leaseDir)) {
+            New-Item -ItemType Directory -Path $leaseDir -Force | Out-Null
+        }
+        $otherLeaseId = [guid]::NewGuid().ToString('D')
+        $otherPayload = (@{
+            leaseId  = $otherLeaseId
+            pid      = 999999
+            untilUtc = [datetime]::UtcNow.AddMinutes(5).ToString('o')
+        } | ConvertTo-Json -Compress)
+        Set-Content -LiteralPath $leasePath -Value $otherPayload -Encoding UTF8 -NoNewline
+        try {
+            Exit-MetraTicketWatchScanLease
+            Test-Path -LiteralPath $leasePath | Should -BeTrue
+            $remaining = Get-Content -Raw -LiteralPath $leasePath | ConvertFrom-Json
+            $remaining.leaseId | Should -Be $otherLeaseId
+        }
+        finally {
+            if (Test-Path -LiteralPath $leasePath) {
+                Remove-Item -LiteralPath $leasePath -Force -ErrorAction SilentlyContinue
+            }
         }
     }
 }

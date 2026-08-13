@@ -596,7 +596,7 @@ function Invoke-MetraOpsApi {
                     -Minutes $minutes `
                     -Quiet `
                     -MetraRoot $MetraRoot
-                $payload = Get-MetraDeskPayload -MetraRoot $MetraRoot
+                $payload = Get-MetraDeskPayload -MetraRoot $MetraRoot -Request $Request
                 Write-MetraOpsJsonResponse -Response $Response -Object ([PSCustomObject]@{
                         ok     = [bool]$store.ok
                         store  = $store
@@ -618,7 +618,7 @@ function Invoke-MetraOpsApi {
             $prefs = Get-MetraDeskPreferences -MetraRoot $MetraRoot
             $enabled = [bool](Get-MetraProp -Object $prefs -Name 'ticketWatchEnabled' -Default $true)
             if (-not $enabled) {
-                $payload = Get-MetraDeskPayload -MetraRoot $MetraRoot
+                $payload = Get-MetraDeskPayload -MetraRoot $MetraRoot -Request $Request
                 Write-MetraOpsJsonResponse -Response $Response -StatusCode 409 -Object ([PSCustomObject]@{
                         error = 'Ticket watch is turned off in desk preferences.'
                         ok    = $false
@@ -659,8 +659,39 @@ function Invoke-MetraOpsApi {
                 }
             }
             try {
-                $scan = Invoke-MetraTicketWatchScan -Quiet -MetraRoot $MetraRoot -Draft:$draft
-                $payload = Get-MetraDeskPayload -MetraRoot $MetraRoot
+                if (-not (Enter-MetraTicketWatchScanLease)) {
+                    $payload = Get-MetraDeskPayload -MetraRoot $MetraRoot -Request $Request
+                    Write-MetraOpsJsonResponse -Response $Response -Object ([PSCustomObject]@{
+                            ok      = $true
+                            skipped = $true
+                            watch   = [PSCustomObject]@{
+                                ok             = $true
+                                available      = $true
+                                scope          = 'mine'
+                                synced         = $false
+                                warning        = 'Ticket scan already in progress on this host.'
+                                scanned        = 0
+                                added          = 0
+                                refreshed      = 0
+                                unchanged      = 0
+                                draftsWritten  = 0
+                                draftAvailable = $false
+                                evidenceSuggestions = 0
+                                nextEvidenceAvailable = $false
+                                readyForRecommendation = $false
+                                iSupportWrites = $false
+                            }
+                            desk    = $payload
+                        }) -Depth 12
+                    return
+                }
+                try {
+                    $scan = Invoke-MetraTicketWatchScan -Quiet -MetraRoot $MetraRoot -Draft:$draft
+                }
+                finally {
+                    Exit-MetraTicketWatchScanLease
+                }
+                $payload = Get-MetraDeskPayload -MetraRoot $MetraRoot -Request $Request
                 Write-MetraOpsJsonResponse -Response $Response -Object ([PSCustomObject]@{
                         ok    = [bool]$scan.ok
                         watch = [PSCustomObject]@{
@@ -1100,7 +1131,7 @@ function Invoke-MetraOpsApi {
             }
             try {
                 $null = Invoke-MetraAttentionMutation -Key $attnKey -Action $action -Days $days -Note $note -MetraRoot $MetraRoot
-                $payload = Get-MetraDeskPayload -MetraRoot $MetraRoot
+                $payload = Get-MetraDeskPayload -MetraRoot $MetraRoot -Request $Request
                 Write-MetraOpsJsonResponse -Response $Response -Object $payload
             }
             catch {
@@ -1529,7 +1560,7 @@ function Invoke-MetraOpsApi {
                 $result = Invoke-MetraPlaceConfirm -Text $text -HomeId $homeId -KeepInView:$keep -SaveForPortfolio:$saveForPortfolio -AttachmentIds $confirmAttachments -MetraRoot $MetraRoot
                 # Rebuild desk when Attention or Capture changed.
                 $payload = $null
-                if ($result.attentionKey -or $result.captureId) { $payload = Get-MetraDeskPayload -MetraRoot $MetraRoot }
+                if ($result.attentionKey -or $result.captureId) { $payload = Get-MetraDeskPayload -MetraRoot $MetraRoot -Request $Request }
                 Write-MetraOpsJsonResponse -Response $Response -Object ([PSCustomObject]@{
                         result = $result
                         desk   = $payload

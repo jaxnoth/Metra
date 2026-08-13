@@ -424,6 +424,8 @@ function Save-MetraSettingsPortfolio {
     )
 
     $touchedRoots = $false
+    $cursorKeyResult = $null
+    $pendingRootsWrite = $null
     $hasRootsPayload = $PSBoundParameters.ContainsKey('Roots') -and $null -ne $Roots
     $hasLegacy = -not [string]::IsNullOrWhiteSpace($PrimaryPath) -or
         $PSBoundParameters.ContainsKey('PersonalPath') -or $ClearPersonal
@@ -617,15 +619,21 @@ function Save-MetraSettingsPortfolio {
         }
 
         $json = $cfg | ConvertTo-Json -Depth 12
-        Set-Content -LiteralPath $configPath -Value $json -Encoding UTF8
-        Clear-MetraConfigCache
+        $pendingRootsWrite = [PSCustomObject]@{ path = $configPath; json = $json }
     }
 
     if ($ClearCursorApiKey) {
-        $null = Set-MetraCursorApiKey -Clear
+        $cursorKeyResult = Set-MetraCursorApiKey -Clear
     }
     elseif (-not [string]::IsNullOrWhiteSpace($CursorApiKey)) {
-        $null = Set-MetraCursorApiKey -ApiKey $CursorApiKey
+        $cursorKeyResult = Set-MetraCursorApiKey -ApiKey $CursorApiKey
+    }
+
+    $rootsWritten = $false
+    if ($pendingRootsWrite) {
+        Set-Content -LiteralPath $pendingRootsWrite.path -Value $pendingRootsWrite.json -Encoding UTF8
+        Clear-MetraConfigCache
+        $rootsWritten = $true
     }
 
     if ($PSBoundParameters.ContainsKey('MachineRole') -and $MachineRole) {
@@ -638,12 +646,37 @@ function Save-MetraSettingsPortfolio {
         $null = Set-MetraConfiguredOpsBaseUrl -OpsBaseUrl $OpsBaseUrl -MetraRoot $MetraRoot
     }
 
-    $portfolio = Get-MetraSettingsPortfolio -MetraRoot $MetraRoot
-    return [PSCustomObject]@{
-        ok         = $true
-        rootsSaved = [bool]$touchedRoots
-        portfolio  = $portfolio
+    $cursorKeyOk = $true
+    if ($null -ne $cursorKeyResult) {
+        $keyStatusGate = [string](Get-MetraProp -Object $cursorKeyResult -Name 'status' -Default '')
+        if ($keyStatusGate -in @('cancelled', 'whatif', 'rolled_back', 'failed')) { $cursorKeyOk = $false }
+        if ($null -ne $cursorKeyResult.sidecarRestarted -and -not [bool]$cursorKeyResult.sidecarRestarted) {
+            $cursorKeyOk = $false
+        }
     }
+
+    $portfolio = Get-MetraSettingsPortfolio -MetraRoot $MetraRoot
+    $partialSuccess = [bool]$rootsWritten -and -not [bool]$cursorKeyOk -and ($null -ne $cursorKeyResult)
+    $result = [PSCustomObject]@{
+        ok             = [bool]$cursorKeyOk
+        rootsSaved     = [bool]$rootsWritten
+        partialSuccess = $partialSuccess
+        portfolio      = $portfolio
+    }
+    if ($null -ne $cursorKeyResult) {
+        $result | Add-Member -NotePropertyName cursorKey -NotePropertyValue $cursorKeyResult -Force
+        $keyStatus = [string](Get-MetraProp -Object $cursorKeyResult -Name 'status' -Default '')
+        if ($keyStatus) {
+            $result | Add-Member -NotePropertyName cursorKeyStatus -NotePropertyValue $keyStatus -Force
+        }
+        if ($null -ne $cursorKeyResult.sidecarRestarted) {
+            $result | Add-Member -NotePropertyName sidecarRestarted -NotePropertyValue ([bool]$cursorKeyResult.sidecarRestarted) -Force
+        }
+        if ($cursorKeyResult.sidecarRestartWarning) {
+            $result | Add-Member -NotePropertyName sidecarRestartWarning -NotePropertyValue ([string]$cursorKeyResult.sidecarRestartWarning) -Force
+        }
+    }
+    return $result
 }
 
 function Test-MetraSelfFolderName {
