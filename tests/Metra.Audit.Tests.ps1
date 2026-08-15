@@ -254,6 +254,129 @@ Describe 'Audit AGENTS line budget' {
         }
     }
 
+    It 'returns WARN when stub shape missing required sections' {
+        InModuleScope Metra {
+            $dir = Join-Path ([IO.Path]::GetTempPath()) ("metra-stub-shape-" + [guid]::NewGuid().ToString('n'))
+            New-Item -ItemType Directory -Path $dir -Force | Out-Null
+            @(
+                '# Test'
+                ''
+                '## Start here'
+                ''
+                '1. Go'
+            ) | Set-Content -LiteralPath (Join-Path $dir 'AGENTS.md') -Encoding utf8
+            try {
+                $audit = Get-MetraAgentsStubShapeAuditForPath -AgentsPath (Join-Path $dir 'AGENTS.md') -ProjectPath $dir
+                $audit.Status | Should -Be 'WARN'
+                $audit.MissingSections | Should -Contain 'Route here when'
+                $audit.MissingSections | Should -Contain 'Ceilings'
+                $audit.MissingSections | Should -Contain 'Token rules'
+            }
+            finally {
+                Remove-Item -LiteralPath $dir -Recurse -Force -ErrorAction SilentlyContinue
+            }
+        }
+    }
+
+    It 'accepts Do not as Ceilings alias for reference-only stubs' {
+        InModuleScope Metra {
+            $dir = Join-Path ([IO.Path]::GetTempPath()) ("metra-stub-donot-" + [guid]::NewGuid().ToString('n'))
+            New-Item -ItemType Directory -Path $dir -Force | Out-Null
+            @(
+                '# Test'
+                ''
+                '## Route here when'
+                'Triggers: x'
+                ''
+                '## Start here'
+                '1. Go'
+                ''
+                '## Do not'
+                '- edit'
+                ''
+                '## Token rules'
+                '- scan'
+            ) | Set-Content -LiteralPath (Join-Path $dir 'AGENTS.md') -Encoding utf8
+            try {
+                $audit = Get-MetraAgentsStubShapeAuditForPath -AgentsPath (Join-Path $dir 'AGENTS.md') -ProjectPath $dir
+                $audit.Status | Should -Be 'OK'
+                $audit.MissingSections | Should -Not -Contain 'Ceilings'
+            }
+            finally {
+                Remove-Item -LiteralPath $dir -Recurse -Force -ErrorAction SilentlyContinue
+            }
+        }
+    }
+
+    It 'requires On-demand playbooks when docs/playbooks has files' {
+        InModuleScope Metra {
+            $dir = Join-Path ([IO.Path]::GetTempPath()) ("metra-stub-playbooks-" + [guid]::NewGuid().ToString('n'))
+            $playDir = Join-Path $dir 'docs\playbooks'
+            New-Item -ItemType Directory -Path $playDir -Force | Out-Null
+            'playbook' | Set-Content -LiteralPath (Join-Path $playDir 'one.md') -Encoding utf8
+            @(
+                '# Test'
+                ''
+                '## Route here when'
+                'Triggers: x'
+                ''
+                '## Start here'
+                '1. Go'
+                ''
+                '## Ceilings'
+                '- confirm'
+                ''
+                '## Token rules'
+                '- scan'
+            ) | Set-Content -LiteralPath (Join-Path $dir 'AGENTS.md') -Encoding utf8
+            try {
+                $audit = Get-MetraAgentsStubShapeAuditForPath -AgentsPath (Join-Path $dir 'AGENTS.md') -ProjectPath $dir
+                $audit.Status | Should -Be 'WARN'
+                $audit.MissingSections | Should -Contain 'On-demand playbooks'
+            }
+            finally {
+                Remove-Item -LiteralPath $dir -Recurse -Force -ErrorAction SilentlyContinue
+            }
+        }
+    }
+
+    It 'flags unlinked requestable project rules' {
+        InModuleScope Metra {
+            $dir = Join-Path ([IO.Path]::GetTempPath()) ("metra-stub-rules-" + [guid]::NewGuid().ToString('n'))
+            $rulesDir = Join-Path $dir '.cursor\rules'
+            New-Item -ItemType Directory -Path $rulesDir -Force | Out-Null
+            @(
+                '---'
+                'alwaysApply: false'
+                '---'
+                'pointer'
+            ) | Set-Content -LiteralPath (Join-Path $rulesDir 'sample-rule.mdc') -Encoding utf8
+            @(
+                '# Test'
+                ''
+                '## Route here when'
+                'Triggers: x'
+                ''
+                '## Start here'
+                '1. Go'
+                ''
+                '## Ceilings'
+                '- confirm'
+                ''
+                '## Token rules'
+                '- scan'
+            ) | Set-Content -LiteralPath (Join-Path $dir 'AGENTS.md') -Encoding utf8
+            try {
+                $audit = Get-MetraAgentsStubShapeAuditForPath -AgentsPath (Join-Path $dir 'AGENTS.md') -ProjectPath $dir
+                $audit.Status | Should -Be 'WARN'
+                $audit.UnlinkedRequestableRules | Should -Contain 'sample-rule.mdc'
+            }
+            finally {
+                Remove-Item -LiteralPath $dir -Recurse -Force -ErrorAction SilentlyContinue
+            }
+        }
+    }
+
     It 'includes AGENTS WARN rows in DriftOnly output' {
         InModuleScope Metra {
             $script:auditFixtureRoot = Join-Path ([IO.Path]::GetTempPath()) ("metra-agents-drift-" + [guid]::NewGuid().ToString('n'))

@@ -175,6 +175,91 @@ function Get-MetraAgentsLineAuditForPath {
     }
 }
 
+function Test-MetraAgentsMarkdownHeadingPresent {
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory)][string]$Content,
+        [Parameter(Mandatory)][string[]]$HeadingPatterns
+    )
+
+    foreach ($pattern in $HeadingPatterns) {
+        if ($Content -match $pattern) { return $true }
+    }
+    return $false
+}
+
+function Get-MetraAgentsStubShapeAuditForPath {
+    <#
+    .SYNOPSIS
+        Report-only A2 desk stub shape check for AGENTS.md (advisory WARN only).
+    #>
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory)][string]$AgentsPath,
+        [Parameter(Mandatory)][string]$ProjectPath
+    )
+
+    if (-not (Test-Path -LiteralPath $AgentsPath)) {
+        return [pscustomobject]@{
+            Status                   = 'missing'
+            Message                  = 'AGENTS stub shape: missing file'
+            MissingSections          = @()
+            UnlinkedRequestableRules = @()
+        }
+    }
+
+    $content = [string](Get-Content -Raw -LiteralPath $AgentsPath -ErrorAction SilentlyContinue)
+    $missing = New-Object System.Collections.Generic.List[string]
+
+    if (-not (Test-MetraAgentsMarkdownHeadingPresent -Content $content -HeadingPatterns @('(?m)^##\s+Route here when\s*$'))) {
+        [void]$missing.Add('Route here when')
+    }
+    if (-not (Test-MetraAgentsMarkdownHeadingPresent -Content $content -HeadingPatterns @('(?m)^##\s+Start here\s*$'))) {
+        [void]$missing.Add('Start here')
+    }
+    if (-not (Test-MetraAgentsMarkdownHeadingPresent -Content $content -HeadingPatterns @('(?m)^##\s+Ceilings\s*$', '(?m)^##\s+Do not\s*$', '(?m)^##\s+Portfolio rules\s*$'))) {
+        [void]$missing.Add('Ceilings')
+    }
+    if (-not (Test-MetraAgentsMarkdownHeadingPresent -Content $content -HeadingPatterns @('(?m)^##\s+Token rules\s*$'))) {
+        [void]$missing.Add('Token rules')
+    }
+
+    $playbooksDir = Join-Path $ProjectPath 'docs\playbooks'
+    if (Test-Path -LiteralPath $playbooksDir) {
+        $playbookCount = @(Get-ChildItem -LiteralPath $playbooksDir -Filter '*.md' -File -ErrorAction SilentlyContinue).Count
+        if ($playbookCount -gt 0 -and -not (Test-MetraAgentsMarkdownHeadingPresent -Content $content -HeadingPatterns @('(?m)^##\s+On-demand playbooks\s*$'))) {
+            [void]$missing.Add('On-demand playbooks')
+        }
+    }
+
+    $unlinked = New-Object System.Collections.Generic.List[string]
+    $rulesDir = Join-Path $ProjectPath '.cursor\rules'
+    if (Test-Path -LiteralPath $rulesDir) {
+        foreach ($ruleFile in @(Get-ChildItem -LiteralPath $rulesDir -Filter '*.mdc' -File -ErrorAction SilentlyContinue)) {
+            if ($ruleFile.Name -like '*.example.mdc') { continue }
+            if (Test-MetraCursorRuleAlwaysApply -Path $ruleFile.FullName) { continue }
+            $ruleName = $ruleFile.Name
+            $ruleStem = $ruleFile.BaseName
+            if ($content -notmatch [regex]::Escape($ruleName) -and $content -notmatch [regex]::Escape($ruleStem)) {
+                [void]$unlinked.Add($ruleName)
+            }
+        }
+    }
+
+    $status = if ($missing.Count -eq 0 -and $unlinked.Count -eq 0) { 'OK' } else { 'WARN' }
+    $parts = @()
+    if ($missing.Count -gt 0) { $parts += "missing sections: $($missing -join ', ')" }
+    if ($unlinked.Count -gt 0) { $parts += "unlinked requestable rules: $($unlinked -join ', ')" }
+    $message = if ($status -eq 'OK') { 'AGENTS stub shape: OK' } else { "AGENTS stub shape: WARN ($($parts -join '; '))" }
+
+    return [pscustomobject]@{
+        Status                   = $status
+        Message                  = $message
+        MissingSections          = @($missing.ToArray())
+        UnlinkedRequestableRules = @($unlinked.ToArray())
+    }
+}
+
 function Get-MetraContextFootprintEstimate {
     <#
     .SYNOPSIS
@@ -472,6 +557,17 @@ function Invoke-MetraProjectContextAudit {
 
         $agentsPath = Join-Path $project.Path 'AGENTS.md'
         $agentsLineAudit = Get-MetraAgentsLineAuditForPath -AgentsPath $agentsPath -Budget $agentsLineBudget
+        $agentsStubShapeAudit = if ($hasAgents) {
+            Get-MetraAgentsStubShapeAuditForPath -AgentsPath $agentsPath -ProjectPath $project.Path
+        }
+        else {
+            [pscustomobject]@{
+                Status                   = 'missing'
+                Message                  = 'AGENTS stub shape: missing file'
+                MissingSections          = @()
+                UnlinkedRequestableRules = @()
+            }
+        }
 
         if (-not $inRegistry) {
             $findings += 'Missing from registry (projects.json or projects.local.json)'
@@ -624,11 +720,15 @@ function Invoke-MetraProjectContextAudit {
             Findings          = $findings
             Advisories        = $advisories
             SuggestedTriggers = $suggestedTriggers
-            AgentsLineCount   = $agentsLineAudit.LineCount
-            AgentsLineBudget  = $agentsLineAudit.Budget
-            AgentsLineStatus  = $agentsLineAudit.Status
-            AgentsLineMessage = $agentsLineAudit.Message
-            Drift             = ($findings.Count -gt 0 -or -not $inRegistry)
+            AgentsLineCount              = $agentsLineAudit.LineCount
+            AgentsLineBudget             = $agentsLineAudit.Budget
+            AgentsLineStatus             = $agentsLineAudit.Status
+            AgentsLineMessage            = $agentsLineAudit.Message
+            AgentsStubShapeStatus        = $agentsStubShapeAudit.Status
+            AgentsStubShapeMessage       = $agentsStubShapeAudit.Message
+            AgentsStubShapeMissing       = @($agentsStubShapeAudit.MissingSections)
+            AgentsStubShapeUnlinkedRules = @($agentsStubShapeAudit.UnlinkedRequestableRules)
+            Drift                        = ($findings.Count -gt 0 -or -not $inRegistry)
         }
         $reports += $report
 
@@ -637,8 +737,11 @@ function Invoke-MetraProjectContextAudit {
                 Write-AuditHost ("DRIFT: {0} ({1})" -f $project.Name, $project.Root) -ForegroundColor Yellow
                 foreach ($f in $findings) { Write-AuditHost ("  - {0}" -f $f) }
             }
-            elseif ($agentsLineAudit.Status -eq 'WARN') {
+            if ($agentsLineAudit.Status -eq 'WARN') {
                 Write-AuditHost ("WARN {0} AGENTS.md {1} lines exceeds budget {2}" -f $project.Name, $agentsLineAudit.LineCount, $agentsLineAudit.Budget) -ForegroundColor Yellow
+            }
+            if ($agentsStubShapeAudit.Status -eq 'WARN') {
+                Write-AuditHost ("WARN {0} {1}" -f $project.Name, $agentsStubShapeAudit.Message) -ForegroundColor Yellow
             }
             continue
         }
@@ -649,6 +752,8 @@ function Invoke-MetraProjectContextAudit {
         if ($hasAgents) {
             $agentsColor = if ($agentsLineAudit.Status -eq 'WARN') { [ConsoleColor]::Yellow } else { [ConsoleColor]::Green }
             Write-AuditHost $agentsLineAudit.Message -ForegroundColor $agentsColor
+            $shapeColor = if ($agentsStubShapeAudit.Status -eq 'WARN') { [ConsoleColor]::Yellow } else { [ConsoleColor]::Green }
+            Write-AuditHost $agentsStubShapeAudit.Message -ForegroundColor $shapeColor
         }
         if ($generatedHits.Count -gt 0) {
             Write-AuditHost ("Generated/cache: {0}" -f ($generatedHits -join ', '))
@@ -709,6 +814,7 @@ function Invoke-MetraProjectContextAudit {
     }
     $driftProjects = $driftProjectKeys.Count
     $agentsLineWarnCount = @($reports | Where-Object { $_.AgentsLineStatus -eq 'WARN' }).Count
+    $agentsStubShapeWarnCount = @($reports | Where-Object { $_.AgentsStubShapeStatus -eq 'WARN' }).Count
 
     $summary = [PSCustomObject]@{
         ProjectCount     = @($reports).Count
@@ -721,13 +827,14 @@ function Invoke-MetraProjectContextAudit {
         MetadataCount           = $metadataFindings.Count
         AgentsLineBudget        = $agentsLineBudget
         AgentsLineWarnCount     = $agentsLineWarnCount
+        AgentsStubShapeWarnCount = $agentsStubShapeWarnCount
         ContextFootprintEstimate = $contextFootprint
         Reports                 = $reports
     }
 
     if ($DriftOnly) {
         Write-AuditHost ""
-        Write-AuditHost ("Drift projects: {0}; drift findings: {1}; AGENTS budget WARN: {2} (advisory)" -f $driftProjects, $driftFindings, $agentsLineWarnCount) -ForegroundColor $(if ($driftFindings -gt 0 -or $driftProjects -gt 0) { 'Yellow' } else { 'Green' })
+        Write-AuditHost ("Drift projects: {0}; drift findings: {1}; AGENTS budget WARN: {2}; AGENTS stub shape WARN: {3} (advisory)" -f $driftProjects, $driftFindings, $agentsLineWarnCount, $agentsStubShapeWarnCount) -ForegroundColor $(if ($driftFindings -gt 0 -or $driftProjects -gt 0) { 'Yellow' } else { 'Green' })
         if ($driftFindings -gt 0 -or $driftProjects -gt 0) {
             $global:LASTEXITCODE = 1
         }
