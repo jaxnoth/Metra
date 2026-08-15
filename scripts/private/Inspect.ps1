@@ -691,7 +691,74 @@ function Get-MetraInspectGitDiffFiles {
     }
 }
 
+function Resolve-MetraInspectAgentsPlaybookIndexRelativePath {
+    <#
+    .SYNOPSIS
+        Canonicalize and contain a stub-table playbook link under docs/playbooks (fail closed on .. or escape).
+    #>
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory)][string]$RawPath
+    )
+
+    if ([string]::IsNullOrWhiteSpace($RawPath)) { return $null }
+    $rel = ($RawPath -replace '\\', '/').Trim().TrimStart('/')
+    if ($rel -match '^[A-Za-z]:') { return $null }
+
+    $stack = New-Object System.Collections.Generic.List[string]
+    foreach ($part in @($rel.Split('/'))) {
+        if ([string]::IsNullOrWhiteSpace($part) -or $part -eq '.') { continue }
+        if ($part -eq '..') { return $null }
+        [void]$stack.Add($part)
+    }
+
+    $normalized = ($stack -join '/')
+    if ($normalized -notlike 'docs/playbooks/*') { return $null }
+    if ($normalized -notlike '*.md') { return $null }
+    return $normalized
+}
+
+function Get-MetraInspectAgentsPlaybookIndexPathsFromStub {
+    <#
+    .SYNOPSIS
+        Parses ## On-demand playbooks table links from a stub AGENTS.md (A2 Phase 4 consumer).
+    #>
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory)][string]$StubText
+    )
+
+    if ([string]::IsNullOrWhiteSpace($StubText)) { return @() }
+
+    $lines = $StubText -split "`r?`n"
+    $inSection = $false
+    $paths = New-Object System.Collections.Generic.List[string]
+
+    foreach ($line in @($lines)) {
+        if ($line -match '^\s*##\s+On-demand playbooks\s*$') {
+            $inSection = $true
+            continue
+        }
+        if ($inSection -and $line -match '^\s*##\s+') { break }
+        if (-not $inSection) { continue }
+
+        foreach ($m in [regex]::Matches($line, '\[[^\]]*\]\(([^)]+)\)')) {
+            $normalized = Resolve-MetraInspectAgentsPlaybookIndexRelativePath -RawPath $m.Groups[1].Value
+            if ([string]::IsNullOrWhiteSpace($normalized)) { continue }
+            if (-not $paths.Contains($normalized)) {
+                [void]$paths.Add($normalized)
+            }
+        }
+    }
+
+    return @($paths | Sort-Object)
+}
+
 function Get-MetraInspectAgentsText {
+    <#
+    .SYNOPSIS
+        Stub AGENTS.md for Inspect prompts (README fallback when AGENTS missing). A2 Phase 4: playbook cabinet bodies are never attached; index paths are listed when present.
+    #>
     [CmdletBinding()]
     param(
         [string]$Root
@@ -721,6 +788,21 @@ function Get-MetraInspectAgentsText {
         throw ("$source refused by secrets scrub: {0}" -f $scrub.Reason)
     }
     $text = [string]$scrub.Text
+
+    if ($source -eq 'AGENTS.md') {
+        $playbookPaths = @(Get-MetraInspectAgentsPlaybookIndexPathsFromStub -StubText $text)
+        if ($playbookPaths.Count -gt 0) {
+            $indexLines = New-Object System.Collections.Generic.List[string]
+            [void]$indexLines.Add('')
+            [void]$indexLines.Add('---')
+            [void]$indexLines.Add('A2 on-demand playbook paths (index only; cabinet bodies not attached to Inspect):')
+            foreach ($rel in $playbookPaths) {
+                [void]$indexLines.Add("- $rel")
+            }
+            $text = $text + ($indexLines -join "`n")
+        }
+    }
+
     if ($text.Length -gt $maxLen) {
         return $text.Substring(0, $maxLen) + "`n...[truncated]..."
     }
