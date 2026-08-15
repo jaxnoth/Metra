@@ -57,6 +57,7 @@ Triggers: Metra home, routing, ctx, registry, inspect, profile, decisions, works
 - Scoped Grep/Glob under the routed project absolute path - not whole multi-root workspace first.
 - Prefer CLI filters over large JSON or full agent transcript dumps.
 - Full list: [docs/playbooks/token-rules.md](docs/playbooks/token-rules.md).
+- Example overlay rules under `.cursor/rules/*.example.mdc` are optional imports - not linked here.
 
 ## Related
 
