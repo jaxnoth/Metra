@@ -474,7 +474,7 @@ Do not call this L4 (no specialist merge). Do not grant L5 because Snapshot or H
 | On hard stop | Investigate criterion unmet; cite session/health/command output (or ticket `note`); next: return to TicketTracker with fail-closed handoff - do not `post` success |
 | Loop form | turn-based today; target goal-based (technical playbook done-when) |
 | Gaps to target | 1. Prove done-when on next live investigate hop (practice, not docs). 2. Bound retry when session/health flakes. |
-| Next bite | Next ticket+investigate: enforce done-when before leaving technical project; then G2 AGENTS-as-code |
+| Next bite | Next ticket+investigate: enforce done-when before leaving technical project (G2 desk shipped 2026-08-15) |
 
 ### Workflow: Jitterbit stuck-ops
 
@@ -490,7 +490,7 @@ Do not call this L4 (no specialist merge). Do not grant L5 because Snapshot or H
 | Evidence (current) | Playbook + done-when/On hard stop in `IWU.Jitterbit/README.md` and `Jitterbit/AGENTS.md` (2026-08-06 G1): Find -> Health -> Stop -> TranDb get/clear; post-check health + Harmony + TranDb |
 | On hard stop | PE down or counts not improved; cite health/TranDb tables; next: operator fixes PE or confirms Clear - never soft-cancel live work blindly |
 | Gaps to target | 1. Prove judges on next live stuck-ops run. 2. Bound retry when Harmony/health flakes. |
-| Next bite | Next stuck-ops: refuse "complete" until post-check passes; then G2 |
+| Next bite | Next stuck-ops: refuse "complete" until post-check passes (G2 desk shipped 2026-08-15) |
 
 ### Workflow: Jitterbit agent go-live
 
@@ -521,7 +521,7 @@ Do not call this L4 (no specialist merge). Do not grant L5 because Snapshot or H
 | Evidence (current) | Colleague `AGENTS.md` triage + done-when/On hard stop (2026-08-06 G1): `brief` then `Get-ColleagueSession -FullName`, optional process filter, classify old vs fresh vs none |
 | On hard stop | No killable session or unknown lock file; cite session/process output; next: ask operator which control record to clear - fail closed, do not invent a generic clear |
 | Gaps to target | 1. Prove done-when on next Live stuck-session ticket. 2. Bound retry when telnet/call stack flakes. |
-| Next bite | Next PGLT-style ticket: enforce done-when before claiming complete; then G2 |
+| Next bite | Next PGLT-style ticket: enforce done-when before claiming complete (G2 desk shipped 2026-08-15) |
 
 ---
 
