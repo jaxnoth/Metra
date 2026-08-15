@@ -579,11 +579,15 @@ function Invoke-MetraAskEngineCommand {
     .SYNOPSIS
         CLI router for ask engine|key|recommend|accept|menu (plus journal via Capture).
     #>
-    [CmdletBinding()]
+    [CmdletBinding(SupportsShouldProcess = $true)]
     param(
         [Parameter(Mandatory)][string]$Subcommand,
         [object[]]$ArgsRest = @()
     )
+
+    $shouldProcessParams = @{}
+    if ($WhatIfPreference) { $shouldProcessParams['WhatIf'] = $true }
+    if ($PSBoundParameters.ContainsKey('Confirm')) { $shouldProcessParams['Confirm'] = $PSBoundParameters['Confirm'] }
 
     $sub = $Subcommand.Trim().ToLowerInvariant()
     switch -Regex ($sub) {
@@ -623,9 +627,10 @@ function Invoke-MetraAskEngineCommand {
                     if ($band) { $p['SizeBand'] = $band }
                     return Set-MetraAskEngine @p
                 }
+                'restart' { return Restart-MetraAskEngine @shouldProcessParams }
                 'recommend' { return Get-MetraAskEngineRecommendation }
                 'menu' { return Get-MetraAskEngineMenu }
-                default { throw "Unknown ask engine action: $action. Use show|set|recommend|menu." }
+                default { throw "Unknown ask engine action: $action. Use show|set|restart|recommend|menu." }
             }
         }
         '^(key)$' {

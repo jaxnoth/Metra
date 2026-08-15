@@ -77,6 +77,8 @@
         "ms-vscode.powershell"
       ]
     }
+  },
+  "audit": {
+    "agentsLineBudget": 100
   }
 }
-

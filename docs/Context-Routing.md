@@ -4,6 +4,18 @@
 
 Keep agent response time and token use low by routing to one project, then loading only that project's compact guidance.
 
+## Desk model (context anti-rot)
+
+Portfolio knowledge follows the desk model scar in [Decisions.md](Decisions.md) (2026-08-14).
+
+| Layer | Role | Examples |
+|-------|------|----------|
+| Index | Route and point; always-on stays tiny | `projects.json`, `routing` / `ctx`, stub `AGENTS.md`, OCC |
+| Cabinet | Detail on demand; keep files small | skills, solutions, playbooks, one Decision Registry entry |
+| Writes | Classify home, dedupe, update index pointer | `capture promote`, `decisions promote`, git commit |
+
+Agents read the index, then named cabinet files only - not the whole cabinet every chat. Cursor multi-root workspaces that inject every full `AGENTS.md` violate this scar until agent lane **A2** stub/skill splits land (see gitignored `Future-Development.local.md`).
+
 ## Artifacts
 
 | Path | Role |
@@ -24,7 +36,7 @@ Registry project rows use the same optional arrays for consistency: `triggers`, 
 | `.cursor/rules/project-routing.mdc` | Always-on routing rule |
 | `.cursor/rules/metra-persona.mdc` | Base Metra personality (tracked) |
 | `.cursor/rules/metra-persona.local.mdc` | Operator overlay (gitignored) |
-| Project `AGENTS.md` | Local entry playbook |
+| Project `AGENTS.md` | Local desk index (stub); procedures in `docs/playbooks/*.md` - see [AGENTS-Authoring.md](AGENTS-Authoring.md) |
 | Project `.cursorignore` | Hide generated/cache/binary noise |
 | `docs/Decisions.md` | Append-only portfolio-wide Metra policy (prefer before transcript dig) |
 | `docs/Agentic-Maturity.md` | Workflow L1-L6 maturity / completeness scorecards (design metric; not Ops health) |
@@ -71,7 +83,7 @@ Human-facing desks (HTML Ops Ask / Route, Overview/selfdoc, companion stubs) con
 .\metra.ps1 ctx -Query "ticket disk"
 .\metra.ps1 verify
 ```
-The audit is a **re-runnable probe**. Do not rewrite it for routine project changes. Re-run it; update curated files when it reports drift. `-MetadataOnly` skips the recursive tree scan and prints route registry advisories only. Cloud/personal roots use light audit (no deep recursive scan). Use `verify` for Routing-Scenarios fixture smoke (PASS/WARN/FAIL).
+The audit is a **re-runnable probe**. Do not rewrite it for routine project changes. Re-run it; update curated files when it reports drift. `-MetadataOnly` skips the recursive tree scan and prints route registry advisories only. Cloud/personal roots use light audit (no deep recursive scan). Each project with `AGENTS.md` prints a physical line count (`OK` / `WARN` against `audit.agentsLineBudget`, default 100). Normal audit also prints **Context Footprint Estimate** (alwaysApply rules + mounted AGENTS; report-only, not a merge gate). Use `verify` for Routing-Scenarios fixture smoke (PASS/WARN/FAIL).
 
 ## When to re-audit
 
@@ -117,6 +129,7 @@ Selfdoc documents **routing behavior**, not only registry fields:
 | New large/generated path not excluded | Extend `.cursorignore` and registry `excludePaths` |
 | Stale trigger terms | Update the owning registry from current README/entry docs, then `.\metra.ps1 selfdoc` |
 | Route metadata advisories (`audit -MetadataOnly`) | Fix the named field on that registry row; never treat as drift; then `.\metra.ps1 selfdoc` if purpose/triggers changed |
+| `AGENTS.md` over stub line budget (`audit`) | Advisory WARN only - split stub vs `docs/playbooks/` per [AGENTS-Authoring.md](AGENTS-Authoring.md); audit never auto-edits |
 | Registry route / trigger / purpose change | `.\metra.ps1 selfdoc` (or `snapshot -RefreshSelfDocumentation`) so the self-doc canvas + Overview stay honest |
 | Routine edits inside existing paths | No registry work |
 

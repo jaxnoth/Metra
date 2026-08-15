@@ -607,17 +607,36 @@ async function complete({ prompt, cwd, context, sessionId, images }) {
         /* ignore */
       }
     }
-    if (!text) {
-      text = 'Metra answered, but the engine returned no text.'
+    const hadModelText = Boolean(text && String(text).trim())
+    const outScrub = scrubSecretsText(stripDeskChrome(hadModelText ? text : ''))
+    if (outScrub.refuse) {
+      return {
+        message:
+          outScrub.notice ||
+          'Private-key material was blocked and not sent to the Ask engine. Rephrase without the key block.',
+        engine: ENGINE,
+        model: MODEL,
+        sessionId: id,
+        status: 'refused',
+        secretsRefuse: true,
+        secretsReason: outScrub.reason || 'pem_private_key',
+      }
     }
 
-    const outScrub = scrubSecretsText(stripDeskChrome(text))
+    const rawStatus = result.status && String(result.status).trim()
+    let message = outScrub.text
+    if (!hadModelText) {
+      message =
+        message ||
+        'Metra answered, but the engine returned no text.'
+    }
+    const status = rawStatus || (hadModelText ? 'finished' : 'unknown')
     return {
-      message: outScrub.text,
+      message,
       engine: ENGINE,
       model: MODEL,
       sessionId: id,
-      status: result.status || 'finished',
+      status,
     }
   } catch (err) {
     if (err instanceof CursorAgentError) {

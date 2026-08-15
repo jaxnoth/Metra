@@ -447,4 +447,152 @@ Describe 'Ask engine lifecycle and routing' {
             $cap.available | Should -BeTrue
         }
     }
+
+    It 'restart stops then starts the sidecar' {
+        InModuleScope Metra {
+            Mock Get-MetraAskSettings { [PSCustomObject]@{ engine = 'cursor'; cursorPort = 7381 } }
+            Mock Stop-MetraAskEngine { $script:AskRestartStopped = $true }
+            Mock Test-MetraAskEngineHealth { $false }
+            Mock Get-MetraAskEngineRecordedProcessId { return $null }
+            Mock Start-MetraAskEngine {
+                $script:AskRestartStarted = $true
+                return [PSCustomObject]@{ available = $true; engine = 'cursor'; reason = 'ok' }
+            }
+            $script:AskRestartStopped = $false
+            $script:AskRestartStarted = $false
+            $cap = Restart-MetraAskEngine -Confirm:$false
+            $script:AskRestartStopped | Should -BeTrue
+            $script:AskRestartStarted | Should -BeTrue
+            $cap.available | Should -BeTrue
+        }
+    }
+
+    It 'restart is a no-op when Ask engine is not cursor' {
+        InModuleScope Metra {
+            Mock Get-MetraAskSettings { [PSCustomObject]@{ engine = 'ollama'; cursorPort = 7381 } }
+            Mock Get-MetraAskCapability { [PSCustomObject]@{ available = $true; engine = 'ollama'; reason = 'ok' } }
+            Mock Stop-MetraAskEngine { throw 'Stop-MetraAskEngine should not run for non-cursor restart' }
+            Mock Start-MetraAskEngine { throw 'Start-MetraAskEngine should not run for non-cursor restart' }
+            $cap = Restart-MetraAskEngine -Confirm:$false
+            $cap.engine | Should -Be 'ollama'
+            Should -Invoke Stop-MetraAskEngine -Times 0
+            Should -Invoke Start-MetraAskEngine -Times 0
+        }
+    }
+
+    It 'ask engine restart routes through Invoke-MetraAskEngineCommand' {
+        InModuleScope Metra {
+            Mock Restart-MetraAskEngine {
+                return [PSCustomObject]@{ available = $true; engine = 'cursor'; reason = 'ok' }
+            }
+            $r = Invoke-MetraAskEngineCommand -Subcommand 'engine' -ArgsRest @('restart')
+            $r.available | Should -BeTrue
+            Should -Invoke Restart-MetraAskEngine -Times 1
+        }
+    }
+
+    It 'ask engine restart -WhatIf forwards ShouldProcess without stopping the sidecar' {
+        InModuleScope Metra {
+            Mock Stop-MetraAskEngine { throw 'Stop-MetraAskEngine should not run under WhatIf' }
+            Mock Start-MetraAskEngine { throw 'Start-MetraAskEngine should not run under WhatIf' }
+            Mock Get-MetraAskCapability { [PSCustomObject]@{ available = $true; reason = 'ok' } }
+            $r = Invoke-MetraAskEngineCommand -Subcommand 'engine' -ArgsRest @('restart') -WhatIf
+            $r.reason | Should -Be 'restart_cancelled'
+            $r.available | Should -BeFalse
+            Should -Invoke Stop-MetraAskEngine -Times 0
+            Should -Invoke Start-MetraAskEngine -Times 0
+        }
+    }
+}
+
+Describe 'Ask cursor response conversion' {
+    It 'maps sidecar status error to ok false' {
+        InModuleScope Metra {
+            $settings = [PSCustomObject]@{ engine = 'cursor'; model = 'composer-2.5' }
+            $response = [PSCustomObject]@{
+                status  = 'error'
+                message = 'The Ask engine run failed. Try again, or use Classify for routing only.'
+                engine  = 'cursor'
+                model   = 'composer-2.5'
+                sessionId = 's1'
+            }
+            $promptScrub = [PSCustomObject]@{ Matched = $false; Text = 'test'; Notice = $null; Kinds = @() }
+            $ctxScrub = [PSCustomObject]@{ Matched = $false; Notice = $null; Kinds = @() }
+            $r = Convert-MetraAskCursorResponse -Response $response -Settings $settings -SessionId 's1' -PromptScrub $promptScrub -CtxScrub $ctxScrub
+            $r.ok | Should -BeFalse
+            $r.status | Should -Be 'error'
+            $r.error | Should -Be 'engine_request_failed'
+            $r.message | Should -Match 'Ask engine run failed'
+        }
+    }
+
+    It 'maps sidecar status finished to ok true' {
+        InModuleScope Metra {
+            $settings = [PSCustomObject]@{ engine = 'cursor'; model = 'composer-2.5' }
+            $response = [PSCustomObject]@{
+                status  = 'finished'
+                message = '{"findings":[]}'
+                engine  = 'cursor'
+                model   = 'composer-2.5'
+                sessionId = 's1'
+            }
+            $promptScrub = [PSCustomObject]@{ Matched = $false; Text = 'test'; Notice = $null; Kinds = @(); Refuse = $false }
+            $ctxScrub = [PSCustomObject]@{ Matched = $false; Notice = $null; Kinds = @(); Refuse = $false }
+            Mock Invoke-MetraAskSecretsScrubText { param($Text) [PSCustomObject]@{ Text = $Text; Matched = $false; Notice = $null; Kinds = @(); Refuse = $false; Reason = $null } }
+            $r = Convert-MetraAskCursorResponse -Response $response -Settings $settings -SessionId 's1' -PromptScrub $promptScrub -CtxScrub $ctxScrub
+            $r.ok | Should -BeTrue
+            $r.status | Should -Be 'finished'
+        }
+    }
+
+    It 'refuses when output scrub detects private-key material on finished status' {
+        InModuleScope Metra {
+            $settings = [PSCustomObject]@{ engine = 'cursor'; model = 'composer-2.5' }
+            $response = [PSCustomObject]@{
+                status    = 'finished'
+                message   = '-----BEGIN PRIVATE KEY-----'
+                engine    = 'cursor'
+                model     = 'composer-2.5'
+                sessionId = 's1'
+            }
+            $promptScrub = [PSCustomObject]@{ Matched = $false; Text = 'test'; Notice = $null; Kinds = @(); Refuse = $false }
+            $ctxScrub = [PSCustomObject]@{ Matched = $false; Notice = $null; Kinds = @(); Refuse = $false }
+            Mock Invoke-MetraAskSecretsScrubText {
+                param($Text)
+                if ($Text -match 'PRIVATE KEY') {
+                    return [PSCustomObject]@{
+                        Text   = ''
+                        Matched = $true
+                        Notice = 'blocked output key'
+                        Kinds  = @('pem_private_key')
+                        Refuse = $true
+                        Reason = 'pem_private_key'
+                    }
+                }
+                return [PSCustomObject]@{ Text = $Text; Matched = $false; Notice = $null; Kinds = @(); Refuse = $false; Reason = $null }
+            }
+            $r = Convert-MetraAskCursorResponse -Response $response -Settings $settings -SessionId 's1' -PromptScrub $promptScrub -CtxScrub $ctxScrub
+            $r.ok | Should -BeFalse
+            $r.status | Should -Be 'refused'
+            $r.error | Should -Be 'secrets_refuse'
+        }
+    }
+
+    It 'maps missing sidecar status to ok false' {
+        InModuleScope Metra {
+            $settings = [PSCustomObject]@{ engine = 'cursor'; model = 'composer-2.5' }
+            $response = [PSCustomObject]@{
+                message = 'partial payload'
+                engine  = 'cursor'
+                model   = 'composer-2.5'
+                sessionId = 's1'
+            }
+            $promptScrub = [PSCustomObject]@{ Matched = $false; Text = 'test'; Notice = $null; Kinds = @() }
+            $ctxScrub = [PSCustomObject]@{ Matched = $false; Notice = $null; Kinds = @() }
+            $r = Convert-MetraAskCursorResponse -Response $response -Settings $settings -SessionId 's1' -PromptScrub $promptScrub -CtxScrub $ctxScrub
+            $r.ok | Should -BeFalse
+            $r.status | Should -Be 'unknown'
+            $r.error | Should -Be 'engine_request_failed'
+        }
+    }
 }

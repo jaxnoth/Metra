@@ -492,7 +492,8 @@ function Reduce-MetraInspectDiffFiles {
     param(
         [Parameter(Mandatory)][object[]]$Files,
         [int]$MaxFiles = 24,
-        [int]$MaxBytesPerFile = 24000
+        [int]$MaxBytesPerFile = 24000,
+        [switch]$IncludeDocs
     )
 
     $ordered = @(
@@ -524,7 +525,7 @@ function Reduce-MetraInspectDiffFiles {
     $omittedByFileCap = New-Object System.Collections.Generic.List[string]
     $atFileCap = $false
     foreach ($f in $kept) {
-        if ($f.class -eq 'docs') {
+        if ($f.class -eq 'docs' -and -not $IncludeDocs) {
             [void]$docsCollapsed.Add([string]$f.path)
             continue
         }
@@ -942,7 +943,7 @@ function ConvertTo-MetraInspectFindings {
         }
     }
 
-    $allowedSeverity = @('High', 'Medium', 'Low', 'Info')
+    $allowedSeverity = @('Critical', 'High', 'Medium', 'Low', 'Info')
     $allowedConfidence = @('High', 'Medium', 'Low')
     $allowedCategory = @('Security', 'Reliability', 'Performance', 'Maintainability', 'Standards', 'Scope')
 
@@ -1089,7 +1090,7 @@ Focus on:
 - Fail-closed edges and missing acceptance criteria
 
 Return ONLY a JSON object: {"findings":[...]}. Each finding object must include:
-severity (High|Medium|Low|Info), confidence (High|Medium|Low), category (prefer Scope when relevant, else Security|Reliability|Performance|Maintainability|Standards),
+severity (Critical|High|Medium|Low|Info), confidence (High|Medium|Low), category (prefer Scope when relevant, else Security|Reliability|Performance|Maintainability|Standards),
 file (plan path or section), line (number or null), finding, recommendation, evidence.
 If no issues, return {"findings":[]}. No markdown or prose outside the JSON object.
 '@
@@ -1106,8 +1107,14 @@ Focus on:
 - Credential exposure
 - Error handling / reliability
 
+Review loop regression revert (Inspect.ps1 loop/baseline code):
+- Restore-MetraInspectReviewGitBaseline is intentional **manifest-only** restore: copies baseline manifest paths back; warns on diff extras; does **not** delete new/unlisted files (operator may keep useful work from a failed fix batch).
+- Do **not** report manifest-only restore or "extras left unchanged" warnings as High/Medium defects. Use Info at most if noting operator follow-up.
+- Do report missing path containment, untrusted baselinePath, or resume root mismatch.
+- Save-MetraInspectReviewGitBaseline may omit non-leaf or missing-on-disk diff paths; it warns with captured/total counts and stores baselineCoverage on pendingBaseline. Warn-not-fail is intentional; do not flag loud omission warnings as High/Medium.
+
 Return ONLY a JSON object: {"findings":[...]}. Each finding object must include:
-severity (High|Medium|Low|Info), confidence (High|Medium|Low), category (Security|Reliability|Performance|Maintainability|Standards|Scope),
+severity (Critical|High|Medium|Low|Info), confidence (High|Medium|Low), category (Security|Reliability|Performance|Maintainability|Standards|Scope),
 file, line (number or null), finding, recommendation, evidence.
 If no issues, return {"findings":[]}. No markdown or prose outside the JSON object.
 '@
@@ -1232,7 +1239,7 @@ function Show-MetraInspectFindingsConsole {
         return
     }
 
-    $order = @{ High = 0; Medium = 1; Low = 2; Info = 3 }
+    $order = @{ Critical = 0; High = 1; Medium = 2; Low = 3; Info = 4 }
     $sorted = @(
         $findings | Sort-Object @{ Expression = {
                 $s = [string]$_.severity
@@ -1461,13 +1468,18 @@ function Invoke-MetraInspectPlan {
 }
 
 function Get-MetraInspectBingPackProfile {
+    <#
+    .SYNOPSIS
+        Larger caps for inspect pack / Bing comparison lane (full doc bodies, more files).
+    #>
     [CmdletBinding()]
     param()
     return [PSCustomObject]@{
-        MaxFiles         = 32
-        MaxBytesPerFile  = 48000
-        MaxPackBodyChars = 250000
-        MaxPlanBytes     = 250000
+        MaxFiles         = 64
+        MaxBytesPerFile  = 96000
+        MaxPackBodyChars = 750000
+        MaxPlanBytes     = 750000
+        IncludeDocs      = $true
     }
 }
 
@@ -1572,14 +1584,16 @@ function Build-MetraInspectPackDiffAppendix {
     $maxFiles = 24
     $maxBytesPerFile = 24000
     $maxPackBodyChars = 80000
+    $includeDocs = $false
     if ($Profile -eq 'bing') {
         $bing = Get-MetraInspectBingPackProfile
         $maxFiles = [int]$bing.MaxFiles
         $maxBytesPerFile = [int]$bing.MaxBytesPerFile
         $maxPackBodyChars = [int]$bing.MaxPackBodyChars
+        $includeDocs = [bool](Get-MetraProp -Object $bing -Name 'IncludeDocs' -Default $true)
     }
 
-    $reduced = Reduce-MetraInspectDiffFiles -Files $Files -MaxFiles $maxFiles -MaxBytesPerFile $maxBytesPerFile
+    $reduced = Reduce-MetraInspectDiffFiles -Files $Files -MaxFiles $maxFiles -MaxBytesPerFile $maxBytesPerFile -IncludeDocs:$includeDocs
     $scrubbedFiles = @(ConvertTo-MetraInspectScrubbedDiffParts -Files $reduced.Files)
     $packFileList = @($scrubbedFiles | ForEach-Object { $_.path })
     $packBody = (
@@ -1620,10 +1634,138 @@ function Build-MetraInspectPackDiffAppendix {
     }
 }
 
+function Test-MetraInspectRelativePathInA2DeskScope {
+    <#
+    .SYNOPSIS
+        True when a repo-relative path belongs to an A2 desk split pack (stub + playbooks).
+    #>
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory)][string]$RelativePath
+    )
+
+    $p = ([string]$RelativePath).Replace('\', '/').Trim()
+    while ($p.StartsWith('./', [System.StringComparison]::Ordinal)) {
+        $p = $p.Substring(2)
+    }
+    if ($p -ieq 'AGENTS.md') { return $true }
+    if ($p -like 'docs/playbooks/*') { return $true }
+    return $false
+}
+
+function Get-MetraInspectA2DeskRelativePaths {
+    <#
+    .SYNOPSIS
+        Sorted AGENTS.md plus docs/playbooks/*.md paths under a project root.
+    #>
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory)][string]$Root
+    )
+
+    $agentsPath = Join-Path $Root 'AGENTS.md'
+    if (-not (Test-Path -LiteralPath $agentsPath -PathType Leaf)) {
+        throw 'A2 desk pack requires AGENTS.md at project root.'
+    }
+
+    $paths = New-Object System.Collections.Generic.List[string]
+    [void]$paths.Add('AGENTS.md')
+
+    $playbookDir = Join-Path $Root 'docs/playbooks'
+    if (Test-Path -LiteralPath $playbookDir -PathType Container) {
+        $rootFull = [System.IO.Path]::GetFullPath($Root)
+        if (-not $rootFull.EndsWith([System.IO.Path]::DirectorySeparatorChar)) {
+            $rootFull = $rootFull + [System.IO.Path]::DirectorySeparatorChar
+        }
+        Get-ChildItem -LiteralPath $playbookDir -Filter '*.md' -File -Recurse -ErrorAction Stop |
+            ForEach-Object {
+                $rel = $_.FullName.Substring($rootFull.Length).Replace('\', '/')
+                [void]$paths.Add($rel)
+            }
+    }
+
+    return @($paths.ToArray() | Sort-Object -Unique)
+}
+
+function Get-MetraInspectA2DeskPackFiles {
+    <#
+    .SYNOPSIS
+        Builds A2 desk pack file objects from disk, preferring git diff bodies when present.
+    #>
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory)][string]$Root,
+        [object[]]$DiffFiles = @()
+    )
+
+    $diffByPath = @{}
+    foreach ($f in @($DiffFiles)) {
+        $p = ([string](Get-MetraProp -Object $f -Name 'path' -Default '')).Replace('\', '/')
+        if ([string]::IsNullOrWhiteSpace($p)) { continue }
+        if (-not (Test-MetraInspectRelativePathInA2DeskScope -RelativePath $p)) { continue }
+        $diffByPath[$p] = $f
+    }
+
+    $files = New-Object System.Collections.Generic.List[object]
+    foreach ($rel in @(Get-MetraInspectA2DeskRelativePaths -Root $Root)) {
+        if ($diffByPath.ContainsKey($rel)) {
+            [void]$files.Add($diffByPath[$rel])
+            continue
+        }
+
+        $full = Join-Path $Root ($rel -replace '/', [System.IO.Path]::DirectorySeparatorChar)
+        if (-not (Test-Path -LiteralPath $full -PathType Leaf)) { continue }
+
+        $raw = Get-Content -LiteralPath $full -Raw -Encoding utf8 -ErrorAction Stop
+        if ($null -eq $raw) { $raw = '' }
+        $prefix = "A2 DESK FILE: $rel`nFull file from disk (not a git diff)."
+        [void]$files.Add([PSCustomObject]@{
+                path    = $rel
+                content = "$prefix`n$raw"
+            })
+    }
+
+    return @($files.ToArray())
+}
+
+function Format-MetraInspectA2DeskAuditSummary {
+    <#
+    .SYNOPSIS
+        Stub line budget audit plus playbook counts for A2 desk packs.
+    #>
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory)][string]$Root,
+        [string[]]$DeskPaths = @()
+    )
+
+    $agentsPath = Join-Path $Root 'AGENTS.md'
+    $audit = Get-MetraAgentsLineAuditForPath -AgentsPath $agentsPath
+
+    $playbookPaths = @(
+        @($DeskPaths) |
+            Where-Object { (Test-MetraInspectRelativePathInA2DeskScope -RelativePath $_) -and ($_ -notlike 'AGENTS.md') }
+    )
+    $playbookLines = 0
+    foreach ($rel in $playbookPaths) {
+        $full = Join-Path $Root ($rel -replace '/', [System.IO.Path]::DirectorySeparatorChar)
+        if (Test-Path -LiteralPath $full -PathType Leaf) {
+            $playbookLines += Get-MetraFilePhysicalLineCount -Path $full
+        }
+    }
+
+    $sb = New-Object System.Text.StringBuilder
+    [void]$sb.AppendLine('## A2 desk audit')
+    [void]$sb.AppendLine([string]$audit.Message)
+    [void]$sb.AppendLine("Playbooks: $($playbookPaths.Count) files, $playbookLines total lines under docs/playbooks/")
+    [void]$sb.AppendLine('Scope: AGENTS.md stub + docs/playbooks/*.md only (other working-tree changes excluded).')
+    return $sb.ToString().TrimEnd()
+}
+
 function Format-MetraInspectPackMarkdown {
     [CmdletBinding()]
     param(
-        [ValidateSet('diff', 'plan')][string]$Mode,
+        [ValidateSet('diff', 'plan', 'agents')][string]$Mode,
         [object[]]$Findings = @(),
         [string]$PackBody,
         [string[]]$PackFileList = @(),
@@ -1639,7 +1781,8 @@ function Format-MetraInspectPackMarkdown {
         [string]$Root,
         [string[]]$AssessedFilesFallback = @(),
         [string]$PackManifest,
-        [string]$TestCatalog
+        [string]$TestCatalog,
+        [string]$AgentsAuditSummary
     )
 
     $sb = New-Object System.Text.StringBuilder
@@ -1667,6 +1810,10 @@ function Format-MetraInspectPackMarkdown {
         [void]$sb.AppendLine('')
         [void]$sb.AppendLine($PackManifest)
     }
+    if (-not [string]::IsNullOrWhiteSpace($AgentsAuditSummary)) {
+        [void]$sb.AppendLine('')
+        [void]$sb.AppendLine($AgentsAuditSummary)
+    }
     if ($Stale) {
         [void]$sb.AppendLine('')
         [void]$sb.AppendLine('WARNING: Findings are from the assessed report; appendix body is rebuilt from current disk (not the assessed snapshot).')
@@ -1675,7 +1822,10 @@ function Format-MetraInspectPackMarkdown {
     }
     [void]$sb.AppendLine('')
     if ($Mode -eq 'diff') {
-        [void]$sb.AppendLine('Bing preamble: harden for validation, ShouldProcess honesty, path safety, fail-closed edges, credential exposure, error handling.')
+        [void]$sb.AppendLine('Bing preamble: harden for validation, ShouldProcess honesty, path safety, fail-closed edges, credential exposure, error handling. Inspect loop regression revert is manifest-only plus warn on extras (not auto-delete unlisted files) by design.')
+    }
+    elseif ($Mode -eq 'agents') {
+        [void]$sb.AppendLine('Bing preamble: review A2 desk split - stub under line budget, playbook index and safety ceilings in stub only, loadWhen/front matter on playbooks, provenance lines, content parity with pre-split AGENTS (done-when / On hard stop preserved), no procedure warehouse in stub, playbook bodies not always-on.')
     }
     else {
         [void]$sb.AppendLine('Bing preamble: review plan for scope discipline, root isolation, recommend-only / no auto-act, naming collisions, phase boundaries, fail-closed edges, acceptance criteria.')
@@ -1705,7 +1855,8 @@ function Format-MetraInspectPackMarkdown {
         [void]$sb.AppendLine($(if ($null -eq $PackBody) { '' } else { $PackBody }))
     }
     else {
-        [void]$sb.AppendLine('## Diff (current disk scrub)')
+        $sectionTitle = if ($Mode -eq 'agents') { '## A2 desk split (current disk scrub)' } else { '## Diff (current disk scrub)' }
+        [void]$sb.AppendLine($sectionTitle)
         $filesLine = @($PackFileList)
         if ($filesLine.Count -eq 0) {
             $filesLine = @($AssessedFilesFallback | ForEach-Object { $_ })
@@ -1731,7 +1882,7 @@ function Write-MetraInspectPackArtifact {
     [CmdletBinding(SupportsShouldProcess)]
     param(
         [Parameter(Mandatory)][string]$PackText,
-        [ValidateSet('diff', 'plan')][string]$Mode,
+        [ValidateSet('diff', 'plan', 'agents')][string]$Mode,
         [switch]$Stale
     )
 
@@ -1748,7 +1899,7 @@ function Write-MetraInspectPackArtifact {
 
     Write-MetraAtomicUtf8Text -Path $packPath -Text $PackText
 
-    if ($PackText.Length -gt 100000) {
+    if ($PackText.Length -gt 500000) {
         Write-Host 'Pack is large; prefer opening the pack file in Bing instead of clipboard paste.' -ForegroundColor Yellow
     }
 
@@ -1772,7 +1923,7 @@ function Write-MetraInspectPackArtifact {
 function Invoke-MetraInspectPackOnly {
     [CmdletBinding(SupportsShouldProcess)]
     param(
-        [ValidateSet('diff', 'plan')][string]$Mode = 'diff',
+        [ValidateSet('diff', 'plan', 'agents')][string]$Mode = 'diff',
         [string]$Name,
         [switch]$Latest,
         [string]$Path,
@@ -1787,10 +1938,42 @@ function Invoke-MetraInspectPackOnly {
     $root = $null
     $appendix = $null
     $packManifest = $null
+    $agentsAuditSummary = $null
     $packedAtUtc = [datetime]::UtcNow.ToString('o')
     $bingProfile = Get-MetraInspectBingPackProfile
 
-    if ($Mode -eq 'diff') {
+    if ($Mode -eq 'agents') {
+        if ([string]::IsNullOrWhiteSpace($Name)) {
+            throw 'A2 desk pack-only requires -Name <Project>.'
+        }
+
+        $ctx = Resolve-MetraInspectProjectContext -Name $Name -Mode diff
+        if (-not $ctx.Ok) { throw $ctx.Error }
+        $project = [string]$ctx.Project
+        $root = [string]$ctx.Root
+
+        $diff = Get-MetraInspectGitDiffFiles -Root $ctx.Root -Base $Base
+        if ($diff.Warning) {
+            Write-Host ("WARNING: {0}" -f $diff.Warning) -ForegroundColor Yellow
+        }
+
+        $deskFiles = @(Get-MetraInspectA2DeskPackFiles -Root $ctx.Root -DiffFiles $diff.Files)
+        if ($deskFiles.Count -eq 0) {
+            throw 'Nothing to pack (no AGENTS.md or docs/playbooks/*.md found).'
+        }
+
+        $deskPaths = @($deskFiles | ForEach-Object { [string]$_.path })
+        $agentsAuditSummary = Format-MetraInspectA2DeskAuditSummary -Root $ctx.Root -DeskPaths $deskPaths
+
+        $appendix = Build-MetraInspectPackDiffAppendix -Root $ctx.Root -Files $deskFiles -Profile bing
+        $packFileList = @($appendix.FileList)
+        $packBody = [string]$appendix.Body
+        $packManifest = [string]$appendix.Manifest
+        if ($appendix.PackBodyTruncated) {
+            Write-Host 'WARNING: A2 desk appendix truncated at Bing pack body cap.' -ForegroundColor Yellow
+        }
+    }
+    elseif ($Mode -eq 'diff') {
         $ctx = Resolve-MetraInspectProjectContext -Name $Name -Mode diff
         if (-not $ctx.Ok) { throw $ctx.Error }
         $project = [string]$ctx.Project
@@ -1884,7 +2067,8 @@ function Invoke-MetraInspectPackOnly {
     $packText = Format-MetraInspectPackMarkdown -Mode $Mode -Findings @() -PackBody $packBody -PackFileList $packFileList `
         -BingOnly -Project $project -Root $root -PlanPath $planPathOut -InspectedAtUtc $packedAtUtc `
         -PackManifest $packManifest `
-        -TestCatalog $(if ($Mode -eq 'diff' -and $appendix) { [string]$appendix.TestCatalog } else { $null })
+        -TestCatalog $(if (($Mode -eq 'diff' -or $Mode -eq 'agents') -and $appendix) { [string]$appendix.TestCatalog } else { $null }) `
+        -AgentsAuditSummary $agentsAuditSummary
 
     return Write-MetraInspectPackArtifact -PackText $packText -Mode $Mode -Stale:$false
 }
@@ -2041,6 +2225,823 @@ function Invoke-MetraInspectPack {
     return Write-MetraInspectPackArtifact -PackText $packText -Mode $Mode -Stale:$stale
 }
 
+function Get-MetraInspectReviewLoopMaxLoops {
+    [CmdletBinding()]
+    param()
+
+    return 5
+}
+
+function Get-MetraInspectReviewSeverityTier {
+    <#
+    .SYNOPSIS
+        Maps inspect finding severity to review-loop tiers Critical|High|Medium|Low.
+    #>
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory)][string]$Severity
+    )
+
+    switch -Regex ($Severity) {
+        '^Critical$' { return 'Critical' }
+        '^High$' { return 'High' }
+        '^Medium$' { return 'Medium' }
+        default { return 'Low' } # Low and Info
+    }
+}
+
+function Get-MetraInspectReviewSeverityCounts {
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory)][AllowEmptyCollection()][object[]]$Findings
+    )
+
+    $counts = [ordered]@{
+        Critical = 0
+        High     = 0
+        Medium   = 0
+        Low      = 0
+    }
+    foreach ($f in @($Findings)) {
+        if ($null -eq $f) { continue }
+        $tier = Get-MetraInspectReviewSeverityTier -Severity ([string]$f.severity)
+        $counts[$tier]++
+    }
+    return [PSCustomObject]$counts
+}
+
+function Test-MetraInspectReviewSeverityCountsEqual {
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory)][object]$Left,
+        [Parameter(Mandatory)][object]$Right
+    )
+
+    foreach ($tier in @('Critical', 'High', 'Medium', 'Low')) {
+        if ([int]$Left.$tier -ne [int]$Right.$tier) { return $false }
+    }
+    return $true
+}
+
+function Test-MetraInspectReviewGoalMet {
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory)][object]$Counts
+    )
+
+    return ([int]$Counts.Critical -eq 0 -and [int]$Counts.High -eq 0 -and [int]$Counts.Medium -le 2)
+}
+
+function Test-MetraInspectReviewRegressed {
+    <#
+    .SYNOPSIS
+        True when post-fix severity counts are worse than the saved baseline (Critical/High/Medium only).
+    #>
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory)][object]$Baseline,
+        [Parameter(Mandatory)][object]$Current
+    )
+
+    foreach ($tier in @('Critical', 'High', 'Medium')) {
+        if ([int]$Current.$tier -gt [int]$Baseline.$tier) {
+            return $true
+        }
+    }
+    return $false
+}
+
+function Get-MetraInspectReviewWorkingTreeInputHash {
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory)][string]$Root,
+        [string]$Base
+    )
+
+    $diff = Get-MetraInspectGitDiffFiles -Root $Root -Base $Base
+    if ($diff.Empty) { return 'empty' }
+    return Get-MetraInspectInputHash -Parts @(
+        @($diff.Files) | ForEach-Object { [PSCustomObject]@{ path = $_.path; content = $_.content } }
+    )
+}
+
+function Get-MetraInspectReviewBaselineDirectory {
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory)][string]$SlotKey,
+        [Parameter(Mandatory)][int]$RoundNum
+    )
+
+    $safe = ($SlotKey -replace '[^\w\.-]', '_').Trim('_')
+    if ([string]::IsNullOrWhiteSpace($safe)) { $safe = 'default' }
+    return Join-Path (Join-Path (Get-MetraInspectStateRoot) $safe) ("baselines/r{0}" -f $RoundNum)
+}
+
+function Test-MetraInspectReviewManifestRelativePath {
+    <#
+    .SYNOPSIS
+        True when a manifest/git-relative path is safe to join (no .., not rooted).
+    #>
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory)][AllowEmptyString()][string]$RelativePath
+    )
+
+    if ([string]::IsNullOrWhiteSpace($RelativePath)) { return $false }
+    if ([System.IO.Path]::IsPathRooted($RelativePath)) { return $false }
+    $normalized = ($RelativePath -replace '\\', '/').Trim()
+    if ($normalized -match '(^|/)\.\.(/|$)') { return $false }
+    return $true
+}
+
+function Resolve-MetraInspectReviewManifestPathPair {
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory)][string]$RelativePath,
+        [Parameter(Mandatory)][string]$ProjectRoot,
+        [Parameter(Mandatory)][string]$ContainerRoot
+    )
+
+    if (-not (Test-MetraInspectReviewManifestRelativePath -RelativePath $RelativePath)) {
+        throw "Inspect review baseline rejected unsafe manifest path: $RelativePath"
+    }
+
+    $destFull = [System.IO.Path]::GetFullPath((Join-Path $ProjectRoot $RelativePath))
+    $srcFull = [System.IO.Path]::GetFullPath((Join-Path $ContainerRoot $RelativePath))
+    if (-not (Test-MetraPathWithinRoot -Path $destFull -Root $ProjectRoot)) {
+        throw "Inspect review baseline manifest path escapes project root: $RelativePath"
+    }
+    if (-not (Test-MetraPathWithinRoot -Path $srcFull -Root $ContainerRoot)) {
+        throw "Inspect review baseline manifest path escapes baseline directory: $RelativePath"
+    }
+
+    return [PSCustomObject]@{
+        Relative = [string]$RelativePath
+        Src      = $srcFull
+        Dest     = $destFull
+    }
+}
+
+function Assert-MetraInspectReviewBaselinePath {
+    <#
+    .SYNOPSIS
+        Fail closed when persisted baselinePath is outside the expected inspect state slot directory.
+    #>
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory)][string]$BaselinePath,
+        [Parameter(Mandatory)][string]$SlotKey,
+        [Parameter(Mandatory)][int]$RoundNum
+    )
+
+    if ([string]::IsNullOrWhiteSpace($BaselinePath)) {
+        throw 'Inspect review baselinePath is empty.'
+    }
+
+    $stateRoot = Get-MetraInspectStateRoot
+    $baselineFull = [System.IO.Path]::GetFullPath($BaselinePath)
+    if (-not (Test-MetraPathWithinRoot -Path $baselineFull -Root $stateRoot)) {
+        throw "Inspect review baselinePath is outside inspect state root: $BaselinePath"
+    }
+
+    $expected = Get-MetraInspectReviewBaselineDirectory -SlotKey $SlotKey -RoundNum $RoundNum
+    $expectedFull = [System.IO.Path]::GetFullPath($expected)
+    if (-not [string]::Equals($expectedFull, $baselineFull, [StringComparison]::OrdinalIgnoreCase)) {
+        throw ("Inspect review baselinePath does not match expected round directory. Expected: {0} Actual: {1}" -f $expectedFull, $baselineFull)
+    }
+}
+
+function Save-MetraInspectReviewGitBaseline {
+    <#
+    .SYNOPSIS
+        Snapshots inspect-scope working tree files for regression revert.
+    #>
+    [CmdletBinding(SupportsShouldProcess, ConfirmImpact = 'Medium')]
+    param(
+        [Parameter(Mandatory)][string]$Root,
+        [Parameter(Mandatory)][string]$SlotKey,
+        [Parameter(Mandatory)][int]$RoundNum,
+        [string]$Base
+    )
+
+    $dir = Get-MetraInspectReviewBaselineDirectory -SlotKey $SlotKey -RoundNum $RoundNum
+    if (-not $PSCmdlet.ShouldProcess($dir, 'Save inspect review baseline snapshot')) {
+        return [PSCustomObject]@{
+            Path              = $dir
+            GitHead           = ''
+            InputHash         = Get-MetraInspectReviewWorkingTreeInputHash -Root $Root -Base $Base
+            Manifest          = @()
+            DiffPathCount     = 0
+            ManifestPathCount = 0
+            OmittedPaths      = @()
+        }
+    }
+
+    if (Test-Path -LiteralPath $dir) {
+        Remove-Item -LiteralPath $dir -Recurse -Force -ErrorAction Stop
+    }
+    New-Item -ItemType Directory -Path $dir -Force | Out-Null
+
+    $diff = Get-MetraInspectGitDiffFiles -Root $Root -Base $Base
+    $manifest = New-Object System.Collections.Generic.List[string]
+    $rejected = New-Object System.Collections.Generic.List[string]
+    $eligible = New-Object System.Collections.Generic.List[string]
+    $omitted = New-Object System.Collections.Generic.List[string]
+    foreach ($f in @($diff.Files)) {
+        $rel = [string]$f.path
+        if ([string]::IsNullOrWhiteSpace($rel)) { continue }
+        if (-not (Test-MetraInspectReviewManifestRelativePath -RelativePath $rel)) {
+            [void]$rejected.Add($rel)
+            continue
+        }
+        [void]$eligible.Add($rel)
+        $src = Join-Path $Root $rel
+        if (-not (Test-Path -LiteralPath $src -PathType Leaf)) {
+            [void]$omitted.Add($rel)
+            continue
+        }
+        $pair = Resolve-MetraInspectReviewManifestPathPair -RelativePath $rel -ProjectRoot $Root -ContainerRoot $dir
+        $destParent = Split-Path -Parent $pair.Dest
+        if (-not (Test-Path -LiteralPath $destParent)) {
+            New-Item -ItemType Directory -Path $destParent -Force | Out-Null
+        }
+        Copy-Item -LiteralPath $pair.Src -Destination $pair.Dest -Force
+        [void]$manifest.Add($rel)
+    }
+    if ($rejected.Count -gt 0) {
+        $preview = if ($rejected.Count -le 5) { ($rejected -join ', ') } else { (($rejected | Select-Object -First 5) -join ', ') + '...' }
+        throw ("Inspect review baseline rejected {0} inspect-scope path(s): {1}" -f $rejected.Count, $preview)
+    }
+    if ($omitted.Count -gt 0) {
+        $preview = if ($omitted.Count -le 5) { ($omitted -join ', ') } else { (($omitted | Select-Object -First 5) -join ', ') + '...' }
+        Write-Warning ("Inspect review baseline captured {0}/{1} inspect-scope diff path(s); {2} omitted (non-leaf or missing on disk): {3}" -f $manifest.Count, $eligible.Count, $omitted.Count, $preview)
+    }
+    Write-MetraAtomicUtf8Text -Path (Join-Path $dir 'manifest.json') -Text ($manifest | ConvertTo-Json -Compress)
+
+    return [PSCustomObject]@{
+        Path              = $dir
+        GitHead           = [string]$diff.GitHead
+        InputHash         = Get-MetraInspectReviewWorkingTreeInputHash -Root $Root -Base $Base
+        Manifest          = @($manifest.ToArray())
+        DiffPathCount     = [int]$eligible.Count
+        ManifestPathCount = [int]$manifest.Count
+        OmittedPaths      = @($omitted.ToArray())
+    }
+}
+
+function Restore-MetraInspectReviewGitBaseline {
+    <#
+    .SYNOPSIS
+        Restores manifest-listed inspect-scope files from a saved baseline directory.
+        Does not delete diff files outside the manifest; warns when extras remain.
+    #>
+    [CmdletBinding(SupportsShouldProcess, ConfirmImpact = 'High')]
+    param(
+        [Parameter(Mandatory)][string]$Root,
+        [Parameter(Mandatory)][string]$BaselinePath,
+        [Parameter(Mandatory)][string]$SlotKey,
+        [Parameter(Mandatory)][int]$RoundNum,
+        [string]$Base
+    )
+
+    Assert-MetraInspectReviewBaselinePath -BaselinePath $BaselinePath -SlotKey $SlotKey -RoundNum $RoundNum
+
+    if (-not $PSCmdlet.ShouldProcess($Root, 'Restore inspect review baseline (regression revert)')) {
+        return
+    }
+
+    $manifestPath = Join-Path $BaselinePath 'manifest.json'
+    if (-not (Test-Path -LiteralPath $manifestPath)) {
+        throw "Inspect review baseline manifest missing: $manifestPath"
+    }
+    $manifest = @((Get-Content -LiteralPath $manifestPath -Raw | ConvertFrom-Json) | ForEach-Object { [string]$_ })
+
+    foreach ($rel in $manifest) {
+        $pair = Resolve-MetraInspectReviewManifestPathPair -RelativePath $rel -ProjectRoot $Root -ContainerRoot $BaselinePath
+        if (Test-Path -LiteralPath $pair.Src -PathType Leaf) {
+            $destParent = Split-Path -Parent $pair.Dest
+            if (-not (Test-Path -LiteralPath $destParent)) {
+                New-Item -ItemType Directory -Path $destParent -Force | Out-Null
+            }
+            Copy-Item -LiteralPath $pair.Src -Destination $pair.Dest -Force
+        }
+        elseif (Test-Path -LiteralPath $pair.Dest) {
+            Remove-Item -LiteralPath $pair.Dest -Force -ErrorAction Stop
+        }
+    }
+
+    $currentDiff = Get-MetraInspectGitDiffFiles -Root $Root -Base $Base
+    $extras = @(@($currentDiff.Files) | ForEach-Object { [string]$_.path } | Where-Object {
+            -not [string]::IsNullOrWhiteSpace($_) -and ($manifest -notcontains $_)
+        })
+    if ($extras.Count -gt 0) {
+        $preview = if ($extras.Count -le 5) { ($extras -join ', ') } else { (($extras | Select-Object -First 5) -join ', ') + '...' }
+        Write-Warning ("Regression revert restored manifest files only; {0} diff file(s) were left unchanged: {1}" -f $extras.Count, $preview)
+    }
+}
+
+function Export-MetraInspectReviewFixQueue {
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory)][string]$SlotKey,
+        [Parameter(Mandatory)][object]$Report,
+        [int]$RoundNum
+    )
+
+    $safe = ($SlotKey -replace '[^\w\.-]', '_').Trim('_')
+    if ([string]::IsNullOrWhiteSpace($safe)) { $safe = 'default' }
+    $path = Join-Path (Join-Path (Get-MetraInspectStateRoot) $safe) 'fix-queue.json'
+    $items = @(@($Report.findings) | ForEach-Object {
+            [ordered]@{
+                severity       = [string]$_.severity
+                confidence     = [string]$_.confidence
+                category       = [string]$_.category
+                file           = [string]$_.file
+                line           = [int](Get-MetraProp -Object $_ -Name 'line' -Default 0)
+                finding        = [string]$_.finding
+                recommendation = [string]$_.recommendation
+            }
+        })
+    $payload = [ordered]@{
+        exportedAtUtc = [datetime]::UtcNow.ToString('o')
+        round         = $RoundNum
+        reportPath    = [string](Get-MetraProp -Object $Report.provenance -Name 'reportPath' -Default '')
+        findings      = $items
+    }
+    Write-MetraAtomicUtf8Text -Path $path -Text ($payload | ConvertTo-Json -Depth 8)
+    return $path
+}
+
+function Write-MetraInspectReviewFixGuidance {
+    [CmdletBinding()]
+    param(
+        [string]$FixQueuePath,
+        [switch]$RunUntilGoal
+    )
+
+    Write-Host ''
+    Write-Host 'Coding loop rhythm:' -ForegroundColor Cyan
+    Write-Host '1. Summarize Critical/High (then actionable Medium) in chat.'
+    Write-Host '2. Agent applies affirmed fixes only.'
+    Write-Host '3. Run inspect loop again - verifies after fixes; reverts the tree if counts regress.'
+    Write-Host '4. Repeat until goal, convergence, or MaxLoops. Bing pack is after the loop, not between rounds.'
+    if ($FixQueuePath) {
+        Write-Host ("Fix queue: {0}" -f $FixQueuePath) -ForegroundColor DarkGray
+    }
+    if ($RunUntilGoal) {
+        Write-Host 'Full loop (-RunAll): re-invoke inspect loop -RunAll after each fix batch until the session completes.' -ForegroundColor Yellow
+    }
+    else {
+        Write-Host 'Next: apply fixes, then run inspect loop again (same session).' -ForegroundColor Yellow
+    }
+}
+
+function Get-MetraInspectReviewGrade {
+    <#
+    .SYNOPSIS
+        Informational grade from review severity counts (never overrides severity reporting).
+    #>
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory)][object]$Counts
+    )
+
+    if ([int]$Counts.Critical -gt 0) { return 'D' }
+    if ([int]$Counts.High -gt 0) { return 'C' }
+    if ([int]$Counts.Medium -le 2) { return 'A' }
+    if ([int]$Counts.Medium -le 5) { return 'B' }
+    return 'B'
+}
+
+function Get-MetraInspectReviewLoopStatePath {
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory)][string]$SlotKey
+    )
+
+    $safe = ($SlotKey -replace '[^\w\.-]', '_').Trim('_')
+    if ([string]::IsNullOrWhiteSpace($safe)) { $safe = 'default' }
+    return Join-Path (Join-Path (Get-MetraInspectStateRoot) $safe) 'review-loop.json'
+}
+
+function Get-MetraInspectReviewLoopHistoryPath {
+    [CmdletBinding()]
+    param()
+
+    return Join-Path (Get-MetraInspectStateRoot) 'review-loop-history.jsonl'
+}
+
+function Get-MetraInspectReviewLoopState {
+    <#
+    .SYNOPSIS
+        Loads persisted review-loop session state. Missing file returns $null; corrupt file fails closed.
+    #>
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory)][string]$SlotKey
+    )
+
+    $path = Get-MetraInspectReviewLoopStatePath -SlotKey $SlotKey
+    if (-not (Test-Path -LiteralPath $path)) { return $null }
+    try {
+        return Get-Content -LiteralPath $path -Raw -ErrorAction Stop | ConvertFrom-Json -ErrorAction Stop
+    }
+    catch {
+        throw "Could not read inspect review loop state ($path): $($_.Exception.Message). Run inspect loop -Reset to start a new session."
+    }
+}
+
+function Assert-MetraInspectReviewLoopRootMatch {
+    <#
+    .SYNOPSIS
+        Fail closed when persisted review-loop root does not match the currently resolved project root.
+    #>
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory)][AllowEmptyString()][string]$PersistedRoot,
+        [Parameter(Mandatory)][AllowEmptyString()][string]$CurrentRoot
+    )
+
+    if ([string]::IsNullOrWhiteSpace($PersistedRoot)) {
+        throw 'Inspect review loop state is missing root. Run inspect loop -Reset to start a new session.'
+    }
+    if ([string]::IsNullOrWhiteSpace($CurrentRoot)) {
+        throw 'Inspect review loop could not resolve project root. Run inspect loop -Reset to start a new session.'
+    }
+
+    $persistedFull = [System.IO.Path]::GetFullPath($PersistedRoot)
+    $currentFull = [System.IO.Path]::GetFullPath($CurrentRoot)
+    if (-not [string]::Equals($persistedFull, $currentFull, [StringComparison]::OrdinalIgnoreCase)) {
+        throw ("Inspect review loop root mismatch (persisted: {0}; current: {1}). Run inspect loop -Reset." -f $persistedFull, $currentFull)
+    }
+}
+
+function Save-MetraInspectReviewLoopState {
+    [CmdletBinding(SupportsShouldProcess)]
+    param(
+        [Parameter(Mandatory)][string]$SlotKey,
+        [Parameter(Mandatory)][object]$State
+    )
+
+    $path = Get-MetraInspectReviewLoopStatePath -SlotKey $SlotKey
+    if (-not $PSCmdlet.ShouldProcess($path, 'Persist inspect review loop state')) {
+        return [PSCustomObject]@{ Path = $path; Skipped = $true }
+    }
+
+    $dir = Split-Path -Parent $path
+    if (-not (Test-Path -LiteralPath $dir)) {
+        New-Item -ItemType Directory -Path $dir -Force | Out-Null
+    }
+    Write-MetraAtomicUtf8Text -Path $path -Text ($State | ConvertTo-Json -Depth 12)
+    return [PSCustomObject]@{ Path = $path; Skipped = $false }
+}
+
+function Add-MetraInspectReviewLoopHistoryEntry {
+    [CmdletBinding(SupportsShouldProcess)]
+    param(
+        [Parameter(Mandatory)][object]$State
+    )
+
+    $path = Get-MetraInspectReviewLoopHistoryPath
+    if (-not $PSCmdlet.ShouldProcess($path, 'Append review loop metrics history')) {
+        return
+    }
+
+    $entry = [ordered]@{
+        completedAtUtc    = [datetime]::UtcNow.ToString('o')
+        project           = [string]$State.project
+        root              = [string]$State.root
+        inspectMode       = [string]$State.inspectMode
+        LoopsUsed         = [int]$State.LoopsUsed
+        FinalGrade        = [string]$State.FinalGrade
+        CriticalCount     = [int]$State.CriticalCount
+        HighCount         = [int]$State.HighCount
+        MediumCount       = [int]$State.MediumCount
+        LowCount          = [int]$State.LowCount
+        TerminationReason = [string]$State.TerminationReason
+        maxLoops          = [int]$State.maxLoops
+    }
+    $line = ($entry | ConvertTo-Json -Compress -Depth 6)
+    Add-Content -LiteralPath $path -Value $line -Encoding UTF8
+}
+
+function Write-MetraInspectReviewRoundSummary {
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory)][int]$Round,
+        [Parameter(Mandatory)][object]$Counts
+    )
+
+    Write-Host ''
+    Write-Host ("Review round {0}" -f $Round) -ForegroundColor Cyan
+    Write-Host ("Critical: {0}" -f $Counts.Critical)
+    Write-Host ("High: {0}" -f $Counts.High)
+    Write-Host ("Medium: {0}" -f $Counts.Medium)
+    Write-Host ("Low: {0}" -f $Counts.Low)
+}
+
+function Write-MetraInspectReviewLoopFinalSummary {
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory)][object]$State
+    )
+
+    Write-Host ''
+    Write-Host ("Review Grade: {0}" -f $State.FinalGrade) -ForegroundColor $(if ($State.FinalGrade -eq 'A') { 'Green' } else { 'Yellow' })
+    Write-Host ("Loops Used: {0}/{1}" -f $State.LoopsUsed, $State.maxLoops)
+    Write-Host 'Round Trend:'
+    foreach ($round in @($State.rounds)) {
+        $parts = @()
+        if ([int]$round.critical -gt 0) { $parts += ("Critical {0}" -f $round.critical) }
+        if ([int]$round.high -gt 0) { $parts += ("High {0}" -f $round.high) }
+        if ([int]$round.medium -gt 0) { $parts += ("Medium {0}" -f $round.medium) }
+        if ([int]$round.low -gt 0) { $parts += ("Low {0}" -f $round.low) }
+        if ($parts.Count -eq 0) { $parts = @('none') }
+        Write-Host ("R{0} -> {1}" -f $round.round, ($parts -join ' '))
+    }
+    Write-Host ("Termination Reason: {0}" -f $State.TerminationReason)
+    if ($State.TerminationReason -eq 'Convergence detected') {
+        Write-Host 'Review convergence reached. Additional passes are not producing meaningful reduction.' -ForegroundColor Yellow
+    }
+    if ($State.TerminationReason -eq 'Maximum loop count reached') {
+        Write-Host 'MaxLoops is a protection fence, not success. Run inspect pack for Bing review when ready.' -ForegroundColor Yellow
+    }
+    Write-Host ''
+    Write-Host 'After the loop completes, run inspect pack for external (Bing) review - not between rounds.'
+}
+
+function Resolve-MetraInspectReviewTermination {
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory)][object]$LatestCounts,
+        [int]$CompletedCycles = 0,
+        [object]$PreviousVerifyCounts = $null,
+        [int]$MaxLoops = 5
+    )
+
+    if (Test-MetraInspectReviewGoalMet -Counts $LatestCounts) {
+        return [PSCustomObject]@{
+            Complete          = $true
+            TerminationReason = 'Goal achieved'
+            LoopsUsed         = $CompletedCycles
+        }
+    }
+    if ($null -ne $PreviousVerifyCounts -and $CompletedCycles -ge 2) {
+        if (Test-MetraInspectReviewSeverityCountsEqual -Left $LatestCounts -Right $PreviousVerifyCounts) {
+            return [PSCustomObject]@{
+                Complete          = $true
+                TerminationReason = 'Convergence detected'
+                LoopsUsed         = $CompletedCycles
+            }
+        }
+    }
+    if ($CompletedCycles -ge $MaxLoops) {
+        return [PSCustomObject]@{
+            Complete          = $true
+            TerminationReason = 'Maximum loop count reached'
+            LoopsUsed         = $CompletedCycles
+        }
+    }
+    return [PSCustomObject]@{
+        Complete          = $false
+        TerminationReason = $null
+        LoopsUsed         = $CompletedCycles
+    }
+}
+
+function Invoke-MetraInspectReviewLoop {
+    <#
+    .SYNOPSIS
+        Goal-based inspect review loop: assess, fix (agent), verify with regression revert, repeat until goal or fence.
+        One step per invocation. -RunAll marks a full-loop session (re-invoke after each fix batch until complete).
+    #>
+    [CmdletBinding(SupportsShouldProcess)]
+    param(
+        [string]$Name,
+        [string]$Base,
+        [switch]$Reset,
+        [switch]$RunAll,
+        [ValidateRange(0, 20)]
+        [int]$MaxLoops = 0
+    )
+
+    $ctx = Resolve-MetraInspectProjectContext -Name $Name -Mode diff
+    if (-not $ctx.Ok) { throw $ctx.Error }
+
+    $slotKey = [string]$ctx.Project
+    if ([string]::IsNullOrWhiteSpace($slotKey)) { $slotKey = 'default' }
+
+    $loaded = if ($Reset) { $null } else { Get-MetraInspectReviewLoopState -SlotKey $slotKey }
+    if (-not $Reset -and $null -ne $loaded) {
+        Assert-MetraInspectReviewLoopRootMatch -PersistedRoot ([string]$loaded.root) -CurrentRoot ([string]$ctx.Root)
+    }
+    if (-not $Reset -and $null -ne $loaded -and $loaded.active -eq $false -and -not [string]::IsNullOrWhiteSpace([string]$loaded.TerminationReason)) {
+        Write-Host 'Review loop session already complete. Use -Reset to start a new session.' -ForegroundColor Yellow
+        Write-MetraInspectReviewLoopFinalSummary -State $loaded
+        return $loaded
+    }
+
+    if ($PSBoundParameters.ContainsKey('MaxLoops') -and [int]$MaxLoops -gt 0) {
+        # explicit CLI wins over persisted session
+    }
+    elseif ($null -ne $loaded -and [int]$loaded.maxLoops -ge 1 -and [int]$loaded.maxLoops -le 20) {
+        $MaxLoops = [int]$loaded.maxLoops
+    }
+    else {
+        $MaxLoops = Get-MetraInspectReviewLoopMaxLoops
+    }
+
+    if ($Reset -or $null -eq $loaded) {
+        $state = [PSCustomObject]@{
+            schemaVersion     = 1
+            project           = [string]$ctx.Project
+            root              = [string]$ctx.Root
+            inspectMode       = 'diff'
+            maxLoops          = $MaxLoops
+            startedAtUtc      = [datetime]::UtcNow.ToString('o')
+            updatedAtUtc      = [datetime]::UtcNow.ToString('o')
+            active            = $true
+            phase             = $null
+            runUntilGoal      = [bool]$RunAll
+            pendingBaseline   = $null
+            lastVerifyCounts  = $null
+            completedCycles   = 0
+            rounds            = @()
+            LoopsUsed         = 0
+            FinalGrade        = $null
+            CriticalCount     = 0
+            HighCount         = 0
+            MediumCount       = 0
+            LowCount          = 0
+            TerminationReason = $null
+        }
+    }
+    else {
+        $state = $loaded
+        if ($RunAll) {
+            $state.runUntilGoal = $true
+        }
+        $state.maxLoops = $MaxLoops
+    }
+
+    if ($MaxLoops -lt 1 -or $MaxLoops -gt 20) {
+        throw "inspect loop MaxLoops must be 1-20 after resolution; got $MaxLoops."
+    }
+
+    if ($WhatIfPreference) {
+        $next = if ([string]$state.phase -eq 'AwaitingFix') { 'verify-after-fix' } else { 'assess' }
+        Write-Host ("WhatIf: would run inspect review loop ({0}) for {1}" -f $next, $ctx.Project)
+        return [PSCustomObject]@{ WhatIf = $true; Project = $ctx.Project; MaxLoops = $MaxLoops; Phase = $state.phase }
+    }
+
+    $loopShouldProcess = @{ Confirm = $false }
+
+    $pending = $state.pendingBaseline
+    $isVerify = ($state.phase -eq 'AwaitingFix') -and ($null -ne $pending)
+    if ($isVerify) {
+        $currentHash = Get-MetraInspectReviewWorkingTreeInputHash -Root $ctx.Root -Base $Base
+        $baselineHash = [string](Get-MetraProp -Object $pending -Name 'inputHash' -Default '')
+        if ($currentHash -eq $baselineHash) {
+            Write-Host 'No working-tree changes since the last assess. Apply fixes, then run inspect loop again.' -ForegroundColor Yellow
+            if ($state.runUntilGoal) {
+                Write-Host 'Full loop (-RunAll): waiting for a fix batch before the next verify pass.' -ForegroundColor DarkGray
+            }
+            $null = Save-MetraInspectReviewLoopState @loopShouldProcess -SlotKey $slotKey -State $state
+            return $state
+        }
+
+        Write-Host 'Verify pass: inspecting after fix batch (regression revert enabled).' -ForegroundColor Cyan
+    }
+    else {
+        Write-Host 'Assess pass: baseline inspect before fixes.' -ForegroundColor Cyan
+    }
+
+    $report = Invoke-MetraInspectDiff -Name $Name -Base $Base
+    $reportSkipped = [bool](Get-MetraProp -Object $report -Name 'Skipped' -Default $false)
+    if ($null -eq $report) {
+        Write-Warning 'Inspect review loop stopped: inspect diff returned no report.'
+        return $state
+    }
+    if ($reportSkipped) {
+        Write-Host 'Inspect review loop stopped: inspect diff was skipped (confirm denied or dry-run).' -ForegroundColor Yellow
+        return $state
+    }
+
+    $counts = Get-MetraInspectReviewSeverityCounts -Findings @($report.findings)
+
+    if ($isVerify) {
+        $baselineCounts = [PSCustomObject]@{
+            Critical = [int](Get-MetraProp -Object $pending -Name 'critical' -Default 0)
+            High     = [int](Get-MetraProp -Object $pending -Name 'high' -Default 0)
+            Medium   = [int](Get-MetraProp -Object $pending -Name 'medium' -Default 0)
+            Low      = [int](Get-MetraProp -Object $pending -Name 'low' -Default 0)
+        }
+        if (Test-MetraInspectReviewRegressed -Baseline $baselineCounts -Current $counts) {
+            $baselinePath = [string](Get-MetraProp -Object $pending -Name 'baselinePath' -Default '')
+            if ([string]::IsNullOrWhiteSpace($baselinePath)) {
+                throw 'Inspect review regression detected but baselinePath is missing from session state.'
+            }
+            Write-Host ''
+            Write-Host 'Regression detected (Critical/High/Medium increased). Reverting working tree to pre-fix baseline.' -ForegroundColor Red
+            Write-Host ("Before: Critical={0} High={1} Medium={2} | After: Critical={3} High={4} Medium={5}" -f `
+                    $baselineCounts.Critical, $baselineCounts.High, $baselineCounts.Medium, `
+                    $counts.Critical, $counts.High, $counts.Medium)
+            Restore-MetraInspectReviewGitBaseline @loopShouldProcess -Root $ctx.Root -BaselinePath $baselinePath -SlotKey $slotKey -RoundNum ([int]$state.LoopsUsed) -Base $Base
+            $state | Add-Member -NotePropertyName lastRegressionAtUtc -NotePropertyValue ([datetime]::UtcNow.ToString('o')) -Force
+            $state | Add-Member -NotePropertyName lastRegressionReverted -NotePropertyValue $true -Force
+            $state.updatedAtUtc = [datetime]::UtcNow.ToString('o')
+            $null = Save-MetraInspectReviewLoopState @loopShouldProcess -SlotKey $slotKey -State $state
+            $fixQueuePath = Export-MetraInspectReviewFixQueue -SlotKey $slotKey -Report $report -RoundNum ([int]$state.LoopsUsed)
+            Write-MetraInspectReviewFixGuidance -FixQueuePath $fixQueuePath -RunUntilGoal:([bool]$state.runUntilGoal)
+            return $state
+        }
+    }
+
+    $roundNum = if ($isVerify) { [int]$state.LoopsUsed } else { @($state.rounds).Count + 1 }
+    if (-not $isVerify) {
+        $round = [PSCustomObject]@{
+            round      = $roundNum
+            atUtc      = [datetime]::UtcNow.ToString('o')
+            critical   = [int]$counts.Critical
+            high       = [int]$counts.High
+            medium     = [int]$counts.Medium
+            low        = [int]$counts.Low
+            reportPath = [string](Get-MetraProp -Object $report.provenance -Name 'reportPath' -Default '')
+            pass       = 'assess'
+        }
+        $state.rounds = @(@($state.rounds) + @($round))
+        $state.LoopsUsed = $roundNum
+    }
+    else {
+        $rounds = @($state.rounds)
+        if ($rounds.Count -gt 0) {
+            $last = $rounds[$rounds.Count - 1]
+            $last | Add-Member -NotePropertyName verifiedAtUtc -NotePropertyValue ([datetime]::UtcNow.ToString('o')) -Force
+            $last | Add-Member -NotePropertyName critical -NotePropertyValue ([int]$counts.Critical) -Force
+            $last | Add-Member -NotePropertyName high -NotePropertyValue ([int]$counts.High) -Force
+            $last | Add-Member -NotePropertyName medium -NotePropertyValue ([int]$counts.Medium) -Force
+            $last | Add-Member -NotePropertyName low -NotePropertyValue ([int]$counts.Low) -Force
+            $last | Add-Member -NotePropertyName pass -NotePropertyValue 'verify' -Force
+            $state.rounds = $rounds
+        }
+    }
+
+    $state.CriticalCount = [int]$counts.Critical
+    $state.HighCount = [int]$counts.High
+    $state.MediumCount = [int]$counts.Medium
+    $state.LowCount = [int]$counts.Low
+    $state.updatedAtUtc = [datetime]::UtcNow.ToString('o')
+    $state.FinalGrade = Get-MetraInspectReviewGrade -Counts $counts
+
+    $baselineSnap = Save-MetraInspectReviewGitBaseline @loopShouldProcess -Root $ctx.Root -SlotKey $slotKey -RoundNum $roundNum -Base $Base
+    $state.pendingBaseline = [PSCustomObject]@{
+        inputHash         = [string]$baselineSnap.InputHash
+        gitHead           = [string]$baselineSnap.GitHead
+        baselinePath      = [string]$baselineSnap.Path
+        critical          = [int]$counts.Critical
+        high              = [int]$counts.High
+        medium            = [int]$counts.Medium
+        low               = [int]$counts.Low
+        baselineCoverage  = [PSCustomObject]@{
+            diffPathCount     = [int](Get-MetraProp -Object $baselineSnap -Name 'DiffPathCount' -Default 0)
+            manifestPathCount = [int](Get-MetraProp -Object $baselineSnap -Name 'ManifestPathCount' -Default 0)
+            omittedPaths      = @((Get-MetraProp -Object $baselineSnap -Name 'OmittedPaths' -Default @()))
+        }
+    }
+    $state.phase = 'AwaitingFix'
+
+    Write-MetraInspectReviewRoundSummary -Round $roundNum -Counts $counts
+    if ($isVerify) {
+        Write-Host 'Verify pass accepted (no regression).' -ForegroundColor Green
+        $state.completedCycles = [int]$state.completedCycles + 1
+    }
+
+    $previousVerify = $state.lastVerifyCounts
+    $term = Resolve-MetraInspectReviewTermination -LatestCounts $counts -CompletedCycles ([int]$state.completedCycles) -PreviousVerifyCounts $previousVerify -MaxLoops $MaxLoops
+    if ($isVerify) {
+        $state.lastVerifyCounts = [PSCustomObject]@{
+            Critical = [int]$counts.Critical
+            High     = [int]$counts.High
+            Medium   = [int]$counts.Medium
+            Low      = [int]$counts.Low
+        }
+    }
+    if ($term.Complete) {
+        $state.active = $false
+        $state.phase = $null
+        $state.TerminationReason = [string]$term.TerminationReason
+        $null = Save-MetraInspectReviewLoopState @loopShouldProcess -SlotKey $slotKey -State $state
+        Add-MetraInspectReviewLoopHistoryEntry @loopShouldProcess -State $state
+        Write-MetraInspectReviewLoopFinalSummary -State $state
+        return $state
+    }
+
+    $fixQueuePath = Export-MetraInspectReviewFixQueue -SlotKey $slotKey -Report $report -RoundNum $roundNum
+    $null = Save-MetraInspectReviewLoopState @loopShouldProcess -SlotKey $slotKey -State $state
+    Write-MetraInspectReviewFixGuidance -FixQueuePath $fixQueuePath -RunUntilGoal:([bool]$state.runUntilGoal)
+    return $state
+}
+
 function Show-MetraInspectCli {
     <#
     .SYNOPSIS
@@ -2072,6 +3073,9 @@ function Show-MetraInspectCli {
     $nameFromRest = $null
     $mode = 'diff'
     $packMode = $null
+    $reset = $false
+    $runAll = $false
+    $maxLoops = 0
 
     $i = 0
     if ($argsRest.Count -gt 0 -and $argsRest[0] -ieq 'pack-only') {
@@ -2079,6 +3083,10 @@ function Show-MetraInspectCli {
         $i = 1
         if ($argsRest.Count -gt 1 -and $argsRest[1] -ieq 'plan') {
             $packMode = 'plan'
+            $i = 2
+        }
+        elseif ($argsRest.Count -gt 1 -and $argsRest[1] -ieq 'agents') {
+            $packMode = 'agents'
             $i = 2
         }
         else {
@@ -2100,9 +3108,32 @@ function Show-MetraInspectCli {
         $mode = 'plan'
         $i = 1
     }
+    elseif ($argsRest.Count -gt 0 -and $argsRest[0] -ieq 'loop') {
+        $mode = 'loop'
+        $i = 1
+    }
 
     while ($i -lt $argsRest.Count) {
         $tok = [string]$argsRest[$i]
+        if ($mode -eq 'loop' -and $tok -ieq '-Reset') {
+            $reset = $true
+            $i++
+            continue
+        }
+        if ($mode -eq 'loop' -and $tok -ieq '-RunAll') {
+            $runAll = $true
+            $i++
+            continue
+        }
+        if ($mode -eq 'loop' -and $tok -ieq '-MaxLoops' -and ($i + 1) -lt $argsRest.Count) {
+            $parsedMaxLoops = 0
+            if (-not [int]::TryParse([string]$argsRest[$i + 1], [ref]$parsedMaxLoops) -or $parsedMaxLoops -lt 1 -or $parsedMaxLoops -gt 20) {
+                throw 'inspect loop -MaxLoops must be an integer from 1 to 20.'
+            }
+            $maxLoops = $parsedMaxLoops
+            $i += 2
+            continue
+        }
         if ($tok -ieq '-Latest') {
             $latest = $true
             $i++
@@ -2150,6 +3181,16 @@ function Show-MetraInspectCli {
         }
         'plan' {
             return Invoke-MetraInspectPlan -Name $projectName -Latest:$latest -Path $planPath -Fragment $fragment @common
+        }
+        'loop' {
+            $loopParams = @{
+                Name = $projectName
+                Base = $baseRev
+                Reset = $reset
+                RunAll = $runAll
+            }
+            if ($maxLoops -gt 0) { $loopParams.MaxLoops = $maxLoops }
+            return Invoke-MetraInspectReviewLoop @loopParams @common
         }
         default {
             return Invoke-MetraInspectDiff -Name $projectName -Base $baseRev @common

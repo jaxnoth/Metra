@@ -20,6 +20,13 @@ Entry shape:
 
 ---
 
+## 2026-08-14 - Desk model for context and durable knowledge
+
+- Decision: Metra treats portfolio knowledge as a **desk**, not a monolith. One tiny **index** per scope (registry row, `routing` / `ctx`, Decision Registry search, stub `AGENTS.md`) says what exists and where it lives. **Cabinet files** hold detail: on-demand playbooks, skills, solutions, single registry entries, `Decisions.md` sections. Agents read the index first, then only the named relevant file(s). Cabinet files stay small (target under ~100 lines, about two pages). Rules that must not be missed belong at the top of always-on index material (persona, routing, ceilings), not buried in cabinet middles.
+- Durable writes classify home first, dedupe (Decision Registry fingerprint, Capture `derivedFrom`), update or create one small file, then update the index pointer. No auto-promote into always-on context. No Universal Memory Engine. Decision Registry, Capture, and `decisions harvest` remain retrieve-on-demand with bounded hit counts - never load the full ledger into chat.
+- Why: Context rot comes from volume in the static prefix (especially multi-root full `AGENTS.md` loads), not from index-first retrieval. This scar is the product shape for **G2 / agent lane A2** (lean stubs + on-demand skills) and aligns with the context-engineering crosswalk in [Agentic-Maturity.md](Agentic-Maturity.md).
+- See: [Context-Routing.md](Context-Routing.md) (Desk model); gitignored `Future-Development.local.md` (A2, A4, A14); `.\metra.ps1 routing`; `.\metra.ps1 ctx`; `.\metra.ps1 decisions search`
+
 ## 2026-08-12 - Azure DevOps remote evidence
 
 - Decision: Metra exposes read-only Azure DevOps remote evidence via `.\metra.ps1 azdo` (status, repos, get, gaps, tree, search, ideas). Auth uses `METRA_AZDO_PAT` or gitignored `docs/azdo.local.json`; REST pins `api-version=7.1` and resolves each repo default branch from the API.
@@ -40,6 +47,28 @@ Entry shape:
 - Inspect fails closed for empty diffs, missing or ambiguous plans, ambiguous project roots, unavailable model transport, and non-JSON model output. It must not produce fake-success reports.
 - Why: Daily plan and change assessment needs a Metra-native advisory path without forcing awkward full-path copy. Keeping Inspect recommend-only and fail-closed preserves the Observe → Recommend → Human affirms pattern while calibration determines whether Metra Inspect becomes trustworthy enough to narrow the Bing gate later.
 - See: `.\metra.ps1 inspect`; `.\metra.ps1 inspect plan`; `.\metra.ps1 inspect plan -Latest`; `.\metra.ps1 inspect pack`; `scripts/private/Inspect.ps1`
+
+## 2026-08-14 - Metra Inspect goal-based review loop
+
+- Decision: `.\metra.ps1 inspect loop` tracks a persisted goal-based review session per project. Success is done-when severity (Critical=0, High=0, Medium<=2), not a fixed number of passes. MaxLoops=5 is runaway protection only; reaching it is not success. Stall detection stops after two consecutive rounds with unchanged severity counts (Convergence detected). Grades A-D are informational only.
+- Each round prints Critical/High/Medium/Low counts, then on completion: Review Grade, Loops Used, Round Trend, Termination Reason. Metrics persist to `review-loop.json` and append to `review-loop-history.jsonl` (LoopsUsed, FinalGrade, severity counts, TerminationReason) for future reporting.
+- Recommend-only unchanged: no auto-fix, no lowered write gates, human affirms fixes in chat between loop invocations. Default is one engine round per CLI call; `-RunAll` runs up to MaxLoops in one process for testing.
+- Why: Fixed five-pass loops optimize for iteration count, not defect reduction. Goal-based termination matches A1 judge philosophy while preserving chat gate and engine independence.
+- See: `.\metra.ps1 inspect loop`; `scripts/private/Inspect.ps1`; `.cursor/rules/metra-inspect-loop.mdc`; `AGENTS.md` Inspect section
+
+## 2026-08-14 - Metra Inspect loop regression revert semantics
+
+- Decision: On severity regression during `inspect loop` verify, `Restore-MetraInspectReviewGitBaseline` restores **manifest-listed baseline files only** (copy back or remove when absent from baseline snapshot). Diff-scoped files **not** in the assess manifest are **left unchanged**; the CLI emits a **warning** listing extras. It does **not** auto-delete new untracked files created during a fix batch.
+- Why: Full tree rollback that deletes unlisted files is surprising operator behavior and can destroy useful work (for example a new test file added mid-round). Manifest-only restore plus warn preserves the safety net for known baseline paths while keeping Inspect a verifier, not a git reset.
+- Inspect reviewers must treat manifest-only restore and "extras left unchanged" warnings as **intentional**, not High/Medium defects. Flag missing path containment, untrusted `baselinePath`, or resume root mismatch instead.
+- Baseline save warns (does not fail) when inspect-scope diff paths are omitted from the manifest (non-leaf or missing on disk). `pendingBaseline.baselineCoverage` records diffPathCount, manifestPathCount, and omittedPaths while `inputHash` remains the full diff hash for verify-skip detection.
+- See: `Restore-MetraInspectReviewGitBaseline`; `Save-MetraInspectReviewGitBaseline`; `docs/Decisions.md` (this entry); `Build-MetraInspectPrompt` review-loop rubric
+
+## 2026-08-14 - A2 desk split pilot (Colleague)
+
+- Decision: Phase 3 A2 pilot splits `Colleague/AGENTS.md` into a stub index (under 100 lines) plus `docs/playbooks/*.md` cabinet files. Procedures, done-when tables, and command catalogs move to playbooks; ceilings and playbook index stay in the stub.
+- Why: Colleague was 312 mounted lines in default context; pilot proves footprint reduction and index-first retrieval before TicketTracker / Metra splits. Playbooks are not always-on.
+- See: `Colleague/AGENTS.md`; `Colleague/docs/playbooks/`; [AGENTS-Authoring.md](AGENTS-Authoring.md)
 
 ## 2026-08-12 - Metra Inspect coding loop (default agent workflow)
 

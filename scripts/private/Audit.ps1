@@ -57,6 +57,154 @@ function Get-MetraAuditSuggestedTriggersFromText {
     )
 }
 
+
+function Get-MetraAgentsLineBudget {
+    <#
+    .SYNOPSIS
+        Default-context AGENTS stub line budget from metra.config.json audit.agentsLineBudget.
+    #>
+    [CmdletBinding()]
+    param()
+
+    $default = 100
+    try {
+        $cfg = Get-MetraConfig
+        $audit = Get-MetraProp -Object $cfg -Name 'audit' -Default $null
+        $budget = Get-MetraProp -Object $audit -Name 'agentsLineBudget' -Default $null
+        if ($null -ne $budget) {
+            $parsed = 0
+            if ([int]::TryParse([string]$budget, [ref]$parsed) -and $parsed -gt 0) {
+                return $parsed
+            }
+            Write-Warning "Invalid audit.agentsLineBudget '$budget'; using default $default."
+        }
+    }
+    catch {
+        # Missing config falls back to default budget.
+    }
+    return $default
+}
+
+function Get-MetraFilePhysicalLineCount {
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory)][string]$Path
+    )
+
+    if (-not (Test-Path -LiteralPath $Path)) { return 0 }
+    return @((Get-Content -LiteralPath $Path -ErrorAction SilentlyContinue)).Count
+}
+
+function Test-MetraCursorRuleAlwaysApply {
+    <#
+    .SYNOPSIS
+        True when a .cursor/rules/*.mdc front matter sets alwaysApply: true.
+    #>
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory)][string]$Path
+    )
+
+    if (-not (Test-Path -LiteralPath $Path)) { return $false }
+    $lines = @(Get-Content -LiteralPath $Path -ErrorAction SilentlyContinue)
+    $inFrontMatter = $false
+    foreach ($line in $lines) {
+        if ($line -eq '---') {
+            if (-not $inFrontMatter) {
+                $inFrontMatter = $true
+                continue
+            }
+            break
+        }
+        if (-not $inFrontMatter) { continue }
+        if ($line -match '(?i)^alwaysApply:\s*true\s*$') { return $true }
+        if ($line -match '(?i)^alwaysApply:\s*false\s*$') { return $false }
+    }
+    return $false
+}
+
+function Get-MetraAgentsLineAuditForPath {
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory)][string]$AgentsPath,
+        [int]$Budget = 0
+    )
+
+    if ($Budget -le 0) { $Budget = Get-MetraAgentsLineBudget }
+    if (-not (Test-Path -LiteralPath $AgentsPath)) {
+        return [pscustomobject]@{
+            LineCount = 0
+            Budget    = $Budget
+            Status    = 'missing'
+            Message   = 'AGENTS.md: missing'
+        }
+    }
+
+    $lines = Get-MetraFilePhysicalLineCount -Path $AgentsPath
+    $status = if ($lines -gt $Budget) { 'WARN' } else { 'OK' }
+    $message = if ($status -eq 'WARN') {
+        "AGENTS.md: $lines lines WARN over budget $Budget"
+    }
+    else {
+        "AGENTS.md: $lines lines OK budget $Budget"
+    }
+
+    return [pscustomobject]@{
+        LineCount = $lines
+        Budget    = $Budget
+        Status    = $status
+        Message   = $message
+    }
+}
+
+function Get-MetraContextFootprintEstimate {
+    <#
+    .SYNOPSIS
+        Report-only estimate of Metra-controlled default-context prefix size.
+    #>
+    [CmdletBinding()]
+    param(
+        [AllowEmptyCollection()][object[]]$Projects = @()
+    )
+
+    $rulesLines = 0
+    $seenRulePaths = [System.Collections.Generic.HashSet[string]]::new([StringComparer]::OrdinalIgnoreCase)
+
+    $scanRoots = New-Object System.Collections.Generic.List[string]
+    [void]$scanRoots.Add((Get-MetraRoot))
+    foreach ($project in @($Projects)) {
+        if ($null -ne $project.Path -and -not [string]::IsNullOrWhiteSpace([string]$project.Path)) {
+            [void]$scanRoots.Add([string]$project.Path)
+        }
+    }
+
+    foreach ($root in @($scanRoots | Select-Object -Unique)) {
+        $rulesDir = Join-Path $root '.cursor\rules'
+        if (-not (Test-Path -LiteralPath $rulesDir)) { continue }
+        foreach ($ruleFile in @(Get-ChildItem -LiteralPath $rulesDir -Filter '*.mdc' -File -ErrorAction SilentlyContinue)) {
+            if (-not $seenRulePaths.Add($ruleFile.FullName)) { continue }
+            if (Test-MetraCursorRuleAlwaysApply -Path $ruleFile.FullName) {
+                $rulesLines += Get-MetraFilePhysicalLineCount -Path $ruleFile.FullName
+            }
+        }
+    }
+
+    $agentsLines = 0
+    foreach ($project in @($Projects)) {
+        if ($null -eq $project.Path -or [string]::IsNullOrWhiteSpace([string]$project.Path)) { continue }
+        $agentsPath = Join-Path $project.Path 'AGENTS.md'
+        if (Test-Path -LiteralPath $agentsPath) {
+            $agentsLines += Get-MetraFilePhysicalLineCount -Path $agentsPath
+        }
+    }
+
+    return [pscustomobject]@{
+        AlwaysApplyRulesLines = $rulesLines
+        MountedAgentsLines    = $agentsLines
+        TotalEstimated        = $rulesLines + $agentsLines
+    }
+}
+
 function Get-MetraRouteMetadataIssues {
     <#
     .SYNOPSIS
@@ -237,6 +385,7 @@ function Invoke-MetraProjectContextAudit {
 
     $registry = Get-MetraProjectRegistry
     $projects = @(Resolve-MetraProjectSet -Filter $Filter -Name $Name -Root $Root)
+    $agentsLineBudget = Get-MetraAgentsLineBudget
     $generatedHints = Get-MetraGeneratedPathHints
     # DriftFindings = actionable finding rows; DriftProjects = distinct projects with drift.
     $driftFindings = 0
@@ -286,6 +435,9 @@ function Invoke-MetraProjectContextAudit {
         $hasAgents = Test-Path -LiteralPath (Join-Path $project.Path 'AGENTS.md')
         $hasIgnore = Test-Path -LiteralPath (Join-Path $project.Path '.cursorignore')
         $hasReadme = Test-Path -LiteralPath (Join-Path $project.Path 'README.md')
+
+        $agentsPath = Join-Path $project.Path 'AGENTS.md'
+        $agentsLineAudit = Get-MetraAgentsLineAuditForPath -AgentsPath $agentsPath -Budget $agentsLineBudget
 
         if (-not $inRegistry) {
             $findings += 'Missing from registry (projects.json or projects.local.json)'
@@ -438,6 +590,10 @@ function Invoke-MetraProjectContextAudit {
             Findings          = $findings
             Advisories        = $advisories
             SuggestedTriggers = $suggestedTriggers
+            AgentsLineCount   = $agentsLineAudit.LineCount
+            AgentsLineBudget  = $agentsLineAudit.Budget
+            AgentsLineStatus  = $agentsLineAudit.Status
+            AgentsLineMessage = $agentsLineAudit.Message
             Drift             = ($findings.Count -gt 0 -or -not $inRegistry)
         }
         $reports += $report
@@ -447,12 +603,19 @@ function Invoke-MetraProjectContextAudit {
                 Write-AuditHost ("DRIFT: {0} ({1})" -f $project.Name, $project.Root) -ForegroundColor Yellow
                 foreach ($f in $findings) { Write-AuditHost ("  - {0}" -f $f) }
             }
+            elseif ($agentsLineAudit.Status -eq 'WARN') {
+                Write-AuditHost ("WARN {0} AGENTS.md {1} lines exceeds budget {2}" -f $project.Name, $agentsLineAudit.LineCount, $agentsLineAudit.Budget) -ForegroundColor Yellow
+            }
             continue
         }
 
         Write-AuditHost ""
         Write-AuditHost ("==== {0} ({1}) ====" -f $project.Name, $project.Root) -ForegroundColor Cyan
         Write-AuditHost ("Registry: {0} | AGENTS.md: {1} | .cursorignore: {2}{3}" -f $inRegistry, $hasAgents, $hasIgnore, $(if ($lightAudit) { ' | light scan' } else { '' }))
+        if ($hasAgents) {
+            $agentsColor = if ($agentsLineAudit.Status -eq 'WARN') { [ConsoleColor]::Yellow } else { [ConsoleColor]::Green }
+            Write-AuditHost $agentsLineAudit.Message -ForegroundColor $agentsColor
+        }
         if ($generatedHits.Count -gt 0) {
             Write-AuditHost ("Generated/cache: {0}" -f ($generatedHits -join ', '))
         }
@@ -484,6 +647,16 @@ function Invoke-MetraProjectContextAudit {
         }
     }
 
+    $contextFootprint = Get-MetraContextFootprintEstimate -Projects $projects
+    if (-not $DriftOnly) {
+        Write-AuditHost ''
+        Write-AuditHost 'Context Footprint Estimate'
+        Write-AuditHost '--------------------------'
+        Write-AuditHost ("AlwaysApply rules: {0} lines" -f $contextFootprint.AlwaysApplyRulesLines)
+        Write-AuditHost ("Mounted AGENTS:    {0} lines" -f $contextFootprint.MountedAgentsLines)
+        Write-AuditHost ("Total estimated:   {0} lines" -f $contextFootprint.TotalEstimated)
+    }
+
     $metadataFindings = @(Get-MetraRouteMetadataIssues)
     Write-AuditHost ''
     Write-RouteMetadataAdvisories -Findings $metadataFindings
@@ -498,6 +671,7 @@ function Invoke-MetraProjectContextAudit {
         }
     }
     $driftProjects = $driftProjectKeys.Count
+    $agentsLineWarnCount = @($reports | Where-Object { $_.AgentsLineStatus -eq 'WARN' }).Count
 
     $summary = [PSCustomObject]@{
         ProjectCount     = @($reports).Count
@@ -507,13 +681,16 @@ function Invoke-MetraProjectContextAudit {
         DriftOnly        = [bool]$DriftOnly
         MetadataOnly     = $false
         MetadataFindings = $metadataFindings
-        MetadataCount    = $metadataFindings.Count
-        Reports          = $reports
+        MetadataCount           = $metadataFindings.Count
+        AgentsLineBudget        = $agentsLineBudget
+        AgentsLineWarnCount     = $agentsLineWarnCount
+        ContextFootprintEstimate = $contextFootprint
+        Reports                 = $reports
     }
 
     if ($DriftOnly) {
         Write-AuditHost ""
-        Write-AuditHost ("Drift projects: {0}; drift findings: {1}" -f $driftProjects, $driftFindings) -ForegroundColor $(if ($driftFindings -gt 0 -or $driftProjects -gt 0) { 'Yellow' } else { 'Green' })
+        Write-AuditHost ("Drift projects: {0}; drift findings: {1}; AGENTS budget WARN: {2} (advisory)" -f $driftProjects, $driftFindings, $agentsLineWarnCount) -ForegroundColor $(if ($driftFindings -gt 0 -or $driftProjects -gt 0) { 'Yellow' } else { 'Green' })
         if ($driftFindings -gt 0 -or $driftProjects -gt 0) {
             $global:LASTEXITCODE = 1
         }

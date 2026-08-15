@@ -110,6 +110,7 @@
         'Invoke-MetraAskEngine',
         'Start-MetraAskEngine',
         'Stop-MetraAskEngine',
+        'Restart-MetraAskEngine',
         'Get-MetraDeskPreferences',
         'Set-MetraDeskPreferences',
         'Get-MetraOpsFallbackPort',
