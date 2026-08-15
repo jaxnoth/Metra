@@ -300,6 +300,69 @@ function Get-MetraAskEnginePidFile {
     return Join-Path $dir "ask-engine-$Port.pid"
 }
 
+function Get-MetraAskEngineLogPath {
+    param(
+        [int]$Port = 7381,
+        [ValidateSet('stderr', 'stdout', 'base')]
+        [string]$Stream = 'stderr'
+    )
+
+    $dir = Join-Path $env:LOCALAPPDATA 'Metra\logs'
+    if (-not (Test-Path -LiteralPath $dir)) {
+        $null = New-Item -ItemType Directory -Path $dir -Force
+    }
+    switch ($Stream) {
+        'stdout' { return Join-Path $dir "ask-engine-$Port.out.log" }
+        'base' { return Join-Path $dir "ask-engine-$Port" }
+        default { return Join-Path $dir "ask-engine-$Port.err.log" }
+    }
+}
+
+function Get-MetraAskCursorSidecarListenerProcessIds {
+    <#
+    .SYNOPSIS
+        Returns Metra Cursor sidecar node PIDs listening on the Ask port (orphan recovery).
+    #>
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory)][int]$Port
+    )
+
+    $pids = New-Object System.Collections.Generic.List[int]
+    try {
+        $conns = @(Get-NetTCPConnection -LocalPort $Port -State Listen -ErrorAction Stop)
+        foreach ($conn in $conns) {
+            $localAddress = [string]$conn.LocalAddress
+            if ($localAddress -notin @('127.0.0.1', '::1')) { continue }
+            $listenerPid = [int]$conn.OwningProcess
+            if ($listenerPid -le 0 -or $listenerPid -eq $PID) { continue }
+            if (-not (Test-MetraAskCursorSidecarProcessId -ProcessId $listenerPid)) { continue }
+            if (-not $pids.Contains($listenerPid)) {
+                [void]$pids.Add($listenerPid)
+            }
+        }
+    }
+    catch {
+        $patterns = @(
+            "127\.0\.0\.1:$Port\s+0\.0\.0\.0:0\s+LISTENING\s+(\d+)",
+            "\[\:\:1\]:$Port\s+\[\:\:\]:0\s+LISTENING\s+(\d+)"
+        )
+        foreach ($pattern in $patterns) {
+            foreach ($line in @(netstat -ano | Select-String -Pattern $pattern)) {
+                $m = [regex]::Match([string]$line, $pattern)
+                if (-not $m.Success) { continue }
+                $listenerPid = [int]$m.Groups[1].Value
+                if ($listenerPid -le 0 -or $listenerPid -eq $PID) { continue }
+                if (-not (Test-MetraAskCursorSidecarProcessId -ProcessId $listenerPid)) { continue }
+                if (-not $pids.Contains($listenerPid)) {
+                    [void]$pids.Add($listenerPid)
+                }
+            }
+        }
+    }
+    return @($pids)
+}
+
 function Get-MetraAskEngineBaseUrl {
     param([string]$MetraRoot = (Get-MetraRoot))
 
@@ -903,7 +966,7 @@ function New-MetraAskEngineErrorResult {
 function Test-MetraAskCursorSidecarProcessId {
     <#
     .SYNOPSIS
-        True when a PID looks like the Metra Cursor Ask node sidecar (stale PID reuse guard).
+        True when a PID is provably the Metra Cursor Ask node sidecar (fail closed when CommandLine is unavailable).
     #>
     [CmdletBinding()]
     param([Parameter(Mandatory)][int]$ProcessId)
@@ -916,14 +979,10 @@ function Test-MetraAskCursorSidecarProcessId {
     try {
         $cim = Get-CimInstance -ClassName Win32_Process -Filter "ProcessId=$ProcessId" -ErrorAction SilentlyContinue
         $cmd = if ($cim) { [string]$cim.CommandLine } else { '' }
-        if (-not [string]::IsNullOrWhiteSpace($cmd)) {
-            return [bool]($cmd -match '(?i)(engines[\\/]+cursor|server\.mjs)')
-        }
+        if ([string]::IsNullOrWhiteSpace($cmd)) { return $false }
+        return [bool]($cmd -match '(?i)(engines[\\/]+cursor|server\.mjs)')
     }
-    catch { }
-
-    # No command line available - process name node is best-effort allow.
-    return $true
+    catch { return $false }
 }
 
 function Start-MetraAskEngine {
@@ -955,6 +1014,8 @@ function Start-MetraAskEngine {
     }
 
     $pidFile = Get-MetraAskEnginePidFile -Port $settings.cursorPort
+    $logOut = Get-MetraAskEngineLogPath -Port $settings.cursorPort -Stream stdout
+    $logErr = Get-MetraAskEngineLogPath -Port $settings.cursorPort -Stream stderr
     $proc = $null
     try {
         # Temporary process environment: Windows PowerShell Start-Process lacks per-child -Environment.
@@ -968,7 +1029,9 @@ function Start-MetraAskEngine {
         try {
             $proc = Start-Process -FilePath $nodePath -ArgumentList @($sidecar) `
                 -WorkingDirectory (Split-Path -Parent $sidecar) `
-                -PassThru -WindowStyle Hidden
+                -PassThru -WindowStyle Hidden `
+                -RedirectStandardOutput $logOut `
+                -RedirectStandardError $logErr
         }
         finally {
             if ($null -eq $previous) { Remove-Item Env:CURSOR_API_KEY -ErrorAction SilentlyContinue }
@@ -977,6 +1040,9 @@ function Start-MetraAskEngine {
             Remove-Item Env:METRA_ASK_MODEL -ErrorAction SilentlyContinue
             Remove-Item Env:METRA_ASK_OPTIMIZE_FOR -ErrorAction SilentlyContinue
             Remove-Item Env:METRA_ASK_ENGINE -ErrorAction SilentlyContinue
+        }
+        if (-not $proc) {
+            throw 'Ask Cursor sidecar Start-Process returned no process handle.'
         }
         Set-Content -LiteralPath $pidFile -Value $proc.Id -Encoding ASCII
 
@@ -1001,37 +1067,71 @@ function Start-MetraAskEngine {
 }
 
 function Stop-MetraAskEngine {
-    [CmdletBinding()]
+    [CmdletBinding(SupportsShouldProcess = $true, ConfirmImpact = 'Medium')]
     param(
         [string]$MetraRoot = (Get-MetraRoot),
-        [int]$Port = 0
+        [int]$Port = 0,
+        [switch]$IncludePortListeners
     )
 
     $settings = Get-MetraAskSettings -MetraRoot $MetraRoot
     if ($Port -le 0) { $Port = $settings.cursorPort }
 
     $pidFile = Get-MetraAskEnginePidFile -Port $Port
-    $target = $null
+    $targets = New-Object System.Collections.Generic.List[int]
+    $recordedPid = $null
+    $removeStalePidFile = $false
     if (Test-Path -LiteralPath $pidFile) {
         $recorded = 0
         if ([int]::TryParse((Get-Content -LiteralPath $pidFile -Raw).Trim(), [ref]$recorded)) {
             if ($recorded -ne $PID -and (Test-MetraAskCursorSidecarProcessId -ProcessId $recorded)) {
-                $target = $recorded
+                [void]$targets.Add($recorded)
+                $recordedPid = $recorded
             }
             elseif ($recorded -ne $PID -and (Get-Process -Id $recorded -ErrorAction SilentlyContinue)) {
                 Write-Warning "Ask engine PID file $recorded is not a Metra Cursor sidecar node process; not stopping it."
+                $removeStalePidFile = $true
+            }
+            else {
+                $removeStalePidFile = $true
             }
         }
-        Remove-Item -LiteralPath $pidFile -Force -ErrorAction SilentlyContinue
+        else {
+            $removeStalePidFile = $true
+        }
     }
 
-    if ($target) {
+    if ($IncludePortListeners) {
+        foreach ($listenerPid in @(Get-MetraAskCursorSidecarListenerProcessIds -Port $Port)) {
+            if (-not $targets.Contains($listenerPid)) {
+                [void]$targets.Add($listenerPid)
+            }
+        }
+    }
+
+    $stoppedRecorded = $false
+    foreach ($target in @($targets)) {
+        if (-not $PSCmdlet.ShouldProcess("Ask engine process $target on port $Port", 'Stop')) { continue }
         try {
             Stop-Process -Id $target -Force -ErrorAction Stop
             Write-Host "Stopped Ask engine on port $Port (process $target)." -ForegroundColor DarkGray
+            if ($null -ne $recordedPid -and $target -eq $recordedPid) {
+                $stoppedRecorded = $true
+            }
         }
         catch {
             Write-Warning "Could not stop Ask engine process $target - $($_.Exception.Message)"
+        }
+    }
+
+    if ($stoppedRecorded -and (Test-Path -LiteralPath $pidFile)) {
+        if ($PSCmdlet.ShouldProcess($pidFile, 'Remove Ask engine PID file')) {
+            Remove-Item -LiteralPath $pidFile -Force -ErrorAction SilentlyContinue
+        }
+    }
+    elseif ($removeStalePidFile -and (Test-Path -LiteralPath $pidFile)) {
+        if ($PSCmdlet.ShouldProcess($pidFile, 'Remove stale Ask engine PID file')) {
+            Remove-Item -LiteralPath $pidFile -Force -ErrorAction SilentlyContinue
         }
     }
 }
@@ -1058,7 +1158,7 @@ function Restart-MetraAskEngine {
 
     $pidBefore = Get-MetraAskEngineRecordedProcessId -MetraRoot $MetraRoot
 
-    $null = Stop-MetraAskEngine -MetraRoot $MetraRoot
+    $null = Stop-MetraAskEngine -MetraRoot $MetraRoot -IncludePortListeners -Confirm:$false
 
     $deadline = [datetime]::UtcNow.AddSeconds(10)
     while ([datetime]::UtcNow -lt $deadline) {
@@ -1066,7 +1166,17 @@ function Restart-MetraAskEngine {
         Start-Sleep -Milliseconds 250
     }
     if (Test-MetraAskEngineHealth -MetraRoot $MetraRoot -TimeoutSec 1) {
-        Write-Warning 'Ask sidecar still healthy after stop; restart did not recycle the process.'
+        Write-Warning 'Ask sidecar still healthy after stop; forcing port listener recycle.'
+        $null = Stop-MetraAskEngine -MetraRoot $MetraRoot -IncludePortListeners -Confirm:$false
+        $deadline = [datetime]::UtcNow.AddSeconds(10)
+        while ([datetime]::UtcNow -lt $deadline) {
+            if (-not (Test-MetraAskEngineHealth -MetraRoot $MetraRoot -TimeoutSec 1)) { break }
+            Start-Sleep -Milliseconds 250
+        }
+    }
+    if (Test-MetraAskEngineHealth -MetraRoot $MetraRoot -TimeoutSec 1) {
+        $logErr = Get-MetraAskEngineLogPath -Port $settings.cursorPort -Stream stderr
+        Write-Warning "Ask sidecar still healthy after forced stop; restart did not recycle the process. See $logErr (and matching .out.log)"
         $stale = Get-MetraAskCapability -MetraRoot $MetraRoot
         $stale | Add-Member -NotePropertyName reason -NotePropertyValue 'restart_stale_process' -Force
         $stale | Add-Member -NotePropertyName available -NotePropertyValue $false -Force
@@ -1176,7 +1286,7 @@ function Set-MetraCursorApiKey {
                 }
             }
             elseif ($restart.sidecarRestartWarning) {
-                try { $null = Stop-MetraAskEngine } catch { }
+                try { $null = Stop-MetraAskEngine -IncludePortListeners -Confirm:$false } catch { }
                 try { $null = Start-MetraAskEngine } catch { }
                 $result.status = 'failed'
                 $restart.sidecarRestarted = $false

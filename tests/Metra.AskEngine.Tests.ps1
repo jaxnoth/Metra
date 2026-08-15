@@ -420,6 +420,34 @@ Describe 'Ask engine lifecycle and routing' {
         }
     }
 
+    It 'Test-MetraAskCursorSidecarProcessId fails closed when CommandLine is unavailable' {
+        InModuleScope Metra {
+            Mock Get-Process { [PSCustomObject]@{ ProcessName = 'node' } }
+            Mock Get-CimInstance { return $null }
+            Test-MetraAskCursorSidecarProcessId -ProcessId 4242 | Should -BeFalse
+        }
+    }
+
+    It 'Stop-MetraAskEngine -WhatIf does not stop orphan port listeners or remove PID file' {
+        InModuleScope Metra {
+            $pidFile = Join-Path $env:TEMP ("ask-engine-" + [guid]::NewGuid().ToString('n') + '.pid')
+            Set-Content -LiteralPath $pidFile -Value '4242' -Encoding ASCII
+            Mock Get-MetraAskEnginePidFile { $pidFile }
+            Mock Get-MetraAskSettings { [PSCustomObject]@{ engine = 'cursor'; cursorPort = 7381 } }
+            Mock Get-MetraAskCursorSidecarListenerProcessIds { return @(4242) }
+            Mock Test-MetraAskCursorSidecarProcessId { param($ProcessId) $ProcessId -eq 4242 }
+            Mock Stop-Process { throw 'Stop-Process should not run under WhatIf' }
+            try {
+                { Stop-MetraAskEngine -IncludePortListeners -WhatIf } | Should -Not -Throw
+                Should -Invoke Stop-Process -Times 0
+                Test-Path -LiteralPath $pidFile | Should -BeTrue
+            }
+            finally {
+                Remove-Item -LiteralPath $pidFile -Force -ErrorAction SilentlyContinue
+            }
+        }
+    }
+
     It 'Get-MetraAskRouteCwd matches project names case-insensitively' {
         $projPath = Join-Path $TestDrive 'TicketTrackerProj'
         New-Item -ItemType Directory -Path $projPath -Force | Out-Null
@@ -451,7 +479,7 @@ Describe 'Ask engine lifecycle and routing' {
     It 'restart stops then starts the sidecar' {
         InModuleScope Metra {
             Mock Get-MetraAskSettings { [PSCustomObject]@{ engine = 'cursor'; cursorPort = 7381 } }
-            Mock Stop-MetraAskEngine { $script:AskRestartStopped = $true }
+            Mock Stop-MetraAskEngine { param($IncludePortListeners) $script:AskRestartStopped = $true; $script:AskRestartIncludePort = [bool]$IncludePortListeners }
             Mock Test-MetraAskEngineHealth { $false }
             Mock Get-MetraAskEngineRecordedProcessId { return $null }
             Mock Start-MetraAskEngine {
@@ -460,10 +488,24 @@ Describe 'Ask engine lifecycle and routing' {
             }
             $script:AskRestartStopped = $false
             $script:AskRestartStarted = $false
+            $script:AskRestartIncludePort = $false
             $cap = Restart-MetraAskEngine -Confirm:$false
             $script:AskRestartStopped | Should -BeTrue
+            $script:AskRestartIncludePort | Should -BeTrue
             $script:AskRestartStarted | Should -BeTrue
             $cap.available | Should -BeTrue
+        }
+    }
+
+    It 'Stop-MetraAskEngine can stop orphan port listeners when PID file is missing' {
+        InModuleScope Metra {
+            Mock Get-MetraAskSettings { [PSCustomObject]@{ engine = 'cursor'; cursorPort = 7381 } }
+            Mock Get-MetraAskCursorSidecarListenerProcessIds { return @(4242) }
+            Mock Test-MetraAskCursorSidecarProcessId { param($ProcessId) $ProcessId -eq 4242 }
+            Mock Stop-Process { param($Id) $script:AskStoppedPid = $Id }
+            $script:AskStoppedPid = $null
+            Stop-MetraAskEngine -IncludePortListeners
+            $script:AskStoppedPid | Should -Be 4242
         }
     }
 

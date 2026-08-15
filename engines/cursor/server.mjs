@@ -503,6 +503,49 @@ function loadImagesFromRefs(rawImages) {
   return out
 }
 
+function extractRunErrorDetail(result, run) {
+  let detail = ''
+  if (typeof result?.result === 'string' && result.result.trim()) {
+    detail = result.result.trim()
+  } else if (result?.result && typeof result.result === 'object') {
+    detail = String(result.result.message || result.result.error || '').trim()
+  }
+  if (!detail && typeof run?.result === 'string' && run.result.trim()) {
+    detail = run.result.trim()
+  }
+  if (!detail && result?.requestId) {
+    detail = `requestId=${result.requestId}`
+  }
+  if (detail.length > 400) detail = `${detail.slice(0, 399)}...`
+  return detail
+}
+
+async function extractRunErrorDetailAsync(result, run) {
+  let detail = extractRunErrorDetail(result, run)
+  if (detail && !detail.startsWith('requestId=')) return detail
+  if (run && typeof run.conversation === 'function') {
+    try {
+      const turns = await run.conversation()
+      for (let i = turns.length - 1; i >= 0; i--) {
+        const turn = turns[i]
+        const text = String(turn?.text || turn?.message || turn?.content || '').trim()
+        if (text) {
+          detail = text.length > 400 ? `${text.slice(0, 399)}...` : text
+          break
+        }
+      }
+    } catch {
+      /* ignore conversation probe failures */
+    }
+  }
+  if (!detail || detail.startsWith('requestId=')) {
+    const id = result?.id || 'n/a'
+    const requestId = result?.requestId || 'n/a'
+    detail = `run ${id} failed with no SDK detail (requestId=${requestId})`
+  }
+  return detail
+}
+
 async function complete({ prompt, cwd, context, sessionId, images }) {
   const apiKey = process.env.CURSOR_API_KEY
   if (!apiKey) {
@@ -568,14 +611,7 @@ async function complete({ prompt, cwd, context, sessionId, images }) {
         : await agent.send(wrapped)
     const result = await run.wait()
     if (result.status === 'error') {
-      // Prefer SDK error text when present; otherwise keep the desk-safe fallback.
-      let detail = ''
-      if (typeof result.result === 'string' && result.result.trim()) {
-        detail = result.result.trim()
-      } else if (result.result && typeof result.result === 'object') {
-        detail = String(result.result.message || result.result.error || '').trim()
-      }
-      if (detail.length > 400) detail = `${detail.slice(0, 399)}...`
+      const detail = await extractRunErrorDetailAsync(result, run)
       const scrubbed = detail ? scrubSecretsText(detail) : { text: '' }
       const message = scrubbed.text
         ? `The Ask engine run failed: ${scrubbed.text}`
@@ -591,6 +627,7 @@ async function complete({ prompt, cwd, context, sessionId, images }) {
         status: 'error',
         runId: result.id || null,
         requestId: result.requestId || null,
+        errorDetail: scrubbed.text || null,
       }
     }
 
@@ -670,6 +707,7 @@ const server = http.createServer(async (req, res) => {
       ok: true,
       engine: ENGINE,
       model: MODEL,
+      apiKeyPresent: Boolean(process.env.CURSOR_API_KEY),
     })
     return
   }
