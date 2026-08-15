@@ -183,6 +183,9 @@ AGENTS.md: 217 lines WARN over budget 100
 Context Footprint Estimate
 --------------------------
 AlwaysApply rules: 231 lines
+  113 lines  .cursor\rules\metra-persona.mdc
+   71 lines  .cursor\rules\metra-inspect-loop.mdc
+   ...
 Mounted AGENTS:    612 lines
 Total estimated:   843 lines
 ```

@@ -95,6 +95,24 @@ function Get-MetraFilePhysicalLineCount {
     return @((Get-Content -LiteralPath $Path -ErrorAction SilentlyContinue)).Count
 }
 
+function Get-MetraPathRelativeToAuditRoot {
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory)][string]$FullPath,
+        [Parameter(Mandatory)][string]$Root
+    )
+
+    if ([string]::IsNullOrWhiteSpace($FullPath) -or [string]::IsNullOrWhiteSpace($Root)) { return $FullPath }
+    $rootNorm = $Root.TrimEnd('\', '/')
+    $sep = [System.IO.Path]::DirectorySeparatorChar
+    if ($FullPath.Equals($rootNorm, [StringComparison]::OrdinalIgnoreCase)) { return '' }
+    $prefix = $rootNorm + $sep
+    if ($FullPath.StartsWith($prefix, [StringComparison]::OrdinalIgnoreCase)) {
+        return $FullPath.Substring($prefix.Length)
+    }
+    return $FullPath
+}
+
 function Test-MetraCursorRuleAlwaysApply {
     <#
     .SYNOPSIS
@@ -168,10 +186,12 @@ function Get-MetraContextFootprintEstimate {
     )
 
     $rulesLines = 0
+    $ruleDetails = New-Object System.Collections.Generic.List[object]
     $seenRulePaths = [System.Collections.Generic.HashSet[string]]::new([StringComparer]::OrdinalIgnoreCase)
+    $metraRoot = Get-MetraRoot
 
     $scanRoots = New-Object System.Collections.Generic.List[string]
-    [void]$scanRoots.Add((Get-MetraRoot))
+    [void]$scanRoots.Add($metraRoot)
     foreach ($project in @($Projects)) {
         if ($null -ne $project.Path -and -not [string]::IsNullOrWhiteSpace([string]$project.Path)) {
             [void]$scanRoots.Add([string]$project.Path)
@@ -184,7 +204,20 @@ function Get-MetraContextFootprintEstimate {
         foreach ($ruleFile in @(Get-ChildItem -LiteralPath $rulesDir -Filter '*.mdc' -File -ErrorAction SilentlyContinue)) {
             if (-not $seenRulePaths.Add($ruleFile.FullName)) { continue }
             if (Test-MetraCursorRuleAlwaysApply -Path $ruleFile.FullName) {
-                $rulesLines += Get-MetraFilePhysicalLineCount -Path $ruleFile.FullName
+                $lineCount = Get-MetraFilePhysicalLineCount -Path $ruleFile.FullName
+                $rulesLines += $lineCount
+                $relativePath = $ruleFile.FullName
+                foreach ($candidateRoot in @($scanRoots | Select-Object -Unique | Sort-Object { $_.Length } -Descending)) {
+                    $rel = Get-MetraPathRelativeToAuditRoot -FullPath $ruleFile.FullName -Root $candidateRoot
+                    if ($rel -ne $ruleFile.FullName) {
+                        $relativePath = $rel
+                        break
+                    }
+                }
+                [void]$ruleDetails.Add([pscustomobject]@{
+                    Path  = $relativePath
+                    Lines = $lineCount
+                })
             }
         }
     }
@@ -200,6 +233,7 @@ function Get-MetraContextFootprintEstimate {
 
     return [pscustomobject]@{
         AlwaysApplyRulesLines = $rulesLines
+        AlwaysApplyRules      = @($ruleDetails | Sort-Object -Property Lines -Descending)
         MountedAgentsLines    = $agentsLines
         TotalEstimated        = $rulesLines + $agentsLines
     }
@@ -653,6 +687,9 @@ function Invoke-MetraProjectContextAudit {
         Write-AuditHost 'Context Footprint Estimate'
         Write-AuditHost '--------------------------'
         Write-AuditHost ("AlwaysApply rules: {0} lines" -f $contextFootprint.AlwaysApplyRulesLines)
+        foreach ($ruleRow in @($contextFootprint.AlwaysApplyRules)) {
+            Write-AuditHost ("  {0,4} lines  {1}" -f $ruleRow.Lines, $ruleRow.Path)
+        }
         Write-AuditHost ("Mounted AGENTS:    {0} lines" -f $contextFootprint.MountedAgentsLines)
         Write-AuditHost ("Total estimated:   {0} lines" -f $contextFootprint.TotalEstimated)
     }
