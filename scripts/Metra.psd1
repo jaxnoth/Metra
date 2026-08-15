@@ -1,6 +1,6 @@
 @{
     RootModule        = 'Metra.psm1'
-    ModuleVersion     = '0.1.13'
+    ModuleVersion     = '0.1.14'
     GUID              = 'afe44c63-0346-4acf-b723-164fb28c585d'
     Author            = 'Metra contributors'
     CompanyName       = 'Community'
