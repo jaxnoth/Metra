@@ -2014,7 +2014,7 @@ function Start-MetraOpsServer {
         }
     }
     finally {
-        try { Stop-MetraAskEngine -MetraRoot $MetraRoot } catch { }
+        try { Stop-MetraAskEngine -MetraRoot $MetraRoot -IncludePortListeners -Confirm:$false } catch { }
         try {
             if ($listener.IsListening) { $listener.Stop() }
         }
