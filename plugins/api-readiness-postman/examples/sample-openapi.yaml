@@ -1,0 +1,53 @@
+openapi: 3.0.3
+info:
+  title: Sample Widget API
+  version: 0.1.0
+  description: Intentionally weak spec for P1 smoke test (missing operationIds, error schemas, etc.)
+servers:
+  - url: https://api.example.com/v1
+paths:
+  /widgets:
+    get:
+      summary: List widgets
+      responses:
+        "200":
+          description: OK
+    post:
+      summary: Create widget
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                name:
+                  type: string
+      responses:
+        "201":
+          description: Created
+  /widgets/{id}:
+    get:
+      summary: Get widget
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: OK
+        "404":
+          description: Not found
+    delete:
+      summary: Delete widget
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "204":
+          description: Deleted

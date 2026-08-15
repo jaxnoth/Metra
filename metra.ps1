@@ -154,7 +154,7 @@ Usage:
       Session Journal. Mode B (remote OpsBaseUrl) queries HQ; -Local reads the local journal file.
       Session Journal (recent Ask conversations - continuity window, not permanent memory).
       get <sessionId> resumes/reads one session; recall "<query>" searches prompts/answers.
-  .\metra.ps1 ask engine show|set|recommend|menu
+  .\metra.ps1 ask engine show|set|restart|recommend|menu
   .\metra.ps1 ask key status|set|clear
   .\metra.ps1 ask recommend|accept [-RuntimeOnly] [-SkipInstall] [-WhatIf]
       Ask engine: Ollama recommended path; Cursor premium; enterprise when configured.
@@ -163,12 +163,15 @@ Usage:
   .\metra.ps1 coverage
       Knowledge coverage visibility (AGENTS / serves / decisions / uncovered) - counts and gap lists, not a score.
   .\metra.ps1 inspect [-Name Metra] [-Base <rev>] [-WhatIf]
+  .\metra.ps1 inspect loop [-Name Metra] [-Base <rev>] [-Reset] [-RunAll] [-MaxLoops <n>] [-WhatIf]
   .\metra.ps1 inspect plan [-Latest] [-Path <file>] [<filename-fragment>] -Name <Project> [-WhatIf]
   .\metra.ps1 inspect pack [plan] [-WhatIf]
   .\metra.ps1 inspect pack-only [-Name <Project>] [-Base <rev>] [-WhatIf]
+  .\metra.ps1 inspect pack-only agents -Name <Project> [-Base <rev>] [-WhatIf]
   .\metra.ps1 inspect pack-only plan [-Latest] [-Path <file>] [<fragment>] -Name <Project> [-WhatIf]
       pack-only: Bing comparison lane without Ask engine (scrubbed diff/plan + preamble).
       inspect pack: requires a prior inspect run; includes assessed findings.
+      inspect loop: goal-based review session (Critical/High/Medium/Low counts; stops at goal, convergence, or MaxLoops=5).
       Local AI-assisted inspection of git diffs or Cursor plans (Ask/Ollama). Recommend-only.
   .\metra.ps1 azdo status|repos|get|gaps|tree|search|ideas
       Read-only Azure DevOps remote evidence (PAT: METRA_AZDO_PAT or docs/azdo.local.json). gaps maps AzDO vs registry/disk.
@@ -695,7 +698,12 @@ switch ($Command) {
             $subArgs = @($Rest[1..($Rest.Count - 1)])
         }
         if ($sub -match '^(?i)(engine|key|recommend|accept|menu)$') {
-            $result = Invoke-MetraAskEngineCommand -Subcommand $sub -ArgsRest $subArgs
+            $askEngineParams = @{
+                Subcommand = $sub
+                ArgsRest   = $subArgs
+            }
+            if ($WhatIf) { $askEngineParams.WhatIf = $true }
+            $result = Invoke-MetraAskEngineCommand @askEngineParams
             if ($sub -match '^(?i)(recommend|accept|menu)$' -or ($sub -match '^(?i)engine$' -and $subArgs.Count -gt 0 -and $subArgs[0] -match '^(?i)(recommend|menu)$')) {
                 $result | Format-List
             }

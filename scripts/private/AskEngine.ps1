@@ -767,7 +767,8 @@ function Invoke-MetraAskEngine {
 function Convert-MetraAskCursorResponse {
     param($Response, $Settings, [string]$SessionId, $PromptScrub, $CtxScrub)
 
-    $status = [string](Get-MetraProp -Object $Response -Name 'status' -Default 'finished')
+    $statusRaw = [string](Get-MetraProp -Object $Response -Name 'status' -Default '')
+    $status = if ([string]::IsNullOrWhiteSpace($statusRaw)) { 'unknown' } else { $statusRaw.Trim() }
     if ($status -eq 'refused' -or [bool](Get-MetraProp -Object $Response -Name 'secretsRefuse' -Default $false)) {
         $refuseNotice = [string](Get-MetraProp -Object $Response -Name 'message' -Default '')
         if ([string]::IsNullOrWhiteSpace($refuseNotice)) {
@@ -791,11 +792,35 @@ function Convert-MetraAskCursorResponse {
     }
     $rawMessage = [string](Get-MetraProp -Object $Response -Name 'message' -Default '')
     $msgScrub = Invoke-MetraAskSecretsScrubText -Text $rawMessage
+    if ($msgScrub.Refuse) {
+        return New-MetraAskEngineRefuseResult -Settings $settings -SessionId $SessionId -Scrub $msgScrub -Source output
+    }
     $notice = Join-MetraAskSecretsNotices -Notices @(
         $(if ($PromptScrub.Matched) { $PromptScrub.Notice }),
         $(if ($CtxScrub.Matched) { $CtxScrub.Notice }),
         $(if ($msgScrub.Matched) { $msgScrub.Notice })
     )
+    if ($status -ne 'finished') {
+        $errMsg = [string]$msgScrub.Text
+        if ([string]::IsNullOrWhiteSpace($errMsg)) {
+            $errMsg = 'Ask engine request failed.'
+        }
+        return [PSCustomObject]@{
+            ok              = $false
+            message         = $errMsg
+            engine          = [string](Get-MetraProp -Object $Response -Name 'engine' -Default $Settings.engine)
+            model           = [string](Get-MetraProp -Object $Response -Name 'model' -Default $Settings.model)
+            sessionId       = [string](Get-MetraProp -Object $Response -Name 'sessionId' -Default $SessionId)
+            status          = $status
+            error           = 'engine_request_failed'
+            secretsRefuse   = $false
+            secretsReason   = $null
+            secretsNotice   = $notice
+            secretsScrubbed = [bool]($PromptScrub.Matched -or $CtxScrub.Matched -or $msgScrub.Matched)
+            secretsKinds    = @($PromptScrub.Kinds) + @($CtxScrub.Kinds) + @($msgScrub.Kinds)
+            scrubbedPrompt  = [string]$PromptScrub.Text
+        }
+    }
     return [PSCustomObject]@{
         ok              = $true
         message         = [string]$msgScrub.Text
@@ -1011,6 +1036,67 @@ function Stop-MetraAskEngine {
     }
 }
 
+function Restart-MetraAskEngine {
+    <#
+    .SYNOPSIS
+        Stops then starts the Cursor Ask sidecar (no-op start path for non-cursor engines).
+    #>
+    [CmdletBinding(SupportsShouldProcess = $true, ConfirmImpact = 'Medium')]
+    param([string]$MetraRoot = (Get-MetraRoot))
+
+    $settings = Get-MetraAskSettings -MetraRoot $MetraRoot
+    if ($settings.engine -ne 'cursor') {
+        return Get-MetraAskCapability -MetraRoot $MetraRoot
+    }
+
+    if (-not $PSCmdlet.ShouldProcess('Ask Cursor sidecar', 'Restart')) {
+        $cancelled = Get-MetraAskCapability -MetraRoot $MetraRoot
+        $cancelled | Add-Member -NotePropertyName available -NotePropertyValue $false -Force
+        $cancelled | Add-Member -NotePropertyName reason -NotePropertyValue 'restart_cancelled' -Force
+        return $cancelled
+    }
+
+    $pidBefore = Get-MetraAskEngineRecordedProcessId -MetraRoot $MetraRoot
+
+    $null = Stop-MetraAskEngine -MetraRoot $MetraRoot
+
+    $deadline = [datetime]::UtcNow.AddSeconds(10)
+    while ([datetime]::UtcNow -lt $deadline) {
+        if (-not (Test-MetraAskEngineHealth -MetraRoot $MetraRoot -TimeoutSec 1)) { break }
+        Start-Sleep -Milliseconds 250
+    }
+    if (Test-MetraAskEngineHealth -MetraRoot $MetraRoot -TimeoutSec 1) {
+        Write-Warning 'Ask sidecar still healthy after stop; restart did not recycle the process.'
+        $stale = Get-MetraAskCapability -MetraRoot $MetraRoot
+        $stale | Add-Member -NotePropertyName reason -NotePropertyValue 'restart_stale_process' -Force
+        $stale | Add-Member -NotePropertyName available -NotePropertyValue $false -Force
+        return $stale
+    }
+
+    $cap = Start-MetraAskEngine -MetraRoot $MetraRoot
+    $pidAfter = Get-MetraAskEngineRecordedProcessId -MetraRoot $MetraRoot
+    if ($cap.available -and $null -ne $pidBefore -and $null -ne $pidAfter -and $pidBefore -eq $pidAfter) {
+        Write-Warning "Ask sidecar restart completed but PID unchanged ($pidAfter)."
+        $cap | Add-Member -NotePropertyName reason -NotePropertyValue 'restart_same_pid' -Force
+        $cap | Add-Member -NotePropertyName available -NotePropertyValue $false -Force
+    }
+    return $cap
+}
+
+function Get-MetraAskEngineRecordedProcessId {
+    [CmdletBinding()]
+    param([string]$MetraRoot = (Get-MetraRoot))
+
+    $settings = Get-MetraAskSettings -MetraRoot $MetraRoot
+    $pidFile = Get-MetraAskEnginePidFile -Port $settings.cursorPort
+    if (-not (Test-Path -LiteralPath $pidFile)) { return $null }
+    $recorded = 0
+    if ([int]::TryParse((Get-Content -LiteralPath $pidFile -Raw).Trim(), [ref]$recorded) -and $recorded -gt 0) {
+        return $recorded
+    }
+    return $null
+}
+
 function Restart-MetraAskSidecarAfterKeyChange {
     <#
     .SYNOPSIS
@@ -1027,16 +1113,22 @@ function Restart-MetraAskSidecarAfterKeyChange {
         }
     }
     try {
-        $null = Stop-MetraAskEngine -MetraRoot $MetraRoot
-        $null = Start-MetraAskEngine -MetraRoot $MetraRoot
+        $pidBefore = Get-MetraAskEngineRecordedProcessId -MetraRoot $MetraRoot
+        $cap = Restart-MetraAskEngine -MetraRoot $MetraRoot -Confirm:$false
+        $pidAfter = Get-MetraAskEngineRecordedProcessId -MetraRoot $MetraRoot
+        $restarted = [bool]$cap.available
+        if ($restarted -and $null -ne $pidBefore -and $null -ne $pidAfter -and $pidBefore -eq $pidAfter) {
+            $restarted = $false
+        }
         return [PSCustomObject]@{
-            sidecarRestarted       = $true
-            sidecarRestartWarning  = $null
+            sidecarRestarted       = $restarted
+            sidecarRestartWarning  = $(if ($restarted) { $null } else { [string]$cap.reason })
         }
     }
     catch {
-        $msg = "Ask sidecar restart failed after key change: $($_.Exception.Message). Run Stop-MetraAskEngine; Start-MetraAskEngine manually."
+        $msg = 'Ask sidecar restart failed after key change. Run Stop-MetraAskEngine; Start-MetraAskEngine manually.'
         Write-Warning $msg
+        Write-Verbose $_.Exception.Message
         return [PSCustomObject]@{
             sidecarRestarted       = $false
             sidecarRestartWarning  = $msg

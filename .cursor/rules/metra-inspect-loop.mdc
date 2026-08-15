@@ -5,7 +5,7 @@ alwaysApply: true
 
 # Metra Inspect coding loop
 
-Default workflow when implementing **meaningful code changes** in a routed git project. Inspect stays **recommend-only**; the operator affirms fixes in chat. The CLI does not auto-fix or auto-loop.
+Default workflow when implementing **meaningful code changes** in a routed git project. Inspect assesses; the agent fixes in chat; the CLI verifies and **reverts on regression**. Bing `inspect pack` runs **after** the loop completes, not between rounds.
 
 ## When
 
@@ -18,15 +18,26 @@ Skip when:
 - Trivial one-line typo with no behavioral change (operator may still ask for inspect)
 - Ask engine unavailable - report failure; do not skip inspect silently or invent findings
 
-## Loop
+## Loop rhythm
 
-1. **Plan (before implement):** When work started from a Cursor plan, run `.\metra.ps1 inspect plan -Latest -Name <Project>` (or fragment / `-Path`). Summarize findings in chat; operator picks fix / defer / reject before coding.
-2. **Implement** the agreed batch in the routed project root only.
-3. **Diff inspect (after batch):** `.\metra.ps1 inspect -Name <Project>` from the project or Metra checkout.
-4. **Chat gate:** Post findings High first, then actionable Medium. Do **not** auto-fix from inspect output. Wait for operator picks (fix / defer / reject). Mark deferred items so they are not re-litigated every loop.
-5. **Fix only affirmed items**, then re-run the **same inspect mode** (step 3 or 1).
-6. **Stop** when: no High findings remain **and** operator says ship / good enough, or inspect returns zero actionable findings and operator agrees. Low/Info are optional unless operator wants them addressed.
-7. **Ship lane:** Metra executable changes still use `.\metra.ps1 inspect pack` and Bing as the comparison gate during calibration. Other projects: inspect loop ends at operator ship; pack/Bing optional.
+1. **Assess:** `.\metra.ps1 inspect loop -Name <Project>` (or `-Reset` for a new session). Saves a git/working-tree baseline and severity counts.
+2. **Summarize:** Post Critical and High first, then actionable Medium. Fix queue: `%LOCALAPPDATA%\Metra\inspect\<Project>\fix-queue.json`.
+3. **Fix:** Agent applies **affirmed** fixes only (operator may allow auto-fix on a full `-RunAll` session).
+4. **Verify:** Run `inspect loop` again (same session). Detects tree changes, re-assesses, and **reverts the working tree** if Critical/High/Medium regressed vs the saved baseline.
+5. **Repeat** until goal, convergence, or MaxLoops fence.
+6. **External review:** `.\metra.ps1 inspect pack` (Bing lane) **after** the loop - not between rounds.
+
+`-RunAll` marks a **full-loop session** (`runUntilGoal`): re-invoke `inspect loop -RunAll` after each fix batch until the session completes. It does **not** re-assess the same tree without fixes (that only burned Ask spend).
+
+## Stop conditions
+
+- **Goal achieved:** Critical=0, High=0, Medium<=2 (Grade A target)
+- **Convergence detected:** same severity counts two assess rounds in a row
+- **Maximum loop count reached:** MaxLoops=5 fence (not success)
+- **Regression reverted:** fix batch rolled back; session stays active for a new fix attempt
+- **Operator ship / good enough** even if goal not met (chat authority)
+
+Grades (A/B/C/D) are informational only and never override severity reporting.
 
 ## Engine independence
 
@@ -46,14 +57,15 @@ Inspect findings are strongest when implementation and review use **different mo
 
 Treat inspect as a **first-pass review**, not independent validation. Ship decisions need additional evidence: operator judgment in chat, Pester/verify, pack checks, Bing comparison, or other external signals. Never claim "inspect clean" alone is ship-ready in this mode.
 
-Safety net = inspect + verify + operator judgment, not any single LLM.
+Safety net = inspect + verify + regression revert + operator judgment, not any single LLM.
 
 ## Agent rules
 
 - Never claim "inspect clean" without running the CLI when this loop applies.
-- Never mutate source from inspect findings without operator confirmation in chat.
-- Same finding twice after a fix: call calibration noise or ask operator; do not blind-loop forever.
+- Never mutate source from inspect findings without operator confirmation in chat (except when operator explicitly requests a full `-RunAll` fix pass).
+- If verify reports **regression reverted**, do not treat the fix batch as landed; try a smaller fix or defer.
+- Same finding twice after a fix: convergence stop or ask operator; do not blind-loop forever.
 - Use `-WhatIf` only when operator asks for a dry-run; normal loop runs the engine.
-- Persisted report path is under `%LOCALAPPDATA%\Metra\inspect\`; cite severity/file in chat, not full JSON dumps.
+- Persisted assess report: `%LOCALAPPDATA%\Metra\inspect\<Project>\latest.json`; review session: `%LOCALAPPDATA%\Metra\inspect\<Project>\review-loop.json`; cite severity/file in chat, not full JSON dumps.
 
-See Metra `AGENTS.md` Inspect section and `docs/Decisions.md` (Inspect coding loop; Inspect engine independence).
+See Metra `AGENTS.md` Inspect section and `docs/Decisions.md` (Inspect coding loop; Inspect goal-based review loop; Inspect engine independence).

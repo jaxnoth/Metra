@@ -1,0 +1,19 @@
+{
+  "$schema": "https://agent-plugins.org/schemas/1.0.0/plugin.schema.json",
+  "name": "iwu-api-readiness",
+  "version": "0.1.0",
+  "description": "OpenAPI agent-readiness scan and Postman bootstrap from API doc sites (spec, collection, environment) via minimal MCP.",
+  "author": {
+    "name": "IWU Metra pilot",
+    "url": "https://github.com/agentplugins/agent-plugins-spec"
+  },
+  "homepage": "https://agent-plugins.org",
+  "keywords": [
+    "openapi",
+    "agent-ready",
+    "api-readiness",
+    "postman",
+    "mcp"
+  ],
+  "license": "Apache-2.0"
+}
