@@ -219,7 +219,34 @@ Describe 'Audit AGENTS line budget' {
                     [pscustomobject]@{ Name = 'SampleProj'; Path = $proj; Root = 'work' }
                 )
                 $estimate.AlwaysApplyRulesLines | Should -Be 0
+                $estimate.AlwaysApplyRules.Count | Should -Be 0
                 $estimate.MountedAgentsLines | Should -Be 1
+            }
+            finally {
+                Remove-Item -LiteralPath $root -Recurse -Force -ErrorAction SilentlyContinue
+            }
+        }
+    }
+
+    It 'Context Footprint Estimate lists alwaysApply rule line counts' {
+        InModuleScope Metra {
+            $root = Join-Path ([IO.Path]::GetTempPath()) ("metra-footprint-rules-" + [guid]::NewGuid().ToString('n'))
+            $rulesDir = Join-Path $root '.cursor\rules'
+            New-Item -ItemType Directory -Path $rulesDir -Force | Out-Null
+            @(
+                '---'
+                'alwaysApply: true'
+                '---'
+                'line one'
+                'line two'
+            ) | Set-Content -LiteralPath (Join-Path $rulesDir 'always-on.mdc') -Encoding utf8
+            try {
+                Mock Get-MetraRoot { return $root }
+                $estimate = Get-MetraContextFootprintEstimate -Projects @()
+                $estimate.AlwaysApplyRulesLines | Should -Be 5
+                $estimate.AlwaysApplyRules.Count | Should -Be 1
+                $estimate.AlwaysApplyRules[0].Path | Should -BeLike '*always-on.mdc'
+                $estimate.AlwaysApplyRules[0].Lines | Should -Be 5
             }
             finally {
                 Remove-Item -LiteralPath $root -Recurse -Force -ErrorAction SilentlyContinue
