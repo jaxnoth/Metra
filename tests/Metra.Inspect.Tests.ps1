@@ -956,6 +956,131 @@ Describe 'Inspect A2 desk pack' {
     }
 }
 
+Describe 'Inspect A2 AGENTS consumer' {
+    It 'Get-MetraInspectAgentsPlaybookIndexPathsFromStub parses On-demand playbooks table links' {
+        InModuleScope Metra {
+            $stub = @'
+# Pilot stub
+
+## On-demand playbooks
+
+| Trigger | Read |
+| --- | --- |
+| stuck session | [docs/playbooks/stuck-session-in-use.md](docs/playbooks/stuck-session-in-use.md) |
+| wafm | [docs/playbooks/wafm.md](docs/playbooks/wafm.md) |
+| stuck session dup | [docs/playbooks/stuck-session-in-use.md](docs/playbooks/stuck-session-in-use.md) |
+
+## Token rules
+
+- scoped grep only
+'@
+            $paths = @(Get-MetraInspectAgentsPlaybookIndexPathsFromStub -StubText $stub)
+            $paths.Count | Should -Be 2
+            $paths[0] | Should -Be 'docs/playbooks/stuck-session-in-use.md'
+            $paths[1] | Should -Be 'docs/playbooks/wafm.md'
+        }
+    }
+
+    It 'Resolve-MetraInspectAgentsPlaybookIndexRelativePath rejects .. traversal and accepts canonical paths' {
+        InModuleScope Metra {
+            Resolve-MetraInspectAgentsPlaybookIndexRelativePath -RawPath 'docs/playbooks/sample.md' |
+                Should -Be 'docs/playbooks/sample.md'
+            Resolve-MetraInspectAgentsPlaybookIndexRelativePath -RawPath 'docs/playbooks/../../AGENTS.md' |
+                Should -Be $null
+            Resolve-MetraInspectAgentsPlaybookIndexRelativePath -RawPath 'docs/playbooks/nested/sample.md' |
+                Should -Be 'docs/playbooks/nested/sample.md'
+        }
+    }
+
+    It 'Get-MetraInspectAgentsPlaybookIndexPathsFromStub ignores traversal links in the table' {
+        InModuleScope Metra {
+            $stub = @'
+## On-demand playbooks
+
+| Trigger | Read |
+| --- | --- |
+| escape | [docs/playbooks/../../AGENTS.md](docs/playbooks/../../AGENTS.md) |
+| ok | [docs/playbooks/sample.md](docs/playbooks/sample.md) |
+'@
+            $paths = @(Get-MetraInspectAgentsPlaybookIndexPathsFromStub -StubText $stub)
+            $paths.Count | Should -Be 1
+            $paths[0] | Should -Be 'docs/playbooks/sample.md'
+        }
+    }
+
+    It 'Get-MetraInspectAgentsText appends playbook path index without cabinet bodies' {
+        InModuleScope Metra {
+            $repo = Join-Path $env:TEMP ("metra-inspect-agents-" + [guid]::NewGuid().ToString('n'))
+            New-Item -ItemType Directory -Path (Join-Path $repo 'docs/playbooks') -Force | Out-Null
+            try {
+                $stub = @'
+# Stub
+
+## On-demand playbooks
+
+| Trigger | Read |
+| --- | --- |
+| sample | [docs/playbooks/sample.md](docs/playbooks/sample.md) |
+
+## Token rules
+'@
+                Set-Content -LiteralPath (Join-Path $repo 'AGENTS.md') -Value $stub -Encoding utf8
+                Set-Content -LiteralPath (Join-Path $repo 'docs/playbooks/sample.md') -Value 'CABINET_BODY_NOT_FOR_INSPECT' -Encoding utf8
+
+                $text = Get-MetraInspectAgentsText -Root $repo
+                $text | Should -Match 'On-demand playbooks'
+                $text | Should -Match 'A2 on-demand playbook paths'
+                $text | Should -Match '- docs/playbooks/sample.md'
+                $text | Should -Not -Match 'CABINET_BODY_NOT_FOR_INSPECT'
+            }
+            finally {
+                Remove-Item -LiteralPath $repo -Recurse -Force -ErrorAction SilentlyContinue
+            }
+        }
+    }
+
+    It 'Get-MetraInspectAgentsText leaves legacy monolith AGENTS unchanged when no On-demand playbooks section' {
+        InModuleScope Metra {
+            $repo = Join-Path $env:TEMP ("metra-inspect-agents-legacy-" + [guid]::NewGuid().ToString('n'))
+            New-Item -ItemType Directory -Path $repo -Force | Out-Null
+            try {
+                Set-Content -LiteralPath (Join-Path $repo 'AGENTS.md') -Value "# Legacy`n`nLong procedural body stays attached.`n" -Encoding utf8
+                $text = Get-MetraInspectAgentsText -Root $repo
+                $text | Should -Match 'Long procedural body stays attached'
+                $text | Should -Not -Match 'A2 on-demand playbook paths'
+            }
+            finally {
+                Remove-Item -LiteralPath $repo -Recurse -Force -ErrorAction SilentlyContinue
+            }
+        }
+    }
+
+    It 'Get-MetraInspectAgentsText README fallback does not append playbook index block' {
+        InModuleScope Metra {
+            $repo = Join-Path $env:TEMP ("metra-inspect-readme-" + [guid]::NewGuid().ToString('n'))
+            New-Item -ItemType Directory -Path $repo -Force | Out-Null
+            try {
+                $readme = @'
+# README
+
+## On-demand playbooks
+
+| Trigger | Read |
+| --- | --- |
+| sample | [docs/playbooks/sample.md](docs/playbooks/sample.md) |
+'@
+                Set-Content -LiteralPath (Join-Path $repo 'README.md') -Value $readme -Encoding utf8
+                $text = Get-MetraInspectAgentsText -Root $repo
+                $text | Should -Match 'On-demand playbooks'
+                $text | Should -Not -Match 'A2 on-demand playbook paths'
+            }
+            finally {
+                Remove-Item -LiteralPath $repo -Recurse -Force -ErrorAction SilentlyContinue
+            }
+        }
+    }
+}
+
 Describe 'Inspect Bing pack profile' {
     It 'extracts Describe and It names for test catalog' {
         InModuleScope Metra {
