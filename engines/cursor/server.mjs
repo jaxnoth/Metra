@@ -14,9 +14,14 @@ const ENGINE = 'cursor'
 /**
  * Cursor Ask defaults to composer-2.5 (Ask API slug). auto-* tokens still map
  * to auto-smart router tiers. IDE agent names like composer-2.5-fast are aliased.
+ * Optional rawId overrides process env (per-request Inspect pin).
  */
-function resolveModelSelection() {
-  const rawId = String(process.env.METRA_ASK_MODEL || 'composer-2.5').trim()
+function resolveModelSelection(rawIdOverride) {
+  const rawId = String(
+    rawIdOverride != null && String(rawIdOverride).trim()
+      ? rawIdOverride
+      : process.env.METRA_ASK_MODEL || 'composer-2.5',
+  ).trim()
   const rawOpt = String(process.env.METRA_ASK_OPTIMIZE_FOR || 'cost')
     .trim()
     .toLowerCase()
@@ -48,6 +53,18 @@ function resolveModelSelection() {
     intelligence: 'intelligence',
   }
   const rawLower = rawId.toLowerCase()
+  // Display labels like auto-smart/cost from Metra settings.model
+  if (rawLower.startsWith('auto-smart/')) {
+    const tier = rawLower.slice('auto-smart/'.length)
+    const optimizeFor = ['cost', 'balanced', 'intelligence'].includes(tier)
+      ? tier
+      : 'cost'
+    return {
+      id: 'auto-smart',
+      params: [{ id: 'optimize_for', value: optimizeFor }],
+      label: `auto-smart/${optimizeFor}`,
+    }
+  }
   const id = aliasMap[rawLower] || rawId || 'composer-2.5'
   if (id === 'auto-smart') {
     const fromAlias = aliasOptimize[rawLower]
@@ -68,8 +85,29 @@ function resolveModelSelection() {
 const MODEL_SELECTION = resolveModelSelection()
 const MODEL = MODEL_SELECTION.label
 
-/** @type {Map<string, Awaited<ReturnType<typeof Agent.create>>>} */
+/**
+ * Session cache keyed by sessionId.
+ * Stores { agent, modelKey } so a reused session cannot silently keep an old
+ * Agent.create model while responses report a newer per-request override.
+ * Legacy bare-agent entries are treated as unknown modelKey and recreated.
+ * @type {Map<string, { agent: Awaited<ReturnType<typeof Agent.create>>, modelKey: string } | Awaited<ReturnType<typeof Agent.create>>>}
+ */
 const sessions = new Map()
+
+function normalizeSessionEntry(raw) {
+  if (!raw) return null
+  if (raw.agent) {
+    return {
+      agent: raw.agent,
+      modelKey: raw.modelKey != null ? String(raw.modelKey) : null,
+    }
+  }
+  return { agent: raw, modelKey: null }
+}
+
+function selectionModelKey(selection) {
+  return selection && selection.label ? String(selection.label) : ''
+}
 
 function readJson(req) {
   return new Promise((resolve, reject) => {
@@ -546,13 +584,19 @@ async function extractRunErrorDetailAsync(result, run) {
   return detail
 }
 
-async function complete({ prompt, cwd, context, sessionId, images }) {
+async function complete({ prompt, cwd, context, sessionId, images, model }) {
   const apiKey = process.env.CURSOR_API_KEY
   if (!apiKey) {
     const err = new Error('CURSOR_API_KEY missing')
     err.code = 'key_missing'
     throw err
   }
+
+  const selection =
+    model != null && String(model).trim()
+      ? resolveModelSelection(String(model).trim())
+      : MODEL_SELECTION
+  const modelLabel = selection.label
 
   const promptScrub = scrubSecretsText(prompt)
   const ctxScrub = scrubSecretsValue(context || {})
@@ -563,7 +607,7 @@ async function complete({ prompt, cwd, context, sessionId, images }) {
         ctxScrub.notice ||
         'Private-key material was blocked and not sent to the Ask engine. Rephrase without the key block.',
       engine: ENGINE,
-      model: MODEL,
+      model: modelLabel,
       sessionId: sessionId || null,
       status: 'refused',
       secretsRefuse: true,
@@ -573,30 +617,42 @@ async function complete({ prompt, cwd, context, sessionId, images }) {
 
   const workDir = cwd && typeof cwd === 'string' && cwd.length > 0 ? cwd : process.cwd()
   const sdkImages = loadImagesFromRefs(images)
+  const modelKey = selectionModelKey(selection)
+  const modelOpt =
+    selection.params && selection.params.length > 0
+      ? { id: selection.id, params: selection.params }
+      : { id: selection.id }
 
-  let agent
-  let newSession = false
-  if (sessionId && sessions.has(sessionId)) {
-    agent = sessions.get(sessionId)
-  } else {
-    const modelOpt =
-      MODEL_SELECTION.params && MODEL_SELECTION.params.length > 0
-        ? { id: MODEL_SELECTION.id, params: MODEL_SELECTION.params }
-        : { id: MODEL_SELECTION.id }
-    agent = await Agent.create({
+  async function createAgent() {
+    return Agent.create({
       apiKey,
       model: modelOpt,
       local: { cwd: workDir, settingSources: [] },
     })
+  }
+
+  let agent
+  let newSession = false
+  const requestedId =
+    sessionId && String(sessionId).trim() ? String(sessionId).trim() : null
+  if (requestedId && sessions.has(requestedId)) {
+    const entry = normalizeSessionEntry(sessions.get(requestedId))
+    if (entry && entry.modelKey === modelKey) {
+      agent = entry.agent
+    } else {
+      // Model override changed (or legacy entry lacked modelKey): recreate agent.
+      agent = await createAgent()
+      newSession = true
+      sessions.set(requestedId, { agent, modelKey })
+    }
+  } else {
+    agent = await createAgent()
     newSession = true
   }
 
-  const id =
-    sessionId && String(sessionId).trim()
-      ? String(sessionId).trim()
-      : agent.agentId || `local-${Date.now()}`
+  const id = requestedId || agent.agentId || `local-${Date.now()}`
   if (newSession) {
-    sessions.set(id, agent)
+    sessions.set(id, { agent, modelKey })
   }
 
   const wrapped = buildPrompt(promptScrub.text, ctxScrub.value || {}, {
@@ -622,7 +678,7 @@ async function complete({ prompt, cwd, context, sessionId, images }) {
       return {
         message,
         engine: ENGINE,
-        model: MODEL,
+        model: modelLabel,
         sessionId: id,
         status: 'error',
         runId: result.id || null,
@@ -652,7 +708,7 @@ async function complete({ prompt, cwd, context, sessionId, images }) {
           outScrub.notice ||
           'Private-key material was blocked and not sent to the Ask engine. Rephrase without the key block.',
         engine: ENGINE,
-        model: MODEL,
+        model: modelLabel,
         sessionId: id,
         status: 'refused',
         secretsRefuse: true,
@@ -668,19 +724,34 @@ async function complete({ prompt, cwd, context, sessionId, images }) {
         'Metra answered, but the engine returned no text.'
     }
     const status = rawStatus || (hadModelText ? 'finished' : 'unknown')
-    return {
+    // Only include resolvedModel when the transport/SDK actually names a served model.
+    // Do not copy modelLabel into resolvedModel. Do not stringify model objects.
+    let transportResolved = null
+    if (result && typeof result.model === 'string' && result.model.trim()) {
+      transportResolved = result.model.trim()
+    } else if (result && result.model && typeof result.model === 'object' && result.model.id) {
+      transportResolved = String(result.model.id).trim()
+    }
+    if (transportResolved === '[object Object]') {
+      transportResolved = null
+    }
+    const payload = {
       message,
       engine: ENGINE,
-      model: MODEL,
+      model: modelLabel,
       sessionId: id,
       status,
     }
+    if (transportResolved) {
+      payload.resolvedModel = transportResolved
+    }
+    return payload
   } catch (err) {
     if (err instanceof CursorAgentError) {
       return {
         message: `Ask engine could not start: ${err.message}`,
         engine: ENGINE,
-        model: MODEL,
+        model: modelLabel,
         sessionId: id,
         status: 'error',
       }
@@ -726,6 +797,7 @@ const server = http.createServer(async (req, res) => {
         context: body.context,
         sessionId: body.sessionId,
         images: body.images,
+        model: body.model,
       })
       sendJson(res, 200, result)
     } catch (err) {

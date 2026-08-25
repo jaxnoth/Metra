@@ -1468,3 +1468,153 @@ Describe 'Inspect review loop helpers' {
         }
     }
 }
+
+Describe 'Inspect engine selection' {
+    It 'falls back to ask when inspect block is absent' {
+        InModuleScope Metra {
+            Mock Get-MetraAskSettings {
+                [PSCustomObject]@{
+                    engine             = 'ollama'
+                    ollamaModel        = 'qwen2.5-coder:7b'
+                    cursorModel        = 'composer-2.5'
+                    cursorOptimizeFor  = 'cost'
+                    enterpriseModel    = ''
+                    llamacppModel      = ''
+                }
+            }
+            Mock Get-MetraConfig { [PSCustomObject]@{ ask = [PSCustomObject]@{} } }
+            $sel = Resolve-MetraInspectEngineSelection
+            $sel.Engine | Should -Be 'ollama'
+            $sel.RequestedModel | Should -Be 'qwen2.5-coder:7b'
+            $sel.ConfigurationSource | Should -Be 'ask-fallback'
+            $sel.FellBackToAsk | Should -BeTrue
+        }
+    }
+
+    It 'uses inspect engine and cursor model when both set' {
+        InModuleScope Metra {
+            Mock Get-MetraAskSettings {
+                [PSCustomObject]@{
+                    engine             = 'ollama'
+                    ollamaModel        = 'qwen2.5-coder:7b'
+                    cursorModel        = 'composer-2.5'
+                    cursorOptimizeFor  = 'cost'
+                    enterpriseModel    = ''
+                    llamacppModel      = ''
+                }
+            }
+            Mock Get-MetraConfig {
+                [PSCustomObject]@{
+                    inspect = [PSCustomObject]@{
+                        engine = 'cursor'
+                        cursor = [PSCustomObject]@{ model = 'gemini-3.7-flash' }
+                    }
+                }
+            }
+            $sel = Resolve-MetraInspectEngineSelection
+            $sel.Engine | Should -Be 'cursor'
+            $sel.RequestedModel | Should -Be 'gemini-3.7-flash'
+            $sel.ConfigurationSource | Should -Be 'inspect'
+            $sel.FellBackToAsk | Should -BeFalse
+        }
+    }
+
+    It 'mixed fallback: inspect.engine=cursor with ask.cursor.model when inspect.cursor.model omitted' {
+        InModuleScope Metra {
+            Mock Get-MetraAskSettings {
+                [PSCustomObject]@{
+                    engine             = 'ollama'
+                    ollamaModel        = 'qwen2.5-coder:7b'
+                    cursorModel        = 'composer-2.5'
+                    cursorOptimizeFor  = 'cost'
+                    enterpriseModel    = ''
+                    llamacppModel      = ''
+                }
+            }
+            Mock Get-MetraConfig {
+                [PSCustomObject]@{
+                    inspect = [PSCustomObject]@{
+                        engine = 'cursor'
+                    }
+                }
+            }
+            $sel = Resolve-MetraInspectEngineSelection
+            $sel.Engine | Should -Be 'cursor'
+            $sel.RequestedModel | Should -Be 'composer-2.5'
+            $sel.EngineSource | Should -Be 'inspect'
+            $sel.ModelSource | Should -Be 'ask-fallback'
+            $sel.FellBackToAsk | Should -BeTrue
+            $sel.ConfigurationSource | Should -Be 'inspect'
+        }
+    }
+
+    It 'ignores inspect.cursor.model when effective engine is ollama' {
+        InModuleScope Metra {
+            Mock Get-MetraAskSettings {
+                [PSCustomObject]@{
+                    engine             = 'ollama'
+                    ollamaModel        = 'qwen2.5:7b'
+                    cursorModel        = 'composer-2.5'
+                    cursorOptimizeFor  = 'cost'
+                    enterpriseModel    = ''
+                    llamacppModel      = ''
+                }
+            }
+            Mock Get-MetraConfig {
+                [PSCustomObject]@{
+                    inspect = [PSCustomObject]@{
+                        cursor = [PSCustomObject]@{ model = 'gemini-3.7-flash' }
+                    }
+                }
+            }
+            $sel = Resolve-MetraInspectEngineSelection
+            $sel.Engine | Should -Be 'ollama'
+            $sel.RequestedModel | Should -Be 'qwen2.5:7b'
+        }
+    }
+
+    It 'fails closed on unknown inspect.engine' {
+        InModuleScope Metra {
+            Mock Get-MetraAskSettings {
+                [PSCustomObject]@{
+                    engine             = 'ollama'
+                    ollamaModel        = 'qwen2.5:7b'
+                    cursorModel        = 'composer-2.5'
+                    cursorOptimizeFor  = 'cost'
+                    enterpriseModel    = ''
+                    llamacppModel      = ''
+                }
+            }
+            Mock Get-MetraConfig {
+                [PSCustomObject]@{
+                    inspect = [PSCustomObject]@{ engine = 'nope' }
+                }
+            }
+            { Resolve-MetraInspectEngineSelection } | Should -Throw '*Unknown inspect.engine*'
+        }
+    }
+
+    It 'does not synthesize resolvedModel in engineProvenance' {
+        InModuleScope Metra {
+            $sel = [PSCustomObject]@{
+                Engine              = 'cursor'
+                RequestedModel      = 'gemini-3.7-flash'
+                ConfigurationSource = 'inspect'
+                EngineSource        = 'inspect'
+                ModelSource         = 'inspect'
+            }
+            $p = New-MetraInspectEngineProvenance -Selection $sel -ResolvedModel '' -CodingModel ''
+            $p.requestedModel | Should -Be 'gemini-3.7-flash'
+            [string]::IsNullOrWhiteSpace([string](Get-MetraProp -Object $p -Name 'resolvedModel' -Default '')) | Should -BeTrue
+            $p.independence | Should -Be 'unknown'
+        }
+    }
+
+    It 'classifies composer vs gemini as independent' {
+        InModuleScope Metra {
+            Resolve-MetraInspectIndependenceStatus -ReviewModel 'gemini-3.7-flash' -CodingModel 'composer-2.5' | Should -Be 'independent'
+            Resolve-MetraInspectIndependenceStatus -ReviewModel 'qwen2.5:7b' -CodingModel 'qwen2.5-coder:7b' | Should -Be 'shared-family'
+            Resolve-MetraInspectIndependenceStatus -ReviewModel 'gemini-3.7-flash' -CodingModel 'auto-smart/cost' | Should -Be 'unknown'
+        }
+    }
+}

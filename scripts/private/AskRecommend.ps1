@@ -598,7 +598,48 @@ function Invoke-MetraAskEngineCommand {
                 'show' {
                     $s = Get-MetraAskSettings
                     $c = Get-MetraAskCapability
+                    $inspSel = $null
+                    try { $inspSel = Resolve-MetraInspectEngineSelection } catch { $inspSel = $null }
+                    $askBlock = [PSCustomObject]@{
+                        engine        = $s.engine
+                        model         = $s.model
+                        available     = $c.available
+                        reason        = $c.reason
+                        sizeBand      = $s.ollamaSizeBand
+                        ideInstalled  = $c.ideInstalled
+                        apiKeyPresent = $c.apiKeyPresent
+                        nodeReady     = $c.nodeReady
+                        sidecarReady  = $c.sidecarReady
+                        engineHealthy = $c.engineHealthy
+                        runtimeReady  = $c.runtimeReady
+                        modelPresent  = $c.modelPresent
+                    }
+                    $inspBlock = if ($null -ne $inspSel) {
+                        [PSCustomObject]@{
+                            engine = $inspSel.Engine
+                            model  = $inspSel.RequestedModel
+                            source = $inspSel.ConfigurationSource
+                        }
+                    }
+                    else { $null }
+                    Write-Host 'Ask' -ForegroundColor Cyan
+                    Write-Host ("  Engine:  {0}" -f $askBlock.engine)
+                    Write-Host ("  Model:   {0}" -f $askBlock.model)
+                    if ($null -ne $inspBlock) {
+                        Write-Host 'Inspect' -ForegroundColor Cyan
+                        Write-Host ("  Engine:  {0}" -f $inspBlock.engine)
+                        Write-Host ("  Model:   {0}" -f $inspBlock.model)
+                        $srcLabel = switch ([string]$inspBlock.source) {
+                            'inspect' { 'inspect configuration' }
+                            'ask-fallback' { 'ask fallback' }
+                            default { [string]$inspBlock.source }
+                        }
+                        Write-Host ("  Source:  {0}" -f $srcLabel)
+                    }
                     return [PSCustomObject]@{
+                        ask     = $askBlock
+                        inspect = $inspBlock
+                        # Compat: keep flat Ask fields for existing callers
                         engine        = $s.engine
                         model         = $s.model
                         available     = $c.available

@@ -33,11 +33,17 @@
     },
     "cursor": {
       "port": 7381,
-      "model": "composer-2.5"
+      "model": "auto"
     },
     "llamacpp": {
       "baseUrl": "http://127.0.0.1:8080",
       "model": "qwen2.5:14b"
+    }
+  },
+  "inspect": {
+    "engine": "cursor",
+    "cursor": {
+      "model": "gemini-3.7-flash"
     }
   },
   "workspace": {
