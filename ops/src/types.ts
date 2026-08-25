@@ -107,6 +107,16 @@ export type Handoff = {
   runnerUp: string | null
   score: number
   note?: string | null
+  /** Chat lane stamp from Ask (hide Where when lane=chat). */
+  lane?: string | null
+  chatLaneReason?: string | null
+  responseObjective?: string | null
+}
+
+export type AskVoiceResponse = {
+  spoken: string
+  display: string
+  durable: string
 }
 
 export type AskEntry = {
@@ -425,7 +435,7 @@ export type AskResult = {
   engine?: string | null
   model?: string | null
   answered?: boolean
-  /** grounded | provisional | refusal | degraded | greeting | observation | park */
+  /** grounded | provisional | refusal | degraded | greeting | observation | park | capture_ack | clarify_draft | operator_confirm */
   answerType?: string | null
   /** adequate | thin | none */
   evidenceQuality?: string | null
@@ -434,6 +444,17 @@ export type AskResult = {
   showWhere?: boolean
   /** Park short-circuit: highlight Save for portfolio (never auto-create Capture). */
   suggestCapture?: boolean
+  /** chat | routed */
+  lane?: string | null
+  /** Classifier reason (e.g. social_greeting, capture_intent). */
+  reason?: string | null
+  /** Clarify | Capture | GroundedAnswer | OperatorConfirm */
+  responseObjective?: string | null
+  intentConfidence?: number | null
+  /** Integer route score (confident threshold = 2). */
+  routeScore?: number | null
+  turnMode?: string | null
+  voice?: AskVoiceResponse | null
   continuity?: AskContinuity | null
   /** True when Ask scrubbed or refused secret-shaped content. */
   secretsScrubbed?: boolean

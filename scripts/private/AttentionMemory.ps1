@@ -780,7 +780,16 @@ function Merge-MetraAttentionItemFromTicketQueue {
             @{ Name = 'existingRecommendation'; Value = $existingRecommendation }
             @{ Name = 'recommendationSource'; Value = $recommendationSource }
             @{ Name = 'ticketStatusCode'; Value = $ticketStatusCode }
+            @{ Name = 'assessGate'; Value = [string](Get-MetraProp -Object $QueueItem -Name 'assessGate' -Default '') }
+            @{ Name = 'summary'; Value = [string](Get-MetraProp -Object $QueueItem -Name 'summary' -Default '') }
+            @{ Name = 'whyNext'; Value = [string](Get-MetraProp -Object $QueueItem -Name 'whyNext' -Default '') }
+            @{ Name = 'askPrompt'; Value = [string](Get-MetraProp -Object $QueueItem -Name 'askPrompt' -Default '') }
+            @{ Name = 'responseObjective'; Value = [string](Get-MetraProp -Object $QueueItem -Name 'responseObjective' -Default '') }
         )) {
+        # Skip empty optional assess/display fields so we do not wipe prior values on thin queue items.
+        if ($pair.Name -in @('assessGate', 'summary', 'whyNext', 'askPrompt', 'responseObjective') -and [string]::IsNullOrWhiteSpace([string]$pair.Value)) {
+            continue
+        }
         if ($Item.PSObject.Properties[$pair.Name]) {
             $Item.($pair.Name) = $pair.Value
         }

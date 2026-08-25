@@ -136,12 +136,26 @@ type ChatTurn = {
   showWhere?: boolean
   /** Park short-circuit: highlight Save for portfolio. */
   suggestCapture?: boolean
+  /** chat | routed - Chat lane never shows Where. */
+  lane?: string | null
+  reason?: string | null
+  responseObjective?: string | null
   /** Journal turn id for Save for portfolio. */
   turnId?: string | null
   sessionId?: string | null
 }
 
 const CHAT_LIMIT = 24
+
+/** Hide debug answer/evidence badge for honesty + chat-lane short-circuits. */
+const ASK_BADGE_HIDDEN_ANSWER_TYPES = [
+  'greeting',
+  'observation',
+  'park',
+  'capture_ack',
+  'clarify_draft',
+  'operator_confirm',
+]
 
 function nextChatId(): string {
   return `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`
@@ -2101,6 +2115,9 @@ export default function App() {
           handoff: result.handoff,
           showWhere: Boolean(result.showWhere),
           suggestCapture: Boolean(result.suggestCapture),
+          lane: result.lane || null,
+          reason: result.reason || null,
+          responseObjective: result.responseObjective || null,
           turnId: result.entry?.id || null,
           sessionId: result.sessionId || result.entry?.sessionId || askSessionId,
         },
@@ -2657,7 +2674,7 @@ export default function App() {
                     )}
                     {turn.role === 'metra' &&
                       (turn.answerType || turn.evidenceQuality) &&
-                      !['greeting', 'observation', 'park'].includes(
+                      !ASK_BADGE_HIDDEN_ANSWER_TYPES.includes(
                         String(turn.answerType || '').toLowerCase(),
                       ) && (
                         <p className="muted small" style={{ marginTop: '0.35rem' }}>

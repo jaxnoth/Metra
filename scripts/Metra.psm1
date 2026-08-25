@@ -96,6 +96,7 @@ $script:MetraCompatibilityFunctions = @(
     'Get-MetraDeskHandoff',
     'Get-MetraDeskPlaceRecommendation',
     'Get-MetraDeskAskResult',
+    'New-MetraTicketAssessDraft',
     'New-MetraAskEvidenceItem',
     'New-MetraAskEvidencePack',
     'Get-MetraAskEvidenceQuality',

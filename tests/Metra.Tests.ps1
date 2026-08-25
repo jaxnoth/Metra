@@ -2362,7 +2362,7 @@ Describe 'HTML Ops desk payload' {
         }
     }
 
-    It 'L2 thin/none cannot ground; none skips engine' {
+    It 'L2 thin/none cannot ground; none lands Chat lane without engine' {
         InModuleScope Metra {
             Mock Invoke-MetraAskEngine {
                 throw 'Invoke-MetraAskEngine should not run for none evidence'
@@ -2402,10 +2402,12 @@ Describe 'HTML Ops desk payload' {
                 }
             }
             $ask = Get-MetraDeskAskResult -Prompt 'Invent something with no evidence'
+            $ask.lane | Should -Be 'chat'
             $ask.evidenceQuality | Should -Be 'none'
-            $ask.answerType | Should -Be 'provisional'
-            $ask.answered | Should -BeFalse
-            $ask.message | Should -Match 'enough routed evidence'
+            $ask.answered | Should -BeTrue
+            $ask.answerType | Should -BeIn @('capture_ack', 'clarify_draft')
+            $ask.responseObjective | Should -BeIn @('Capture', 'Clarify')
+            $ask.message | Should -Not -Match '(?i)enough routed evidence'
             Should -Invoke Invoke-MetraAskEngine -Times 0
 
             $thinSem = Resolve-MetraAskAnswerSemantics -EvidenceQuality 'thin' -PreferredType 'grounded'

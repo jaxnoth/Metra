@@ -1,6 +1,8 @@
 {
   "writeLocalDraft": false,
   "autoAnalyze": false,
+  "autoAssess": false,
+  "assessMaxAgeHours": 24,
   "evidenceRouter": false,
   "autoStoreRecommend": false,
   "top": 0,

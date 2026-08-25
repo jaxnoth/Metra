@@ -1216,27 +1216,36 @@ function Invoke-MetraOpsApi {
                 -Capability $ask.capability `
                 -Images $askJournalImages `
                 -MetraRoot $MetraRoot
-            $showWhere = Test-MetraAskShowWhere -Handoff $ask.handoff
+            $askLane = [string](Get-MetraProp -Object $ask -Name 'lane' -Default '')
+            $askLaneReason = [string](Get-MetraProp -Object $ask -Name 'reason' -Default '')
+            $showWhere = Test-MetraAskShowWhere -Handoff $ask.handoff -Lane $askLane -LaneReason $askLaneReason
             Write-MetraOpsJsonResponse -Response $Response -Object ([PSCustomObject]@{
-                    entry            = $entry
-                    handoff          = $ask.handoff
-                    message          = [string]$ask.message
-                    sessionId        = [string]$entry.sessionId
-                    capability       = $ask.capability
-                    engine           = $ask.engine
-                    model            = $ask.model
-                    answered         = [bool]$ask.answered
-                    answerType       = [string](Get-MetraProp -Object $ask -Name 'answerType' -Default '')
-                    evidenceQuality  = [string](Get-MetraProp -Object $ask -Name 'evidenceQuality' -Default '')
-                    nextStep         = [string](Get-MetraProp -Object $ask -Name 'nextStep' -Default '')
-                    showWhere        = [bool]$showWhere
-                    suggestCapture   = [bool](Get-MetraProp -Object $ask -Name 'suggestCapture' -Default $false)
-                    continuity       = $ask.continuity
-                    secretsScrubbed  = [bool](Get-MetraProp -Object $ask -Name 'secretsScrubbed' -Default $false)
-                    secretsNotice    = $(Get-MetraProp -Object $ask -Name 'secretsNotice' -Default $null)
-                    secretsKinds     = @(Get-MetraProp -Object $ask -Name 'secretsKinds' -Default @())
-                    secretsReason    = $(Get-MetraProp -Object $ask -Name 'secretsReason' -Default $null)
-                    images           = @(Get-MetraProp -Object $entry -Name 'images' -Default @())
+                    entry             = $entry
+                    handoff           = $ask.handoff
+                    message           = [string]$ask.message
+                    sessionId         = [string]$entry.sessionId
+                    capability        = $ask.capability
+                    engine            = $ask.engine
+                    model             = $ask.model
+                    answered          = [bool]$ask.answered
+                    answerType        = [string](Get-MetraProp -Object $ask -Name 'answerType' -Default '')
+                    evidenceQuality   = [string](Get-MetraProp -Object $ask -Name 'evidenceQuality' -Default '')
+                    nextStep          = [string](Get-MetraProp -Object $ask -Name 'nextStep' -Default '')
+                    showWhere         = [bool]$showWhere
+                    suggestCapture    = [bool](Get-MetraProp -Object $ask -Name 'suggestCapture' -Default $false)
+                    lane              = $askLane
+                    reason            = $askLaneReason
+                    responseObjective = [string](Get-MetraProp -Object $ask -Name 'responseObjective' -Default '')
+                    intentConfidence  = [double](Get-MetraProp -Object $ask -Name 'intentConfidence' -Default 0)
+                    routeScore        = [int](Get-MetraProp -Object $ask -Name 'routeScore' -Default 0)
+                    turnMode          = [string](Get-MetraProp -Object $ask -Name 'turnMode' -Default '')
+                    voice             = $(Get-MetraProp -Object $ask -Name 'voice' -Default $null)
+                    continuity        = $ask.continuity
+                    secretsScrubbed   = [bool](Get-MetraProp -Object $ask -Name 'secretsScrubbed' -Default $false)
+                    secretsNotice     = $(Get-MetraProp -Object $ask -Name 'secretsNotice' -Default $null)
+                    secretsKinds      = @(Get-MetraProp -Object $ask -Name 'secretsKinds' -Default @())
+                    secretsReason     = $(Get-MetraProp -Object $ask -Name 'secretsReason' -Default $null)
+                    images            = @(Get-MetraProp -Object $entry -Name 'images' -Default @())
                 }) -Depth 12
             return
         }

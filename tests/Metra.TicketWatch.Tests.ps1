@@ -510,6 +510,73 @@ Describe 'Ticket watch Attention helpers' {
         }
     }
 
+    It 'autoAssess: Added/Refreshed only; never rides ForceDraft; never iSupport' {
+        InModuleScope Metra {
+            Test-MetraTicketWatchShouldAssess -ChangeKind added -AutoAssess:$false |
+                Should -BeFalse
+            Test-MetraTicketWatchShouldAssess -ChangeKind added -AutoAssess:$true -AssessMaxAgeHours 0 |
+                Should -BeTrue
+            Test-MetraTicketWatchShouldAssess -ChangeKind refreshed -AutoAssess:$true -AssessMaxAgeHours 0 |
+                Should -BeTrue
+            Test-MetraTicketWatchShouldAssess -ChangeKind unchanged -AutoAssess:$true -AssessMaxAgeHours 0 |
+                Should -BeFalse
+        }
+    }
+
+    It 'Assess suppresses Analyze for same ticket when both auto flags on' {
+        # Mirrors Invoke-MetraTicketWatchScan selection: assessIds first; analyze skips those ids.
+        InModuleScope Metra {
+            $changeByTicketId = @{ '1001' = 'added'; '1002' = 'refreshed' }
+            $autoAssess = $true
+            $autoAnalyze = $true
+            $forceDraft = $false
+
+            $assessIds = @(
+                foreach ($ticketId in @($changeByTicketId.Keys)) {
+                    $kind = [string]$changeByTicketId[$ticketId]
+                    if (Test-MetraTicketWatchShouldAssess -ChangeKind $kind -AutoAssess:$autoAssess -AssessMaxAgeHours 0) {
+                        $ticketId
+                    }
+                }
+            )
+            $analyzeIds = @(
+                foreach ($ticketId in @($changeByTicketId.Keys)) {
+                    if ($assessIds -contains $ticketId) { continue }
+                    $kind = [string]$changeByTicketId[$ticketId]
+                    if (Test-MetraTicketWatchShouldAnalyze -ChangeKind $kind -ForceDraft:$forceDraft -AutoAnalyze:$autoAnalyze) {
+                        $ticketId
+                    }
+                }
+            )
+
+            $assessIds.Count | Should -Be 2
+            $assessIds | Should -Contain '1001'
+            $assessIds | Should -Contain '1002'
+            $analyzeIds.Count | Should -Be 0
+        }
+    }
+
+    It 'Update-MetraTicketAttentionFromAssess stamps CLARIFY whyNext' {
+        InModuleScope Metra {
+            $q = [pscustomobject]@{
+                id = 'ticket:1001'
+                detail = 'Open'
+                command = '.\TicketTracker.ps1 brief 1001'
+            }
+            $a = [pscustomobject]@{
+                gate = 'CLARIFY'
+                customerAsk = 'Which application?'
+                responseObjective = 'Clarify'
+                ticketId = '1001'
+            }
+            $u = Update-MetraTicketAttentionFromAssess -QueueItem $q -AssessResult $a
+            $u.assessGate | Should -Be 'CLARIFY'
+            $u.whyNext | Should -Match 'clarifying'
+            $u.askPrompt | Should -Match 'application'
+            $u.command | Should -Match 'assess 1001'
+        }
+    }
+
     It 'E1: product cue list normalizes union from solutions, registry, and local' {
         InModuleScope Metra {
             $cues = ConvertTo-MetraTicketWatchNormalizedProductCues `

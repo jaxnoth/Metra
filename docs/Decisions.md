@@ -20,6 +20,15 @@ Entry shape:
 
 ---
 
+## 2026-08-25 - Chat lane activation (Ask + TicketTracker assess)
+
+- Decision: Portfolio Chat lane is a first-class Ask path alongside Routed Ask. Classifier uses integer `routeScore` (confident threshold **2**), emits `lane` / `reason` / `responseObjective` / `intentConfidence`, and projects Ops-safe `answerType` via reason (preserve `greeting` / `observation` / `park`; add `capture_ack` / `clarify_draft` / `operator_confirm`). Voice responses keep invariant **durable contains spoken**. TicketTracker `assess` owns INTAKE / CLARIFY / SOLVE-READY gates and ticket confidences; Metra Chat lane drafts `customerAsk` / `recommendDraft` only. Gate mapping: INTAKE/CLARIFY → Clarify; SOLVE-READY → **OperatorConfirm** (never GroundedAnswer in assess Phase 1). Assess default is local-only (no iSupport write).
+- Why: Thin evidence and unrouted turns were falling through to none-evidence router failure or grounded theater. Secretary posture needs a human-first lane; sparse tickets need TT-owned gates with question-only drafts until the operator confirms Host writes.
+- Bing observability (conditions of approval): ambiguous reminder fixture; lane `reason`; voice `durable ⊇ spoken`; first-class `responseObjective`.
+- Claude corrections folded in: sequential early-returns (not scattered routes); Ops badge kinds; integer routeScore; `Test-MetraAskShowWhere` extended for chat reasons; dead HonestyShortCircuit retired.
+- Deferred (not solved): INTAKE durable write shape (recommend vs `post` / Waiting on Customer); assess engine billing choice (cheap triage OK on configured Ask engine - no new engine switch).
+- See: `scripts/private/AskLane.ps1`; `engines/chat-lane/system.md`; TicketTracker `src/TicketAssess.ps1`; `schemas/assess-response.v1.json`; TicketTracker `docs/playbooks/ticket-assess.md`; Future-Development Chat lane scar
+
 ## 2026-08-14 - Desk model for context and durable knowledge
 
 - Decision: Metra treats portfolio knowledge as a **desk**, not a monolith. One tiny **index** per scope (registry row, `routing` / `ctx`, Decision Registry search, stub `AGENTS.md`) says what exists and where it lives. **Cabinet files** hold detail: on-demand playbooks, skills, solutions, single registry entries, `Decisions.md` sections. Agents read the index first, then only the named relevant file(s). Cabinet files stay small (target under ~100 lines, about two pages). Rules that must not be missed belong at the top of always-on index material (persona, routing, ceilings), not buried in cabinet middles.

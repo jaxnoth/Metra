@@ -2231,18 +2231,34 @@ function Get-MetraDeskAskResult {
         -RecallSessionId $RecallSessionId `
         -MetraRoot $MetraRoot
 
-    # Honesty circuit breakers - before any engine call.
-    if (Test-MetraDeskGreeting -Query $q) {
-        return New-MetraAskGreetingResult -Query $q -Continuity $continuity -SessionId $SessionId
-    }
-    if (Test-MetraAskPersonalObservationIntent -Prompt $q) {
-        return New-MetraAskPersonalObservationResult -Query $q -Continuity $continuity -SessionId $SessionId -MetraRoot $MetraRoot
-    }
-    if (Test-MetraAskParkOrSaveIntent -Prompt $q) {
-        return New-MetraAskParkOrSaveResult -Query $q -Continuity $continuity -SessionId $SessionId
-    }
-
+    # Handoff early so lane classifier has integer routeScore (threshold 2).
     $handoff = Get-MetraDeskHandoff -Query $q -MetraRoot $MetraRoot
+    $routeScore = [int](Get-MetraProp -Object $handoff -Name 'score' -Default 0)
+    $lanePre = Resolve-MetraAskLane -Prompt $q -RouteScore $routeScore -EvidenceQuality 'none'
+
+    # Honesty / capture / clarify / authority - Chat lane landing (before evidence pack).
+    if ($lanePre.reason -eq 'social_greeting') {
+        return Merge-MetraAskLaneIntoResult `
+            -Result (New-MetraAskGreetingResult -Query $q -Continuity $continuity -SessionId $SessionId) `
+            -Lane $lanePre
+    }
+    if ($lanePre.reason -eq 'personal_observation') {
+        return Merge-MetraAskLaneIntoResult `
+            -Result (New-MetraAskPersonalObservationResult -Query $q -Continuity $continuity -SessionId $SessionId -MetraRoot $MetraRoot) `
+            -Lane $lanePre
+    }
+    if ($lanePre.reason -eq 'capture_intent' -and [string]$lanePre.answerType -eq 'park') {
+        return Merge-MetraAskLaneIntoResult `
+            -Result (New-MetraAskParkOrSaveResult -Query $q -Continuity $continuity -SessionId $SessionId) `
+            -Lane $lanePre
+    }
+    if ($lanePre.reason -eq 'authority_requires_confirm' -or
+        $lanePre.reason -eq 'sparse_intake_clarify' -or
+        ($lanePre.reason -eq 'capture_intent' -and [string]$lanePre.answerType -eq 'capture_ack') -or
+        $lanePre.reason -eq 'high_intent_no_route') {
+        return New-MetraAskChatLaneResult -Prompt $q -Handoff $handoff -Lane $lanePre `
+            -Continuity $continuity -SessionId $SessionId -MetraRoot $MetraRoot
+    }
 
     $capability = Get-MetraAskCapability -MetraRoot $MetraRoot
     $cwd = Get-MetraAskRouteCwd -Where ([string]$handoff.where) -MetraRoot $MetraRoot
@@ -2264,9 +2280,17 @@ function Get-MetraDeskAskResult {
         }
     }
 
+    $lane = Resolve-MetraAskLane -Prompt $q -RouteScore $routeScore -EvidenceQuality $quality
+
+    # Chat lane for thin/none-but-routed (and residual chat) - human landing, not router failure.
+    if ($lane.lane -eq 'chat') {
+        return New-MetraAskChatLaneResult -Prompt $q -Handoff $handoff -Lane $lane `
+            -Continuity $continuity -SessionId $SessionId -MetraRoot $MetraRoot
+    }
+
     if (-not $capability.available) {
         $sem = Resolve-MetraAskAnswerSemantics -EvidenceQuality $quality -EngineUnavailable -NextStep $handoffNext
-        return [PSCustomObject]@{
+        return Merge-MetraAskLaneIntoResult -Lane $lane -Result ([PSCustomObject]@{
             handoff          = $handoff
             message          = [string]$capability.message
             sessionId        = $null
@@ -2285,32 +2309,13 @@ function Get-MetraDeskAskResult {
             scrubbedPrompt   = $q
             suggestCapture   = $false
             images           = $journalImages
-        }
+        })
     }
 
-    # Prefer skip engine when evidence is none.
+    # Prefer skip engine when evidence is none (should already be chat lane above).
     if ($quality -eq 'none') {
-        $sem = Resolve-MetraAskAnswerSemantics -EvidenceQuality 'none' -NextStep $handoffNext
-        return [PSCustomObject]@{
-            handoff          = $handoff
-            message          = New-MetraAskNoneEvidenceReply
-            sessionId        = $SessionId
-            capability       = $capability
-            engine           = $null
-            model            = $null
-            answered         = [bool]$sem.answered
-            answerType       = [string]$sem.answerType
-            evidenceQuality  = 'none'
-            nextStep         = [string]$sem.nextStep
-            continuity       = $continuity
-            secretsScrubbed  = $false
-            secretsNotice    = $null
-            secretsKinds     = @()
-            secretsReason    = $null
-            scrubbedPrompt   = $q
-            suggestCapture   = $false
-            images           = $journalImages
-        }
+        return New-MetraAskChatLaneResult -Prompt $q -Handoff $handoff -Lane $lane `
+            -Continuity $continuity -SessionId $SessionId -MetraRoot $MetraRoot
     }
 
     $promptScrub = Invoke-MetraAskSecretsScrubText -Text $q
@@ -2327,7 +2332,7 @@ function Get-MetraDeskAskResult {
             $refuseNotice = 'Private-key material was blocked and not sent to the Ask engine. Rephrase without the key block.'
         }
         $sem = Resolve-MetraAskAnswerSemantics -EvidenceQuality $quality -SecretsRefuse -NextStep 'Rephrase without private-key material.'
-        return [PSCustomObject]@{
+        return Merge-MetraAskLaneIntoResult -Lane $lane -Result ([PSCustomObject]@{
             handoff          = $handoff
             message          = [string]$refuseNotice
             sessionId        = $SessionId
@@ -2346,7 +2351,7 @@ function Get-MetraDeskAskResult {
             scrubbedPrompt   = $enginePrompt
             suggestCapture   = $false
             images           = $journalImages
-        }
+        })
     }
 
     $engineResult = Invoke-MetraAskEngine -Prompt $enginePrompt -Cwd $cwd -Context $safeContext `
@@ -2358,7 +2363,7 @@ function Get-MetraDeskAskResult {
             $degMsg = 'Ask image intake needs the Cursor Ask engine for vision in this release. Switch Ask to Cursor, or remove the image and ask in text.'
         }
         $sem = Resolve-MetraAskAnswerSemantics -EvidenceQuality $quality -EngineUnavailable -NextStep 'Switch Ask engine to Cursor for vision, or ask without images.'
-        return [PSCustomObject]@{
+        return Merge-MetraAskLaneIntoResult -Lane $lane -Result ([PSCustomObject]@{
             handoff          = $handoff
             message          = $degMsg
             sessionId        = $SessionId
@@ -2377,7 +2382,7 @@ function Get-MetraDeskAskResult {
             scrubbedPrompt   = $enginePrompt
             suggestCapture   = $false
             images           = $journalImages
-        }
+        })
     }
 
     if (-not $engineResult.ok -and [string](Get-MetraProp -Object $engineResult -Name 'error' -Default '') -ne 'secrets_refuse' -and -not (Test-MetraAskEngineHealth -MetraRoot $MetraRoot -TimeoutSec 2)) {
@@ -2397,7 +2402,7 @@ function Get-MetraDeskAskResult {
         }
         $scrubbedFromEngine = [string](Get-MetraProp -Object $engineResult -Name 'scrubbedPrompt' -Default $enginePrompt)
         $sem = Resolve-MetraAskAnswerSemantics -EvidenceQuality $quality -SecretsRefuse
-        return [PSCustomObject]@{
+        return Merge-MetraAskLaneIntoResult -Lane $lane -Result ([PSCustomObject]@{
             handoff          = $handoff
             message          = $refuseNotice
             sessionId        = $SessionId
@@ -2416,7 +2421,7 @@ function Get-MetraDeskAskResult {
             scrubbedPrompt   = $scrubbedFromEngine
             suggestCapture   = $false
             images           = $journalImages
-        }
+        })
     }
 
     if (-not $engineResult.ok -or [string]::IsNullOrWhiteSpace($engineResult.message)) {
@@ -2444,7 +2449,7 @@ The Ask engine returned an error. Metra can still route work and recommend durab
             $(Get-MetraProp -Object $engineResult -Name 'secretsNotice' -Default $null)
         )
         $sem = Resolve-MetraAskAnswerSemantics -EvidenceQuality $quality -EngineUnavailable -NextStep $handoffNext
-        return [PSCustomObject]@{
+        return Merge-MetraAskLaneIntoResult -Lane $lane -Result ([PSCustomObject]@{
             handoff          = $handoff
             message          = Add-MetraAskSecretsNoticeToMessage -Message ([string]$failCap.message) -Notice $preNotice
             sessionId        = $null
@@ -2463,7 +2468,7 @@ The Ask engine returned an error. Metra can still route work and recommend durab
             scrubbedPrompt   = $enginePrompt
             suggestCapture   = $false
             images           = $journalImages
-        }
+        })
     }
 
     $responseScrub = Invoke-MetraAskSecretsScrubText -Text ([string]$engineResult.message)
@@ -2491,7 +2496,7 @@ The Ask engine returned an error. Metra can still route work and recommend durab
     }
     $cleanMessage = Add-MetraAskSecretsNoticeToMessage -Message $cleanMessage -Notice $notice
 
-    return [PSCustomObject]@{
+    return Merge-MetraAskLaneIntoResult -Lane $lane -Result ([PSCustomObject]@{
         handoff          = $handoff
         message          = $cleanMessage
         sessionId        = [string]$engineResult.sessionId
@@ -2510,7 +2515,7 @@ The Ask engine returned an error. Metra can still route work and recommend durab
         scrubbedPrompt   = $enginePrompt
         suggestCapture   = $false
         images           = $journalImages
-    }
+    })
 }
 
 function Get-MetraDeskHandoff {
