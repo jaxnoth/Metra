@@ -773,11 +773,34 @@ function Test-MetraAskShowWhere {
     <#
     .SYNOPSIS
         True when Ask should surface a quiet Where chip (weak / ambiguous / home fallback).
+        Chat lane turns never show Where (secretary path - no dispatch theater).
     #>
     [CmdletBinding()]
-    param([Parameter(Mandatory)]$Handoff)
+    param(
+        [Parameter(Mandatory)]$Handoff,
+        [string]$Lane = '',
+        [string]$LaneReason = ''
+    )
 
     if (-not $Handoff) { return $false }
+
+    $laneVal = $Lane
+    if ([string]::IsNullOrWhiteSpace($laneVal)) {
+        $laneVal = [string](Get-MetraProp -Object $Handoff -Name 'lane' -Default '')
+    }
+    $reasonVal = $LaneReason
+    if ([string]::IsNullOrWhiteSpace($reasonVal)) {
+        $reasonVal = [string](Get-MetraProp -Object $Handoff -Name 'chatLaneReason' -Default '')
+    }
+
+    $chatReasons = @(
+        'social_greeting', 'personal_observation', 'capture_intent',
+        'adequate_route_thin_evidence', 'sparse_intake_clarify',
+        'authority_requires_confirm', 'high_intent_no_route'
+    )
+    if ($laneVal -eq 'chat') { return $false }
+    if ($reasonVal -in $chatReasons) { return $false }
+
     $kind = [string](Get-MetraProp -Object $Handoff -Name 'kind' -Default '')
     if ($kind -in @('greeting', 'observation', 'park')) { return $false }
     if ([bool](Get-MetraProp -Object $Handoff -Name 'ambiguous' -Default $false)) { return $true }

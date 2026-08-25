@@ -65,12 +65,16 @@ function Get-MetraTicketWatchConfig {
     # from a full scan, and anything missing from a full scan gets auto-closed.
     # scope mine: TT cache may be broader; Attention stays person-filter only.
     # autoAnalyze: opt-in M2; Scan tickets / CLI only - never Portfolio refresh.
+    # autoAssess: opt-in; Added/Refreshed => Invoke-TicketAssess (local draft only, never iSupport).
+    # assessMaxAgeHours: skip autoAssess when a fresh assessment artifact exists.
     # evidenceRouter: opt-in E1; after local analyze draft - Next evidence only (never recommend).
     # autoStoreRecommend: reserved / unused for auto-write through Mine quality loop.
     # Config may set true for experiments, but TicketWatch never auto-writes iSupport from it (M4+).
     $defaults = [PSCustomObject]@{
         writeLocalDraft     = $false
         autoAnalyze         = $false
+        autoAssess          = $false
+        assessMaxAgeHours   = 24
         evidenceRouter      = $false
         autoStoreRecommend  = $false
         top                 = 0
@@ -91,6 +95,13 @@ function Get-MetraTicketWatchConfig {
         }
         if ($null -ne (Get-MetraProp -Object $raw -Name 'autoAnalyze' -Default $null)) {
             $defaults.autoAnalyze = [bool]$raw.autoAnalyze
+        }
+        if ($null -ne (Get-MetraProp -Object $raw -Name 'autoAssess' -Default $null)) {
+            $defaults.autoAssess = [bool]$raw.autoAssess
+        }
+        if ($null -ne (Get-MetraProp -Object $raw -Name 'assessMaxAgeHours' -Default $null)) {
+            $hrs = [int]$raw.assessMaxAgeHours
+            if ($hrs -ge 0) { $defaults.assessMaxAgeHours = $hrs }
         }
         if ($null -ne (Get-MetraProp -Object $raw -Name 'evidenceRouter' -Default $null)) {
             $defaults.evidenceRouter = [bool]$raw.evidenceRouter
@@ -164,6 +175,122 @@ function Test-MetraTicketWatchShouldAnalyze {
     if (-not $AutoAnalyze) { return $false }
     if ($ChangeKind -eq 'unchanged') { return $false }
     return ($ChangeKind -eq 'added' -or $ChangeKind -eq 'refreshed')
+}
+
+function Test-MetraTicketWatchHasRecentAssess {
+    <#
+    .SYNOPSIS
+        True when data/assessments/<id>.json exists and assessedAtUtc is within MaxAgeHours.
+    #>
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory)][string]$TicketId,
+        [int]$MaxAgeHours = 24,
+        [string]$TicketTrackerPath = ''
+    )
+
+    if ($MaxAgeHours -le 0) { return $false }
+    $root = $TicketTrackerPath
+    if ([string]::IsNullOrWhiteSpace($root)) {
+        $tt = Resolve-MetraTicketTrackerModule
+        if (-not $tt) { return $false }
+        $root = [string]$tt.Path
+    }
+    $path = Join-Path $root ("data\assessments\{0}.json" -f $TicketId)
+    if (-not (Test-Path -LiteralPath $path)) { return $false }
+    try {
+        $raw = Get-Content -LiteralPath $path -Raw -ErrorAction Stop | ConvertFrom-Json
+        $at = [string](Get-MetraProp -Object $raw -Name 'assessedAtUtc' -Default '')
+        if ([string]::IsNullOrWhiteSpace($at)) { return $true }
+        $when = [datetime]::Parse($at, $null, [System.Globalization.DateTimeStyles]::RoundtripKind).ToUniversalTime()
+        $age = ([datetime]::UtcNow) - $when
+        return ($age.TotalHours -lt $MaxAgeHours)
+    }
+    catch {
+        return $false
+    }
+}
+
+function Test-MetraTicketWatchShouldAssess {
+    <#
+    .SYNOPSIS
+        Queue assess trigger (local assess draft only - never iSupport recommend).
+    .DESCRIPTION
+        autoAssess + Added/Refreshed only (does not ride on -Draft / writeLocalDraft - that stays analyze).
+        Skips when a fresh assessment artifact exists.
+    #>
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory)]
+        [ValidateSet('added', 'refreshed', 'unchanged')]
+        [string]$ChangeKind,
+        [bool]$AutoAssess = $false,
+        [string]$TicketId = '',
+        [int]$AssessMaxAgeHours = 24,
+        [string]$TicketTrackerPath = ''
+    )
+
+    if (-not $AutoAssess) { return $false }
+    if ($ChangeKind -eq 'unchanged') { return $false }
+    if ($ChangeKind -notin @('added', 'refreshed')) { return $false }
+    if ($TicketId) {
+        if (Test-MetraTicketWatchHasRecentAssess -TicketId $TicketId -MaxAgeHours $AssessMaxAgeHours -TicketTrackerPath $TicketTrackerPath) {
+            return $false
+        }
+    }
+    return $true
+}
+
+function Update-MetraTicketAttentionFromAssess {
+    <#
+    .SYNOPSIS
+        Stamp assess gate onto a ticket Attention queue item (Metra Attention only).
+    #>
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory)]$QueueItem,
+        [Parameter(Mandatory)]$AssessResult
+    )
+
+    if (-not $QueueItem) { return $QueueItem }
+    $gate = [string](Get-MetraProp -Object $AssessResult -Name 'gate' -Default '')
+    $ask = [string](Get-MetraProp -Object $AssessResult -Name 'customerAsk' -Default '')
+    $obj = [string](Get-MetraProp -Object $AssessResult -Name 'responseObjective' -Default '')
+    $id = [string](Get-MetraProp -Object $AssessResult -Name 'ticketId' -Default '')
+
+    $summary = if ($gate) { "Assess: $gate" } else { 'Assess complete' }
+    $why = switch ($gate) {
+        'INTAKE' { 'Needs intake details before routing.' }
+        'CLARIFY' { 'Needs clarifying questions from the requester.' }
+        'SOLVE-READY' { 'Solve-ready - confirm before recommend or investigate.' }
+        default { 'Assessment available (local draft only).' }
+    }
+
+    $detail = [string](Get-MetraProp -Object $QueueItem -Name 'detail' -Default '')
+    if ($detail -and $detail -notmatch '(?i)\bAssess:') {
+        $detail = "$detail - $summary"
+    }
+    elseif (-not $detail) {
+        $detail = $summary
+    }
+
+    foreach ($pair in @(
+            @{ Name = 'assessGate'; Value = $gate },
+            @{ Name = 'summary'; Value = $summary },
+            @{ Name = 'whyNext'; Value = $why },
+            @{ Name = 'askPrompt'; Value = $(if ($ask) { $ask } else { "Review assess for ticket $id" }) },
+            @{ Name = 'responseObjective'; Value = $obj },
+            @{ Name = 'command'; Value = ".\TicketTracker.ps1 assess $id" },
+            @{ Name = 'detail'; Value = $detail }
+        )) {
+        if ($QueueItem.PSObject.Properties[$pair.Name]) {
+            $QueueItem.($pair.Name) = $pair.Value
+        }
+        else {
+            $QueueItem | Add-Member -NotePropertyName $pair.Name -NotePropertyValue $pair.Value -Force
+        }
+    }
+    return $QueueItem
 }
 
 function Get-MetraTicketWatchProductCueStopList {
@@ -2329,6 +2456,8 @@ function Invoke-MetraTicketWatchScan {
     # Force draft: -Draft switch or writeLocalDraft config (always analyze mine-eligible in scan).
     $forceDraft = [bool]$Draft -or [bool]$cfg.writeLocalDraft
     $autoAnalyze = [bool]$cfg.autoAnalyze
+    $autoAssess = [bool]$cfg.autoAssess
+    $assessMaxAgeHours = [int]$cfg.assessMaxAgeHours
     $evidenceRouter = [bool]$cfg.evidenceRouter
     $doSync = [bool]$cfg.syncOnScan -and -not $SkipSync
     $scope = [string]$cfg.scope
@@ -2346,12 +2475,15 @@ function Invoke-MetraTicketWatchScan {
         refreshed            = 0
         unchanged            = 0
         draftsWritten        = 0
+        assessmentsWritten   = 0
         draftAvailable       = $false
         evidenceSuggestions  = 0
         evidenceRecommendable = 0
         nextEvidenceAvailable = $false
         readyForRecommendation = $false
         autoAnalyze          = $autoAnalyze
+        autoAssess           = $autoAssess
+        assessMaxAgeHours    = $assessMaxAgeHours
         evidenceRouter       = $evidenceRouter
         forceDraft           = $forceDraft
         coveredTicket        = $false
@@ -2410,18 +2542,12 @@ function Invoke-MetraTicketWatchScan {
     # A truncated list is not full coverage - auto-close would kill live tickets past the cap.
     $truncated = [bool](Get-MetraProp -Object $candidates -Name 'Truncated' -Default $false)
     $coveredKinds = if ($truncated) { @() } else { @('ticket') }
-    $memory = Update-MetraAttentionMemory `
-        -Queue $queue `
-        -CoveredKinds $coveredKinds `
-        -ScanMode 'full' `
-        -MetraRoot $MetraRoot
     $result.coveredTicket = -not $truncated
-    $result.ok = $true
     if ($truncated -and -not $Quiet) {
         Write-Warning ("Ticket list capped at {0}; tickets past the cap stay in Attention untouched." -f $topN)
     }
 
-    # Classify change kind per ticket id for M2 analyze trigger (Added/Refreshed vs Unchanged).
+    # Classify change kind per ticket id for M2 analyze / assess trigger (Added/Refreshed vs Unchanged).
     $changeByTicketId = @{}
     foreach ($q in $queue) {
         $key = [string]$q.id
@@ -2445,7 +2571,7 @@ function Invoke-MetraTicketWatchScan {
         }
     }
 
-    # M2: TT New-TicketDraftAnalysis -> local analyze-draft note only. Fail-soft per ticket.
+    # Assess (preferred) or analyze: local drafts only. Fail-soft per ticket.
     # E1: optional evidenceRouter after analyze - Next evidence note only (never recommend/iSupport).
     $ticketsById = @{}
     foreach ($t in @($candidates.Tickets)) {
@@ -2463,81 +2589,134 @@ function Invoke-MetraTicketWatchScan {
         $personPriorByCustomer[$custKey]++
     }
 
+    $queueByTicketId = @{}
+    foreach ($q in $queue) {
+        $key = [string]$q.id
+        if ($key -match '^ticket:(.+)$') { $queueByTicketId[$Matches[1]] = $q }
+    }
+
+    $assessIds = @(
+        foreach ($ticketId in @($changeByTicketId.Keys)) {
+            $kind = [string]$changeByTicketId[$ticketId]
+            if (Test-MetraTicketWatchShouldAssess -ChangeKind $kind -AutoAssess:$autoAssess `
+                    -TicketId $ticketId -AssessMaxAgeHours $assessMaxAgeHours -TicketTrackerPath $tt.Path) {
+                $ticketId
+            }
+        }
+    )
     $analyzeIds = @(
         foreach ($ticketId in @($changeByTicketId.Keys)) {
+            if ($assessIds -contains $ticketId) { continue }
             $kind = [string]$changeByTicketId[$ticketId]
             if (Test-MetraTicketWatchShouldAnalyze -ChangeKind $kind -ForceDraft:$forceDraft -AutoAnalyze:$autoAnalyze) {
                 $ticketId
             }
         }
     )
-    if ($analyzeIds.Count -gt 0) {
-        $null = Import-MetraTicketTrackerModule -ModulePath $tt.ModulePath
-        foreach ($id in $analyzeIds) {
-            try {
-                $analysis = New-TicketDraftAnalysis -Id $id
-                $result.draftsWritten++
 
-                if ($evidenceRouter) {
-                    try {
-                        $ticketObj = $ticketsById[$id]
-                        $subject = if ($ticketObj) {
-                            [string](Get-MetraProp -Object $ticketObj -Name 'Subject' -Default '')
-                        } else { '' }
-                        if (-not $subject -and $analysis) {
-                            $subject = [string](Get-MetraProp -Object $analysis -Name 'Subject' -Default '')
-                        }
-                        $desc = ''
-                        if ($ticketObj) {
-                            $desc = [string](Get-MetraProp -Object $ticketObj -Name 'Description' -Default '')
-                        }
-                        $customer = ''
-                        if ($ticketObj) {
-                            $customer = [string](Get-MetraProp -Object $ticketObj -Name 'Customer' -Default '')
-                        }
-                        $custKey = $customer.Trim().ToLowerInvariant()
-                        $personPrior = 0
-                        if ($custKey -and $personPriorByCustomer.ContainsKey($custKey)) {
-                            $personPrior = [math]::Max(0, ([int]$personPriorByCustomer[$custKey]) - 1)
-                        }
-                        $similarN = @($analysis.Similar).Count
-                        $solutionsN = @($analysis.Solutions).Count
-                        $signals = Get-MetraTicketWatchEvidenceSignals `
-                            -Subject $subject `
-                            -Description $desc `
-                            -SimilarCount $similarN `
-                            -SolutionsCount $solutionsN `
-                            -PersonPriorCount $personPrior `
-                            -MailCue:$false `
-                            -InstitutionalExhausted:$true
-                        $suggestion = Get-MetraTicketWatchEvidenceSuggestion -Signals $signals
-                        $noteBody = Format-MetraTicketWatchEvidenceNextNote -Suggestion $suggestion
-                        $priorEvidence = Get-MetraTicketWatchLatestNoteText -TicketId $id -Tag 'evidence-next'
-                        if ($noteBody.Trim() -ne ([string]$priorEvidence).Trim()) {
-                            $null = Add-TrackedTicketNote -Id $id -Text $noteBody -Tags 'evidence-next'
-                        }
-                        $result.evidenceSuggestions++
-                        if ([string]$suggestion.draftState -eq 'recommendable') {
-                            $result.evidenceRecommendable++
-                        }
-                    }
-                    catch {
-                        if (-not $Quiet) {
-                            Write-Warning ("Next evidence suggestion failed for {0}: {1}" -f $id, $_.Exception.Message)
-                        }
-                    }
-                }
+    if ($assessIds.Count -gt 0 -or $analyzeIds.Count -gt 0) {
+        $null = Import-MetraTicketTrackerModule -ModulePath $tt.ModulePath
+    }
+
+    foreach ($id in $assessIds) {
+        try {
+            $assessCmd = Get-Command Invoke-TicketAssess -ErrorAction Stop
+            $assessment = & $assessCmd -Id $id -DraftRecommend
+            $result.assessmentsWritten++
+            $result.draftsWritten++
+            if ($queueByTicketId.ContainsKey($id)) {
+                $queueByTicketId[$id] = Update-MetraTicketAttentionFromAssess -QueueItem $queueByTicketId[$id] -AssessResult $assessment
             }
-            catch {
-                if (-not $Quiet) {
-                    Write-Warning ("Local analyze draft failed for {0}: {1}" -f $id, $_.Exception.Message)
-                }
+        }
+        catch {
+            if (-not $Quiet) {
+                Write-Warning ("Ticket assess skipped for {0}: {1}" -f $id, $_.Exception.Message)
             }
         }
     }
-    $result.draftAvailable = $result.draftsWritten -gt 0
-    $result.nextEvidenceAvailable = $result.evidenceSuggestions -gt 0
-    $result.readyForRecommendation = $result.evidenceRecommendable -gt 0
+
+    foreach ($id in $analyzeIds) {
+        try {
+            $analysis = New-TicketDraftAnalysis -Id $id
+            $result.draftsWritten++
+
+            if ($evidenceRouter) {
+                try {
+                    $ticketObj = $ticketsById[$id]
+                    $subject = if ($ticketObj) {
+                        [string](Get-MetraProp -Object $ticketObj -Name 'Subject' -Default '')
+                    } else { '' }
+                    if (-not $subject -and $analysis) {
+                        $subject = [string](Get-MetraProp -Object $analysis -Name 'Subject' -Default '')
+                    }
+                    $desc = ''
+                    if ($ticketObj) {
+                        $desc = [string](Get-MetraProp -Object $ticketObj -Name 'Description' -Default '')
+                    }
+                    $customer = ''
+                    if ($ticketObj) {
+                        $customer = [string](Get-MetraProp -Object $ticketObj -Name 'Customer' -Default '')
+                    }
+                    $custKey = $customer.Trim().ToLowerInvariant()
+                    $personPrior = 0
+                    if ($custKey -and $personPriorByCustomer.ContainsKey($custKey)) {
+                        $personPrior = [math]::Max(0, ([int]$personPriorByCustomer[$custKey]) - 1)
+                    }
+                    $similarN = @($analysis.Similar).Count
+                    $solutionsN = @($analysis.Solutions).Count
+                    $signals = Get-MetraTicketWatchEvidenceSignals `
+                        -Subject $subject `
+                        -Description $desc `
+                        -SimilarCount $similarN `
+                        -SolutionsCount $solutionsN `
+                        -PersonPriorCount $personPrior `
+                        -MailCue:$false `
+                        -InstitutionalExhausted:$true
+                    $suggestion = Get-MetraTicketWatchEvidenceSuggestion -Signals $signals
+                    $noteBody = Format-MetraTicketWatchEvidenceNextNote -Suggestion $suggestion
+                    $priorEvidence = Get-MetraTicketWatchLatestNoteText -TicketId $id -Tag 'evidence-next'
+                    if ($noteBody.Trim() -ne ([string]$priorEvidence).Trim()) {
+                        $null = Add-TrackedTicketNote -Id $id -Text $noteBody -Tags 'evidence-next'
+                    }
+                    $result.evidenceSuggestions++
+                    if (Test-MetraTicketWatchNoteIsRecommendable -NoteText $noteBody) {
+                        $result.evidenceRecommendable++
+                    }
+                }
+                catch {
+                    if (-not $Quiet) {
+                        Write-Warning ("Evidence router skipped for {0}: {1}" -f $id, $_.Exception.Message)
+                    }
+                }
+            }
+        }
+        catch {
+            if (-not $Quiet) {
+                Write-Warning ("Ticket analyze skipped for {0}: {1}" -f $id, $_.Exception.Message)
+            }
+        }
+    }
+
+    # Rebuild queue array from stamped map (assess fields) then reconcile Attention.
+    $queue = @(
+        foreach ($q in $queue) {
+            $key = [string]$q.id
+            if ($key -match '^ticket:(.+)$' -and $queueByTicketId.ContainsKey($Matches[1])) {
+                $queueByTicketId[$Matches[1]]
+            }
+            else { $q }
+        }
+    )
+    $result.queue = $queue
+    $memory = Update-MetraAttentionMemory `
+        -Queue $queue `
+        -CoveredKinds $coveredKinds `
+        -ScanMode 'full' `
+        -MetraRoot $MetraRoot
+    $result.ok = $true
+    $result.nextEvidenceAvailable = ($result.evidenceSuggestions -gt 0)
+    $result.readyForRecommendation = ($result.evidenceRecommendable -gt 0)
+    $result.draftAvailable = ($result.draftsWritten -gt 0)
 
     if (-not $Quiet) {
         Write-Host ''
@@ -2558,11 +2737,18 @@ function Invoke-MetraTicketWatchScan {
         Write-Host ("  Added: {0}" -f $result.added)
         Write-Host ("  Refreshed: {0}" -f $result.refreshed)
         Write-Host ("  Unchanged: {0}" -f $result.unchanged)
-        if ($result.draftsWritten -gt 0) {
-            Write-Host ("Draft available: {0} local analyze draft(s)." -f $result.draftsWritten)
+        if ($result.assessmentsWritten -gt 0) {
+            Write-Host ("Assess drafts: {0} local assess draft(s)." -f $result.assessmentsWritten)
+        }
+        elseif ($autoAssess) {
+            Write-Host 'No assess drafts written (nothing matched trigger, recent assess skip, or Unchanged).'
+        }
+        $analyzeDrafts = [math]::Max(0, $result.draftsWritten - $result.assessmentsWritten)
+        if ($analyzeDrafts -gt 0) {
+            Write-Host ("Analyze drafts: {0} local analyze draft(s)." -f $analyzeDrafts)
         }
         elseif ($forceDraft -or $autoAnalyze) {
-            Write-Host 'No analyze drafts written (nothing matched trigger, or all Unchanged).'
+            Write-Host 'No analyze drafts written (assess preferred, nothing matched, or Unchanged).'
         }
         if ($result.evidenceSuggestions -gt 0) {
             Write-Host ("Next evidence: {0} suggestion(s)." -f $result.evidenceSuggestions)
@@ -2570,12 +2756,12 @@ function Invoke-MetraTicketWatchScan {
                 Write-Host ("Evidence appears sufficient / Ready for recommendation: {0}." -f $result.evidenceRecommendable)
             }
         }
-        elseif ($evidenceRouter -and ($forceDraft -or $autoAnalyze)) {
+        elseif ($evidenceRouter -and ($forceDraft -or $autoAnalyze -or $autoAssess)) {
             Write-Host 'No Next evidence notes written (evidenceRouter on; no analyze drafts this scan).'
         }
         Write-Host ''
         Write-Host 'No iSupport writes performed.'
-        Write-Host 'Next: open Ops Attention or run .\TicketTracker.ps1 brief <id>'
+        Write-Host 'Next: open Ops Attention or run .\TicketTracker.ps1 brief <id> / assess <id>'
         Write-Host ''
     }
 

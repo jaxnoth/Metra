@@ -461,6 +461,7 @@ function Resolve-MetraAskAnswerSemantics {
     <#
     .SYNOPSIS
         Map evidence quality + capability path to answerType / answered / nextStep.
+        Honesty short-circuits use New-MetraAskShortCircuitResult / Chat lane converter - not this function.
     #>
     [CmdletBinding()]
     param(
@@ -469,20 +470,9 @@ function Resolve-MetraAskAnswerSemantics {
         [string]$PreferredType = 'provisional',
         [string]$NextStep = '',
         [switch]$EngineUnavailable,
-        [switch]$SecretsRefuse,
-        [switch]$HonestyShortCircuit,
-        [string]$HonestyKind
+        [switch]$SecretsRefuse
     )
 
-    if ($HonestyShortCircuit) {
-        $kind = if ($HonestyKind) { $HonestyKind } else { 'greeting' }
-        return [PSCustomObject]@{
-            answered         = $true
-            answerType       = $kind
-            evidenceQuality  = 'none'
-            nextStep         = $NextStep
-        }
-    }
     if ($SecretsRefuse) {
         return [PSCustomObject]@{
             answered         = $false

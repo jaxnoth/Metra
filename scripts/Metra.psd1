@@ -89,6 +89,7 @@
         'Get-MetraDeskHandoff',
         'Get-MetraDeskPlaceRecommendation',
         'Get-MetraDeskAskResult',
+        'New-MetraTicketAssessDraft',
         'Test-MetraDeskGreeting',
         'Test-MetraAskShowWhere',
         'Add-MetraPlaceMemoryItem',
