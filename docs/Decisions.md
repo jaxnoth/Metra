@@ -20,6 +20,15 @@ Entry shape:
 
 ---
 
+## 2026-08-25 - Inspect engine configuration split
+
+- Decision: Inspect may use dedicated `inspect.*` engine and provider-model configuration. Missing Inspect values fall back to the corresponding `ask.*` values so existing configurations retain their current behavior. Ask and Inspect are independently selectable, allowing day-to-day coding and reviewer workloads to use different model families without changing the global Ask configuration.
+- During calibration on constrained hosts, the preferred Inspect selection is Cursor-hosted Gemini Flash using the exact model identifier accepted by the configured sidecar (`gemini-3.7-flash` when allowed). Inspect reports keep flat `provenance.engine` / `provenance.model` for existing consumers and add `provenance.engineProvenance` for requested/resolved/source/independence detail. A resolved model is recorded only when the transport returns one. Engine-independence status is conservative: runs are not classified as independent when coding and review resolve to the same model family, and runs with insufficient resolution data are classified as unknown.
+- Ollama remains valid for Ask or Inspect when explicitly selected. Schema-constrained Ollama findings output remains a separate enhancement. This decision does not change the Inspect Phase 1 CLI surface and does not by itself unpark fix-step isolation. Promotion follows Phase 2a calibration evidence of repeated Ollama Inspect pain on constrained hosts.
+- See: `Resolve-MetraInspectEngineSelection`; `Invoke-MetraAskEngine -Engine/-Model`; `.\metra.ps1 ask engine show`; `metra.config.example.json` `inspect` block; Future-Development A13 / Phase 2b
+
+---
+
 ## 2026-08-25 - Chat lane activation (Ask + TicketTracker assess)
 
 - Decision: Portfolio Chat lane is a first-class Ask path alongside Routed Ask. Classifier uses integer `routeScore` (confident threshold **2**), emits `lane` / `reason` / `responseObjective` / `intentConfidence`, and projects Ops-safe `answerType` via reason (preserve `greeting` / `observation` / `park`; add `capture_ack` / `clarify_draft` / `operator_confirm`). Voice responses keep invariant **durable contains spoken**. TicketTracker `assess` owns INTAKE / CLARIFY / SOLVE-READY gates and ticket confidences; Metra Chat lane drafts `customerAsk` / `recommendDraft` only. Gate mapping: INTAKE/CLARIFY → Clarify; SOLVE-READY → **OperatorConfirm** (never GroundedAnswer in assess Phase 1). Assess default is local-only (no iSupport write).

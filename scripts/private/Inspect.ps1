@@ -1221,11 +1221,213 @@ $Payload
 "@
 }
 
+function Get-MetraInspectModelFamily {
+    [CmdletBinding()]
+    param([string]$Model)
+
+    $m = [string]$Model
+    if ([string]::IsNullOrWhiteSpace($m)) { return 'unknown' }
+    $lower = $m.Trim().ToLowerInvariant()
+    if ($lower -like 'auto-smart*' -or $lower -eq 'auto') { return 'unknown' }
+    if ($lower -like 'gemini*') { return 'gemini' }
+    if ($lower -like 'composer*') { return 'composer' }
+    if ($lower -like 'qwen*') { return 'qwen' }
+    if ($lower -like 'gpt*' -or $lower -like 'o1*' -or $lower -like 'o3*' -or $lower -like 'o4*') { return 'openai' }
+    if ($lower -like 'claude*') { return 'anthropic' }
+    if ($lower -like 'grok*') { return 'grok' }
+    return 'unknown'
+}
+
+function Resolve-MetraInspectIndependenceStatus {
+    <#
+    .SYNOPSIS
+        Conservative independence: independent | shared-family | unknown.
+    #>
+    [CmdletBinding()]
+    param(
+        [string]$ReviewModel,
+        [string]$CodingModel
+    )
+
+    $reviewFamily = Get-MetraInspectModelFamily -Model $ReviewModel
+    $codingFamily = Get-MetraInspectModelFamily -Model $CodingModel
+    if ($reviewFamily -eq 'unknown' -or $codingFamily -eq 'unknown') { return 'unknown' }
+    if ($reviewFamily -eq $codingFamily) {
+        # Same known family - also require exact model match when family is ambiguous-other was removed
+        return 'shared-family'
+    }
+    return 'independent'
+}
+
+function Resolve-MetraInspectEngineSelection {
+    <#
+    .SYNOPSIS
+        Resolves Inspect engine/model with inspect.* first, then ask.* fallback (no cross-provider leak).
+    #>
+    [CmdletBinding()]
+    param([string]$MetraRoot = (Get-MetraRoot))
+
+    $ask = Get-MetraAskSettings -MetraRoot $MetraRoot
+    $cfg = $null
+    try { $cfg = Get-MetraConfig } catch { $cfg = $null }
+    if ($null -eq $cfg) {
+        $configPath = Get-MetraAskConfigPath -MetraRoot $MetraRoot
+        if (Test-Path -LiteralPath $configPath) {
+            try { $cfg = Get-Content -Raw -LiteralPath $configPath | ConvertFrom-Json } catch { $cfg = $null }
+        }
+    }
+    $insp = Get-MetraProp -Object $cfg -Name 'inspect' -Default $null
+
+    $allowed = @('cursor', 'ollama', 'enterprise', 'llamacpp', 'none')
+    $engineSource = 'default'
+    $engine = [string](Get-MetraProp -Object $ask -Name 'engine' -Default 'ollama')
+    if ([string]::IsNullOrWhiteSpace($engine)) { $engine = 'ollama' }
+    $engine = $engine.Trim().ToLowerInvariant()
+
+    $rawInspEngine = [string](Get-MetraProp -Object $insp -Name 'engine' -Default '').Trim()
+    if (-not [string]::IsNullOrWhiteSpace($rawInspEngine)) {
+        $engNorm = $rawInspEngine.ToLowerInvariant()
+        if ($engNorm -notin $allowed) {
+            throw ("Unknown inspect.engine '{0}'. Use cursor|ollama|enterprise|llamacpp|none." -f $rawInspEngine)
+        }
+        $engine = $engNorm
+        $engineSource = 'inspect'
+    }
+    elseif ($null -ne $ask) {
+        $engineSource = 'ask-fallback'
+    }
+
+    $modelSource = 'default'
+    $requestedModel = ''
+    $cursorOptimizeFor = [string](Get-MetraProp -Object $ask -Name 'cursorOptimizeFor' -Default 'cost')
+
+    switch ($engine) {
+        'cursor' {
+            $inspCursor = Get-MetraProp -Object $insp -Name 'cursor' -Default $null
+            $rawModel = [string](Get-MetraProp -Object $inspCursor -Name 'model' -Default '').Trim()
+            if ([string]::IsNullOrWhiteSpace($rawModel)) {
+                $rawModel = [string](Get-MetraProp -Object $ask -Name 'cursorModel' -Default '').Trim()
+                if ([string]::IsNullOrWhiteSpace($rawModel)) { $rawModel = 'composer-2.5' }
+                $modelSource = 'ask-fallback'
+            }
+            else {
+                $modelSource = 'inspect'
+            }
+            $sel = Resolve-MetraAskCursorModelSelection -Model $rawModel -OptimizeFor $cursorOptimizeFor
+            $requestedModel = [string]$sel.model
+            $cursorOptimizeFor = [string]$sel.cursorOptimizeFor
+        }
+        'ollama' {
+            $inspOllama = Get-MetraProp -Object $insp -Name 'ollama' -Default $null
+            $rawModel = [string](Get-MetraProp -Object $inspOllama -Name 'model' -Default '').Trim()
+            if ([string]::IsNullOrWhiteSpace($rawModel)) {
+                $rawModel = [string](Get-MetraProp -Object $ask -Name 'ollamaModel' -Default '').Trim()
+                $modelSource = 'ask-fallback'
+            }
+            else {
+                $modelSource = 'inspect'
+            }
+            $requestedModel = $rawModel
+        }
+        'enterprise' {
+            $inspEnt = Get-MetraProp -Object $insp -Name 'enterprise' -Default $null
+            $rawModel = [string](Get-MetraProp -Object $inspEnt -Name 'model' -Default '').Trim()
+            if ([string]::IsNullOrWhiteSpace($rawModel)) {
+                $rawModel = [string](Get-MetraProp -Object $ask -Name 'enterpriseModel' -Default '').Trim()
+                $modelSource = 'ask-fallback'
+            }
+            else {
+                $modelSource = 'inspect'
+            }
+            $requestedModel = $rawModel
+        }
+        'llamacpp' {
+            $inspLlama = Get-MetraProp -Object $insp -Name 'llamacpp' -Default $null
+            $rawModel = [string](Get-MetraProp -Object $inspLlama -Name 'model' -Default '').Trim()
+            if ([string]::IsNullOrWhiteSpace($rawModel)) {
+                $rawModel = [string](Get-MetraProp -Object $ask -Name 'llamacppModel' -Default '').Trim()
+                $modelSource = 'ask-fallback'
+            }
+            else {
+                $modelSource = 'inspect'
+            }
+            $requestedModel = $rawModel
+        }
+        default {
+            $requestedModel = ''
+            $modelSource = $engineSource
+        }
+    }
+
+    $configurationSource = if ($engineSource -eq 'inspect' -or $modelSource -eq 'inspect') {
+        'inspect'
+    }
+    elseif ($engineSource -eq 'ask-fallback' -or $modelSource -eq 'ask-fallback') {
+        'ask-fallback'
+    }
+    else {
+        'default'
+    }
+
+    $fellBack = ($engineSource -ne 'inspect') -or ($modelSource -ne 'inspect')
+
+    return [PSCustomObject]@{
+        Engine              = $engine
+        RequestedModel      = $requestedModel
+        ConfigurationSource = $configurationSource
+        FellBackToAsk       = [bool]$fellBack
+        EngineSource        = $engineSource
+        ModelSource         = $modelSource
+        CursorOptimizeFor   = $cursorOptimizeFor
+    }
+}
+
+function New-MetraInspectEngineProvenance {
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory)]$Selection,
+        [string]$ResolvedModel,
+        [string]$CodingModel
+    )
+
+    $requested = [string](Get-MetraProp -Object $Selection -Name 'RequestedModel' -Default '')
+    $engine = [string](Get-MetraProp -Object $Selection -Name 'Engine' -Default '')
+    $independence = Resolve-MetraInspectIndependenceStatus -ReviewModel $requested -CodingModel $CodingModel
+    $block = [ordered]@{
+        purpose             = 'inspect'
+        engine              = $engine
+        requestedModel      = $requested
+        configurationSource = [string](Get-MetraProp -Object $Selection -Name 'ConfigurationSource' -Default 'ask-fallback')
+        independence        = $independence
+        engineSource        = [string](Get-MetraProp -Object $Selection -Name 'EngineSource' -Default '')
+        modelSource         = [string](Get-MetraProp -Object $Selection -Name 'ModelSource' -Default '')
+    }
+    if (-not [string]::IsNullOrWhiteSpace($ResolvedModel)) {
+        $block['resolvedModel'] = $ResolvedModel
+        $block['resolvedModelSource'] = 'transport'
+    }
+    return [PSCustomObject]$block
+}
+
+function Write-MetraInspectReviewerBanner {
+    [CmdletBinding()]
+    param([Parameter(Mandatory)]$Selection)
+
+    $src = [string]$Selection.ConfigurationSource
+    $tag = switch ($src) {
+        'inspect' { 'inspect pin' }
+        'ask-fallback' { 'ask fallback' }
+        default { 'default' }
+    }
+    Write-Host ("Inspect reviewer: {0} / {1} [{2}]" -f $Selection.Engine, $Selection.RequestedModel, $tag) -ForegroundColor DarkGray
+}
+
 function Invoke-MetraInspectEngine {
     [CmdletBinding()]
     param(
         [Parameter(Mandatory)][string]$Prompt,
-        [Parameter(Mandatory)][string]$Cwd
+        [Parameter(Mandatory)][string]$Cwd,
+        [string]$MetraRoot = (Get-MetraRoot)
     )
 
     $retrySuffix = @'
@@ -1235,43 +1437,62 @@ Return ONLY one object: {"findings":[...]} where each item has severity, confide
 If no issues: {"findings":[]}. No markdown. No prose outside JSON.
 '@
 
+    $selection = Resolve-MetraInspectEngineSelection -MetraRoot $MetraRoot
+    Write-MetraInspectReviewerBanner -Selection $selection
+
     $currentPrompt = $Prompt
     $lastParse = $null
     $engine = ''
     $model = ''
+    $resolvedModel = $null
+    $engineProvenance = $null
 
     for ($attempt = 0; $attempt -lt 2; $attempt++) {
-        $engineResult = Invoke-MetraAskEngine -Prompt $currentPrompt -Cwd $Cwd -Context @{ purpose = 'metra-inspect' } -TimeoutSec 600
+        $engineResult = Invoke-MetraAskEngine -Prompt $currentPrompt -Cwd $Cwd -MetraRoot $MetraRoot `
+            -Context @{ purpose = 'metra-inspect' } -TimeoutSec 600 `
+            -Engine $selection.Engine -Model $selection.RequestedModel
         if (-not $engineResult.ok) {
             $msg = [string](Get-MetraProp -Object $engineResult -Name 'message' -Default 'Ask engine failed.')
             $err = [string](Get-MetraProp -Object $engineResult -Name 'error' -Default 'engine_error')
+            $resolvedModel = Get-MetraProp -Object $engineResult -Name 'resolvedModel' -Default $null
+            if ($null -ne $resolvedModel -and [string]::IsNullOrWhiteSpace([string]$resolvedModel)) { $resolvedModel = $null }
+            $engineProvenance = New-MetraInspectEngineProvenance -Selection $selection -ResolvedModel $resolvedModel -CodingModel ''
             return [PSCustomObject]@{
-                Ok            = $false
-                Message       = $msg
-                Error         = $err
-                Excerpt       = $null
-                Engine        = [string](Get-MetraProp -Object $engineResult -Name 'engine' -Default '')
-                Model         = [string](Get-MetraProp -Object $engineResult -Name 'model' -Default '')
-                Findings      = @()
-                ShapeMismatch = $false
-                RetryAttempt  = $attempt
+                Ok               = $false
+                Message          = $msg
+                Error            = $err
+                Excerpt          = $null
+                Engine           = [string](Get-MetraProp -Object $engineResult -Name 'engine' -Default $selection.Engine)
+                Model            = [string](Get-MetraProp -Object $engineResult -Name 'model' -Default $selection.RequestedModel)
+                ResolvedModel    = $resolvedModel
+                EngineProvenance = $engineProvenance
+                Selection        = $selection
+                Findings         = @()
+                ShapeMismatch    = $false
+                RetryAttempt     = $attempt
             }
         }
 
-        $engine = [string](Get-MetraProp -Object $engineResult -Name 'engine' -Default '')
-        $model = [string](Get-MetraProp -Object $engineResult -Name 'model' -Default '')
+        $engine = [string](Get-MetraProp -Object $engineResult -Name 'engine' -Default $selection.Engine)
+        $model = [string](Get-MetraProp -Object $engineResult -Name 'model' -Default $selection.RequestedModel)
+        $resolvedModel = Get-MetraProp -Object $engineResult -Name 'resolvedModel' -Default $null
+        if ($null -ne $resolvedModel -and [string]::IsNullOrWhiteSpace([string]$resolvedModel)) { $resolvedModel = $null }
+        $engineProvenance = New-MetraInspectEngineProvenance -Selection $selection -ResolvedModel $resolvedModel -CodingModel ''
         $parsed = ConvertTo-MetraInspectFindings -Message ([string]$engineResult.message)
         if ($parsed.Ok) {
             return [PSCustomObject]@{
-                Ok            = $true
-                Message       = [string]$engineResult.message
-                Error         = $null
-                Excerpt       = $null
-                Engine        = $engine
-                Model         = $model
-                Findings      = @($parsed.Findings)
-                ShapeMismatch = $false
-                RetryAttempt  = $attempt
+                Ok               = $true
+                Message          = [string]$engineResult.message
+                Error            = $null
+                Excerpt          = $null
+                Engine           = $engine
+                Model            = $model
+                ResolvedModel    = $resolvedModel
+                EngineProvenance = $engineProvenance
+                Selection        = $selection
+                Findings         = @($parsed.Findings)
+                ShapeMismatch    = $false
+                RetryAttempt     = $attempt
             }
         }
 
@@ -1285,15 +1506,18 @@ If no issues: {"findings":[]}. No markdown. No prose outside JSON.
     }
 
     return [PSCustomObject]@{
-        Ok            = $false
-        Message       = [string]$lastParse.Error
-        Error         = 'parse_failed'
-        Excerpt       = [string]$lastParse.Excerpt
-        Engine        = $engine
-        Model         = $model
-        Findings      = @()
-        ShapeMismatch = [bool]$lastParse.ShapeMismatch
-        RetryAttempt  = 1
+        Ok               = $false
+        Message          = [string]$lastParse.Error
+        Error            = 'parse_failed'
+        Excerpt          = [string]$lastParse.Excerpt
+        Engine           = $engine
+        Model            = $model
+        ResolvedModel    = $resolvedModel
+        EngineProvenance = $engineProvenance
+        Selection        = $selection
+        Findings         = @()
+        ShapeMismatch    = [bool]$lastParse.ShapeMismatch
+        RetryAttempt     = 1
     }
 }
 
@@ -1412,6 +1636,7 @@ function Invoke-MetraInspectDiff {
     $provenance = [ordered]@{
         engine              = $engine.Engine
         model               = $engine.Model
+        engineProvenance    = $(if ($null -ne $engine.EngineProvenance) { $engine.EngineProvenance } else { $null })
         inspectedAtUtc      = [datetime]::UtcNow.ToString('o')
         project             = $ctx.Project
         root                = $ctx.Root
@@ -1529,6 +1754,7 @@ function Invoke-MetraInspectPlan {
     $provenance = [ordered]@{
         engine         = $engine.Engine
         model          = $engine.Model
+        engineProvenance = $(if ($null -ne $engine.EngineProvenance) { $engine.EngineProvenance } else { $null })
         inspectedAtUtc = [datetime]::UtcNow.ToString('o')
         project        = $ctx.Project
         root           = $ctx.Root

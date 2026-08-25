@@ -535,6 +535,16 @@ Describe 'Ask engine lifecycle and routing' {
 
     It 'ask engine restart -WhatIf forwards ShouldProcess without stopping the sidecar' {
         InModuleScope Metra {
+            Mock Get-MetraAskSettings {
+                [PSCustomObject]@{
+                    enabled = $true; engine = 'cursor'; model = 'composer-2.5'
+                    cursorPort = 7381; cursorModel = 'composer-2.5'; cursorOptimizeFor = 'cost'
+                    ollamaBaseUrl = 'http://127.0.0.1:11434'; ollamaModel = 'qwen'; ollamaSizeBand = 'medium'
+                    enterpriseBaseUrl = ''; enterpriseModel = ''; enterpriseApiKeyEnv = 'X'; enterpriseRequireApiKey = $false
+                    enterpriseConfigured = $false; llamacppBaseUrl = 'http://127.0.0.1:8080'; llamacppModel = 'x'
+                    metraRoot = (Get-MetraRoot)
+                }
+            }
             Mock Stop-MetraAskEngine { throw 'Stop-MetraAskEngine should not run under WhatIf' }
             Mock Start-MetraAskEngine { throw 'Start-MetraAskEngine should not run under WhatIf' }
             Mock Get-MetraAskCapability { [PSCustomObject]@{ available = $true; reason = 'ok' } }
@@ -635,6 +645,70 @@ Describe 'Ask cursor response conversion' {
             $r.ok | Should -BeFalse
             $r.status | Should -Be 'unknown'
             $r.error | Should -Be 'engine_request_failed'
+        }
+    }
+}
+
+Describe 'Ask engine selection overrides' {
+It 'Engine Model overrides do not mutate Get-MetraAskSettings and pass ollama model' {
+        InModuleScope Metra {
+            $base = [PSCustomObject]@{
+                enabled = $true; engine = 'ollama'; model = 'qwen2.5:7b'
+                cursorPort = 7381; cursorModel = 'composer-2.5'; cursorOptimizeFor = 'cost'
+                ollamaBaseUrl = 'http://127.0.0.1:11434'; ollamaModel = 'qwen2.5:7b'; ollamaSizeBand = 'medium'
+                enterpriseBaseUrl = ''; enterpriseModel = ''; enterpriseApiKeyEnv = 'X'; enterpriseRequireApiKey = $false
+                enterpriseConfigured = $false; llamacppBaseUrl = 'http://127.0.0.1:8080'; llamacppModel = 'x'
+                metraRoot = (Get-MetraRoot)
+            }
+            Mock Get-MetraAskSettings { $base }
+            Mock Invoke-MetraAskSecretsScrubText {
+                [PSCustomObject]@{ Refuse = $false; Reason = $null; Notice = $null; Matched = $false; Text = 'hi'; Kinds = @() }
+            }
+            Mock Invoke-MetraAskSecretsScrubObject {
+                [PSCustomObject]@{ Refuse = $false; Reason = $null; Notice = $null; Matched = $false; Value = @{}; Kinds = @() }
+            }
+            $captured = $null
+            Mock Invoke-MetraAskOpenAICompatComplete {
+                param($Settings)
+                $script:captured = $Settings
+                [PSCustomObject]@{ ok = $true; message = '{}'; engine = $Settings.engine; model = $Settings.model; status = 'finished' }
+            }
+            $r = Invoke-MetraAskEngine -Prompt 'hi' -Cwd (Get-MetraRoot) -Engine ollama -Model 'inspect-pin:7b'
+            $r.ok | Should -BeTrue
+            $script:captured.engine | Should -Be 'ollama'
+            $script:captured.model | Should -Be 'inspect-pin:7b'
+            $base.engine | Should -Be 'ollama'
+            $base.ollamaModel | Should -Be 'qwen2.5:7b'
+        }
+    }
+
+    It 'omitted Engine Model uses ask settings unchanged' {
+        InModuleScope Metra {
+            Mock Get-MetraAskSettings {
+                [PSCustomObject]@{
+                    enabled = $true; engine = 'ollama'; model = 'qwen2.5:7b'
+                    cursorPort = 7381; cursorModel = 'composer-2.5'; cursorOptimizeFor = 'cost'
+                    ollamaBaseUrl = 'http://127.0.0.1:11434'; ollamaModel = 'qwen2.5:7b'; ollamaSizeBand = 'medium'
+                    enterpriseBaseUrl = ''; enterpriseModel = ''; enterpriseApiKeyEnv = 'X'; enterpriseRequireApiKey = $false
+                    enterpriseConfigured = $false; llamacppBaseUrl = 'http://127.0.0.1:8080'; llamacppModel = 'x'
+                    metraRoot = (Get-MetraRoot)
+                }
+            }
+            Mock Invoke-MetraAskSecretsScrubText {
+                [PSCustomObject]@{ Refuse = $false; Reason = $null; Notice = $null; Matched = $false; Text = 'hi'; Kinds = @() }
+            }
+            Mock Invoke-MetraAskSecretsScrubObject {
+                [PSCustomObject]@{ Refuse = $false; Reason = $null; Notice = $null; Matched = $false; Value = @{}; Kinds = @() }
+            }
+            $captured = $null
+            Mock Invoke-MetraAskOpenAICompatComplete {
+                param($Settings)
+                $script:captured = $Settings
+                [PSCustomObject]@{ ok = $true; message = 'ok'; engine = $Settings.engine; model = $Settings.model; status = 'finished' }
+            }
+            $null = Invoke-MetraAskEngine -Prompt 'hi' -Cwd (Get-MetraRoot)
+            $script:captured.engine | Should -Be 'ollama'
+            $script:captured.model | Should -Be 'qwen2.5:7b'
         }
     }
 }

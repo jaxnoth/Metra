@@ -724,10 +724,161 @@ function New-MetraAskEngineRefuseResult {
     }
 }
 
+function New-MetraAskSettingsWithOverrides {
+    <#
+    .SYNOPSIS
+        Returns a copy of Ask settings with optional engine/model overrides (no mutation of source).
+    #>
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory)]$Settings,
+        [string]$Engine,
+        [string]$Model
+    )
+
+    $eng = [string](Get-MetraProp -Object $Settings -Name 'engine' -Default 'ollama')
+    if (-not [string]::IsNullOrWhiteSpace($Engine)) {
+        $eng = $Engine.Trim().ToLowerInvariant()
+    }
+
+    $cursorModel = [string](Get-MetraProp -Object $Settings -Name 'cursorModel' -Default 'composer-2.5')
+    $cursorOptimizeFor = [string](Get-MetraProp -Object $Settings -Name 'cursorOptimizeFor' -Default 'cost')
+    $ollamaModel = [string](Get-MetraProp -Object $Settings -Name 'ollamaModel' -Default '')
+    $entModel = [string](Get-MetraProp -Object $Settings -Name 'enterpriseModel' -Default '')
+    $llamaModel = [string](Get-MetraProp -Object $Settings -Name 'llamacppModel' -Default '')
+
+    if (-not [string]::IsNullOrWhiteSpace($Model)) {
+        $m = $Model.Trim()
+        switch ($eng) {
+            'cursor' {
+                $sel = Resolve-MetraAskCursorModelSelection -Model $m -OptimizeFor $cursorOptimizeFor
+                $cursorModel = $sel.cursorModel
+                $cursorOptimizeFor = $sel.cursorOptimizeFor
+            }
+            'ollama' { $ollamaModel = $m }
+            'enterprise' { $entModel = $m }
+            'llamacpp' { $llamaModel = $m }
+        }
+    }
+
+    $activeModel = switch ($eng) {
+        'cursor' {
+            if ($cursorModel -eq 'auto-smart') { "auto-smart/$cursorOptimizeFor" }
+            else { $cursorModel }
+        }
+        'ollama' { $ollamaModel }
+        'enterprise' { $entModel }
+        'llamacpp' { $llamaModel }
+        default { '' }
+    }
+
+    return [PSCustomObject]@{
+        enabled                 = [bool](Get-MetraProp -Object $Settings -Name 'enabled' -Default $true)
+        engine                  = $eng
+        cursorPort              = [int](Get-MetraProp -Object $Settings -Name 'cursorPort' -Default 7381)
+        cursorModel             = $cursorModel
+        cursorOptimizeFor       = $cursorOptimizeFor
+        ollamaBaseUrl           = [string](Get-MetraProp -Object $Settings -Name 'ollamaBaseUrl' -Default 'http://127.0.0.1:11434')
+        ollamaModel             = $ollamaModel
+        ollamaSizeBand          = [string](Get-MetraProp -Object $Settings -Name 'ollamaSizeBand' -Default 'medium')
+        enterpriseBaseUrl       = [string](Get-MetraProp -Object $Settings -Name 'enterpriseBaseUrl' -Default '')
+        enterpriseModel         = $entModel
+        enterpriseApiKeyEnv     = [string](Get-MetraProp -Object $Settings -Name 'enterpriseApiKeyEnv' -Default 'METRA_ASK_ENTERPRISE_KEY')
+        enterpriseRequireApiKey = [bool](Get-MetraProp -Object $Settings -Name 'enterpriseRequireApiKey' -Default $false)
+        enterpriseConfigured    = (-not [string]::IsNullOrWhiteSpace([string](Get-MetraProp -Object $Settings -Name 'enterpriseBaseUrl' -Default '')) -and -not [string]::IsNullOrWhiteSpace($entModel))
+        llamacppBaseUrl         = [string](Get-MetraProp -Object $Settings -Name 'llamacppBaseUrl' -Default 'http://127.0.0.1:8080')
+        llamacppModel           = $llamaModel
+        model                   = $activeModel
+        metraRoot               = [string](Get-MetraProp -Object $Settings -Name 'metraRoot' -Default '')
+    }
+}
+
+function Start-MetraAskCursorSidecar {
+    <#
+    .SYNOPSIS
+        Starts the Cursor Ask sidecar for a port/model regardless of ask.engine (Inspect override path).
+    #>
+    [CmdletBinding()]
+    param(
+        [string]$MetraRoot = (Get-MetraRoot),
+        [int]$CursorPort = 7381,
+        [string]$CursorModel = 'composer-2.5',
+        [string]$CursorOptimizeFor = 'cost'
+    )
+
+    # Always probe the Cursor port - do not use Test-MetraAskEngineHealth (that follows ask.engine).
+    try {
+        $url = "http://127.0.0.1:$CursorPort/health"
+        $response = Invoke-RestMethod -Uri $url -Method Get -TimeoutSec 1
+        if ([bool](Get-MetraProp -Object $response -Name 'ok' -Default $false)) { return $true }
+    }
+    catch { }
+
+    $nodePath = Get-MetraAskNodePath -MetraRoot $MetraRoot
+    $sidecar = Get-MetraAskCursorSidecarPath -MetraRoot $MetraRoot
+    $key = Get-MetraCursorApiKey
+    if (-not $nodePath -or -not $sidecar -or [string]::IsNullOrWhiteSpace($key) -or -not (Test-MetraAskCursorSidecarDeps -MetraRoot $MetraRoot)) {
+        return $false
+    }
+
+    $pidFile = Get-MetraAskEnginePidFile -Port $CursorPort
+    $logOut = Get-MetraAskEngineLogPath -Port $CursorPort -Stream stdout
+    $logErr = Get-MetraAskEngineLogPath -Port $CursorPort -Stream stderr
+    $proc = $null
+    $prevPort = $env:METRA_ASK_PORT
+    $prevModel = $env:METRA_ASK_MODEL
+    $prevOpt = $env:METRA_ASK_OPTIMIZE_FOR
+    $prevEng = $env:METRA_ASK_ENGINE
+    try {
+        $previous = $env:CURSOR_API_KEY
+        $env:CURSOR_API_KEY = $key
+        $env:METRA_ASK_PORT = "$CursorPort"
+        $env:METRA_ASK_MODEL = $CursorModel
+        $env:METRA_ASK_OPTIMIZE_FOR = $CursorOptimizeFor
+        $env:METRA_ASK_ENGINE = 'cursor'
+        try {
+            $proc = Start-Process -FilePath $nodePath -ArgumentList @($sidecar) `
+                -WorkingDirectory (Split-Path -Parent $sidecar) `
+                -PassThru -WindowStyle Hidden `
+                -RedirectStandardOutput $logOut `
+                -RedirectStandardError $logErr
+        }
+        finally {
+            if ($null -eq $previous) { Remove-Item Env:CURSOR_API_KEY -ErrorAction SilentlyContinue }
+            else { $env:CURSOR_API_KEY = $previous }
+            if ($null -eq $prevPort) { Remove-Item Env:METRA_ASK_PORT -ErrorAction SilentlyContinue } else { $env:METRA_ASK_PORT = $prevPort }
+            if ($null -eq $prevModel) { Remove-Item Env:METRA_ASK_MODEL -ErrorAction SilentlyContinue } else { $env:METRA_ASK_MODEL = $prevModel }
+            if ($null -eq $prevOpt) { Remove-Item Env:METRA_ASK_OPTIMIZE_FOR -ErrorAction SilentlyContinue } else { $env:METRA_ASK_OPTIMIZE_FOR = $prevOpt }
+            if ($null -eq $prevEng) { Remove-Item Env:METRA_ASK_ENGINE -ErrorAction SilentlyContinue } else { $env:METRA_ASK_ENGINE = $prevEng }
+        }
+        if (-not $proc) { return $false }
+        Set-Content -LiteralPath $pidFile -Value $proc.Id -Encoding ASCII
+
+        $deadline = [datetime]::UtcNow.AddSeconds(20)
+        while ([datetime]::UtcNow -lt $deadline) {
+            try {
+                $url = "http://127.0.0.1:$CursorPort/health"
+                $response = Invoke-RestMethod -Uri $url -Method Get -TimeoutSec 1
+                if ([bool](Get-MetraProp -Object $response -Name 'ok' -Default $false)) { return $true }
+            }
+            catch { }
+            Start-Sleep -Milliseconds 400
+        }
+        return $false
+    }
+    catch {
+        Write-Warning "Ask Cursor sidecar start failed: $($_.Exception.Message)"
+        return $false
+    }
+}
+
 function Invoke-MetraAskEngine {
     <#
     .SYNOPSIS
         Calls the selected Ask engine (cursor loopback or openai_compat).
+    .NOTES
+        Optional -Engine / -Model override the loaded ask.* selection for this call only
+        (Inspect reviewer pin). Does not mutate metra.config.json or process Ask settings.
     #>
     [CmdletBinding()]
     param(
@@ -737,10 +888,20 @@ function Invoke-MetraAskEngine {
         [string]$SessionId,
         [object[]]$Images = @(),
         [string]$MetraRoot = (Get-MetraRoot),
-        [int]$TimeoutSec = 180
+        [int]$TimeoutSec = 180,
+        [string]$Engine,
+        [string]$Model
     )
 
-    $settings = Get-MetraAskSettings -MetraRoot $MetraRoot
+    $baseSettings = Get-MetraAskSettings -MetraRoot $MetraRoot
+    $hasEngineOverride = $PSBoundParameters.ContainsKey('Engine') -and -not [string]::IsNullOrWhiteSpace($Engine)
+    $hasModelOverride = $PSBoundParameters.ContainsKey('Model') -and -not [string]::IsNullOrWhiteSpace($Model)
+    $settings = if ($hasEngineOverride -or $hasModelOverride) {
+        New-MetraAskSettingsWithOverrides -Settings $baseSettings -Engine $(if ($hasEngineOverride) { $Engine } else { '' }) -Model $(if ($hasModelOverride) { $Model } else { '' })
+    }
+    else {
+        $baseSettings
+    }
 
     $promptScrub = Invoke-MetraAskSecretsScrubText -Text $Prompt
     if ($promptScrub.Refuse) {
@@ -790,12 +951,15 @@ function Invoke-MetraAskEngine {
     }
 
     if ($settings.engine -eq 'cursor') {
+        $null = Start-MetraAskCursorSidecar -MetraRoot $MetraRoot -CursorPort $settings.cursorPort `
+            -CursorModel $settings.cursorModel -CursorOptimizeFor $settings.cursorOptimizeFor
         $url = "http://127.0.0.1:$($settings.cursorPort)/v1/complete"
         $body = @{
             prompt  = [string]$promptScrub.Text
             cwd     = $Cwd
             context = $safeContext
             mode    = 'answer'
+            model   = [string]$settings.model
         }
         if ($SessionId) { $body.sessionId = $SessionId }
         if ($imageRefs.Count -gt 0) {
@@ -832,6 +996,8 @@ function Convert-MetraAskCursorResponse {
 
     $statusRaw = [string](Get-MetraProp -Object $Response -Name 'status' -Default '')
     $status = if ([string]::IsNullOrWhiteSpace($statusRaw)) { 'unknown' } else { $statusRaw.Trim() }
+    $resolvedRaw = Get-MetraProp -Object $Response -Name 'resolvedModel' -Default $null
+    $resolvedModel = if ($null -eq $resolvedRaw -or [string]::IsNullOrWhiteSpace([string]$resolvedRaw)) { $null } else { [string]$resolvedRaw }
     if ($status -eq 'refused' -or [bool](Get-MetraProp -Object $Response -Name 'secretsRefuse' -Default $false)) {
         $refuseNotice = [string](Get-MetraProp -Object $Response -Name 'message' -Default '')
         if ([string]::IsNullOrWhiteSpace($refuseNotice)) {
@@ -842,6 +1008,7 @@ function Convert-MetraAskCursorResponse {
             message         = ''
             engine          = [string](Get-MetraProp -Object $Response -Name 'engine' -Default $Settings.engine)
             model           = [string](Get-MetraProp -Object $Response -Name 'model' -Default $Settings.model)
+            resolvedModel   = $resolvedModel
             sessionId       = [string](Get-MetraProp -Object $Response -Name 'sessionId' -Default $SessionId)
             status          = 'refused'
             error           = 'secrets_refuse'
@@ -873,6 +1040,7 @@ function Convert-MetraAskCursorResponse {
             message         = $errMsg
             engine          = [string](Get-MetraProp -Object $Response -Name 'engine' -Default $Settings.engine)
             model           = [string](Get-MetraProp -Object $Response -Name 'model' -Default $Settings.model)
+            resolvedModel   = $resolvedModel
             sessionId       = [string](Get-MetraProp -Object $Response -Name 'sessionId' -Default $SessionId)
             status          = $status
             error           = 'engine_request_failed'
@@ -889,6 +1057,7 @@ function Convert-MetraAskCursorResponse {
         message         = [string]$msgScrub.Text
         engine          = [string](Get-MetraProp -Object $Response -Name 'engine' -Default $Settings.engine)
         model           = [string](Get-MetraProp -Object $Response -Name 'model' -Default $Settings.model)
+        resolvedModel   = $resolvedModel
         sessionId       = [string](Get-MetraProp -Object $Response -Name 'sessionId' -Default $SessionId)
         status          = $status
         error           = $null
