@@ -37,7 +37,7 @@ param(
     [ValidateSet(
         'list', 'status', 'pull', 'fetch', 'run', 'new', 'apply', 'workspace',
         'audit', 'snapshot', 'selfdoc', 'ops', 'host', 'chats', 'roots', 'routing',
-        'export-profile', 'import-profile', 'ctx', 'setup', 'verify', 'unblock', 'profile', 'decisions', 'coverage', 'ask', 'capture', 'watch', 'inspect', 'azdo', 'help'
+        'export-profile', 'import-profile', 'ctx', 'setup', 'verify', 'unblock', 'tailscale', 'satellite', 'desk', 'profile', 'decisions', 'coverage', 'ask', 'capture', 'watch', 'inspect', 'azdo', 'help'
     )]
     [string]$Command = 'help',
 
@@ -141,6 +141,14 @@ Usage:
       Installer passes PreferFriendly / BindTailscale / AcceptAsk / SyncToken. -Advanced keeps interactive local Ops knobs.
   .\metra.ps1 unblock [-Preview]
       Clear mark-of-the-web from checkout script files (ZIP / OneDrive / email). Supports -Preview.
+  .\metra.ps1 tailscale campus-hosts [-Preview] [-Force]
+      IWU campus: pin Tailscale login/controlplane hosts past DNSFilter MITM (elevation required).
+      Use -Force in elevated Windows PowerShell (Start menu), not VS Code integrated terminal.
+  .\metra.ps1 satellite connect -OpsBaseUrl https://<hq>.ts.net [-SyncToken ...] [-Force] [-Preview]
+  .\metra.ps1 satellite repair-roots [-Preview]
+      Satellite onboarding: HTTPS HQ check, Satellite role, profile sync (merge Mac roots), repair template.
+  .\metra.ps1 desk status|send|push|pull|sync|inbox|open
+      Jumpbox <-> satellite message drop (SSH/SCP). audience=operator|agent; -Agent for Cursor handoffs.
   .\metra.ps1 profile show|note|promote|forget|render|gc
   .\metra.ps1 profile sync [-WhatIf] [-Force] [-OpsBaseUrl https://...] [-SyncToken ...]
   .\metra.ps1 profile status [-OpsBaseUrl https://...] [-SyncToken ...]
@@ -232,6 +240,9 @@ Examples:
   .\metra.ps1 setup -Preview
   .\metra.ps1 unblock
   .\metra.ps1 unblock -Preview
+  .\metra.ps1 tailscale campus-hosts -Preview
+  .\metra.ps1 tailscale campus-hosts
+  pwsh -NoProfile -File .\metra.ps1 satellite connect -OpsBaseUrl https://jumpbox.emerald-banana.ts.net
   .\metra.ps1 verify
 "@ | Write-Host
 }
@@ -539,6 +550,45 @@ switch ($Command) {
     'unblock' {
         # Helper stays private; Show-MetraUnblockCli is a thin compatibility export for the CLI.
         Show-MetraUnblockCli -Preview:$Preview | Format-List Path, Preview, ScannedCount, BlockedDetected, FilesUnblocked, AlreadyClean, Failed
+    }
+
+    'tailscale' {
+        $sub = 'help'
+        if ($Rest -and $Rest.Count -gt 0) {
+            $sub = [string]$Rest[0]
+        }
+        Show-MetraTailscaleCli -Subcommand $sub -Preview:$Preview -Force:$Force -Quiet:$Quiet |
+            Format-List Ok, Preview, Changed, NeedsWrite, HostsPath, Error, DesiredLines, StaleLines
+    }
+
+    'satellite' {
+        $sub = 'help'
+        if ($Rest -and $Rest.Count -gt 0) {
+            $sub = [string]$Rest[0]
+        }
+        $satParams = @{
+            Subcommand = $sub
+            Force      = [bool]$Force
+            Preview    = [bool]$Preview
+            Quiet      = [bool]$Quiet
+        }
+        if ($OpsBaseUrl) { $satParams.OpsBaseUrl = $OpsBaseUrl }
+        if ($SyncToken) { $satParams.SyncToken = $SyncToken }
+        if ($WhatIf) { $satParams.WhatIf = $true }
+        Show-MetraSatelliteCli @satParams |
+            Format-List Ok, Preview, OpsBaseUrl, Reachable, Sync, RootsRepair, PostSync, CampusPreview, Changed, Reason
+    }
+
+    'desk' {
+        $sub = 'help'
+        $subArgs = @()
+        if ($Rest -and $Rest.Count -gt 0) {
+            $sub = [string]$Rest[0]
+            if ($Rest.Count -gt 1) {
+                $subArgs = @($Rest[1..($Rest.Count - 1)])
+            }
+        }
+        Invoke-MetraDeskBridgeCommand -Subcommand $sub -ArgsRest $subArgs | Format-List
     }
 
     'profile' {

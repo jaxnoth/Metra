@@ -20,6 +20,22 @@ Entry shape:
 
 ---
 
+## 2026-08-27 - Satellite profile sync machine-local merge
+
+- Decision: Profile sync and `satellite connect` merge HQ-published `metra.config.json` fields with machine-local portfolio paths. On import, preserve local `roots`, `projectsRoot`, and `workspace.outputs` when the HQ pack carries foreign paths (e.g. Windows `C:\` on Mac). After sync, apply `profiles/satellite-mac/metra.config.json` when foreign roots remain. HQ fields (`opsBaseUrl`, ask/inspect, workspace pins, excludes, persona pack files) still flow from HQ. Guided entrypoint: `.\metra.ps1 satellite connect -OpsBaseUrl https://<hq>.ts.net`.
+- Why: Mac satellite bring-up failed when profile sync overwrote Mac roots with jumpbox Windows paths; setup then resolved nonsense paths. Installer/remote-install still owns first PowerShell/git clone; merge removes the clobber step.
+- See: `scripts/private/Satellite.ps1`, [docs/playbooks/satellite-remote-install.md](playbooks/satellite-remote-install.md), `Import-MetraProfile -MergeMachineLocal`, `Sync-MetraProfile`
+
+---
+
+## 2026-08-27 - IWU DNSFilter Tailscale campus hosts pin
+
+- Decision: On IWU campus, Metra ships `.\metra.ps1 tailscale campus-hosts` to pin `login.tailscale.com` and `controlplane.tailscale.com` to Tailscale coordination anycast (`192.200.0.0/24`) in the Windows hosts file (managed marker block). Campus DNSFilter MITMs `login.tailscale.com` (DNSFilter Root CA + HSTS), which blocks Tailscale Serve enable and admin HTTPS. Hosts writes require elevation. This does not restore org Entra Tailscale enrollment and does not replace Tailscale URL ACL / Serve setup for Ops reach.
+- Why: Personal-tailnet Ops reach on jumpbox failed Serve enable in Edge with `NET::ERR_CERT_AUTHORITY_INVALID`; laptop already needed a hosts pin for the same class of failure.
+- See: `scripts/private/TailscaleCampus.ps1`, [docs/playbooks/tailscale-campus.md](playbooks/tailscale-campus.md), `Enable-MetraOpsTailscaleServe` hint
+
+---
+
 ## 2026-08-25 - Inspect engine configuration split
 
 - Decision: Inspect may use dedicated `inspect.*` engine and provider-model configuration. Missing Inspect values fall back to the corresponding `ask.*` values so existing configurations retain their current behavior. Ask and Inspect are independently selectable, allowing day-to-day coding and reviewer workloads to use different model families without changing the global Ask configuration.
