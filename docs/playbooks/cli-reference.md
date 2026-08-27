@@ -62,6 +62,8 @@ Entry: `.\metra.ps1`. Inspect detail: [inspect-loop.md](inspect-loop.md).
 .\metra.ps1 azdo status|repos|get|gaps|tree|search|ideas
 .\metra.ps1 ops
 .\metra.ps1 unblock
+.\metra.ps1 tailscale campus-hosts
+.\metra.ps1 tailscale campus-hosts -Preview
 .\packaging\Build-MetraInstaller.ps1
 .\metra.ps1 routing -Name TicketTracker
 .\metra.ps1 routing -Query "gateway msal"
