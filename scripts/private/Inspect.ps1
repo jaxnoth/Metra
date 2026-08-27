@@ -1094,9 +1094,8 @@ function Save-MetraInspectReport {
 
     $stateRoot = Get-MetraInspectStateRoot
     if ([string]::IsNullOrWhiteSpace($SlotKey)) { $SlotKey = 'default' }
-    $safe = ($SlotKey -replace '[^\w\.-]', '_').Trim('_')
-    if ([string]::IsNullOrWhiteSpace($safe)) { $safe = 'default' }
-    $dir = Join-Path $stateRoot $safe
+    $slot = Resolve-MetraInspectReviewSlotRoot -SlotKey $SlotKey
+    $dir = $slot.SlotRoot
     $latestPath = Join-Path $dir 'latest.json'
     $pointerName = if ($Report.mode -eq 'plan') { 'last-plan.json' } else { 'last-diff.json' }
     $pointerPath = Join-Path $stateRoot $pointerName
@@ -2191,17 +2190,20 @@ function Write-MetraInspectPackArtifact {
     param(
         [Parameter(Mandatory)][string]$PackText,
         [ValidateSet('diff', 'plan', 'agents')][string]$Mode,
-        [switch]$Stale
+        [switch]$Stale,
+        [switch]$NoClipboard
     )
 
     $packPath = Join-Path (Get-MetraInspectStateRoot) ("pack-{0}.md" -f $Mode)
-    if (-not $PSCmdlet.ShouldProcess($packPath, 'Write inspect pack and copy to clipboard')) {
+    $shouldMsg = if ($NoClipboard) { 'Write inspect pack' } else { 'Write inspect pack and copy to clipboard' }
+    if (-not $PSCmdlet.ShouldProcess($packPath, $shouldMsg)) {
         return [PSCustomObject]@{
-            Path    = $packPath
-            Stale   = $Stale
-            Mode    = $Mode
-            Text    = $PackText
-            Skipped = $true
+            Path         = $packPath
+            Stale        = $Stale
+            Mode         = $Mode
+            Text         = $PackText
+            Skipped      = $true
+            Clipboard    = $false
         }
     }
 
@@ -2211,20 +2213,25 @@ function Write-MetraInspectPackArtifact {
         Write-Host 'Pack is large; prefer opening the pack file in Bing instead of clipboard paste.' -ForegroundColor Yellow
     }
 
-    try {
-        Set-Clipboard -Value $PackText -ErrorAction Stop
-        Write-Host 'Bing comparison pack copied to clipboard.'
-    }
-    catch {
-        Write-Host 'Clipboard unavailable; pack written to file only.'
+    $clipped = $false
+    if (-not $NoClipboard) {
+        try {
+            Set-Clipboard -Value $PackText -ErrorAction Stop
+            Write-Host 'Bing comparison pack copied to clipboard.'
+            $clipped = $true
+        }
+        catch {
+            Write-Host 'Clipboard unavailable; pack written to file only.'
+        }
     }
     Write-Host ("Pack file: {0}" -f $packPath)
     return [PSCustomObject]@{
-        Path    = $packPath
-        Stale   = $Stale
-        Mode    = $Mode
-        Text    = $PackText
-        Skipped = $false
+        Path      = $packPath
+        Stale     = $Stale
+        Mode      = $Mode
+        Text      = $PackText
+        Skipped   = $false
+        Clipboard = $clipped
     }
 }
 
@@ -2384,7 +2391,8 @@ function Invoke-MetraInspectPackOnly {
 function Invoke-MetraInspectPack {
     [CmdletBinding(SupportsShouldProcess)]
     param(
-        [ValidateSet('diff', 'plan')][string]$Mode = 'diff'
+        [ValidateSet('diff', 'plan')][string]$Mode = 'diff',
+        [switch]$NoClipboard
     )
 
     $pointer = Get-MetraInspectLastPointer -Mode $Mode
@@ -2530,7 +2538,7 @@ function Invoke-MetraInspectPack {
         -Root ([string](Get-MetraProp -Object $report.provenance -Name 'root' -Default '')) `
         -AssessedFilesFallback $assessedFilesFallback -PackManifest $packManifest -TestCatalog $testCatalog
 
-    return Write-MetraInspectPackArtifact -PackText $packText -Mode $Mode -Stale:$stale
+    return Write-MetraInspectPackArtifact -PackText $packText -Mode $Mode -Stale:$stale -NoClipboard:$NoClipboard
 }
 
 function Get-MetraInspectReviewLoopMaxLoops {
@@ -2640,9 +2648,8 @@ function Get-MetraInspectReviewBaselineDirectory {
         [Parameter(Mandatory)][int]$RoundNum
     )
 
-    $safe = ($SlotKey -replace '[^\w\.-]', '_').Trim('_')
-    if ([string]::IsNullOrWhiteSpace($safe)) { $safe = 'default' }
-    return Join-Path (Join-Path (Get-MetraInspectStateRoot) $safe) ("baselines/r{0}" -f $RoundNum)
+    $slot = Resolve-MetraInspectReviewSlotRoot -SlotKey $SlotKey
+    return Join-Path $slot.SlotRoot ("baselines/r{0}" -f $RoundNum)
 }
 
 function Test-MetraInspectReviewManifestRelativePath {
@@ -2769,11 +2776,11 @@ function Save-MetraInspectReviewGitBaseline {
             continue
         }
         $pair = Resolve-MetraInspectReviewManifestPathPair -RelativePath $rel -ProjectRoot $Root -ContainerRoot $dir
-        $destParent = Split-Path -Parent $pair.Dest
-        if (-not (Test-Path -LiteralPath $destParent)) {
-            New-Item -ItemType Directory -Path $destParent -Force | Out-Null
+        $baselineParent = Split-Path -Parent $pair.Src
+        if (-not (Test-Path -LiteralPath $baselineParent)) {
+            New-Item -ItemType Directory -Path $baselineParent -Force | Out-Null
         }
-        Copy-Item -LiteralPath $pair.Src -Destination $pair.Dest -Force
+        Copy-Item -LiteralPath $pair.Dest -Destination $pair.Src -Force
         [void]$manifest.Add($rel)
     }
     if ($rejected.Count -gt 0) {
@@ -2833,8 +2840,10 @@ function Restore-MetraInspectReviewGitBaseline {
             }
             Copy-Item -LiteralPath $pair.Src -Destination $pair.Dest -Force
         }
-        elseif (Test-Path -LiteralPath $pair.Dest) {
-            Remove-Item -LiteralPath $pair.Dest -Force -ErrorAction Stop
+        else {
+            # Missing baseline snapshot: never delete the project file. That path was
+            # omitted at save time (untracked/copy failure) and must stay intact.
+            Write-Warning ("Inspect regression restore skipped '{0}' - baseline snapshot missing." -f $rel)
         }
     }
 
@@ -2856,18 +2865,22 @@ function Export-MetraInspectReviewFixQueue {
         [int]$RoundNum
     )
 
-    $safe = ($SlotKey -replace '[^\w\.-]', '_').Trim('_')
-    if ([string]::IsNullOrWhiteSpace($safe)) { $safe = 'default' }
-    $path = Join-Path (Join-Path (Get-MetraInspectStateRoot) $safe) 'fix-queue.json'
+    $path = Get-MetraInspectReviewFixQueuePath -SlotKey $SlotKey
+    $idx = 0
     $items = @(@($Report.findings) | ForEach-Object {
+            $idx++
+            $sev = [string]$_.severity
             [ordered]@{
-                severity       = [string]$_.severity
-                confidence     = [string]$_.confidence
-                category       = [string]$_.category
-                file           = [string]$_.file
-                line           = [int](Get-MetraProp -Object $_ -Name 'line' -Default 0)
-                finding        = [string]$_.finding
-                recommendation = [string]$_.recommendation
+                id                         = (Get-MetraInspectReviewFindingId -RoundNum $RoundNum -Index1Based $idx)
+                status                     = 'Pending'
+                dispatchEligibleBySeverity = [bool](Test-MetraInspectReviewDispatchEligibleBySeverity -Severity $sev)
+                severity                   = $sev
+                confidence                 = [string]$_.confidence
+                category                   = [string]$_.category
+                file                       = [string]$_.file
+                line                       = [int](Get-MetraProp -Object $_ -Name 'line' -Default 0)
+                finding                    = [string]$_.finding
+                recommendation             = [string]$_.recommendation
             }
         })
     $payload = [ordered]@{
@@ -2876,6 +2889,7 @@ function Export-MetraInspectReviewFixQueue {
         reportPath    = [string](Get-MetraProp -Object $Report.provenance -Name 'reportPath' -Default '')
         findings      = $items
     }
+    $payload['sourceQueueHash'] = Get-MetraInspectReviewFixQueueContentHash -Queue ([PSCustomObject]$payload)
     Write-MetraAtomicUtf8Text -Path $path -Text ($payload | ConvertTo-Json -Depth 8)
     return $path
 }
@@ -2890,9 +2904,13 @@ function Write-MetraInspectReviewFixGuidance {
     Write-Host ''
     Write-Host 'Coding loop rhythm:' -ForegroundColor Cyan
     Write-Host '1. Summarize Critical/High (then actionable Medium) in chat.'
-    Write-Host '2. Agent applies affirmed fixes only.'
-    Write-Host '3. Run inspect loop again - verifies after fixes; reverts the tree if counts regress.'
-    Write-Host '4. Repeat until goal, convergence, or MaxLoops. Bing pack is after the loop, not between rounds.'
+    Write-Host '2. Persist gates: inspect loop decide -Affirm/-Defer/-Reject (parent chat only).'
+    Write-Host '3. Package: inspect loop package -FindingId ... [-PassThru]. If dispatchRecommended, at most one Task inspect-fixer; else inline.'
+    Write-Host '4. After fixes: inspect loop record-fix -Mode Dispatch or -Mode Inline.'
+    Write-Host '   Use -Mode Abandoned only to clear a stuck dispatch lock.'
+    Write-Host '5. Run inspect loop again - verifies after fixes; reverts the tree if counts regress.'
+    Write-Host '6. Repeat until goal, convergence, or MaxLoops. Bing pack is after the loop, not between rounds.'
+    Write-Host 'Hard: one fix Task at a time; no cloud/worktree isolation; fixer must not run decide/record-fix/reset/ship (prompt discipline).'
     if ($FixQueuePath) {
         Write-Host ("Fix queue: {0}" -f $FixQueuePath) -ForegroundColor DarkGray
     }
@@ -2900,7 +2918,7 @@ function Write-MetraInspectReviewFixGuidance {
         Write-Host 'Full loop (-RunAll): re-invoke inspect loop -RunAll after each fix batch until the session completes.' -ForegroundColor Yellow
     }
     else {
-        Write-Host 'Next: apply fixes, then run inspect loop again (same session).' -ForegroundColor Yellow
+        Write-Host 'Next: decide -> package -> fix -> record-fix -> inspect loop again (same session).' -ForegroundColor Yellow
     }
 }
 
@@ -2927,9 +2945,8 @@ function Get-MetraInspectReviewLoopStatePath {
         [Parameter(Mandatory)][string]$SlotKey
     )
 
-    $safe = ($SlotKey -replace '[^\w\.-]', '_').Trim('_')
-    if ([string]::IsNullOrWhiteSpace($safe)) { $safe = 'default' }
-    return Join-Path (Join-Path (Get-MetraInspectStateRoot) $safe) 'review-loop.json'
+    $slot = Resolve-MetraInspectReviewSlotRoot -SlotKey $SlotKey
+    return Join-Path $slot.SlotRoot 'review-loop.json'
 }
 
 function Get-MetraInspectReviewLoopHistoryPath {
@@ -3016,18 +3033,20 @@ function Add-MetraInspectReviewLoopHistoryEntry {
     }
 
     $entry = [ordered]@{
-        completedAtUtc    = [datetime]::UtcNow.ToString('o')
-        project           = [string]$State.project
-        root              = [string]$State.root
-        inspectMode       = [string]$State.inspectMode
-        LoopsUsed         = [int]$State.LoopsUsed
-        FinalGrade        = [string]$State.FinalGrade
-        CriticalCount     = [int]$State.CriticalCount
-        HighCount         = [int]$State.HighCount
-        MediumCount       = [int]$State.MediumCount
-        LowCount          = [int]$State.LowCount
-        TerminationReason = [string]$State.TerminationReason
-        maxLoops          = [int]$State.maxLoops
+        completedAtUtc     = [datetime]::UtcNow.ToString('o')
+        project            = [string]$State.project
+        root               = [string]$State.root
+        inspectMode        = [string]$State.inspectMode
+        LoopsUsed          = [int]$State.LoopsUsed
+        FinalGrade         = [string]$State.FinalGrade
+        CriticalCount      = [int]$State.CriticalCount
+        HighCount          = [int]$State.HighCount
+        MediumCount        = [int]$State.MediumCount
+        LowCount           = [int]$State.LowCount
+        TerminationReason  = [string]$State.TerminationReason
+        maxLoops           = [int]$State.maxLoops
+        dispatchFixCount   = [int](Get-MetraProp -Object $State -Name 'dispatchFixCount' -Default 0)
+        inlineFixCount     = [int](Get-MetraProp -Object $State -Name 'inlineFixCount' -Default 0)
     }
     $line = ($entry | ConvertTo-Json -Compress -Depth 6)
     Add-Content -LiteralPath $path -Value $line -Encoding UTF8
@@ -3072,10 +3091,10 @@ function Write-MetraInspectReviewLoopFinalSummary {
         Write-Host 'Review convergence reached. Additional passes are not producing meaningful reduction.' -ForegroundColor Yellow
     }
     if ($State.TerminationReason -eq 'Maximum loop count reached') {
-        Write-Host 'MaxLoops is a protection fence, not success. Run inspect pack for Bing review when ready.' -ForegroundColor Yellow
+        Write-Host 'MaxLoops is a protection fence, not success. Review the auto-built pack (or re-run inspect pack) before Bing.' -ForegroundColor Yellow
     }
     Write-Host ''
-    Write-Host 'After the loop completes, run inspect pack for external (Bing) review - not between rounds.'
+    Write-Host 'Loop session complete. Bing comparison pack is auto-built on completion (file only; not between rounds).'
 }
 
 function Resolve-MetraInspectReviewTermination {
@@ -3160,36 +3179,18 @@ function Invoke-MetraInspectReviewLoop {
     }
 
     if ($Reset -or $null -eq $loaded) {
-        $state = [PSCustomObject]@{
-            schemaVersion     = 1
-            project           = [string]$ctx.Project
-            root              = [string]$ctx.Root
-            inspectMode       = 'diff'
-            maxLoops          = $MaxLoops
-            startedAtUtc      = [datetime]::UtcNow.ToString('o')
-            updatedAtUtc      = [datetime]::UtcNow.ToString('o')
-            active            = $true
-            phase             = $null
-            runUntilGoal      = [bool]$RunAll
-            pendingBaseline   = $null
-            lastVerifyCounts  = $null
-            completedCycles   = 0
-            rounds            = @()
-            LoopsUsed         = 0
-            FinalGrade        = $null
-            CriticalCount     = 0
-            HighCount         = 0
-            MediumCount       = 0
-            LowCount          = 0
-            TerminationReason = $null
-        }
+        $state = New-MetraInspectReviewLoopStateObject -Project ([string]$ctx.Project) -Root ([string]$ctx.Root) -MaxLoops $MaxLoops -RunUntilGoal:([bool]$RunAll)
     }
     else {
         $state = $loaded
+        $migrated = Initialize-MetraInspectReviewLoopStateV2Fields -State $state
         if ($RunAll) {
             $state.runUntilGoal = $true
         }
         $state.maxLoops = $MaxLoops
+        if ($migrated) {
+            $state.updatedAtUtc = [datetime]::UtcNow.ToString('o')
+        }
     }
 
     if ($MaxLoops -lt 1 -or $MaxLoops -gt 20) {
@@ -3257,6 +3258,9 @@ function Invoke-MetraInspectReviewLoop {
             Restore-MetraInspectReviewGitBaseline @loopShouldProcess -Root $ctx.Root -BaselinePath $baselinePath -SlotKey $slotKey -RoundNum ([int]$state.LoopsUsed) -Base $Base
             $state | Add-Member -NotePropertyName lastRegressionAtUtc -NotePropertyValue ([datetime]::UtcNow.ToString('o')) -Force
             $state | Add-Member -NotePropertyName lastRegressionReverted -NotePropertyValue $true -Force
+            # Same round queue is re-exported; allow another record-fix for this round after the next fix batch.
+            $state | Add-Member -NotePropertyName lastRecordedFixRound -NotePropertyValue ([Math]::Max(0, [int]$state.LoopsUsed - 1)) -Force
+            $state | Add-Member -NotePropertyName fixDispatchInFlight -NotePropertyValue $false -Force
             $state.updatedAtUtc = [datetime]::UtcNow.ToString('o')
             $null = Save-MetraInspectReviewLoopState @loopShouldProcess -SlotKey $slotKey -State $state
             $fixQueuePath = Export-MetraInspectReviewFixQueue -SlotKey $slotKey -Report $report -RoundNum ([int]$state.LoopsUsed)
@@ -3301,23 +3305,6 @@ function Invoke-MetraInspectReviewLoop {
     $state.updatedAtUtc = [datetime]::UtcNow.ToString('o')
     $state.FinalGrade = Get-MetraInspectReviewGrade -Counts $counts
 
-    $baselineSnap = Save-MetraInspectReviewGitBaseline @loopShouldProcess -Root $ctx.Root -SlotKey $slotKey -RoundNum $roundNum -Base $Base
-    $state.pendingBaseline = [PSCustomObject]@{
-        inputHash         = [string]$baselineSnap.InputHash
-        gitHead           = [string]$baselineSnap.GitHead
-        baselinePath      = [string]$baselineSnap.Path
-        critical          = [int]$counts.Critical
-        high              = [int]$counts.High
-        medium            = [int]$counts.Medium
-        low               = [int]$counts.Low
-        baselineCoverage  = [PSCustomObject]@{
-            diffPathCount     = [int](Get-MetraProp -Object $baselineSnap -Name 'DiffPathCount' -Default 0)
-            manifestPathCount = [int](Get-MetraProp -Object $baselineSnap -Name 'ManifestPathCount' -Default 0)
-            omittedPaths      = @((Get-MetraProp -Object $baselineSnap -Name 'OmittedPaths' -Default @()))
-        }
-    }
-    $state.phase = 'AwaitingFix'
-
     Write-MetraInspectReviewRoundSummary -Round $roundNum -Counts $counts
     if ($isVerify) {
         Write-Host 'Verify pass accepted (no regression).' -ForegroundColor Green
@@ -3337,12 +3324,59 @@ function Invoke-MetraInspectReviewLoop {
     if ($term.Complete) {
         $state.active = $false
         $state.phase = $null
+        $state.pendingBaseline = $null
         $state.TerminationReason = [string]$term.TerminationReason
         $null = Save-MetraInspectReviewLoopState @loopShouldProcess -SlotKey $slotKey -State $state
         Add-MetraInspectReviewLoopHistoryEntry @loopShouldProcess -State $state
         Write-MetraInspectReviewLoopFinalSummary -State $state
+        try {
+            Write-Host 'Auto-building Bing comparison pack (file only, no clipboard)...' -ForegroundColor Cyan
+            $null = Invoke-MetraInspectPack -Mode diff -NoClipboard @loopShouldProcess
+        }
+        catch {
+            Write-Warning ("Auto inspect pack failed: {0}. Run .\metra.ps1 inspect pack manually when ready." -f $_.Exception.Message)
+        }
         return $state
     }
+
+    # Accepted verify that continues: advance LoopsUsed so the next fix queue/record-fix
+    # use a new round (finding IDs, package ids, lastRecordedFixRound). Regression path above
+    # does not reach here, so it does not create a fresh accepted round.
+    if ($isVerify) {
+        $state.LoopsUsed = [int]$state.LoopsUsed + 1
+        $roundNum = [int]$state.LoopsUsed
+        $state | Add-Member -NotePropertyName fixDispatchInFlight -NotePropertyValue $false -Force
+        $contRound = [PSCustomObject]@{
+            round      = $roundNum
+            atUtc      = [datetime]::UtcNow.ToString('o')
+            critical   = [int]$counts.Critical
+            high       = [int]$counts.High
+            medium     = [int]$counts.Medium
+            low        = [int]$counts.Low
+            reportPath = [string](Get-MetraProp -Object $report.provenance -Name 'reportPath' -Default '')
+            pass       = 'fix-cycle'
+        }
+        $state.rounds = @(@($state.rounds) + @($contRound))
+        Write-Host ("Next fix cycle: round {0} (new finding IDs / record-fix gate)." -f $roundNum) -ForegroundColor DarkGray
+    }
+
+    # Baseline + queue use the actionable round (assess round, or advanced fix-cycle round after verify).
+    $baselineSnap = Save-MetraInspectReviewGitBaseline @loopShouldProcess -Root $ctx.Root -SlotKey $slotKey -RoundNum $roundNum -Base $Base
+    $state.pendingBaseline = [PSCustomObject]@{
+        inputHash         = [string]$baselineSnap.InputHash
+        gitHead           = [string]$baselineSnap.GitHead
+        baselinePath      = [string]$baselineSnap.Path
+        critical          = [int]$counts.Critical
+        high              = [int]$counts.High
+        medium            = [int]$counts.Medium
+        low               = [int]$counts.Low
+        baselineCoverage  = [PSCustomObject]@{
+            diffPathCount     = [int](Get-MetraProp -Object $baselineSnap -Name 'DiffPathCount' -Default 0)
+            manifestPathCount = [int](Get-MetraProp -Object $baselineSnap -Name 'ManifestPathCount' -Default 0)
+            omittedPaths      = @((Get-MetraProp -Object $baselineSnap -Name 'OmittedPaths' -Default @()))
+        }
+    }
+    $state.phase = 'AwaitingFix'
 
     $fixQueuePath = Export-MetraInspectReviewFixQueue -SlotKey $slotKey -Report $report -RoundNum $roundNum
     $null = Save-MetraInspectReviewLoopState @loopShouldProcess -SlotKey $slotKey -State $state
@@ -3419,7 +3453,20 @@ function Show-MetraInspectCli {
     elseif ($argsRest.Count -gt 0 -and $argsRest[0] -ieq 'loop') {
         $mode = 'loop'
         $i = 1
+        if ($argsRest.Count -gt 1 -and $argsRest[1] -match '^(decide|package|record-fix)$') {
+            $mode = 'loop-' + $argsRest[1].ToLowerInvariant()
+            $i = 2
+        }
     }
+
+    $loopAffirm = [System.Collections.Generic.List[string]]::new()
+    $loopDefer = [System.Collections.Generic.List[string]]::new()
+    $loopReject = [System.Collections.Generic.List[string]]::new()
+    $loopFindingId = [System.Collections.Generic.List[string]]::new()
+    $loopPassThru = $false
+    $loopRecordMode = $null
+    $loopSummary = $null
+    $loopPackageId = $null
 
     while ($i -lt $argsRest.Count) {
         $tok = [string]$argsRest[$i]
@@ -3441,6 +3488,32 @@ function Show-MetraInspectCli {
             $maxLoops = $parsedMaxLoops
             $i += 2
             continue
+        }
+        if ($mode -like 'loop-*') {
+            if ($tok -ieq '-Affirm' -and ($i + 1) -lt $argsRest.Count) {
+                [void]$loopAffirm.Add([string]$argsRest[$i + 1]); $i += 2; continue
+            }
+            if ($tok -ieq '-Defer' -and ($i + 1) -lt $argsRest.Count) {
+                [void]$loopDefer.Add([string]$argsRest[$i + 1]); $i += 2; continue
+            }
+            if ($tok -ieq '-Reject' -and ($i + 1) -lt $argsRest.Count) {
+                [void]$loopReject.Add([string]$argsRest[$i + 1]); $i += 2; continue
+            }
+            if ($tok -ieq '-FindingId' -and ($i + 1) -lt $argsRest.Count) {
+                [void]$loopFindingId.Add([string]$argsRest[$i + 1]); $i += 2; continue
+            }
+            if ($tok -ieq '-PassThru') {
+                $loopPassThru = $true; $i++; continue
+            }
+            if ($tok -ieq '-Mode' -and ($i + 1) -lt $argsRest.Count) {
+                $loopRecordMode = [string]$argsRest[$i + 1]; $i += 2; continue
+            }
+            if ($tok -ieq '-Summary' -and ($i + 1) -lt $argsRest.Count) {
+                $loopSummary = [string]$argsRest[$i + 1]; $i += 2; continue
+            }
+            if ($tok -ieq '-PackageId' -and ($i + 1) -lt $argsRest.Count) {
+                $loopPackageId = [string]$argsRest[$i + 1]; $i += 2; continue
+            }
         }
         if ($tok -ieq '-Latest') {
             $latest = $true
@@ -3499,6 +3572,29 @@ function Show-MetraInspectCli {
             }
             if ($maxLoops -gt 0) { $loopParams.MaxLoops = $maxLoops }
             return Invoke-MetraInspectReviewLoop @loopParams @common
+        }
+        'loop-decide' {
+            return Invoke-MetraInspectReviewLoopDecide -Name $projectName -Affirm @($loopAffirm) -Defer @($loopDefer) -Reject @($loopReject) @common
+        }
+        'loop-package' {
+            $pkgParams = @{
+                Name = $projectName
+                FindingId = @($loopFindingId)
+                PassThru = $loopPassThru
+            }
+            return Invoke-MetraInspectReviewLoopPackage @pkgParams @common
+        }
+        'loop-record-fix' {
+            if ([string]::IsNullOrWhiteSpace($loopRecordMode)) {
+                throw 'inspect loop record-fix requires -Mode Dispatch or -Mode Inline (or Abandoned).'
+            }
+            $recParams = @{
+                Name = $projectName
+                Mode = $loopRecordMode
+            }
+            if ($null -ne $loopSummary) { $recParams.Summary = $loopSummary }
+            if ($null -ne $loopPackageId) { $recParams.PackageId = $loopPackageId }
+            return Invoke-MetraInspectReviewLoopRecordFix @recParams @common
         }
         default {
             return Invoke-MetraInspectDiff -Name $projectName -Base $baseRev @common

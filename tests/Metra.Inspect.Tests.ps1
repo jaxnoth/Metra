@@ -1618,3 +1618,30 @@ Describe 'Inspect engine selection' {
         }
     }
 }
+
+Describe 'Inspect fix dispatch queue hash' {
+    It 'Assert-MetraInspectReviewFixQueueHashMatchesPackage throws when queue drifted' {
+        InModuleScope Metra {
+            $stateRoot = Join-Path $env:TEMP ("metra-fix-hash-" + [guid]::NewGuid().ToString('n'))
+            $slotRoot = Join-Path $stateRoot 'Metra'
+            New-Item -ItemType Directory -Path (Join-Path $slotRoot 'packages') -Force | Out-Null
+            Mock Resolve-MetraInspectReviewSlotRoot {
+                [PSCustomObject]@{ SlotRoot = $slotRoot; StateRoot = $stateRoot }
+            }
+            $queue = [PSCustomObject]@{
+                round    = 1
+                findings = @([PSCustomObject]@{
+                        id = 'R1-F001'; severity = 'High'; file = 'a.ps1'; finding = 'x'; status = 'Affirmed'
+                    })
+            }
+            $hash = Get-MetraInspectReviewFixQueueContentHash -Queue $queue
+            $pkg = [PSCustomObject]@{ sourceQueueHash = $hash }
+            Save-MetraInspectReviewFixQueue -SlotKey 'Metra' -Queue $queue -Confirm:$false
+            { Assert-MetraInspectReviewFixQueueHashMatchesPackage -SlotKey 'Metra' -Package $pkg } | Should -Not -Throw
+
+            $queue.findings[0].status = 'Deferred'
+            Save-MetraInspectReviewFixQueue -SlotKey 'Metra' -Queue $queue -Confirm:$false
+            { Assert-MetraInspectReviewFixQueueHashMatchesPackage -SlotKey 'Metra' -Package $pkg } | Should -Throw '*sourceQueueHash mismatch*'
+        }
+    }
+}
