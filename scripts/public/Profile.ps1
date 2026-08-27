@@ -139,7 +139,8 @@ function Export-MetraProfile {
             'Personal-root registryFile (e.g. projects.personal.json beside personal projects) is not included; copy it with that root separately.',
             'Optional metra-humor.local.mdc / metra-teaching-gentle.local.mdc are included when present (Persona Add-ons).',
             'Do not pack secrets, ticket caches, or canvas snapshots.',
-            'Metra Profile Sync v1: HQ-published, satellite-pulled.'
+            'Metra Profile Sync v1: HQ-published, satellite-pulled.',
+            'Machine-local roots/projectsRoot/workspace.outputs are preserved on satellite import when HQ paths are foreign; see satellite connect.'
         )
     }
     $manifestPath = Join-Path $staging 'metra-profile.json'
@@ -226,10 +227,25 @@ function Import-MetraProfile {
 
         [switch]$Force,
 
+        [switch]$MergeMachineLocal,
+
         [switch]$Quiet
     )
 
     $metraRoot = Get-MetraRoot
+    $configPath = Join-Path $metraRoot 'metra.config.json'
+    $localConfigBefore = $null
+    if ($MergeMachineLocal -and (Test-Path -LiteralPath $configPath)) {
+        try {
+            $localConfigBefore = Get-Content -LiteralPath $configPath -Raw -Encoding UTF8 | ConvertFrom-Json
+        }
+        catch {
+            if (-not $Quiet) {
+                Write-Warning "Could not read existing metra.config.json for merge: $($_.Exception.Message)"
+            }
+        }
+    }
+
     $resolved = Resolve-MetraProfileSourceDir -Path $Path
     try {
         $srcDir = $resolved.Directory
@@ -330,6 +346,21 @@ function Import-MetraProfile {
             [void]$copied.Add($row.Relative)
             if (-not $Quiet) {
                 Write-Host ("Imported {0}" -f $row.Relative)
+            }
+        }
+
+        if ($MergeMachineLocal -and $localConfigBefore -and ($copied -contains 'metra.config.json')) {
+            try {
+                $importedCfg = Get-Content -LiteralPath $configPath -Raw -Encoding UTF8 | ConvertFrom-Json
+                $merge = Merge-MetraProfileMachineLocalConfig -Imported $importedCfg -Local $localConfigBefore -Quiet:$Quiet
+                if ($merge.Merged) {
+                    $null = Save-MetraProfileConfigObject -Config $merge.Config -MetraRoot $metraRoot
+                }
+            }
+            catch {
+                if (-not $Quiet) {
+                    Write-Warning "Profile machine-local merge skipped: $($_.Exception.Message)"
+                }
             }
         }
 
@@ -502,11 +533,31 @@ function Sync-MetraProfile {
     }
 
     try {
-        $importResult = Import-MetraProfile -Path $zipPath -Force -Quiet:$Quiet -Confirm:$false
+        $importResult = Import-MetraProfile -Path $zipPath -Force -MergeMachineLocal -Quiet:$Quiet -Confirm:$false
     }
     finally {
         if (Test-Path -LiteralPath $zipPath) {
             Remove-Item -LiteralPath $zipPath -Force -ErrorAction SilentlyContinue
+        }
+    }
+
+    $rootsRepair = $null
+    try {
+        $rootsRepair = Repair-MetraSatelliteLocalRoots -MetraRoot $metraRoot -Quiet:$Quiet
+    }
+    catch {
+        if (-not $Quiet) {
+            Write-Warning "Satellite roots repair skipped: $($_.Exception.Message)"
+        }
+    }
+
+    $postSync = $null
+    try {
+        $postSync = Complete-MetraSatellitePostSync -MetraRoot $metraRoot -OpsBaseUrl $base -Quiet:$Quiet
+    }
+    catch {
+        if (-not $Quiet) {
+            Write-Warning "Satellite post-sync prefs skipped: $($_.Exception.Message)"
         }
     }
 
@@ -546,6 +597,8 @@ function Sync-MetraProfile {
         WhatIf         = $false
         Files          = @($importResult.Files)
         StatePath      = $statePath
+        RootsRepair    = $rootsRepair
+        PostSync       = $postSync
     }
 }
 
