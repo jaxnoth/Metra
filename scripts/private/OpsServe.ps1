@@ -261,7 +261,10 @@ function Enable-MetraOpsTailscaleServe {
     }
 
     $reason = if ($err) { $err } elseif ($status.Reason) { [string]$status.Reason } else { 'Serve could not start' }
-    $hint = 'Enable HTTPS certificates in the Tailscale admin console, then retry Ops with bindTailscale.'
+    $hint = 'Enable HTTPS certificates / Serve in the Tailscale admin console, then retry Ops with bindTailscale.'
+    if ($reason -match 'Serve is not enabled|serve timed out|Serve not configured') {
+        $hint = "$hint On IWU campus, DNSFilter MITMs login.tailscale.com - run: .\metra.ps1 tailscale campus-hosts (elevated), then open the Serve enable URL again."
+    }
     return [PSCustomObject]@{
         Ok       = $false
         ShareUrl = $null
