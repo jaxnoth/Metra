@@ -60,6 +60,7 @@ Entry: `.\metra.ps1`. Inspect detail: [inspect-loop.md](inspect-loop.md).
 .\metra.ps1 inspect pack-only agents -Name <Project>
 .\metra.ps1 inspect pack-only plan -Latest -Name Metra
 .\metra.ps1 azdo status|repos|get|gaps|tree|search|ideas
+.\metra.ps1 atlas health|search|put|sync|publish|notion|write
 .\metra.ps1 ops
 .\metra.ps1 unblock
 .\metra.ps1 tailscale campus-hosts

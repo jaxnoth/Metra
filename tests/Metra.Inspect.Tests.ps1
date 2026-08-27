@@ -1389,14 +1389,372 @@ Describe 'Inspect review loop helpers' {
         }
     }
 
-    It 'Test-MetraInspectReviewRegressed detects worse Critical High or Medium' {
+    It 'finding fingerprints are stable across whitespace path separators and casing' {
         InModuleScope Metra {
-            $base = [PSCustomObject]@{ Critical = 0; High = 1; Medium = 3; Low = 0 }
-            Test-MetraInspectReviewRegressed -Baseline $base -Current ([PSCustomObject]@{ Critical = 0; High = 2; Medium = 3; Low = 0 }) | Should -BeTrue
-            Test-MetraInspectReviewRegressed -Baseline $base -Current ([PSCustomObject]@{ Critical = 0; High = 1; Medium = 4; Low = 0 }) | Should -BeTrue
-            Test-MetraInspectReviewRegressed -Baseline $base -Current ([PSCustomObject]@{ Critical = 0; High = 0; Medium = 2; Low = 9 }) | Should -BeFalse
+            $base = @{
+                File     = 'scripts/private/Inspect.ps1'
+                Severity = 'High'
+                Category = 'Correctness'
+                Finding  = 'example finding text'
+            }
+            $fp1 = Get-MetraInspectFindingFingerprint @base
+            $fp2 = Get-MetraInspectFindingFingerprint -File '  scripts\private\Inspect.ps1  ' -Severity 'High' -Category 'Correctness' -Finding "example`tfinding`r`ntext"
+            $fp3 = Get-MetraInspectFindingFingerprint -File 'SCRIPTS/PRIVATE/Inspect.ps1' -Severity 'High' -Category 'Correctness' -Finding 'example finding text'
+            $fp1 | Should -Be $fp2
+            $fp1 | Should -Be $fp3
         }
     }
+
+    It 'finding fingerprint changes with file severity or category; issueKey ignores severity' {
+        InModuleScope Metra {
+            $fpA = Get-MetraInspectFindingFingerprint -File 'a.ps1' -Severity 'High' -Category 'Correctness' -Finding 'msg'
+            $fpB = Get-MetraInspectFindingFingerprint -File 'b.ps1' -Severity 'High' -Category 'Correctness' -Finding 'msg'
+            $fpC = Get-MetraInspectFindingFingerprint -File 'a.ps1' -Severity 'Medium' -Category 'Correctness' -Finding 'msg'
+            $fpD = Get-MetraInspectFindingFingerprint -File 'a.ps1' -Severity 'High' -Category 'Security' -Finding 'msg'
+            $fpA | Should -Not -Be $fpB
+            $fpA | Should -Not -Be $fpC
+            $fpA | Should -Not -Be $fpD
+
+            $keyHigh = Get-MetraInspectFindingIssueKey -File 'a.ps1' -Category 'Correctness' -Finding 'msg'
+            $keyMed = Get-MetraInspectFindingIssueKey -File 'a.ps1' -Category 'Correctness' -Finding 'msg'
+            $keyHigh | Should -Be $keyMed
+            $keyHigh | Should -Not -Be (Get-MetraInspectFindingIssueKey -File 'a.ps1' -Category 'Security' -Finding 'msg')
+        }
+    }
+
+    It 'finding message normalization truncates after 240 chars and tolerates null' {
+        InModuleScope Metra {
+            $long = ('x' * 300)
+            $fp1 = Get-MetraInspectFindingFingerprint -File 'a.ps1' -Severity 'High' -Category 'C' -Finding $long
+            $fp2 = Get-MetraInspectFindingFingerprint -File 'a.ps1' -Severity 'High' -Category 'C' -Finding (('x' * 240) + 'YYYY')
+            $fp1 | Should -Be $fp2
+            { Get-MetraInspectFindingFingerprint -File 'a.ps1' -Severity 'High' -Category 'C' -Finding $null } | Should -Not -Throw
+            { Get-MetraInspectFindingIssueKey -File 'a.ps1' -Category 'C' -Finding $null } | Should -Not -Throw
+        }
+    }
+
+    It 'Test-MetraInspectReviewRegressed ignores New High outside touch set' {
+        InModuleScope Metra {
+            $baseFinding = [PSCustomObject]@{
+                file = 'scripts/touched.ps1'; severity = 'High'; category = 'Correctness'; finding = 'original'
+            }
+            $baseId = New-MetraInspectFindingIdentityRecord -Finding $baseFinding
+            $pending = [PSCustomObject]@{
+                findingFingerprintVersion = 1
+                findingFingerprints       = @($baseId)
+                critical                  = 0
+                high                      = 1
+                medium                    = 0
+            }
+            $current = @(
+                $baseFinding
+                [PSCustomObject]@{
+                    file = 'scripts/other.ps1'; severity = 'High'; category = 'Correctness'; finding = 'brand new elsewhere'
+                }
+            )
+            $r = Test-MetraInspectReviewRegressed -PendingBaseline $pending -CurrentFindings $current -TouchSet @('scripts/touched.ps1')
+            $r.IncompatibleBaseline | Should -BeFalse
+            $r.Regressed | Should -BeFalse
+            $r.NewFindingCount | Should -Be 1
+        }
+    }
+
+    It 'Test-MetraInspectReviewRegressed detects New High inside touch set' {
+        InModuleScope Metra {
+            $baseFinding = [PSCustomObject]@{
+                file = 'scripts/touched.ps1'; severity = 'High'; category = 'Correctness'; finding = 'original'
+            }
+            $baseId = New-MetraInspectFindingIdentityRecord -Finding $baseFinding
+            $pending = [PSCustomObject]@{
+                findingFingerprintVersion = 1
+                findingFingerprints       = @($baseId)
+                critical                  = 0
+                high                      = 1
+                medium                    = 0
+            }
+            $current = @(
+                $baseFinding
+                [PSCustomObject]@{
+                    file = 'scripts/touched.ps1'; severity = 'High'; category = 'Correctness'; finding = 'new in touch set'
+                }
+            )
+            $r = Test-MetraInspectReviewRegressed -PendingBaseline $pending -CurrentFindings $current -TouchSet @('scripts/touched.ps1')
+            $r.Regressed | Should -BeTrue
+            $r.Reasons | Should -Contain 'TouchSetHighIncrease'
+            $r.TouchHighBaseline | Should -Be 1
+            $r.TouchHighCurrent | Should -Be 2
+        }
+    }
+
+    It 'Test-MetraInspectReviewRegressed detects Critical increase outside touch set' {
+        InModuleScope Metra {
+            $baseFinding = [PSCustomObject]@{
+                file = 'scripts/touched.ps1'; severity = 'High'; category = 'Correctness'; finding = 'original'
+            }
+            $baseId = New-MetraInspectFindingIdentityRecord -Finding $baseFinding
+            $pending = [PSCustomObject]@{
+                findingFingerprintVersion = 1
+                findingFingerprints       = @($baseId)
+                critical                  = 0
+                high                      = 1
+                medium                    = 0
+            }
+            $current = @(
+                $baseFinding
+                [PSCustomObject]@{
+                    file = 'scripts/elsewhere.ps1'; severity = 'Critical'; category = 'Security'; finding = 'new critical'
+                }
+            )
+            $r = Test-MetraInspectReviewRegressed -PendingBaseline $pending -CurrentFindings $current -TouchSet @('scripts/touched.ps1')
+            $r.Regressed | Should -BeTrue
+            $r.Reasons[0] | Should -Be 'CriticalIncrease'
+        }
+    }
+
+    It 'Test-MetraInspectReviewRegressed detects affirmed issueKey still High' {
+        InModuleScope Metra {
+            $affirmed = [PSCustomObject]@{
+                file = 'scripts/touched.ps1'; severity = 'High'; category = 'Correctness'; finding = 'must fix'
+            }
+            $affId = New-MetraInspectFindingIdentityRecord -Finding $affirmed
+            $pending = [PSCustomObject]@{
+                findingFingerprintVersion = 1
+                findingFingerprints       = @($affId)
+                critical                  = 0
+                high                      = 1
+                medium                    = 0
+            }
+
+            # Exact fingerprint remains High (counts unchanged) - still regresses via affirmed predicate.
+            $rExact = Test-MetraInspectReviewRegressed `
+                -PendingBaseline $pending `
+                -CurrentFindings @($affirmed) `
+                -TouchSet @('scripts/touched.ps1') `
+                -AffirmedPackageFindings @($affId)
+            $rExact.Regressed | Should -BeTrue
+            $rExact.Reasons | Should -Be @('AffirmedFindingReappeared')
+            $rExact.AffirmedReappearedCount | Should -Be 1
+
+            # issueKey survives severity-bearing fingerprint change (High -> Critical).
+            $elevated = [PSCustomObject]@{
+                file = 'scripts/touched.ps1'; severity = 'Critical'; category = 'Correctness'; finding = 'must fix'
+            }
+            $elevId = New-MetraInspectFindingIdentityRecord -Finding $elevated
+            $elevId.issueKey | Should -Be $affId.issueKey
+            $elevId.fingerprint | Should -Not -Be $affId.fingerprint
+            $rKey = Test-MetraInspectReviewRegressed `
+                -PendingBaseline $pending `
+                -CurrentFindings @($elevated) `
+                -TouchSet @('scripts/touched.ps1') `
+                -AffirmedPackageFindings @($affId)
+            $rKey.Reasons | Should -Contain 'AffirmedFindingReappeared'
+            $rKey.Reasons | Should -Contain 'CriticalIncrease'
+        }
+    }
+
+    It 'Test-MetraInspectReviewRegressed accepts affirmed High downgraded to Medium without Medium population rise' {
+        InModuleScope Metra {
+            $affirmed = [PSCustomObject]@{
+                file = 'scripts/touched.ps1'; severity = 'High'; category = 'Correctness'; finding = 'must fix'
+            }
+            $affId = New-MetraInspectFindingIdentityRecord -Finding $affirmed
+            $pending = [PSCustomObject]@{
+                findingFingerprintVersion = 1
+                findingFingerprints       = @($affId)
+                critical                  = 0
+                high                      = 1
+                medium                    = 0
+            }
+            $downgraded = [PSCustomObject]@{
+                file = 'scripts/touched.ps1'; severity = 'Medium'; category = 'Correctness'; finding = 'must fix'
+            }
+            $r = Test-MetraInspectReviewRegressed `
+                -PendingBaseline $pending `
+                -CurrentFindings @($downgraded) `
+                -TouchSet @('scripts/touched.ps1') `
+                -AffirmedPackageFindings @($affId)
+            # Demotion of the same issueKey does not count as TouchSetMediumIncrease.
+            $r.Regressed | Should -BeFalse
+            $r.TouchMediumCurrent | Should -Be 0
+        }
+    }
+
+    It 'Test-MetraInspectReviewRegressed ignores New Medium inside touch set' {
+        InModuleScope Metra {
+            $base = [PSCustomObject]@{
+                file = 'scripts/touched.ps1'; severity = 'Medium'; category = 'Correctness'; finding = 'old medium'
+            }
+            $baseId = New-MetraInspectFindingIdentityRecord -Finding $base
+            $pending = [PSCustomObject]@{
+                findingFingerprintVersion = 1
+                findingFingerprints       = @($baseId)
+                critical                  = 0
+                high                      = 0
+                medium                    = 1
+            }
+            $current = @(
+                $base
+                [PSCustomObject]@{
+                    file = 'scripts/touched.ps1'; severity = 'Medium'; category = 'Correctness'; finding = 'brand new medium invent'
+                }
+            )
+            $r = Test-MetraInspectReviewRegressed -PendingBaseline $pending -CurrentFindings $current -TouchSet @('scripts/touched.ps1')
+            $r.Regressed | Should -BeFalse
+            $r.Reasons | Should -BeNullOrEmpty
+        }
+    }
+
+    It 'Test-MetraInspectReviewRegressed empty touch set falls back to baseline finding files only' {
+        InModuleScope Metra {
+            $baseFinding = [PSCustomObject]@{
+                file = 'scripts/base-only.ps1'; severity = 'High'; category = 'Correctness'; finding = 'base'
+            }
+            $baseId = New-MetraInspectFindingIdentityRecord -Finding $baseFinding
+            $pending = [PSCustomObject]@{
+                findingFingerprintVersion = 1
+                findingFingerprints       = @($baseId)
+                critical                  = 0
+                high                      = 1
+                medium                    = 0
+            }
+            $touch = Get-MetraInspectReviewTouchSet -BaselineFindingFingerprints @($baseId) -PackageTargetFiles @() -CurrentDiffFiles @()
+            $touch | Should -Contain 'scripts/base-only.ps1'
+            $current = @(
+                $baseFinding
+                [PSCustomObject]@{
+                    file = 'scripts/unrelated.ps1'; severity = 'High'; category = 'Correctness'; finding = 'noise'
+                }
+            )
+            $r = Test-MetraInspectReviewRegressed -PendingBaseline $pending -CurrentFindings $current -TouchSet @()
+            # empty TouchSet arg triggers fallback inside regressor via baseline fingerprints
+            $r.Regressed | Should -BeFalse
+            $r.TouchSet | Should -Contain 'scripts/base-only.ps1'
+        }
+    }
+
+    It 'Get-MetraInspectReviewTouchSet uses content delta vs baseline not full dirty tree' {
+        InModuleScope Metra {
+            $root = Join-Path $env:TEMP ("metra-touch-" + [guid]::NewGuid().ToString('n'))
+            $project = Join-Path $root 'project'
+            $baseline = Join-Path $root 'baseline'
+            New-Item -ItemType Directory -Path (Join-Path $project 'scripts') -Force | Out-Null
+            New-Item -ItemType Directory -Path (Join-Path $baseline 'scripts') -Force | Out-Null
+            Set-Content -LiteralPath (Join-Path $project 'scripts\touched.ps1') -Value 'changed' -Encoding utf8
+            Set-Content -LiteralPath (Join-Path $project 'scripts\untouched.ps1') -Value 'same' -Encoding utf8
+            Set-Content -LiteralPath (Join-Path $baseline 'scripts\touched.ps1') -Value 'original' -Encoding utf8
+            Set-Content -LiteralPath (Join-Path $baseline 'scripts\untouched.ps1') -Value 'same' -Encoding utf8
+            try {
+                $touch = Get-MetraInspectReviewTouchSet `
+                    -ProjectRoot $project `
+                    -BaselinePath $baseline `
+                    -PackageTargetFiles @('scripts/touched.ps1') `
+                    -BaselineManifest @('scripts/touched.ps1', 'scripts/untouched.ps1') `
+                    -CurrentDiffFiles @(
+                        [PSCustomObject]@{ path = 'scripts/touched.ps1' }
+                        [PSCustomObject]@{ path = 'scripts/untouched.ps1' }
+                        [PSCustomObject]@{ path = 'scripts/other.ps1' }
+                    )
+                $touch | Should -Contain 'scripts/touched.ps1'
+                $touch | Should -Contain 'scripts/other.ps1'  # new vs manifest
+                $touch | Should -Not -Contain 'scripts/untouched.ps1'
+            }
+            finally {
+                Remove-Item -LiteralPath $root -Recurse -Force -ErrorAction SilentlyContinue
+            }
+        }
+    }
+
+    It 'Test-MetraInspectReviewRegressed with no baseline finding files only Critical or affirmed can regress' {
+        InModuleScope Metra {
+            $pending = [PSCustomObject]@{
+                findingFingerprintVersion = 1
+                findingFingerprints       = @()
+                critical                  = 0
+                high                      = 0
+                medium                    = 0
+            }
+            $current = @(
+                [PSCustomObject]@{
+                    file = 'scripts/anywhere.ps1'; severity = 'High'; category = 'Correctness'; finding = 'new high'
+                }
+            )
+            $r = Test-MetraInspectReviewRegressed -PendingBaseline $pending -CurrentFindings $current -TouchSet @()
+            $r.Regressed | Should -BeFalse
+            $r.TouchSet.Count | Should -Be 0
+
+            $rCrit = Test-MetraInspectReviewRegressed -PendingBaseline $pending -CurrentFindings @(
+                [PSCustomObject]@{
+                    file = 'scripts/anywhere.ps1'; severity = 'Critical'; category = 'Security'; finding = 'boom'
+                }
+            ) -TouchSet @()
+            $rCrit.Regressed | Should -BeTrue
+            $rCrit.Reasons | Should -Contain 'CriticalIncrease'
+        }
+    }
+
+    It 'Test-MetraInspectReviewRegressed marks incompatible baseline for missing or unsupported version' {
+        InModuleScope Metra {
+            $legacy = [PSCustomObject]@{
+                critical = 0
+                high     = 1
+                medium   = 0
+            }
+            $r = Test-MetraInspectReviewRegressed -PendingBaseline $legacy -CurrentFindings @() -TouchSet @()
+            $r.IncompatibleBaseline | Should -BeTrue
+            $r.Regressed | Should -BeFalse
+
+            $v2 = [PSCustomObject]@{
+                findingFingerprintVersion = 2
+                findingFingerprints       = @()
+                critical                  = 0
+            }
+            $r2 = Test-MetraInspectReviewRegressed -PendingBaseline $v2 -CurrentFindings @() -TouchSet @()
+            $r2.IncompatibleBaseline | Should -BeTrue
+        }
+    }
+
+    It 'Test-MetraInspectReviewRegressed Reasons follow locked precedence' {
+        InModuleScope Metra {
+            $affirmed = [PSCustomObject]@{
+                file = 'scripts/touched.ps1'; severity = 'High'; category = 'Correctness'; finding = 'affirmed'
+            }
+            $lowBase = [PSCustomObject]@{
+                file = 'scripts/touched.ps1'; severity = 'Low'; category = 'Correctness'; finding = 'will worsen'
+            }
+            $affId = New-MetraInspectFindingIdentityRecord -Finding $affirmed
+            $lowId = New-MetraInspectFindingIdentityRecord -Finding $lowBase
+            $pending = [PSCustomObject]@{
+                findingFingerprintVersion = 1
+                findingFingerprints       = @($affId, $lowId)
+                critical                  = 0
+                high                      = 1
+                medium                    = 0
+            }
+            $current = @(
+                $affirmed
+                [PSCustomObject]@{
+                    file = 'scripts/touched.ps1'; severity = 'High'; category = 'Correctness'; finding = 'extra high'
+                }
+                # Same issueKey as lowBase, raised to Medium - counts for TouchSetMediumIncrease (not New).
+                [PSCustomObject]@{
+                    file = 'scripts/touched.ps1'; severity = 'Medium'; category = 'Correctness'; finding = 'will worsen'
+                }
+                [PSCustomObject]@{
+                    file = 'scripts/other.ps1'; severity = 'Critical'; category = 'Security'; finding = 'crit'
+                }
+            )
+            $r = Test-MetraInspectReviewRegressed `
+                -PendingBaseline $pending `
+                -CurrentFindings $current `
+                -TouchSet @('scripts/touched.ps1') `
+                -AffirmedPackageFindings @($affId)
+            $r.Reasons[0] | Should -Be 'CriticalIncrease'
+            $r.Reasons[1] | Should -Be 'AffirmedFindingReappeared'
+            $r.Reasons[2] | Should -Be 'TouchSetHighIncrease'
+            $r.Reasons[3] | Should -Be 'TouchSetMediumIncrease'
+        }
+    }
+
 
     It 'Invoke-MetraInspectReviewLoop assess then verify reaches goal' {
         InModuleScope Metra {

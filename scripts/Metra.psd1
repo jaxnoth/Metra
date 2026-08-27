@@ -129,6 +129,8 @@
         'Set-MetraConfiguredOpsBaseUrl',
         'Invoke-MetraCaptureCommand',
         'Invoke-MetraAzdoCommand',
+        'Invoke-MetraAtlasCommand',
+        'Get-MetraAtlasProjectPath',
         'Get-MetraAzdoStatus',
         'Normalize-MetraAzdoName',
         'Compare-MetraAzdoGaps',

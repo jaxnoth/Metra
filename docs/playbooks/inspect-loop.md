@@ -34,6 +34,8 @@ Skip the loop for ticket-ops-only turns, brainstorm/plan-without-implement, or w
 
 **Goal-based review loop** (`inspect loop`): success is severity reduction to done-when (Critical=0, High=0, Medium<=2), not a fixed turn count. MaxLoops=5 is runaway protection only. Grade (A-D) is informational. Session state: `%LOCALAPPDATA%\Metra\inspect\<Project>\review-loop.json`; completed metrics append to `review-loop-history.jsonl`.
 
+Verify regression is fingerprint- and touch-set-based: revert when Critical rises globally, High rises among files touched by the affirmed package (or changed since baseline), Medium population rises in the touch set after ignoring brand-new Medium findings (LLM churn), or an affirmed High/Critical issue remains. Whole-tree High/Medium count increases alone do not revert. Manifest-only restore is unchanged. Incompatible legacy baselines (missing/unsupported fingerprint version) invalidate the cycle without restore - re-assess to continue.
+
 Stop conditions: goal achieved; convergence (unchanged counts two rounds); MaxLoops reached (not success); operator ship / good enough. The CLI does not auto-fix - the **agent + chat** loop does.
 
 ## Engine independence

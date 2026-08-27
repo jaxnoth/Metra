@@ -1,0 +1,4 @@
+{
+  "apiKey": "",
+  "note": "Optional Metra-side Notion pointer. Prefer Atlas/config/settings.json or env METRA_NOTION_API_KEY. Never put apiKey in metra.config.json (portfolio-synced)."
+}

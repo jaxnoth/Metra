@@ -611,6 +611,30 @@ function Invoke-MetraInspectReviewLoopPackage {
             [string]::IsNullOrWhiteSpace([string](Get-MetraProp -Object $_ -Name 'file' -Default ''))
         }).Count -gt 0
 
+    $fpVersion = if (Get-Command Get-MetraInspectFindingFingerprintVersion -ErrorAction SilentlyContinue) {
+        [int](Get-MetraInspectFindingFingerprintVersion)
+    }
+    else { 1 }
+
+    $packagedFindings = @($selected | ForEach-Object {
+            $f = $_
+            $idRec = if (Get-Command New-MetraInspectFindingIdentityRecord -ErrorAction SilentlyContinue) {
+                New-MetraInspectFindingIdentityRecord -Finding $f -ProjectRoot ([string]$ctx.Root)
+            }
+            else { $null }
+            # Preserve queue fields; stamp durable identities for verify affirmed-reappear checks.
+            $ordered = [ordered]@{}
+            foreach ($p in @($f.PSObject.Properties)) {
+                $ordered[$p.Name] = $p.Value
+            }
+            if ($null -ne $idRec) {
+                $ordered['fingerprint'] = [string]$idRec.fingerprint
+                $ordered['issueKey'] = [string]$idRec.issueKey
+                $ordered['findingFingerprintVersion'] = $fpVersion
+            }
+            [PSCustomObject]$ordered
+        })
+
     $package = [ordered]@{
         schemaVersion         = 1
         packageId             = $packageId
@@ -620,7 +644,8 @@ function Invoke-MetraInspectReviewLoopPackage {
         root                  = [string]$ctx.Root
         round                 = $currentRound
         findingIds            = @($ids)
-        findings              = @($selected)
+        findings              = @($packagedFindings)
+        findingFingerprintVersion = $fpVersion
         targetFiles           = @($targetFiles)
         contextFiles          = @()
         truncatedFiles        = @()

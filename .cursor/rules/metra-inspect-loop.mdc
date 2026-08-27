@@ -20,10 +20,10 @@ Skip when:
 
 ## Loop rhythm
 
-1. **Assess:** `.\metra.ps1 inspect loop -Name <Project>` (or `-Reset` for a new session). Saves a git/working-tree baseline and severity counts.
+1. **Assess:** `.\metra.ps1 inspect loop -Name <Project>` (or `-Reset` for a new session). Saves a git/working-tree baseline, severity counts, and versioned finding fingerprints.
 2. **Summarize:** Post Critical and High first, then actionable Medium. Fix queue: `%LOCALAPPDATA%\Metra\inspect\<Project>\fix-queue.json`.
 3. **Fix:** Agent applies **affirmed** fixes only (operator may allow auto-fix on a full `-RunAll` session).
-4. **Verify:** Run `inspect loop` again (same session). Detects tree changes, re-assesses, and **reverts the working tree** if Critical/High/Medium regressed vs the saved baseline.
+4. **Verify:** Run `inspect loop` again (same session). Detects tree changes, re-assesses, and **reverts the working tree** only when Critical rises globally, High rises in the fix touch set, Medium rises in the touch set after ignoring brand-new Medium findings, or an affirmed High/Critical issue remains - not because whole-tree High/Medium counts rose.
 5. **Repeat** until goal, convergence, or MaxLoops fence.
 6. **External review:** `.\metra.ps1 inspect pack` (Bing lane) **after** the loop - not between rounds.
 

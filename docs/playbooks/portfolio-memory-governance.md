@@ -36,6 +36,23 @@ Optional **Decision Registry** (Operational Why Memory): `.\metra.ps1 decisions`
 
 For operational why-we-chose scars, use `.\metra.ps1 decisions search` / `ctx -Query` Why Here hits before transcript archaeology. Promote requires why + confidence + evidence. Harvest creates candidates only. When stating a route, prefer ledger-backed Why Here (decision + why); never invent operational why.
 
+## Atlas (portfolio knowledge bus)
+
+Sibling project `C:\Projects\Atlas` (`.\Atlas.ps1` / `.\metra.ps1 atlas`). **Metra routes. Atlas stores. Notion persists.**
+
+| Content | Authority | Atlas / Notion |
+|---------|-----------|----------------|
+| Soft collaboration rhythm | OCC | never sync |
+| Operational why | Decision Registry | Reference pointer only |
+| Portfolio product policy | Decisions.md | Reference pointer only |
+| Cross-product plans/docs/briefs/parked | **Notion Plans via Atlas** | two-way bus (`put` local; `sync push`/`publish` remote) |
+| Institutional KB | Codex | not Atlas |
+| Capture / Ask journal | local | Sessions only after explicit promote |
+
+`ctx -Query` may append up to three Atlas citations when Atlas is healthy - never always-on, never Ask/OCC injection. Deletion sync unsupported in v1. Vectors deferred.
+
+Routing vs Codex: KB/Nice vocabulary -> Codex; plans/briefs/expanded memory/Notion sync -> Atlas.
+
 ## For whom? and maturity
 
 - **For whom?:** cite registry `serves` when present (audiences of the work). Do not invent individuals, requesters, owners, approvers, or interpersonal memory - ticket people facts stay in TicketTracker evidence.

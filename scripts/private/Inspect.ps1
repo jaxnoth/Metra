@@ -636,17 +636,23 @@ function Get-MetraInspectGitDiffFiles {
         $seen = @{}
         if (-not [string]::IsNullOrWhiteSpace($diffText)) {
             $currentPath = $null
+            $currentPathFrom = $null
             $buf = New-Object System.Text.StringBuilder
             foreach ($line in ($diffText -split "`r?`n")) {
                 if ($line -match '^diff --git a/(.+?) b/(.+)$') {
                     if ($currentPath) {
                         [void]$files.Add([PSCustomObject]@{
-                                path    = $currentPath
-                                content = $buf.ToString()
+                                path     = $currentPath
+                                pathFrom = $currentPathFrom
+                                content  = $buf.ToString()
                             })
                         $seen[$currentPath] = $true
                     }
-                    $currentPath = $Matches[2]
+                    $currentPathFrom = [string]$Matches[1]
+                    $currentPath = [string]$Matches[2]
+                    if ([string]::Equals($currentPathFrom, $currentPath, [StringComparison]::OrdinalIgnoreCase)) {
+                        $currentPathFrom = $null
+                    }
                     $buf = New-Object System.Text.StringBuilder
                 }
                 if ($null -ne $currentPath) {
@@ -655,8 +661,9 @@ function Get-MetraInspectGitDiffFiles {
             }
             if ($currentPath) {
                 [void]$files.Add([PSCustomObject]@{
-                        path    = $currentPath
-                        content = $buf.ToString()
+                        path     = $currentPath
+                        pathFrom = $currentPathFrom
+                        content  = $buf.ToString()
                     })
                 $seen[$currentPath] = $true
             }
@@ -1193,6 +1200,7 @@ Review loop regression revert (Inspect.ps1 loop/baseline code):
 - Do **not** report manifest-only restore or "extras left unchanged" warnings as High/Medium defects. Use Info at most if noting operator follow-up.
 - Do report missing path containment, untrusted baselinePath, or resume root mismatch.
 - Save-MetraInspectReviewGitBaseline may omit non-leaf or missing-on-disk diff paths; it warns with captured/total counts and stores baselineCoverage on pendingBaseline. Warn-not-fail is intentional; do not flag loud omission warnings as High/Medium.
+- Verify regression is fingerprint- and touch-set-based (not whole-tree High/Medium count increases). Count-only global High/Medium regression is retired by design.
 
 Return ONLY a JSON object: {"findings":[...]}. Each finding object must include:
 severity (Critical|High|Medium|Low|Info), confidence (High|Medium|Low), category (Security|Reliability|Performance|Maintainability|Standards|Scope),
@@ -2129,7 +2137,7 @@ function Format-MetraInspectPackMarkdown {
     }
     [void]$sb.AppendLine('')
     if ($Mode -eq 'diff') {
-        [void]$sb.AppendLine('Bing preamble: harden for validation, ShouldProcess honesty, path safety, fail-closed edges, credential exposure, error handling. Inspect loop regression revert is manifest-only plus warn on extras (not auto-delete unlisted files) by design.')
+        [void]$sb.AppendLine('Bing preamble: harden for validation, ShouldProcess honesty, path safety, fail-closed edges, credential exposure, error handling. Inspect loop regression revert is fingerprint/touch-set based (not whole-tree High/Medium counts) and manifest-only plus warn on extras (not auto-delete unlisted files) by design.')
     }
     elseif ($Mode -eq 'agents') {
         [void]$sb.AppendLine('Bing preamble: review A2 desk split - stub under line budget, playbook index and safety ceilings in stub only, loadWhen/front matter on playbooks, provenance lines, content parity with pre-split AGENTS (done-when / On hard stop preserved), no procedure warehouse in stub, playbook bodies not always-on.')
@@ -2608,23 +2616,690 @@ function Test-MetraInspectReviewGoalMet {
     return ([int]$Counts.Critical -eq 0 -and [int]$Counts.High -eq 0 -and [int]$Counts.Medium -le 2)
 }
 
-function Test-MetraInspectReviewRegressed {
+function Get-MetraInspectFindingFingerprintVersion {
     <#
     .SYNOPSIS
-        True when post-fix severity counts are worse than the saved baseline (Critical/High/Medium only).
+        Supported finding fingerprint contract version (bump when normalization changes).
+    #>
+    [CmdletBinding()]
+    param()
+
+    return 1
+}
+
+function Get-MetraInspectFindingNormalizedPath {
+    <#
+    .SYNOPSIS
+        Project-relative, slash-normalized, trimmed, invariant-lowercase path for fingerprints.
     #>
     [CmdletBinding()]
     param(
-        [Parameter(Mandatory)][object]$Baseline,
-        [Parameter(Mandatory)][object]$Current
+        [AllowNull()]
+        [AllowEmptyString()]
+        [string]$File,
+        [string]$ProjectRoot = ''
     )
 
-    foreach ($tier in @('Critical', 'High', 'Medium')) {
-        if ([int]$Current.$tier -gt [int]$Baseline.$tier) {
-            return $true
+    if ($null -eq $File) { return '' }
+    $path = [string]$File
+    if ([string]::IsNullOrWhiteSpace($path)) { return '' }
+
+    $path = $path.Trim()
+    if (-not [string]::IsNullOrWhiteSpace($ProjectRoot)) {
+        try {
+            $rootFull = [System.IO.Path]::GetFullPath($ProjectRoot).TrimEnd('\', '/')
+            if ([System.IO.Path]::IsPathRooted($path)) {
+                $candFull = [System.IO.Path]::GetFullPath($path)
+                if (Test-MetraPathWithinRoot -Path $candFull -Root $rootFull) {
+                    $prefix = $rootFull + [System.IO.Path]::DirectorySeparatorChar
+                    if ($candFull.StartsWith($prefix, [StringComparison]::OrdinalIgnoreCase)) {
+                        $path = $candFull.Substring($prefix.Length)
+                    }
+                    elseif ([string]::Equals($candFull, $rootFull, [StringComparison]::OrdinalIgnoreCase)) {
+                        $path = ''
+                    }
+                }
+            }
+        }
+        catch {
+            # keep original path text for hashing when root resolution fails
         }
     }
-    return $false
+
+    $path = ($path -replace '\\', '/').Trim()
+    while ($path.StartsWith('./')) {
+        $path = $path.Substring(2)
+    }
+    return $path.ToLowerInvariant()
+}
+
+function Get-MetraInspectFindingNormalizedMessage {
+    <#
+    .SYNOPSIS
+        Null-safe finding text: trim, collapse whitespace, lowercase, first 240 Unicode chars.
+    #>
+    [CmdletBinding()]
+    param(
+        [AllowNull()]
+        [AllowEmptyString()]
+        [string]$Message
+    )
+
+    if ($null -eq $Message) { $Message = '' }
+    $text = [string]$Message
+    $text = $text.Trim()
+    if ($text.Length -eq 0) { return '' }
+    $text = [regex]::Replace($text, '\s+', ' ')
+    $text = $text.ToLowerInvariant()
+
+    $enum = [System.Globalization.StringInfo]::GetTextElementEnumerator($text)
+    $sb = New-Object System.Text.StringBuilder
+    $n = 0
+    while ($enum.MoveNext() -and $n -lt 240) {
+        [void]$sb.Append([string]$enum.Current)
+        $n++
+    }
+    return $sb.ToString()
+}
+
+function Get-MetraInspectFindingNormalizedToken {
+    [CmdletBinding()]
+    param(
+        [AllowNull()]
+        [AllowEmptyString()]
+        [string]$Token
+    )
+
+    if ($null -eq $Token) { return '' }
+    return ([string]$Token).Trim().ToLowerInvariant()
+}
+
+function Get-MetraInspectSha256HexUtf8 {
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory)]
+        [AllowEmptyString()]
+        [string]$Text
+    )
+
+    $bytes = [System.Text.Encoding]::UTF8.GetBytes($Text)
+    $algo = [System.Security.Cryptography.SHA256]::Create()
+    try {
+        $hash = $algo.ComputeHash($bytes)
+    }
+    finally {
+        $algo.Dispose()
+    }
+    return ([System.BitConverter]::ToString($hash) -replace '-', '').ToLowerInvariant()
+}
+
+function Get-MetraInspectFindingIssueKey {
+    <#
+    .SYNOPSIS
+        Severity-independent issue identity: sha256(file|category|normalizedMessage).
+    #>
+    [CmdletBinding()]
+    param(
+        [AllowNull()][AllowEmptyString()][string]$File,
+        [AllowNull()][AllowEmptyString()][string]$Category,
+        [AllowNull()][AllowEmptyString()][string]$Finding,
+        [string]$ProjectRoot = ''
+    )
+
+    $path = Get-MetraInspectFindingNormalizedPath -File $File -ProjectRoot $ProjectRoot
+    $cat = Get-MetraInspectFindingNormalizedToken -Token $Category
+    $msg = Get-MetraInspectFindingNormalizedMessage -Message $Finding
+    return Get-MetraInspectSha256HexUtf8 -Text ("{0}|{1}|{2}" -f $path, $cat, $msg)
+}
+
+function Get-MetraInspectFindingFingerprint {
+    <#
+    .SYNOPSIS
+        Exact finding identity: sha256(file|severity|category|normalizedMessage).
+    #>
+    [CmdletBinding()]
+    param(
+        [AllowNull()][AllowEmptyString()][string]$File,
+        [AllowNull()][AllowEmptyString()][string]$Severity,
+        [AllowNull()][AllowEmptyString()][string]$Category,
+        [AllowNull()][AllowEmptyString()][string]$Finding,
+        [string]$ProjectRoot = ''
+    )
+
+    $path = Get-MetraInspectFindingNormalizedPath -File $File -ProjectRoot $ProjectRoot
+    $sev = Get-MetraInspectFindingNormalizedToken -Token $Severity
+    $cat = Get-MetraInspectFindingNormalizedToken -Token $Category
+    $msg = Get-MetraInspectFindingNormalizedMessage -Message $Finding
+    return Get-MetraInspectSha256HexUtf8 -Text ("{0}|{1}|{2}|{3}" -f $path, $sev, $cat, $msg)
+}
+
+function New-MetraInspectFindingIdentityRecord {
+    <#
+    .SYNOPSIS
+        Builds a versioned fingerprint/issueKey record from a finding-like object.
+    #>
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory)][object]$Finding,
+        [string]$ProjectRoot = ''
+    )
+
+    $file = [string](Get-MetraProp -Object $Finding -Name 'file' -Default '')
+    $severity = [string](Get-MetraProp -Object $Finding -Name 'severity' -Default '')
+    $category = [string](Get-MetraProp -Object $Finding -Name 'category' -Default '')
+    $text = [string](Get-MetraProp -Object $Finding -Name 'finding' -Default '')
+    $normPath = Get-MetraInspectFindingNormalizedPath -File $file -ProjectRoot $ProjectRoot
+    return [PSCustomObject]@{
+        fingerprint = Get-MetraInspectFindingFingerprint -File $file -Severity $severity -Category $category -Finding $text -ProjectRoot $ProjectRoot
+        issueKey    = Get-MetraInspectFindingIssueKey -File $file -Category $category -Finding $text -ProjectRoot $ProjectRoot
+        file        = $normPath
+        severity    = $severity
+        category    = $category
+    }
+}
+
+function Get-MetraInspectReviewFindingIdentityList {
+    [CmdletBinding()]
+    param(
+        [AllowEmptyCollection()][object[]]$Findings,
+        [string]$ProjectRoot = ''
+    )
+
+    $list = New-Object System.Collections.Generic.List[object]
+    foreach ($f in @($Findings)) {
+        if ($null -eq $f) { continue }
+        [void]$list.Add((New-MetraInspectFindingIdentityRecord -Finding $f -ProjectRoot $ProjectRoot))
+    }
+    return @($list.ToArray())
+}
+
+function Test-MetraInspectReviewBaselineFingerprintsCompatible {
+    <#
+    .SYNOPSIS
+        True when pendingBaseline uses the supported fingerprint contract (version 1 + collection property).
+    #>
+    [CmdletBinding()]
+    param(
+        [AllowNull()][object]$PendingBaseline
+    )
+
+    if ($null -eq $PendingBaseline) { return $false }
+    $ver = Get-MetraProp -Object $PendingBaseline -Name 'findingFingerprintVersion' -Default $null
+    if ($null -eq $ver) { return $false }
+    try {
+        if ([int]$ver -ne (Get-MetraInspectFindingFingerprintVersion)) { return $false }
+    }
+    catch {
+        return $false
+    }
+    # Property must exist (empty array may deserialize as $null - still compatible).
+    $prop = $PendingBaseline.PSObject.Properties['findingFingerprints']
+    if ($null -eq $prop) { return $false }
+    return $true
+}
+
+function Get-MetraInspectReviewTouchSet {
+    <#
+    .SYNOPSIS
+        Confined touch set: package targetFiles UNION paths whose content changed vs the baseline snapshot.
+        Does not treat the full dirty/untracked tree as touched (greenfield-safe).
+    #>
+    [CmdletBinding()]
+    param(
+        [string]$ProjectRoot = '',
+        [string]$BaselinePath = '',
+        [AllowEmptyCollection()][string[]]$PackageTargetFiles = @(),
+        [AllowEmptyCollection()][string[]]$BaselineManifest = @(),
+        [AllowEmptyCollection()][object[]]$CurrentDiffFiles = @(),
+        [AllowEmptyCollection()][object[]]$BaselineFindingFingerprints = @()
+    )
+
+    $set = New-Object 'System.Collections.Generic.HashSet[string]' ([StringComparer]::OrdinalIgnoreCase)
+    $manifestSet = New-Object 'System.Collections.Generic.HashSet[string]' ([StringComparer]::OrdinalIgnoreCase)
+    foreach ($bm in @($BaselineManifest)) {
+        $n = Get-MetraInspectFindingNormalizedPath -File ([string]$bm) -ProjectRoot $ProjectRoot
+        if (-not [string]::IsNullOrWhiteSpace($n)) { [void]$manifestSet.Add($n) }
+    }
+
+    $addPath = {
+        param([string]$Raw)
+        if ([string]::IsNullOrWhiteSpace($Raw)) { return }
+        if (-not [string]::IsNullOrWhiteSpace($ProjectRoot)) {
+            if (-not (Test-MetraInspectPathWithinProjectRoot -Root $ProjectRoot -RelativeOrAbsolute $Raw)) {
+                Write-Warning ("Inspect touch set skipped path outside project root: {0}" -f $Raw)
+                return
+            }
+        }
+        elseif (-not (Test-MetraInspectReviewManifestRelativePath -RelativePath $Raw)) {
+            if ([System.IO.Path]::IsPathRooted($Raw) -or $Raw -match '(^|[/\\])\.\.(/|\\|$)') {
+                Write-Warning ("Inspect touch set skipped unsafe path: {0}" -f $Raw)
+                return
+            }
+        }
+        $norm = Get-MetraInspectFindingNormalizedPath -File $Raw -ProjectRoot $ProjectRoot
+        if (-not [string]::IsNullOrWhiteSpace($norm)) {
+            [void]$set.Add($norm)
+        }
+    }
+
+    foreach ($tf in @($PackageTargetFiles)) {
+        & $addPath -Raw ([string]$tf)
+    }
+
+    $candidates = New-Object 'System.Collections.Generic.HashSet[string]' ([StringComparer]::OrdinalIgnoreCase)
+    foreach ($bm in @($BaselineManifest)) {
+        $n = Get-MetraInspectFindingNormalizedPath -File ([string]$bm) -ProjectRoot $ProjectRoot
+        if (-not [string]::IsNullOrWhiteSpace($n)) { [void]$candidates.Add($n) }
+    }
+    foreach ($df in @($CurrentDiffFiles)) {
+        if ($null -eq $df) { continue }
+        $p = [string](Get-MetraProp -Object $df -Name 'path' -Default '')
+        $from = [string](Get-MetraProp -Object $df -Name 'pathFrom' -Default '')
+        if ([string]::IsNullOrWhiteSpace($from)) {
+            $from = [string](Get-MetraProp -Object $df -Name 'oldPath' -Default '')
+        }
+        $np = Get-MetraInspectFindingNormalizedPath -File $p -ProjectRoot $ProjectRoot
+        if (-not [string]::IsNullOrWhiteSpace($np)) { [void]$candidates.Add($np) }
+        if (-not [string]::IsNullOrWhiteSpace($from)) {
+            $nf = Get-MetraInspectFindingNormalizedPath -File $from -ProjectRoot $ProjectRoot
+            if (-not [string]::IsNullOrWhiteSpace($nf)) { [void]$candidates.Add($nf) }
+        }
+    }
+
+    $hasBaselineSnap = -not [string]::IsNullOrWhiteSpace($BaselinePath) -and (Test-Path -LiteralPath $BaselinePath)
+    foreach ($rel in @($candidates)) {
+        if ([string]::IsNullOrWhiteSpace($rel)) { continue }
+        if (-not [string]::IsNullOrWhiteSpace($ProjectRoot)) {
+            if (-not (Test-MetraInspectPathWithinProjectRoot -Root $ProjectRoot -RelativeOrAbsolute $rel)) { continue }
+        }
+
+        $inManifest = $manifestSet.Contains($rel)
+        if (-not $inManifest) {
+            # New since assess baseline (not in snapshot manifest).
+            & $addPath -Raw $rel
+            continue
+        }
+
+        if (-not $hasBaselineSnap) {
+            # Cannot content-compare; do not expand to full dirty tree - package targets already added.
+            continue
+        }
+
+        $snapFull = $null
+        $curFull = $null
+        try {
+            if (-not (Test-MetraInspectReviewManifestRelativePath -RelativePath $rel)) { continue }
+            $snapFull = [System.IO.Path]::GetFullPath((Join-Path $BaselinePath ($rel -replace '/', [System.IO.Path]::DirectorySeparatorChar)))
+            if (-not [string]::IsNullOrWhiteSpace($ProjectRoot)) {
+                $curFull = [System.IO.Path]::GetFullPath((Join-Path $ProjectRoot ($rel -replace '/', [System.IO.Path]::DirectorySeparatorChar)))
+            }
+        }
+        catch { continue }
+
+        $snapExists = (Test-Path -LiteralPath $snapFull -PathType Leaf)
+        $curExists = (-not [string]::IsNullOrWhiteSpace($curFull)) -and (Test-Path -LiteralPath $curFull -PathType Leaf)
+
+        if (-not $snapExists -and -not $curExists) { continue }
+        if ($snapExists -xor $curExists) {
+            & $addPath -Raw $rel
+            continue
+        }
+        if ($snapExists -and $curExists) {
+            try {
+                $h1 = (Get-FileHash -LiteralPath $snapFull -Algorithm SHA256).Hash
+                $h2 = (Get-FileHash -LiteralPath $curFull -Algorithm SHA256).Hash
+                if (-not [string]::Equals($h1, $h2, [StringComparison]::OrdinalIgnoreCase)) {
+                    & $addPath -Raw $rel
+                }
+            }
+            catch {
+                & $addPath -Raw $rel
+            }
+        }
+    }
+
+    if ($set.Count -eq 0) {
+        foreach ($bf in @($BaselineFindingFingerprints)) {
+            if ($null -eq $bf) { continue }
+            $bfFile = [string](Get-MetraProp -Object $bf -Name 'file' -Default '')
+            $norm = Get-MetraInspectFindingNormalizedPath -File $bfFile -ProjectRoot $ProjectRoot
+            if (-not [string]::IsNullOrWhiteSpace($norm)) {
+                [void]$set.Add($norm)
+            }
+        }
+    }
+
+    return @(@($set) | Sort-Object)
+}
+
+function Compare-MetraInspectReviewFindings {
+    <#
+    .SYNOPSIS
+        Classifies baseline vs current findings (diagnostic metadata; not regression predicates).
+    #>
+    [CmdletBinding()]
+    param(
+        [AllowEmptyCollection()][object[]]$BaselineFingerprints = @(),
+        [AllowEmptyCollection()][object[]]$CurrentFindings = @(),
+        [string]$ProjectRoot = '',
+        [AllowEmptyCollection()][string[]]$TouchSet = @()
+    )
+
+    $currentIds = Get-MetraInspectReviewFindingIdentityList -Findings $CurrentFindings -ProjectRoot $ProjectRoot
+    $baseByFp = @{}
+    $baseByKey = @{}
+    foreach ($b in @($BaselineFingerprints)) {
+        if ($null -eq $b) { continue }
+        $fp = [string](Get-MetraProp -Object $b -Name 'fingerprint' -Default '')
+        $ik = [string](Get-MetraProp -Object $b -Name 'issueKey' -Default '')
+        if (-not [string]::IsNullOrWhiteSpace($fp)) { $baseByFp[$fp] = $b }
+        if (-not [string]::IsNullOrWhiteSpace($ik)) {
+            if (-not $baseByKey.ContainsKey($ik)) { $baseByKey[$ik] = New-Object System.Collections.Generic.List[object] }
+            [void]$baseByKey[$ik].Add($b)
+        }
+    }
+
+    $touch = New-Object 'System.Collections.Generic.HashSet[string]' ([StringComparer]::OrdinalIgnoreCase)
+    foreach ($t in @($TouchSet)) {
+        if (-not [string]::IsNullOrWhiteSpace($t)) { [void]$touch.Add([string]$t) }
+    }
+
+    $severityRank = @{
+        critical = 4
+        high     = 3
+        medium   = 2
+        low      = 1
+        info     = 0
+    }
+
+    $classifications = New-Object System.Collections.Generic.List[object]
+    $matchedBaseFp = New-Object 'System.Collections.Generic.HashSet[string]' ([StringComparer]::OrdinalIgnoreCase)
+    $newCount = 0
+    $persistentCount = 0
+    $worsenedCount = 0
+    $resolvedCount = 0
+
+    foreach ($c in $currentIds) {
+        $fp = [string]$c.fingerprint
+        $ik = [string]$c.issueKey
+        $inTouch = $touch.Count -eq 0 -or $touch.Contains([string]$c.file)
+        if ($baseByFp.ContainsKey($fp)) {
+            [void]$matchedBaseFp.Add($fp)
+            $persistentCount++
+            [void]$classifications.Add([PSCustomObject]@{
+                    Kind        = 'Persistent'
+                    Fingerprint = $fp
+                    IssueKey    = $ik
+                    File        = [string]$c.file
+                    Severity    = [string]$c.severity
+                    InTouchSet  = [bool]$inTouch
+                })
+            continue
+        }
+
+        $related = $null
+        if ($baseByKey.ContainsKey($ik)) {
+            $relatedBucket = $baseByKey[$ik]
+            if ($null -ne $relatedBucket -and $relatedBucket.Count -gt 0) {
+                $related = $relatedBucket[0]
+            }
+        }
+        if ($null -ne $related) {
+            $relFp = [string](Get-MetraProp -Object $related -Name 'fingerprint' -Default '')
+            if (-not [string]::IsNullOrWhiteSpace($relFp)) { [void]$matchedBaseFp.Add($relFp) }
+            $oldSev = Get-MetraInspectFindingNormalizedToken -Token ([string](Get-MetraProp -Object $related -Name 'severity' -Default ''))
+            $newSev = Get-MetraInspectFindingNormalizedToken -Token ([string]$c.severity)
+            $oldRank = if ($severityRank.ContainsKey($oldSev)) { [int]$severityRank[$oldSev] } else { 0 }
+            $newRank = if ($severityRank.ContainsKey($newSev)) { [int]$severityRank[$newSev] } else { 0 }
+            if ($newRank -gt $oldRank) {
+                $worsenedCount++
+                [void]$classifications.Add([PSCustomObject]@{
+                        Kind        = 'Worsened'
+                        Fingerprint = $fp
+                        IssueKey    = $ik
+                        File        = [string]$c.file
+                        Severity    = [string]$c.severity
+                        InTouchSet  = [bool]$inTouch
+                    })
+            }
+            else {
+                $persistentCount++
+                [void]$classifications.Add([PSCustomObject]@{
+                        Kind        = 'Persistent'
+                        Fingerprint = $fp
+                        IssueKey    = $ik
+                        File        = [string]$c.file
+                        Severity    = [string]$c.severity
+                        InTouchSet  = [bool]$inTouch
+                    })
+            }
+            continue
+        }
+
+        $newCount++
+        [void]$classifications.Add([PSCustomObject]@{
+                Kind        = 'New'
+                Fingerprint = $fp
+                IssueKey    = $ik
+                File        = [string]$c.file
+                Severity    = [string]$c.severity
+                InTouchSet  = [bool]$inTouch
+            })
+    }
+
+    foreach ($b in @($BaselineFingerprints)) {
+        if ($null -eq $b) { continue }
+        $fp = [string](Get-MetraProp -Object $b -Name 'fingerprint' -Default '')
+        if ([string]::IsNullOrWhiteSpace($fp) -or $matchedBaseFp.Contains($fp)) { continue }
+        $ik = [string](Get-MetraProp -Object $b -Name 'issueKey' -Default '')
+        # issueKey still present under a new fingerprint counts as not resolved
+        $still = $false
+        foreach ($c in $currentIds) {
+            if ([string]::Equals([string]$c.issueKey, $ik, [StringComparison]::OrdinalIgnoreCase)) {
+                $still = $true
+                break
+            }
+        }
+        if ($still) { continue }
+        $resolvedCount++
+        [void]$classifications.Add([PSCustomObject]@{
+                Kind        = 'Resolved'
+                Fingerprint = $fp
+                IssueKey    = $ik
+                File        = [string](Get-MetraProp -Object $b -Name 'file' -Default '')
+                Severity    = [string](Get-MetraProp -Object $b -Name 'severity' -Default '')
+                InTouchSet  = $false
+            })
+    }
+
+    $countInTouch = {
+        param([object[]]$Ids, [string]$Tier, [hashtable]$BaselineKeyMaxRank)
+        $n = 0
+        $tierRank = @{
+            Critical = 4
+            High     = 3
+            Medium   = 2
+            Low      = 1
+        }
+        $wantRank = [int]$tierRank[$Tier]
+        foreach ($x in @($Ids)) {
+            $sevTier = Get-MetraInspectReviewSeverityTier -Severity ([string]$x.severity)
+            if ($sevTier -ne $Tier) { continue }
+            if ($touch.Count -gt 0 -and -not $touch.Contains([string]$x.file)) { continue }
+            # Demotion of the same issueKey from a higher baseline severity is not a population increase.
+            $ik = [string]$x.issueKey
+            if ($BaselineKeyMaxRank -and -not [string]::IsNullOrWhiteSpace($ik) -and $BaselineKeyMaxRank.ContainsKey($ik)) {
+                if ([int]$BaselineKeyMaxRank[$ik] -gt $wantRank) { continue }
+            }
+            $n++
+        }
+        return $n
+    }
+
+    $baselineKeyMaxRank = @{}
+    foreach ($b in @($BaselineFingerprints)) {
+        if ($null -eq $b) { continue }
+        $ik = [string](Get-MetraProp -Object $b -Name 'issueKey' -Default '')
+        if ([string]::IsNullOrWhiteSpace($ik)) { continue }
+        $tier = Get-MetraInspectReviewSeverityTier -Severity ([string](Get-MetraProp -Object $b -Name 'severity' -Default ''))
+        $rank = switch ($tier) {
+            'Critical' { 4 }
+            'High' { 3 }
+            'Medium' { 2 }
+            default { 1 }
+        }
+        if (-not $baselineKeyMaxRank.ContainsKey($ik) -or [int]$baselineKeyMaxRank[$ik] -lt $rank) {
+            $baselineKeyMaxRank[$ik] = $rank
+        }
+    }
+
+    $baseTouchHigh = 0
+    $baseTouchMedium = 0
+    foreach ($b in @($BaselineFingerprints)) {
+        if ($null -eq $b) { continue }
+        $bf = [string](Get-MetraProp -Object $b -Name 'file' -Default '')
+        if ($touch.Count -gt 0 -and -not $touch.Contains($bf)) { continue }
+        $tier = Get-MetraInspectReviewSeverityTier -Severity ([string](Get-MetraProp -Object $b -Name 'severity' -Default ''))
+        if ($tier -eq 'High') { $baseTouchHigh++ }
+        elseif ($tier -eq 'Medium') { $baseTouchMedium++ }
+    }
+
+    return [PSCustomObject]@{
+        Classifications        = @($classifications.ToArray())
+        NewFindingCount        = [int]$newCount
+        PersistentFindingCount = [int]$persistentCount
+        WorsenedFindingCount   = [int]$worsenedCount
+        ResolvedFindingCount   = [int]$resolvedCount
+        CurrentIdentities      = $currentIds
+        TouchHighBaseline      = [int]$baseTouchHigh
+        TouchMediumBaseline    = [int]$baseTouchMedium
+        TouchHighCurrent       = [int](& $countInTouch -Ids $currentIds -Tier 'High' -BaselineKeyMaxRank $baselineKeyMaxRank)
+        TouchMediumCurrent     = [int](& $countInTouch -Ids $currentIds -Tier 'Medium' -BaselineKeyMaxRank $baselineKeyMaxRank)
+    }
+}
+
+function Test-MetraInspectReviewRegressed {
+    <#
+    .SYNOPSIS
+        Fingerprint + touch-set regression policy. Returns a structured result (use .Regressed).
+    #>
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory)][object]$PendingBaseline,
+        [Parameter(Mandatory)][AllowEmptyCollection()][object[]]$CurrentFindings,
+        [AllowEmptyCollection()][string[]]$TouchSet = @(),
+        [AllowEmptyCollection()][object[]]$AffirmedPackageFindings = @(),
+        [string]$ProjectRoot = ''
+    )
+
+    $empty = {
+        param([bool]$Incompatible)
+        return [PSCustomObject]@{
+            Regressed               = $false
+            Reasons                 = @()
+            CriticalBaseline        = 0
+            CriticalCurrent         = 0
+            TouchHighBaseline       = 0
+            TouchHighCurrent        = 0
+            TouchMediumBaseline     = 0
+            TouchMediumCurrent      = 0
+            AffirmedReappearedCount = 0
+            NewFindingCount         = 0
+            PersistentFindingCount  = 0
+            ResolvedFindingCount    = 0
+            TouchSet                = @($TouchSet)
+            IncompatibleBaseline    = [bool]$Incompatible
+        }
+    }
+
+    if (-not (Test-MetraInspectReviewBaselineFingerprintsCompatible -PendingBaseline $PendingBaseline)) {
+        $r = & $empty -Incompatible $true
+        return $r
+    }
+
+    $baselineFps = @()
+    $fpProp = $PendingBaseline.PSObject.Properties['findingFingerprints']
+    if ($null -ne $fpProp -and $null -ne $fpProp.Value) {
+        $baselineFps = @($fpProp.Value)
+    }
+    $critBase = [int](Get-MetraProp -Object $PendingBaseline -Name 'critical' -Default 0)
+    $currentCounts = Get-MetraInspectReviewSeverityCounts -Findings $CurrentFindings
+    $critNow = [int]$currentCounts.Critical
+
+    $effectiveTouch = @($TouchSet)
+    if ($effectiveTouch.Count -eq 0) {
+        $effectiveTouch = @(Get-MetraInspectReviewTouchSet -ProjectRoot $ProjectRoot -BaselineFindingFingerprints $baselineFps)
+    }
+
+    $compare = Compare-MetraInspectReviewFindings -BaselineFingerprints $baselineFps -CurrentFindings $CurrentFindings -ProjectRoot $ProjectRoot -TouchSet $effectiveTouch
+
+    $reasons = New-Object System.Collections.Generic.List[string]
+    if ($critNow -gt $critBase) {
+        [void]$reasons.Add('CriticalIncrease')
+    }
+
+    $affirmedReappeared = 0
+    $currentIds = @($compare.CurrentIdentities)
+    foreach ($af in @($AffirmedPackageFindings)) {
+        if ($null -eq $af) { continue }
+        $afFp = [string](Get-MetraProp -Object $af -Name 'fingerprint' -Default '')
+        $afKey = [string](Get-MetraProp -Object $af -Name 'issueKey' -Default '')
+        if ([string]::IsNullOrWhiteSpace($afFp) -and [string]::IsNullOrWhiteSpace($afKey)) {
+            # compute if package finding still has raw fields
+            $id = New-MetraInspectFindingIdentityRecord -Finding $af -ProjectRoot $ProjectRoot
+            $afFp = [string]$id.fingerprint
+            $afKey = [string]$id.issueKey
+        }
+        foreach ($c in $currentIds) {
+            $tier = Get-MetraInspectReviewSeverityTier -Severity ([string]$c.severity)
+            if ($tier -ne 'High' -and $tier -ne 'Critical') { continue }
+            $fpMatch = (-not [string]::IsNullOrWhiteSpace($afFp)) -and [string]::Equals([string]$c.fingerprint, $afFp, [StringComparison]::OrdinalIgnoreCase)
+            $keyMatch = (-not [string]::IsNullOrWhiteSpace($afKey)) -and [string]::Equals([string]$c.issueKey, $afKey, [StringComparison]::OrdinalIgnoreCase)
+            if ($fpMatch -or $keyMatch) {
+                $affirmedReappeared++
+                break
+            }
+        }
+    }
+    if ($affirmedReappeared -gt 0) {
+        [void]$reasons.Add('AffirmedFindingReappeared')
+    }
+
+    # Touch-set High/Medium population increases only when a non-empty touch set scopes comparison.
+    # Empty touch set: never use whole-tree High/Medium totals (Critical + affirmed only).
+    if ($effectiveTouch.Count -gt 0) {
+        if ([int]$compare.TouchHighCurrent -gt [int]$compare.TouchHighBaseline) {
+            [void]$reasons.Add('TouchSetHighIncrease')
+        }
+        # Medium: ignore brand-new Medium findings in the touch set (LLM reviewer churn on edited
+        # files). High still counts New. Affirmed High/Critical reappear and CriticalIncrease remain.
+        $newMediumInTouch = @($compare.Classifications | Where-Object {
+                $_.Kind -eq 'New' -and
+                (Get-MetraInspectReviewSeverityTier -Severity ([string]$_.Severity)) -eq 'Medium' -and
+                [bool]$_.InTouchSet
+            }).Count
+        $mediumForRegress = [Math]::Max(0, [int]$compare.TouchMediumCurrent - [int]$newMediumInTouch)
+        if ($mediumForRegress -gt [int]$compare.TouchMediumBaseline) {
+            [void]$reasons.Add('TouchSetMediumIncrease')
+        }
+    }
+
+    return [PSCustomObject]@{
+        Regressed               = ($reasons.Count -gt 0)
+        Reasons                 = @($reasons.ToArray())
+        CriticalBaseline        = $critBase
+        CriticalCurrent         = $critNow
+        TouchHighBaseline       = [int]$compare.TouchHighBaseline
+        TouchHighCurrent        = [int]$compare.TouchHighCurrent
+        TouchMediumBaseline     = [int]$compare.TouchMediumBaseline
+        TouchMediumCurrent      = [int]$compare.TouchMediumCurrent
+        AffirmedReappearedCount = [int]$affirmedReappeared
+        NewFindingCount         = [int]$compare.NewFindingCount
+        PersistentFindingCount  = [int]$compare.PersistentFindingCount
+        ResolvedFindingCount    = [int]$compare.ResolvedFindingCount
+        TouchSet                = @($effectiveTouch)
+        IncompatibleBaseline    = $false
+    }
 }
 
 function Get-MetraInspectReviewWorkingTreeInputHash {
@@ -2908,7 +3583,7 @@ function Write-MetraInspectReviewFixGuidance {
     Write-Host '3. Package: inspect loop package -FindingId ... [-PassThru]. If dispatchRecommended, at most one Task inspect-fixer; else inline.'
     Write-Host '4. After fixes: inspect loop record-fix -Mode Dispatch or -Mode Inline.'
     Write-Host '   Use -Mode Abandoned only to clear a stuck dispatch lock.'
-    Write-Host '5. Run inspect loop again - verifies after fixes; reverts the tree if counts regress.'
+    Write-Host '5. Run inspect loop again - verifies after fixes; reverts only on fingerprint/touch-set regression (not whole-tree High/Medium count rise).'
     Write-Host '6. Repeat until goal, convergence, or MaxLoops. Bing pack is after the loop, not between rounds.'
     Write-Host 'Hard: one fix Task at a time; no cloud/worktree isolation; fixer must not run decide/record-fix/reset/ship (prompt discipline).'
     if ($FixQueuePath) {
@@ -3237,27 +3912,91 @@ function Invoke-MetraInspectReviewLoop {
     }
 
     $counts = Get-MetraInspectReviewSeverityCounts -Findings @($report.findings)
+    $verifyLoggedOutsideTouchHighRise = $false
 
     if ($isVerify) {
-        $baselineCounts = [PSCustomObject]@{
-            Critical = [int](Get-MetraProp -Object $pending -Name 'critical' -Default 0)
-            High     = [int](Get-MetraProp -Object $pending -Name 'high' -Default 0)
-            Medium   = [int](Get-MetraProp -Object $pending -Name 'medium' -Default 0)
-            Low      = [int](Get-MetraProp -Object $pending -Name 'low' -Default 0)
+        if (-not (Test-MetraInspectReviewBaselineFingerprintsCompatible -PendingBaseline $pending)) {
+            Write-Host ''
+            Write-Host 'Pending baseline predates fingerprint-based regression analysis. No restore was performed. Run Inspect again to establish a compatible baseline.' -ForegroundColor Yellow
+            $state.pendingBaseline = $null
+            $state.phase = $null
+            $state | Add-Member -NotePropertyName fixDispatchInFlight -NotePropertyValue $false -Force
+            $state | Add-Member -NotePropertyName lastIncompatibleBaselineAtUtc -NotePropertyValue ([datetime]::UtcNow.ToString('o')) -Force
+            $state.updatedAtUtc = [datetime]::UtcNow.ToString('o')
+            $null = Save-MetraInspectReviewLoopState @loopShouldProcess -SlotKey $slotKey -State $state
+            return $state
         }
-        if (Test-MetraInspectReviewRegressed -Baseline $baselineCounts -Current $counts) {
-            $baselinePath = [string](Get-MetraProp -Object $pending -Name 'baselinePath' -Default '')
+
+        $pkgFindings = @()
+        $pkgTargets = @()
+        $lastPkgId = [string](Get-MetraProp -Object $state -Name 'lastFixPackageId' -Default '')
+        if (-not [string]::IsNullOrWhiteSpace($lastPkgId)) {
+            try {
+                $pkg = Read-MetraInspectReviewFixPackage -SlotKey $slotKey -PackageId $lastPkgId
+                $pkgFindings = @((Get-MetraProp -Object $pkg -Name 'findings' -Default @()))
+                $pkgTargets = @((Get-MetraProp -Object $pkg -Name 'targetFiles' -Default @()) | ForEach-Object { [string]$_ })
+            }
+            catch {
+                Write-Warning ("Inspect verify could not load last fix package '{0}': {1}" -f $lastPkgId, $_.Exception.Message)
+            }
+        }
+
+        $baselinePath = [string](Get-MetraProp -Object $pending -Name 'baselinePath' -Default '')
+        $baselineManifest = @()
+        if (-not [string]::IsNullOrWhiteSpace($baselinePath)) {
+            $manifestPath = Join-Path $baselinePath 'manifest.json'
+            if (Test-Path -LiteralPath $manifestPath) {
+                try {
+                    $baselineManifest = @((Get-Content -LiteralPath $manifestPath -Raw | ConvertFrom-Json) | ForEach-Object { [string]$_ })
+                }
+                catch {
+                    Write-Warning ("Inspect verify could not read baseline manifest: {0}" -f $_.Exception.Message)
+                }
+            }
+        }
+
+        $currentDiff = Get-MetraInspectGitDiffFiles -Root $ctx.Root -Base $Base
+        $touchSet = Get-MetraInspectReviewTouchSet `
+            -ProjectRoot ([string]$ctx.Root) `
+            -BaselinePath $baselinePath `
+            -PackageTargetFiles $pkgTargets `
+            -BaselineManifest $baselineManifest `
+            -CurrentDiffFiles @($currentDiff.Files) `
+            -BaselineFindingFingerprints @((Get-MetraProp -Object $pending -Name 'findingFingerprints' -Default @()))
+
+        $regress = Test-MetraInspectReviewRegressed `
+            -PendingBaseline $pending `
+            -CurrentFindings @($report.findings) `
+            -TouchSet $touchSet `
+            -AffirmedPackageFindings $pkgFindings `
+            -ProjectRoot ([string]$ctx.Root)
+
+        if ($regress.IncompatibleBaseline) {
+            Write-Host ''
+            Write-Host 'Pending baseline predates fingerprint-based regression analysis. No restore was performed. Run Inspect again to establish a compatible baseline.' -ForegroundColor Yellow
+            $state.pendingBaseline = $null
+            $state.phase = $null
+            $state | Add-Member -NotePropertyName fixDispatchInFlight -NotePropertyValue $false -Force
+            $state.updatedAtUtc = [datetime]::UtcNow.ToString('o')
+            $null = Save-MetraInspectReviewLoopState @loopShouldProcess -SlotKey $slotKey -State $state
+            return $state
+        }
+
+        if ($regress.Regressed) {
             if ([string]::IsNullOrWhiteSpace($baselinePath)) {
                 throw 'Inspect review regression detected but baselinePath is missing from session state.'
             }
             Write-Host ''
-            Write-Host 'Regression detected (Critical/High/Medium increased). Reverting working tree to pre-fix baseline.' -ForegroundColor Red
-            Write-Host ("Before: Critical={0} High={1} Medium={2} | After: Critical={3} High={4} Medium={5}" -f `
-                    $baselineCounts.Critical, $baselineCounts.High, $baselineCounts.Medium, `
-                    $counts.Critical, $counts.High, $counts.Medium)
+            Write-Host ('Regression detected ({0}). Reverting working tree to pre-fix baseline (manifest-only).' -f (($regress.Reasons) -join ', ')) -ForegroundColor Red
+            Write-Host ("Critical {0}->{1} | Touch High {2}->{3} | Touch Medium {4}->{5} | AffirmedReappeared={6}" -f `
+                    $regress.CriticalBaseline, $regress.CriticalCurrent, `
+                    $regress.TouchHighBaseline, $regress.TouchHighCurrent, `
+                    $regress.TouchMediumBaseline, $regress.TouchMediumCurrent, `
+                    $regress.AffirmedReappearedCount)
             Restore-MetraInspectReviewGitBaseline @loopShouldProcess -Root $ctx.Root -BaselinePath $baselinePath -SlotKey $slotKey -RoundNum ([int]$state.LoopsUsed) -Base $Base
             $state | Add-Member -NotePropertyName lastRegressionAtUtc -NotePropertyValue ([datetime]::UtcNow.ToString('o')) -Force
             $state | Add-Member -NotePropertyName lastRegressionReverted -NotePropertyValue $true -Force
+            $state | Add-Member -NotePropertyName lastRegressionReasons -NotePropertyValue @($regress.Reasons) -Force
             # Same round queue is re-exported; allow another record-fix for this round after the next fix batch.
             $state | Add-Member -NotePropertyName lastRecordedFixRound -NotePropertyValue ([Math]::Max(0, [int]$state.LoopsUsed - 1)) -Force
             $state | Add-Member -NotePropertyName fixDispatchInFlight -NotePropertyValue $false -Force
@@ -3266,6 +4005,15 @@ function Invoke-MetraInspectReviewLoop {
             $fixQueuePath = Export-MetraInspectReviewFixQueue -SlotKey $slotKey -Report $report -RoundNum ([int]$state.LoopsUsed)
             Write-MetraInspectReviewFixGuidance -FixQueuePath $fixQueuePath -RunUntilGoal:([bool]$state.runUntilGoal)
             return $state
+        }
+
+        $baselineHigh = [int](Get-MetraProp -Object $pending -Name 'high' -Default 0)
+        if ([int]$counts.High -gt $baselineHigh) {
+            $verifyLoggedOutsideTouchHighRise = $true
+            Write-Host ("Global High findings increased from {0} to {1}." -f $baselineHigh, [int]$counts.High) -ForegroundColor DarkYellow
+            Write-Host 'Increase occurred outside the touch set.' -ForegroundColor DarkYellow
+            Write-Host 'Verify accepted.' -ForegroundColor Green
+            Write-Host 'New findings exported to the next fix queue.' -ForegroundColor DarkGray
         }
     }
 
@@ -3307,7 +4055,9 @@ function Invoke-MetraInspectReviewLoop {
 
     Write-MetraInspectReviewRoundSummary -Round $roundNum -Counts $counts
     if ($isVerify) {
-        Write-Host 'Verify pass accepted (no regression).' -ForegroundColor Green
+        if (-not $verifyLoggedOutsideTouchHighRise) {
+            Write-Host 'Verify pass accepted (no regression).' -ForegroundColor Green
+        }
         $state.completedCycles = [int]$state.completedCycles + 1
     }
 
@@ -3362,20 +4112,25 @@ function Invoke-MetraInspectReviewLoop {
 
     # Baseline + queue use the actionable round (assess round, or advanced fix-cycle round after verify).
     $baselineSnap = Save-MetraInspectReviewGitBaseline @loopShouldProcess -Root $ctx.Root -SlotKey $slotKey -RoundNum $roundNum -Base $Base
+    $findingFingerprints = @(Get-MetraInspectReviewFindingIdentityList -Findings @($report.findings) -ProjectRoot ([string]$ctx.Root))
     $state.pendingBaseline = [PSCustomObject]@{
-        inputHash         = [string]$baselineSnap.InputHash
-        gitHead           = [string]$baselineSnap.GitHead
-        baselinePath      = [string]$baselineSnap.Path
-        critical          = [int]$counts.Critical
-        high              = [int]$counts.High
-        medium            = [int]$counts.Medium
-        low               = [int]$counts.Low
-        baselineCoverage  = [PSCustomObject]@{
+        inputHash                   = [string]$baselineSnap.InputHash
+        gitHead                     = [string]$baselineSnap.GitHead
+        baselinePath                = [string]$baselineSnap.Path
+        critical                    = [int]$counts.Critical
+        high                        = [int]$counts.High
+        medium                      = [int]$counts.Medium
+        low                         = [int]$counts.Low
+        findingFingerprintVersion   = [int](Get-MetraInspectFindingFingerprintVersion)
+        findingFingerprints         = $null
+        baselineCoverage            = [PSCustomObject]@{
             diffPathCount     = [int](Get-MetraProp -Object $baselineSnap -Name 'DiffPathCount' -Default 0)
             manifestPathCount = [int](Get-MetraProp -Object $baselineSnap -Name 'ManifestPathCount' -Default 0)
             omittedPaths      = @((Get-MetraProp -Object $baselineSnap -Name 'OmittedPaths' -Default @()))
         }
     }
+    # Keep the property even when the list is empty (PSCustomObject drops bare @()).
+    $state.pendingBaseline | Add-Member -NotePropertyName findingFingerprints -NotePropertyValue $findingFingerprints -Force
     $state.phase = 'AwaitingFix'
 
     $fixQueuePath = Export-MetraInspectReviewFixQueue -SlotKey $slotKey -Report $report -RoundNum $roundNum

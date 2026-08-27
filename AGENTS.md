@@ -20,7 +20,7 @@ Optional overlays: `metra-persona.local.mdc`, `metra-learned.local.mdc`, `metra-
 
 ## Route here when
 
-Triggers: Metra home, routing, ctx, registry, inspect, profile, decisions, workspace setup, portfolio orchestration, multi-root workspace ops.
+Triggers: Metra home, routing, ctx, registry, inspect, profile, decisions, workspace setup, portfolio orchestration, multi-root workspace ops. Also: atlas / portfolio memory / expanded memory / plan archive -> sibling Atlas (see portfolio-memory-governance).
 
 ## Start here
 
