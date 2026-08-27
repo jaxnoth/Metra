@@ -37,7 +37,7 @@ param(
     [ValidateSet(
         'list', 'status', 'pull', 'fetch', 'run', 'new', 'apply', 'workspace',
         'audit', 'snapshot', 'selfdoc', 'ops', 'host', 'chats', 'roots', 'routing',
-        'export-profile', 'import-profile', 'ctx', 'setup', 'verify', 'unblock', 'tailscale', 'satellite', 'desk', 'profile', 'decisions', 'coverage', 'ask', 'capture', 'watch', 'inspect', 'azdo', 'help'
+        'export-profile', 'import-profile', 'ctx', 'setup', 'verify', 'unblock', 'tailscale', 'satellite', 'desk', 'profile', 'decisions', 'coverage', 'ask', 'capture', 'watch', 'inspect', 'azdo', 'atlas', 'help'
     )]
     [string]$Command = 'help',
 
@@ -183,6 +183,8 @@ Usage:
       Local AI-assisted inspection of git diffs or Cursor plans (Ask/Ollama). Recommend-only.
   .\metra.ps1 azdo status|repos|get|gaps|tree|search|ideas
       Read-only Azure DevOps remote evidence (PAT: METRA_AZDO_PAT or docs/azdo.local.json). gaps maps AzDO vs registry/disk.
+  .\metra.ps1 atlas <Atlas.ps1 args...>
+      Passthrough to sibling Atlas knowledge bus (plans/docs sync). Example: .\metra.ps1 atlas search biblequiz
   .\metra.ps1 verify
 
 Roots:
@@ -843,6 +845,10 @@ switch ($Command) {
                 $result | Format-List
             }
         }
+    }
+
+    'atlas' {
+        Invoke-MetraAtlasCommand -ArgsRest $Rest
     }
 }
 

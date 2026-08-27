@@ -20,7 +20,13 @@ Entry shape:
 
 ---
 
-## 2026-08-27 - Satellite profile sync machine-local merge
+## 2026-08-27 - Atlas portfolio knowledge bus
+
+- Decision: Portfolio expanded plans/docs live in sibling project **Atlas** (`C:\Projects\Atlas`, `.\Atlas.ps1`, `.\metra.ps1 atlas`) with Stub + Notion providers. Notion Plans is long-term store for the shared bus; local `data/sync` is mirror + three-way ledger. `put` is local-only unless `-Publish`; sync conflicts fail closed. OCC, Decision Registry, and Decisions.md stay authoritative and are not two-way synced (References pointers only). Deletion is not propagated in v1. Vectors are a future retrieval accelerator over StableIds, not authority. Institutional KB remains Codex. Concept language may say "portfolio memory"; product name is Atlas.
+- Why: Other products need a typed place to publish plans for Metra pickup without collapsing typed Metra homes into a Universal Memory Engine or putting Notion secrets in portfolio-synced metra.config.json.
+- See: `C:\Projects\Atlas\README.md`; [docs/playbooks/portfolio-memory-governance.md](playbooks/portfolio-memory-governance.md); Notion design page plan:metra-vector-store-seam
+
+---
 
 - Decision: Profile sync and `satellite connect` merge HQ-published `metra.config.json` fields with machine-local portfolio paths. On import, preserve local `roots`, `projectsRoot`, and `workspace.outputs` when the HQ pack carries foreign paths (e.g. Windows `C:\` on Mac). After sync, apply `profiles/satellite-mac/metra.config.json` when foreign roots remain. HQ fields (`opsBaseUrl`, ask/inspect, workspace pins, excludes, persona pack files) still flow from HQ. Guided entrypoint: `.\metra.ps1 satellite connect -OpsBaseUrl https://<hq>.ts.net`.
 - Why: Mac satellite bring-up failed when profile sync overwrote Mac roots with jumpbox Windows paths; setup then resolved nonsense paths. Installer/remote-install still owns first PowerShell/git clone; merge removes the clobber step.
@@ -81,6 +87,13 @@ Entry shape:
 - Inspect fails closed for empty diffs, missing or ambiguous plans, ambiguous project roots, unavailable model transport, and non-JSON model output. It must not produce fake-success reports.
 - Why: Daily plan and change assessment needs a Metra-native advisory path without forcing awkward full-path copy. Keeping Inspect recommend-only and fail-closed preserves the Observe → Recommend → Human affirms pattern while calibration determines whether Metra Inspect becomes trustworthy enough to narrow the Bing gate later.
 - See: `.\metra.ps1 inspect`; `.\metra.ps1 inspect plan`; `.\metra.ps1 inspect plan -Latest`; `.\metra.ps1 inspect pack`; `scripts/private/Inspect.ps1`
+
+## 2026-08-27 - Metra Inspect fingerprint and touch-set regression
+
+- Decision: Inspect regression reverts are fingerprint- and touch-set-based. Verify never reverts solely because total High or Medium findings increased across a full-tree assessment. Inspect reverts only when Critical findings increase globally, High or Medium findings increase among files touched by the affirmed fix package or changed since its baseline, or an affirmed High/Critical issue remains at High/Critical. If no touched paths can be determined, Inspect scopes comparison to files represented by baseline findings, never to whole-tree severity totals. Current findings are still exported as the next fix queue after an accepted verify. This supersedes the count-only regression trigger adopted on 2026-08-14; manifest-only restoration remains unchanged.
+- Why: Full-tree LLM assess invents new High findings outside the fix boundary; counting those as regression wiped affirmed fixes (Atlas inspect loop). Touch-set + issueKey/fingerprint ask whether the fix made touched code worse, whether Critical appeared, or whether an affirmed issue remained. Severity demotion of the same issueKey (for example High to Medium) does not count as a touch-set population increase. Touch set is package targetFiles union paths whose content differs from the saved baseline snapshot (or are new since that manifest) - never the full dirty/untracked tree - so greenfield repos with many untracked files do not treat every Gemini Medium as a touch-set regression. Touch-set Medium regression ignores brand-new Medium findings on edited files (LLM churn); touch-set High still counts New findings so introduced Highs in the fix boundary still revert.
+- Pending baselines without supported `findingFingerprintVersion` (currently 1) or without a `findingFingerprints` property are incompatible: no restore, verify does not pass, operator must re-assess.
+- See: `Test-MetraInspectReviewRegressed`; `Get-MetraInspectFindingFingerprint`; `Get-MetraInspectFindingIssueKey`; `Get-MetraInspectReviewTouchSet`; `docs/Decisions.md` (2026-08-14 manifest-only restore entry); `.cursor/rules/metra-inspect-loop.mdc`
 
 ## 2026-08-14 - Metra Inspect goal-based review loop
 

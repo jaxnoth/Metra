@@ -263,6 +263,40 @@ function Export-MetraContextPack {
             }
         )
 
+        # Bounded Atlas citations (retrieve-on-demand). Never always-on / Ask / OCC.
+        $pack['atlasCitations'] = @()
+        try {
+            $atlasRoot = Get-MetraAtlasProjectPath -MetraRoot $metraRoot
+            if ($atlasRoot -and -not [string]::IsNullOrWhiteSpace($Query)) {
+                $atlasCli = Join-Path $atlasRoot 'Atlas.ps1'
+                $healthOut = & $atlasCli health 2>$null
+                # Prefer module import for structured hits
+                Import-Module (Join-Path $atlasRoot 'module\IWU.Atlas.psd1') -Force -ErrorAction Stop
+                $health = Test-AtlasHealth
+                if ($health -and $health.Reachable) {
+                    $hits = @(Find-AtlasPage -Query $Query -Top 3)
+                    $pack['atlasCitations'] = @(
+                        $hits | ForEach-Object {
+                            [ordered]@{
+                                stableId = $_.stableId
+                                title    = $_.title
+                                project  = $_.project
+                                kind     = $_.kind
+                                url      = $_.url
+                                provider = $_.provider
+                                mode     = $_.mode
+                                cite     = (Format-AtlasCite -Citation $_)
+                            }
+                        }
+                    )
+                }
+            }
+        }
+        catch {
+            $pack['atlasCitations'] = @()
+            $pack['atlasUnavailable'] = [string]$_.Exception.Message
+        }
+
         $amb = Get-MetraRoutingAmbiguity -Query $Query
         if ($amb.IsAmbiguous -and $amb.RunnerUp) {
             $runnerName = [string]$amb.RunnerUp.Name
@@ -415,6 +449,17 @@ function Export-MetraContextPack {
             [void]$md.AppendLine(('- **{0}**{1} [{2}]' -f $d.title, $confPart, $d.id))
             [void]$md.AppendLine(('  - decision: {0}' -f (Format-MetraContextText -Text $d.decision -MaxChars 300)))
             [void]$md.AppendLine(('  - why: {0}' -f (Format-MetraContextText -Text $d.why -MaxChars 300)))
+        }
+    }
+    if ((Test-MetraOrderedKey -Pack $pack -Key 'atlasCitations') -and @($pack.atlasCitations).Count -gt 0) {
+        [void]$md.AppendLine('')
+        [void]$md.AppendLine('## Atlas (bounded)')
+        [void]$md.AppendLine('')
+        foreach ($a in @($pack.atlasCitations)) {
+            [void]$md.AppendLine(('- {0} ({1}/{2}) [{3}]' -f $a.title, $a.provider, $a.mode, $a.stableId))
+            if ($a.cite) {
+                [void]$md.AppendLine(('  - cite: {0}' -f $a.cite))
+            }
         }
     }
     if (Test-MetraOrderedKey -Pack $pack -Key 'whyNotFor') {
