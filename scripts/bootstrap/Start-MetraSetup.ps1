@@ -52,7 +52,7 @@ if (-not [string]::IsNullOrWhiteSpace($OpsBaseUrl)) {
 }
 
 if ($Quiet -and $Role -eq 'Satellite' -and [string]::IsNullOrWhiteSpace($SyncToken)) {
-    Write-Warning 'No SyncToken supplied. Profile sync will not be configured during quiet Satellite setup.'
+    Write-Warning 'No SyncToken supplied. Quiet Satellite setup will try Tailscale pair on first profile sync; pass -SyncToken only for break-glass.'
 }
 
 $metraRoot = (Resolve-Path -LiteralPath (Join-Path $PSScriptRoot '..\..')).Path

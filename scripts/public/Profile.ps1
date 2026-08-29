@@ -434,7 +434,30 @@ function Sync-MetraProfile {
     }
     $token = Resolve-MetraProfileSyncToken -SyncToken $SyncToken -MetraRoot $metraRoot
     if (-not $RemoteStatus -and [string]::IsNullOrWhiteSpace($token)) {
-        throw 'Profile sync token missing. Pass -SyncToken, set METRA_PROFILE_SYNC_TOKEN, or store syncToken in docs/profile-sync.local.json (issue on HQ via profile issue-sync-token).'
+        if ($WhatIfPreference) {
+            throw 'Profile sync token missing (WhatIf). Pass -SyncToken, or run without -WhatIf to Tailscale-pair and store a device token.'
+        }
+        if (-not $Quiet) {
+            Write-Host 'No sync token yet - pairing with HQ over Tailscale...' -ForegroundColor DarkGray
+        }
+        $pair = $null
+        try {
+            $pair = Invoke-MetraProfileClientPair -OpsBaseUrl $base -MetraRoot $metraRoot
+        }
+        catch {
+            throw ("Profile sync token missing and Tailscale pair failed: {0}. Pass -SyncToken (break-glass), set METRA_PROFILE_SYNC_TOKEN, or store syncToken in docs/profile-sync.local.json." -f $_.Exception.Message)
+        }
+        if ($pair -and $pair.Pending) {
+            throw ("Profile pair pending Ops approve (requestId={0}). Approve on HQ Settings, then re-run profile sync. Or pass -SyncToken for break-glass." -f $pair.RequestId)
+        }
+        if (-not $pair -or -not $pair.Ok) {
+            $msg = if ($pair) { [string]$pair.Message } else { 'unknown pair failure' }
+            throw ("Profile pair failed: {0}. Pass -SyncToken (break-glass) or retry profile pair." -f $msg)
+        }
+        $token = Resolve-MetraProfileSyncToken -SyncToken '' -MetraRoot $metraRoot
+        if ([string]::IsNullOrWhiteSpace($token)) {
+            throw 'Profile sync token missing after pair. Pass -SyncToken or store syncToken in docs/profile-sync.local.json.'
+        }
     }
 
     if ($RemoteStatus) {

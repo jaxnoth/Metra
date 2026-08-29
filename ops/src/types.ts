@@ -366,6 +366,29 @@ export type ProfileSyncSatellite = {
   stale?: boolean
 }
 
+export type ProfileSyncDevice = {
+  deviceId: string
+  label: string
+  login?: string
+  node?: string
+  tags?: string[]
+  issuedUtc?: string
+  revokedUtc?: string | null
+  lastSeenUtc?: string | null
+  lastIp?: string | null
+  active?: boolean
+}
+
+export type ProfilePairPending = {
+  requestId: string
+  createdUtc?: string
+  label?: string
+  login?: string
+  node?: string
+  ip?: string
+  status?: string
+}
+
 export type ProfileSyncStatus = {
   ok: boolean
   profilePackVersion: number
@@ -373,9 +396,12 @@ export type ProfileSyncStatus = {
   maxWriteUtc?: string | null
   fileCount: number
   files: ProfileSyncFile[]
-  /** HQ has a sync-token hash; plaintext is shown only on Issue/Rotate mint. */
+  /** HQ has a break-glass sync-token hash; plaintext is shown only on Issue/Rotate mint. */
   hasSyncToken?: boolean
   satellites?: ProfileSyncSatellite[]
+  devices?: ProfileSyncDevice[]
+  pairPending?: ProfilePairPending[]
+  clientAuthConfigured?: boolean
 }
 
 export type ProfileSyncTokenIssue = {
@@ -384,6 +410,22 @@ export type ProfileSyncTokenIssue = {
   hasToken: boolean
   token: string | null
   header: string
+  message: string
+  breakGlass?: boolean
+}
+
+export type ProfilePairApproveResult = {
+  ok: boolean
+  deviceId?: string
+  label?: string
+  token?: string | null
+  header?: string
+  message?: string
+}
+
+export type ProfileDeviceRevokeResult = {
+  ok: boolean
+  deviceId: string
   message: string
 }
 

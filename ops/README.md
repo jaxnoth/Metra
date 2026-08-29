@@ -70,13 +70,18 @@ HTML Ops is the first client. Future native iOS (and phone browser over Tailscal
 |--------|------|-------|-------|
 | GET | `/api/settings` | Settings | Portfolio roots (labeled list) + Ask key presence (never the key value). |
 | PUT | `/api/settings` | Settings | Body: `roots: [{ name?, label, path, primary, optional }]` (preferred); legacy `primaryPath` / `personalPath` / `clearPersonal`; `cursorApiKey` / `clearCursorApiKey`. Operator machine only (loopback or `X-Metra-Local-Session`). |
-| GET | `/api/profile/status` | Settings | Profile Sync v1 fingerprint (`contentHash`, `profilePackVersion`, files). Same-machine, local-session, or `X-Metra-Profile-Sync` bearer. `satellites` roster only when caller has local authority. |
+| GET | `/api/profile/status` | Settings | Profile Sync fingerprint. Same-machine, local-session, device token, or break-glass `X-Metra-Profile-Sync`. Local authority also gets `satellites`, `devices`, `pairPending`, `clientAuthConfigured`. |
 | GET | `/api/profile/satellites` | Settings | Satellite roster (local authority only). |
+| GET | `/api/profile/devices` | Settings | Paired devices (local authority). `?includeRevoked=1` optional. |
+| POST | `/api/profile/devices/{id}/revoke` | Settings | Revoke one device (local authority). |
+| POST | `/api/profile/pair` | Satellite | Tailscale WhoIs pair; returns device token or `{ pending, requestId }` (202). |
+| GET | `/api/profile/pair/pending` | Settings | Pending pair requests (local authority). |
+| POST | `/api/profile/pair/approve` | Settings | Body `{ requestId }`. Adds allowlist + mints device token (local authority). |
 | GET | `/api/profile/export` | Settings | Profile zip via `Export-MetraProfile` (optional cache by hash). Same auth as status. |
-| POST | `/api/profile/issue-sync-token` | Settings | Body optional `{ rotate: true }`. Issues satellite bearer (plaintext once). Operator machine / local-session only. |
+| POST | `/api/profile/issue-sync-token` | Settings | Break-glass bearer (plaintext once). Body optional `{ rotate: true }`. Local authority only. Prefer Tailscale pair. |
 | GET | `/api/updates` | Settings | Metra + Ollama update status (`?force=1` bypasses 24h cache). |
 | POST | `/api/updates` | Settings | Body: `{ target: "metra" \| "ollama" }`. Operator-confirm apply only - never auto. Operator machine only. |
-| POST | `/api/ask` | Ask | Body: `prompt`, optional `sessionId`, `recallSessionId`, `client`, `clientHint`. Header `X-Metra-Client`: `ops-web` \| `ops-ios` \| `cli`. Journals a turn (`turnIndex` within session). Returns `entry`, `message`, `handoff`, `sessionId`, `continuity` (summary / recent / recall flags). |
+| POST | `/api/ask` | Ask | Body: `prompt`, optional `sessionId`, `recallSessionId`, `client`, `clientHint`. Header `X-Metra-Client`: `ops-web` \| `ops-ios` \| `cli`. When `client-auth.local.json` allowlist is configured, remote (non-local-authority) callers need allowlisted WhoIs. |
 | GET | `/api/ask/journal` | Ask | Default: recent session summaries + turns. `?sessionId=` one session (Resume). `?q=` keyword search (episodic recall). |
 | GET | `/api/capture` | Ask | List Capture Inbox (`?status=candidate\|all`). |
 | POST | `/api/capture` | Ask | Create candidate. Ask: `{ turnId, sessionId? }`. Place: `{ source: place, text, homeId, placeId?, attachmentIds? }`. Manual: `{ summary }`. Sets `derivedFrom` once. |

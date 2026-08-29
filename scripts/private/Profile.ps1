@@ -452,27 +452,32 @@ function Test-MetraProfileSyncToken {
 function Test-MetraOpsProfileSyncBearer {
     <#
     .SYNOPSIS
-        True when X-Metra-Profile-Sync matches the HQ profile sync token.
+        True when X-Metra-Profile-Sync matches legacy HQ sync hash or a non-revoked device token.
     .DESCRIPTION
-        Satellite check-in uses bearer scope only. Local session / same-machine alone is not enough
-        to register another machine name on the HQ ledger.
+        Check-in and remote sync use remote capability (see Test-MetraOpsProfileSyncRemoteCapability):
+        legacy break-glass alone, or device token with WhoIs when allowlist is configured.
+        Local session / same-machine alone is not enough to register another machine on the HQ ledger.
     #>
     param(
-        [Parameter(Mandatory)]$Request
+        [Parameter(Mandatory)]$Request,
+        [string]$MetraRoot = (Get-MetraRoot),
+        [string]$DataDir
     )
 
-    $syncToken = ''
-    try { $syncToken = [string]$Request.Headers['X-Metra-Profile-Sync'] } catch { }
-    return [bool](Test-MetraProfileSyncToken -SyncToken $syncToken)
+    return [bool](Test-MetraOpsProfileSyncRemoteCapability -Request $Request -MetraRoot $MetraRoot -DataDir $DataDir)
 }
 
 function Test-MetraOpsProfileSyncAuthorized {
     <#
     .SYNOPSIS
-        True when same-machine, local-session, or profile-sync bearer authorizes profile status/export.
+        True when same-machine, local-session, or remote sync capability authorizes profile status/export.
+    .DESCRIPTION
+        Remote path: legacy break-glass sync token alone, or device token (+ allowlisted WhoIs when configured).
     #>
     param(
-        [Parameter(Mandatory)]$Request
+        [Parameter(Mandatory)]$Request,
+        [string]$MetraRoot = (Get-MetraRoot),
+        [string]$DataDir
     )
 
     if (Test-MetraOpsRequestIsSameMachine -Request $Request) {
@@ -485,7 +490,7 @@ function Test-MetraOpsProfileSyncAuthorized {
         return $true
     }
 
-    return Test-MetraOpsProfileSyncBearer -Request $Request
+    return Test-MetraOpsProfileSyncRemoteCapability -Request $Request -MetraRoot $MetraRoot -DataDir $DataDir
 }
 
 function Get-MetraProfileSyncLocalState {

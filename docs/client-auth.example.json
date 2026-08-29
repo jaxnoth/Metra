@@ -1,0 +1,20 @@
+{
+  "schemaVersion": 1,
+  "allowlist": [
+    {
+      "login": "operator@example.com",
+      "node": "",
+      "tag": ""
+    },
+    {
+      "login": "",
+      "node": "laptop.tailnet.ts.net",
+      "tag": ""
+    },
+    {
+      "login": "",
+      "node": "",
+      "tag": "tag:metra-client"
+    }
+  ]
+}

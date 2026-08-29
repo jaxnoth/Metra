@@ -357,14 +357,40 @@ function Invoke-MetraSatelliteConnect {
         Write-Host ("HQ Ops reachable: {0}" -f $reach.Url) -ForegroundColor Green
     }
 
+    $pairPending = $false
+    $pairRequestId = ''
     if (-not [string]::IsNullOrWhiteSpace($SyncToken)) {
         $null = Set-MetraProfileSyncClientToken -SyncToken $SyncToken -MetraRoot $metraRoot
+    }
+    else {
+        $existing = Resolve-MetraProfileSyncToken -SyncToken '' -MetraRoot $metraRoot
+        if ([string]::IsNullOrWhiteSpace($existing)) {
+            try {
+                $pair = Invoke-MetraProfileClientPair -OpsBaseUrl $base -MetraRoot $metraRoot
+                if ($pair.Pending) {
+                    $pairPending = $true
+                    $pairRequestId = [string]$pair.RequestId
+                    if (-not $Quiet) {
+                        Write-Warning ("Pair pending Ops approve (requestId={0}). Approve on HQ, then re-run satellite connect / profile sync." -f $pairRequestId)
+                    }
+                }
+                elseif ($pair.Ok -and -not $Quiet) {
+                    Write-Host ("Paired with HQ; device token stored.") -ForegroundColor Green
+                }
+            }
+            catch {
+                if (-not $Quiet) {
+                    Write-Warning ("Tailscale pair skipped: {0}. Pass -SyncToken for break-glass, or pair later via profile sync." -f $_.Exception.Message)
+                }
+            }
+        }
     }
 
     $null = Invoke-MetraMachineRoleSetup -MetraRoot $metraRoot -Role Satellite -OpsBaseUrl $base -SyncToken $SyncToken -Quiet:$Quiet
 
     $syncResult = $null
-    if (-not $SkipSync) {
+    $doSync = -not $SkipSync -and -not $pairPending
+    if ($doSync) {
         $syncParams = @{
             OpsBaseUrl = $base
             Quiet      = [bool]$Quiet
@@ -374,6 +400,9 @@ function Invoke-MetraSatelliteConnect {
             $syncParams.SyncToken = $SyncToken
         }
         $syncResult = Sync-MetraProfile @syncParams
+    }
+    elseif ($pairPending -and -not $Quiet) {
+        Write-Host 'Skipping profile sync until pair is approved on HQ.' -ForegroundColor Yellow
     }
 
     $rootsRepair = Repair-MetraSatelliteLocalRoots -MetraRoot $metraRoot -Quiet:$Quiet

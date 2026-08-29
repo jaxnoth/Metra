@@ -20,6 +20,14 @@ Entry shape:
 
 ---
 
+## 2026-08-29 - Tailscale identity for client auth; no pasteable shared Ask/sync secret
+
+- Decision: Metra clients (Satellite CLI, future iOS companion, remote Ask) authenticate to the Ops host by **Tailscale peer identity** (WhoIs: login, node name, and/or tags) plus a host **allowlist**. Do **not** invent a second shared secret “derived from Tailscale,” and do **not** keep long-lived pasteable tokens as the primary pairing model. Optional **device capability tokens** (Keychain / local store) may be **minted by the host after** a Tailscale-proven first pairing so a single phone can be revoked without removing the whole node from the tailnet. Profile sync token paste (`X-Metra-Profile-Sync` / `profile issue-sync-token`) remains transitional until this path ships. Tailscale remains **reach + identity**, never local authority by itself (Serve must not collapse to loopback authority - existing scar).
+- Why: Copied sync/Ask keys get lost, drift across machines, and train operators to treat a bearer string as the product. Tailscale already proves which node is calling; Metra should authorize that identity. A derived PSK duplicates identity poorly. Device tokens keep revoke granularity for phones without public-internet auth complexity.
+- See: `docs/tailscale-identity-auth.plan.md`; `SECURITY.md` (Reach vs authority); `docs/ios-companion-app.plan.md` section 2.3; Brand “Profile sync token”
+
+---
+
 ## 2026-08-27 - Codex KB Sync Metra Attention deferred
 
 - Decision: Codex owns KB sync Observe / Recommend / Publish in-repo (`sync scan`, `sync recommend`, `sync draft`, `sync publish`). Metra Attention rows, `.\metra.ps1 ctx -Query "kb stale ..."`, and optional Metra coverage advisory consumed by `sync recommend -PortfolioReview` are **deferred**. When implemented, Metra may surface Codex ledger/registry evidence only; Metra must never auto-publish Expert pages from Attention.
@@ -1227,3 +1235,9 @@ Experience   Primary focus (HTML desk, Ask, project activation, local AI)
 - Decision: `Update-MetraWorkspace` warns when `workspace.outputs` has more than one entry, skips any output whose `metraFolderPath` does not resolve to a folder on disk, and throws only when every output is skipped. Example rules under `.cursor/rules/*.example.mdc` ship with `alwaysApply: false`.
 - Why: A dual-output local config kept writing a second `Metra.code-workspace` with `metraFolderPath: "_meta"` after the checkout renamed to `_metra`. Opening that copy left Cursor with no bound Metra folder, so agent chat would not start, and the extra file also split chat history across two workspaces. Example overlays with `alwaysApply: true` loaded sample personas into every session alongside the live overlay.
 - See: `scripts/public/Workspace.ps1`, `tests/Metra.Tests.ps1`, `.cursor/rules/metra-persona.local.example.mdc`
+
+## 2026-08-29 - Compound intent beats bare product keywords in Ask routing
+
+- Decision: Ask routing must prefer **compound intent** (product + ops verb/outcome) over bare product-name keyword ownership. Example: `IWUDATA` + `run` / `job` / `status` / failure language -> **IWUDATA-Automation**, not **IWUDATA-SQL**. SQL keeps source/deploy ownership (`iwudata sql`, warehouse procedure). No project may monopolize a shared product token (e.g. bare `iwudata`) when sibling stops own the operational meaning. Longer term: grow beyond keyword haystack scoring (intent/compound cues first; embeddings only as soft assist after deterministic route - never replace the map).
+- Why: Phone Ask (2026-08-29) answered "How did IWUDATA run today?" from IWUDATA-SQL and correctly said it had no run status - wrong stop, honest empty. Operator: the combination should have been the indicator; Metra needs to get smarter than keywords alone.
+- See: Decision Registry `d9b91b622c7`; `projects.local.json` (remove bare `iwudata` from SQL; Automation phrases `iwudata run` / `iwudata job` / `iwudata status`); `Get-MetraScoredRoutingProjects`; Future-Development (compound / intent routing).

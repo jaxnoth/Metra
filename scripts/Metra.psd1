@@ -63,6 +63,9 @@
         'Get-MetraProfileStatus'
         'Initialize-MetraProfileSyncToken'
         'Test-MetraProfileSyncToken'
+        'Get-MetraClientDeviceList'
+        'Revoke-MetraClientDeviceToken'
+        'Invoke-MetraProfileClientPair'
         'Invoke-MetraSetup'
         'Invoke-MetraOperatorContractCommand',
         'Invoke-MetraDeskFamiliarityCommand',

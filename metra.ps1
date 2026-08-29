@@ -153,9 +153,13 @@ Usage:
   .\metra.ps1 profile sync [-WhatIf] [-Force] [-OpsBaseUrl https://...] [-SyncToken ...]
   .\metra.ps1 profile status [-OpsBaseUrl https://...] [-SyncToken ...]
       Satellite freshness vs HQ: Current / Behind / Unknown (no import).
+  .\metra.ps1 profile pair [-OpsBaseUrl https://...] [-Force]
+      Tailscale identity pair with HQ (mints device token). Primary Satellite happy path.
+  .\metra.ps1 profile devices
+  .\metra.ps1 profile revoke-device <deviceId>
+      HQ: list / revoke paired devices (local Ops host).
   .\metra.ps1 profile issue-sync-token [-Force]
-      Profile Sync v1 (HQ-published, satellite-pulled). issue-sync-token on HQ; sync on laptop/Mac.
-      Operator Communication Contract (candidates -> promote -> soft guidelines).
+      Break-glass Profile Sync bearer (optional). Prefer profile pair / Tailscale identity.
   .\metra.ps1 decisions show|note|promote|forget|search|get|supersede|gc|review|harvest|seed
       Decision Registry / Operational Why Memory (candidates -> promote; review = hygiene visibility).
   .\metra.ps1 ask log|sessions|get|recall [-Local] [-OpsBaseUrl https://...]
@@ -597,7 +601,7 @@ switch ($Command) {
 
     'profile' {
         if (-not $Rest -or $Rest.Count -eq 0) {
-            throw "profile requires a subcommand. Example: .\metra.ps1 profile show | profile status | profile sync | profile issue-sync-token"
+            throw "profile requires a subcommand. Example: .\metra.ps1 profile show | profile status | profile sync | profile pair | profile devices | profile issue-sync-token"
         }
         $sub = $Rest[0]
         $subArgs = @()
@@ -627,10 +631,36 @@ switch ($Command) {
                 }
                 Sync-MetraProfile @syncParams | Format-List
             }
+            'pair' {
+                $base = $OpsBaseUrl
+                if (-not $base -and $subArgs.Count -gt 0 -and $subArgs[0] -notlike '-*') {
+                    $base = $subArgs[0]
+                }
+                if ([string]::IsNullOrWhiteSpace($base)) {
+                    $base = Get-MetraProfileOpsBaseUrlOrNull
+                }
+                if ([string]::IsNullOrWhiteSpace($base)) {
+                    throw 'profile pair requires -OpsBaseUrl or opsBaseUrl in docs/profile-sync.local.json / metra.config.json.'
+                }
+                Invoke-MetraProfileClientPair -OpsBaseUrl $base | Format-List
+            }
+            'devices' {
+                Get-MetraClientDeviceList -IncludeRevoked:$Force | Format-Table -AutoSize deviceId, label, login, node, lastSeenUtc, lastIp, active
+            }
+            'revoke-device' {
+                $deviceId = ''
+                if ($subArgs.Count -gt 0 -and $subArgs[0] -notlike '-*') {
+                    $deviceId = [string]$subArgs[0]
+                }
+                if ([string]::IsNullOrWhiteSpace($deviceId)) {
+                    throw 'profile revoke-device requires a deviceId. Example: .\metra.ps1 profile revoke-device <id>'
+                }
+                Revoke-MetraClientDeviceToken -DeviceId $deviceId | Format-List
+            }
             'issue-sync-token' {
                 $issued = Initialize-MetraProfileSyncToken -Rotate:$Force
                 if ($issued.Token) {
-                    Write-Host 'Profile sync token (copy to satellite docs/profile-sync.local.json as syncToken):' -ForegroundColor Yellow
+                    Write-Host 'Break-glass profile sync token (prefer Tailscale pair; copy only if needed):' -ForegroundColor Yellow
                     Write-Host $issued.Token
                     Write-Host ''
                     Write-Host $issued.Message

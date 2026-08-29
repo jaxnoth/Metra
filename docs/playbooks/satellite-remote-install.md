@@ -20,16 +20,20 @@ Minimal path: personal tailnet, **HTTPS** HQ Ops, one `satellite connect` comman
 1. PowerShell 7 (`pwsh`)
 2. Metra checkout (e.g. `~/Developer/Metra`)
 3. On personal tailnet (`tailscale up` - same tailnet as jumpbox)
-4. Sync token from HQ (once)
+4. Optional break-glass sync token from HQ (prefer Tailscale pair)
 
 ## HQ once
 
 ```powershell
 cd C:\Projects\_meta
-pwsh -NoProfile -File .\metra.ps1 profile issue-sync-token
+# Optional allowlist (empty = transitional open Ask; Self-login still auto-pairs)
+Copy-Item .\docs\client-auth.example.json .\docs\client-auth.local.json
+# Edit login/node/tag entries, then run Ops with Tailscale Serve / bindTailscale
 ```
 
-Copy the token. HQ `opsBaseUrl` should be the HTTPS Serve URL, e.g. `https://jumpbox.emerald-banana.ts.net`.
+Break-glass only if needed: `pwsh -NoProfile -File .\metra.ps1 profile issue-sync-token -Force`
+
+HQ `opsBaseUrl` should be the HTTPS Serve URL, e.g. `https://jumpbox.emerald-banana.ts.net`.
 
 ## Satellite (one command)
 
@@ -38,11 +42,20 @@ Always use `pwsh -NoProfile -File` when double-clicking `.ps1` opens VS Code.
 ```bash
 cd ~/Developer/Metra
 pwsh -NoProfile -File ./metra.ps1 satellite connect \
+  -OpsBaseUrl https://jumpbox.emerald-banana.ts.net
+```
+
+Happy path pairs over Tailscale (no `-SyncToken`). If pair is pending, Approve on HQ Ops Settings, then re-run connect/sync.
+
+Break-glass override:
+
+```bash
+pwsh -NoProfile -File ./metra.ps1 satellite connect \
   -OpsBaseUrl https://jumpbox.emerald-banana.ts.net \
   -SyncToken '<token>'
 ```
 
-`connect` checks HQ HTTPS, sets Satellite role, runs profile sync (keeps local roots), stores token.
+`connect` checks HQ HTTPS, sets Satellite role, pairs/syncs (keeps local roots), stores device token.
 
 ## Verify
 
