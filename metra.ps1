@@ -200,7 +200,7 @@ Operator profile:
   profiles/sample/           anonymized pack to import on a new machine
   export-profile             pack local config / registry / overlays / learned contract
   import-profile             restore a pack (refuse overwrite unless -Force)
-  profile                    Operator Communication Contract (learned soft guidelines)
+  profile                    OCC (note/promote/show) + desk familiarity (profile familiarity show|analyze-nudge)
   decisions                  Decision Registry (operational why-we-chose; gitignored ledger)
 
 Examples:
@@ -227,6 +227,8 @@ Examples:
   .\metra.ps1 profile note 'Prefer terse verdicts before detail.'
   .\metra.ps1 profile promote 'Prefer terse verdicts before detail.'
   .\metra.ps1 profile show
+  .\metra.ps1 profile familiarity show
+  .\metra.ps1 profile familiarity analyze-nudge -SessionPeak Familiar -SessionFloor Warming -Direction Up -Sustained -Note 'sustained collaborative project brainstorming'
   .\metra.ps1 decisions search 'datamanager'
   .\metra.ps1 decisions harvest -Preview
   .\metra.ps1 ctx
@@ -638,6 +640,36 @@ switch ($Command) {
                     Write-Host 'Re-run with -Force to rotate and show a new plaintext token.'
                 }
                 $issued | Select-Object Created, HasToken, Header, Path, Message | Format-List
+            }
+            'familiarity' {
+                if ($subArgs.Count -eq 0) {
+                    throw "profile familiarity requires show or analyze-nudge. Example: .\metra.ps1 profile familiarity show"
+                }
+                $famSub = $subArgs[0]
+                $famRest = @()
+                if ($subArgs.Count -gt 1) {
+                    $famRest = @($subArgs[1..($subArgs.Count - 1)])
+                }
+                $famResult = Invoke-MetraDeskFamiliarityCommand -Subcommand $famSub -ArgsRest $famRest
+                switch ($famSub.ToLowerInvariant()) {
+                    'show' {
+                        Write-Host ("Durable band: {0}" -f $famResult.DurableBand)
+                        Write-Host ("Score:        {0} (0-8)" -f $famResult.Score)
+                        Write-Host ("Last nudge:   {0}" -f $(if ($famResult.LastNudgeUtcDate) { $famResult.LastNudgeUtcDate } else { '(none)' }))
+                        Write-Host ("Qualifying evidence count: {0}" -f $famResult.QualifyingEvidenceCount)
+                        Write-Host ("Ledger:       {0}" -f $famResult.LedgerPath)
+                        Write-Host ("Exists:       {0}" -f $famResult.LedgerExists)
+                        if ($famResult.LedgerCorrupt) {
+                            Write-Host 'Corrupt:      True (fail-closed to Warming; file not overwritten)'
+                        }
+                        if ($famResult.WarmingDefaultActive) {
+                            Write-Host 'Default:      Warming active (missing or corrupt ledger)'
+                        }
+                    }
+                    default {
+                        $famResult | Format-List
+                    }
+                }
             }
             default {
                 $result = Invoke-MetraOperatorContractCommand -Subcommand $sub -ArgsRest $subArgs
