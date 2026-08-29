@@ -90,7 +90,7 @@ Composition (locked):
 3. Open center node (interchange / classification point)
 4. Short stem from the open node up into a Mist pill labeled **Metra**
 
-Do **not** recolor the terminal nodes blue, amber, or other hues for “direction.” Geometry already carries origin → interchange → destination. Extra endpoint colors invent categories the product does not have and dilute brand coherence.
+Do **not** recolor the terminal nodes blue, amber, or other hues for ΓÇ£direction.ΓÇ¥ Geometry already carries origin ΓåÆ interchange ΓåÆ destination. Extra endpoint colors invent categories the product does not have and dilute brand coherence.
 
 Dark mode uses a brighter teal on charcoal; light mode uses Signal Teal + Mist. Prefer `prefers-color-scheme` in the SVG for GitHub README.
 
@@ -129,7 +129,7 @@ Avoid as brand chrome:
 
 - brains, robots, assistants, chat bubbles, lightning bolts, mascots, emoji
 
-Those cliches say “AI product.” Metra’s distinctive claim is portfolio operations and wayfinding.
+Those cliches say ΓÇ£AI product.ΓÇ¥ MetraΓÇÖs distinctive claim is portfolio operations and wayfinding.
 
 ## Typography
 
@@ -198,7 +198,9 @@ Canonical **operator-facing** words. Brand owns this glossary; installer, Metra 
 | **Satellite** - connects to your main Metra machine | use HQ Ops URL | `machineRole: Satellite` |
 | **Files only** - Install Metra now. Choose a role later. (installer only) | Skip setup / uncheck Run setup | no postinstall setup |
 | **Main Metra address** | OpsBaseUrl, HQ Ops URL | profile `opsBaseUrl` |
-| **Profile sync token** (optional; Satellite) | sync bearer, X-Metra-Profile-Sync | `docs/profile-sync.local.json` `syncToken` |
+| **Pair with Main Metra** (Satellite happy path) | sync paste, paste token first | Tailscale WhoIs + `profile pair` / device token |
+| **Device token** (after pair) | sync bearer for that machine | `docs/profile-sync.local.json` `syncToken`; header `X-Metra-Profile-Sync` |
+| **Break-glass sync token** (optional override) | primary pairing secret | `profile issue-sync-token`; same header |
 | **Ask assistant** | Ask engine (operator labels) | engine APIs / Ollama under the hood |
 | **Here's where we're landing** | Setup Summary | - |
 

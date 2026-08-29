@@ -35,6 +35,8 @@ import {
   fetchProfileStatus,
   downloadProfileExport,
   issueProfileSyncToken,
+  approveProfilePair,
+  revokeProfileDevice,
   postProductUpdate,
 } from './api'
 import { AskMarkdown } from './AskMarkdown'
@@ -1701,12 +1703,12 @@ export default function App() {
       // Issue with an existing hash does not return plaintext (by design). Offer rotate.
       if (!issued.token && !rotate && issued.hasToken) {
         const ok = window.confirm(
-          'A sync token already exists on this HQ. Metra stores only a hash, so the old plaintext cannot be shown again.\n\nRotate now to mint a new token and display it here?',
+          'A break-glass sync token already exists on this HQ. Metra stores only a hash, so the old plaintext cannot be shown again.\n\nRotate now to mint a new token and display it here?',
         )
         if (!ok) {
           setProfileSyncTokenShown(null)
           setSettingsStatus(
-            'Sync token already on HQ (hash only). Use Rotate sync token to mint a new one and display it.',
+            'Break-glass sync token already on HQ (hash only). Prefer Tailscale pair; use Rotate only if needed.',
           )
           return
         }
@@ -1717,7 +1719,7 @@ export default function App() {
         setProfileSyncTokenShown(issued.token)
         setSettingsStatus(
           issued.message ||
-            'Sync token issued - copy it now. HQ stores only a hash; this plaintext is shown once.',
+            'Break-glass sync token issued - copy it now. Prefer Tailscale pair for new satellites.',
         )
         await loadProfileSyncStatus()
         return
@@ -1732,11 +1734,53 @@ export default function App() {
     }
   }
 
+  async function onApproveProfilePair(requestId: string) {
+    setBusy(true)
+    setError(null)
+    setSettingsStatus(null)
+    try {
+      const approved = await approveProfilePair(requestId)
+      if (approved.token) {
+        setProfileSyncTokenShown(approved.token)
+        setSettingsStatus(
+          approved.message ||
+            'Pair approved - device token shown once. Give it to that satellite if it cannot pair again itself.',
+        )
+      } else {
+        setSettingsStatus(approved.message || 'Pair approved.')
+      }
+      await loadProfileSyncStatus()
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e))
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  async function onRevokeProfileDevice(deviceId: string, label: string) {
+    const ok = window.confirm(
+      `Revoke device "${label || deviceId}"? That satellite will need to pair again.`,
+    )
+    if (!ok) return
+    setBusy(true)
+    setError(null)
+    setSettingsStatus(null)
+    try {
+      const revoked = await revokeProfileDevice(deviceId)
+      setSettingsStatus(revoked.message || 'Device revoked.')
+      await loadProfileSyncStatus()
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e))
+    } finally {
+      setBusy(false)
+    }
+  }
+
   async function onCopyProfileSyncToken() {
     if (!profileSyncTokenShown) return
     try {
       await navigator.clipboard.writeText(profileSyncTokenShown)
-      setSettingsStatus('Sync token copied to clipboard.')
+      setSettingsStatus('Token copied to clipboard.')
     } catch {
       setError('Could not copy token to clipboard.')
     }
@@ -3286,17 +3330,24 @@ export default function App() {
             <div>
               <strong>Profile Sync</strong>
               <p className="muted">
-                HQ-published, satellite-pulled. Pack fingerprint is not the sync token. Satellites
-                update after <code>profile sync</code> or upgrade pull.
+                HQ-published, satellite-pulled. Prefer Tailscale pair (
+                <code>profile pair</code> / <code>satellite connect</code>). Break-glass paste token
+                is optional. Pack fingerprint is not a credential.
               </p>
               {profileSyncStatus ? (
                 <ul className="muted" style={{ margin: '0.4rem 0', paddingLeft: '1.1rem' }}>
                   <li>Pack fingerprint: {profileSyncStatus.contentHash}</li>
                   <li>
-                    Sync token:{' '}
+                    Client allowlist:{' '}
+                    {profileSyncStatus.clientAuthConfigured
+                      ? 'configured (docs/client-auth.local.json)'
+                      : 'not configured (transitional - remote Ask open)'}
+                  </li>
+                  <li>
+                    Break-glass sync token:{' '}
                     {profileSyncStatus.hasSyncToken
-                      ? 'configured on HQ (plaintext shown only when minted - Issue/Rotate)'
-                      : 'not issued yet'}
+                      ? 'configured on HQ (plaintext only when minted)'
+                      : 'not issued'}
                   </li>
                   <li>Last write: {profileSyncStatus.maxWriteUtc || '(none)'}</li>
                   <li>
@@ -3307,6 +3358,64 @@ export default function App() {
               ) : (
                 <p className="muted">Status unavailable.</p>
               )}
+              <div style={{ marginTop: '0.6rem' }}>
+                <strong>Paired devices</strong>
+                {profileSyncStatus?.devices && profileSyncStatus.devices.length > 0 ? (
+                  <ul className="muted" style={{ margin: '0.4rem 0', paddingLeft: '1.1rem' }}>
+                    {profileSyncStatus.devices.map((dev) => (
+                      <li key={dev.deviceId}>
+                        {dev.label || dev.deviceId}
+                        {dev.login ? ` - ${dev.login}` : ''}
+                        {dev.node ? ` (${dev.node})` : ''}
+                        {dev.lastSeenUtc ? ` - seen ${formatRelativeUtc(dev.lastSeenUtc)}` : ''}
+                        {dev.lastIp ? ` @ ${dev.lastIp}` : ''}{' '}
+                        <button
+                          type="button"
+                          disabled={busy || !hasLocalSession}
+                          title={
+                            hasLocalSession ? undefined : 'Requires Host-opened local session'
+                          }
+                          onClick={() => void onRevokeProfileDevice(dev.deviceId, dev.label)}
+                        >
+                          Revoke
+                        </button>
+                      </li>
+                    ))}
+                  </ul>
+                ) : (
+                  <p className="muted" style={{ margin: '0.4rem 0' }}>
+                    No paired devices yet. Satellites pair over Tailscale on first sync.
+                  </p>
+                )}
+              </div>
+              <div style={{ marginTop: '0.6rem' }}>
+                <strong>Pending pair approvals</strong>
+                {profileSyncStatus?.pairPending && profileSyncStatus.pairPending.length > 0 ? (
+                  <ul className="muted" style={{ margin: '0.4rem 0', paddingLeft: '1.1rem' }}>
+                    {profileSyncStatus.pairPending.map((p) => (
+                      <li key={p.requestId}>
+                        {p.label || p.node || p.login || p.requestId}
+                        {p.login ? ` - ${p.login}` : ''}
+                        {p.ip ? ` @ ${p.ip}` : ''}{' '}
+                        <button
+                          type="button"
+                          disabled={busy || !hasLocalSession}
+                          title={
+                            hasLocalSession ? undefined : 'Requires Host-opened local session'
+                          }
+                          onClick={() => void onApproveProfilePair(p.requestId)}
+                        >
+                          Approve
+                        </button>
+                      </li>
+                    ))}
+                  </ul>
+                ) : (
+                  <p className="muted" style={{ margin: '0.4rem 0' }}>
+                    No pending pair requests.
+                  </p>
+                )}
+              </div>
               <div style={{ marginTop: '0.6rem' }}>
                 <strong>Satellites</strong>
                 {profileSyncStatus?.satellites && profileSyncStatus.satellites.length > 0 ? (
@@ -3333,24 +3442,24 @@ export default function App() {
                   disabled={busy || !hasLocalSession}
                   title={
                     hasLocalSession
-                      ? undefined
+                      ? 'Break-glass only - prefer Tailscale pair'
                       : 'Requires Host-opened local session'
                   }
                   onClick={() => void onIssueProfileSyncToken(false)}
                 >
-                  Issue sync token
+                  Issue break-glass token
                 </button>
                 <button
                   type="button"
                   disabled={busy || !hasLocalSession}
                   title={
                     hasLocalSession
-                      ? undefined
+                      ? 'Break-glass only - prefer Tailscale pair'
                       : 'Requires Host-opened local session'
                   }
                   onClick={() => void onIssueProfileSyncToken(true)}
                 >
-                  Rotate sync token
+                  Rotate break-glass token
                 </button>
                 <button type="button" disabled={busy} onClick={() => void loadProfileSyncStatus()}>
                   Refresh status
@@ -3369,7 +3478,7 @@ export default function App() {
                   }}
                 >
                   <span>
-                    Sync token:{' '}
+                    Token:{' '}
                     <code style={{ wordBreak: 'break-all' }}>{profileSyncTokenShown}</code>
                   </span>
                   <button type="button" disabled={busy} onClick={() => void onCopyProfileSyncToken()}>
@@ -3378,8 +3487,8 @@ export default function App() {
                 </div>
               ) : profileSyncStatus?.hasSyncToken ? (
                 <p className="muted" style={{ marginTop: '0.5rem' }}>
-                  Token plaintext is not recoverable from HQ. Click Rotate sync token to mint a new
-                  one and show it here for the satellite.
+                  Break-glass plaintext is not recoverable from HQ. Prefer Tailscale pair; Rotate
+                  only when you need a paste override.
                 </p>
               ) : null}
             </div>

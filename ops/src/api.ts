@@ -430,6 +430,40 @@ export async function issueProfileSyncToken(
   ).then((r) => parseJson(r))
 }
 
+export async function approveProfilePair(
+  requestId: string,
+): Promise<import('./types').ProfilePairApproveResult> {
+  const token = await ensureLocalSessionToken()
+  return fetch(
+    '/api/profile/pair/approve',
+    withSessionHeaders(
+      {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ requestId }),
+      },
+      token,
+    ),
+  ).then((r) => parseJson(r))
+}
+
+export async function revokeProfileDevice(
+  deviceId: string,
+): Promise<import('./types').ProfileDeviceRevokeResult> {
+  const token = await ensureLocalSessionToken()
+  return fetch(
+    `/api/profile/devices/${encodeURIComponent(deviceId)}/revoke`,
+    withSessionHeaders(
+      {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: '{}',
+      },
+      token,
+    ),
+  ).then((r) => parseJson(r))
+}
+
 export function dismissAttention(key: string, note?: string): Promise<DeskPayload> {
   return fetch(`/api/attention/${encodeURIComponent(key)}/dismiss`, {
     method: 'POST',

@@ -54,9 +54,11 @@ docs/azdo.local.json
 docs/ops-attention.local.json
 docs/ops-place.local.json
 docs/profile-sync.local.json
+docs/client-auth.local.json
 docs/ticket-watch.local.json
 docs/desk-familiarity.local.json
 docs/*.local.log
+!docs/client-auth.example.json
 !docs/ticket-watch.local.example.json
 !docs/desk-familiarity.local.example.json
 

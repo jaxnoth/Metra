@@ -75,11 +75,19 @@ Default Ops bind is loopback. Opt-in Tailscale (or other non-loopback) bind is f
 
 **Local authority** (`Test-MetraOpsRequestHasLocalAuthority` / `Assert-MetraOpsLocalAuthority`): same-machine (Serve-aware via `Test-MetraOpsRequestIsSameMachine`) or a validated Host-issued `X-Metra-Local-Session`. Transport (loopback, MagicDNS, Serve) is never an authority signal by itself. Host Open may land on the memorable ShareUrl with a `#metraLocalSession=` bootstrap that the client stores and strips; peers without that bootstrap stay Ask-class. Gates refresh, watch, preferences PUT, ask/engine POST, attention mutations, place confirm/correct, settings, updates, open, and profile issue-sync-token. Capture promote passes `HasLocalAuthority` for project-tree writes.
 
-**Ask-class remote** (Tailscale reach, no local-authority gate): `POST /api/ask`, GET ask journal/engine, GET/POST capture (create/dismiss/propose), `POST /api/place/upload`, `POST /api/place`, GET place/homes, GET preferences/settings/snapshot/meta.
+**Ask-class remote** (Tailscale reach, no local-authority gate): `POST /api/ask` (when `client-auth.local.json` allowlist is configured, remote callers need allowlisted WhoIs), GET ask journal/engine, GET/POST capture (create/dismiss/propose), `POST /api/place/upload`, `POST /api/place`, GET place/homes, GET preferences/settings/snapshot/meta.
+
+**Client identity (2026-08-29):** Satellite / remote Ask / future iOS authenticate via **Tailscale WhoIs** (login / node / tags) plus host allowlist (`docs/client-auth.local.json`; see `docs/client-auth.example.json`). Empty allowlist is transitional (no extra identity gate). Serve-injected `Tailscale-User-Login` is trusted only when `RemoteEndPoint` is loopback (Serve connects locally); direct Tailscale binds use `tailscale whois` on the peer IP and ignore client-supplied Tailscale-* headers. WhoIs results are cached in-process by IP for 120 seconds.
+
+After a Tailscale-proven first pair (`POST /api/profile/pair`), the host mints a **device capability token** (hash + identity snapshot in `%LOCALAPPDATA%\Metra\client-devices.json`). Clients store plaintext as `syncToken` in `docs/profile-sync.local.json` and send `X-Metra-Profile-Sync`. Revoke one device without rotating a global paste secret. Ops Settings lists devices (login / node / lastSeen) and pending pair approvals (local authority).
+
+**Bearer replay:** Device and break-glass sync tokens are long-lived bearers - **possession equals authorization** for that capability class; **replay is accepted**. There is no nonce or short TTL window. Revocation is the control plane. Do not invent a second shared secret derived from Tailscale node keys.
+
+**Break-glass:** `profile issue-sync-token` / Settings Issue break-glass token remains local-authority and authorizes sync without WhoIs when that legacy hash matches.
+
+**Profile roster:** `GET /api/profile/status` returns fingerprint to sync/device-token callers; `satellites`, `devices`, and `pairPending` attach only when the caller has local authority. `GET /api/profile/satellites` and device revoke / pair approve require local authority.
 
 **Request body limits:** default 1 MiB (`Read-MetraOpsRequestBytes`); place multipart upload 10 MiB. Oversize returns HTTP 413.
-
-**Profile roster:** `GET /api/profile/status` returns fingerprint only to sync-token callers; `satellites` attaches only when the caller has local authority. `GET /api/profile/satellites` requires local authority.
 
 `POST /api/open` (Open in editor) launches the operator's editor on the desk machine. It never writes files, and it is constrained twice: the path must be an existing folder inside a configured root or the Metra home (`Test-MetraPathWithinRoot`), and the caller must pass locality (`Test-MetraOpsRequestHasLocalAuthority`). `editorCommand` may be a custom executable path by design; Open still does not write. Remote peers get a refusal plus the path.
 

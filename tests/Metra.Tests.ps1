@@ -1680,7 +1680,7 @@ Describe 'Metra Ops Server request safety' {
     It 'requires profile sync bearer for check-in' {
         $source = Get-Content -LiteralPath (Join-Path (Get-MetraRoot) 'scripts\private\OpsServer.ps1') -Raw
         $source | Should -Match 'Test-MetraOpsProfileSyncBearer'
-        $source | Should -Match "Profile check-in requires X-Metra-Profile-Sync bearer"
+        $source | Should -Match "Profile check-in requires a device token or break-glass"
     }
 }
 

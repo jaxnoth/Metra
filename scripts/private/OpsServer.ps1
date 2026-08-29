@@ -498,14 +498,14 @@ function Invoke-MetraOpsApi {
     if ([string]::IsNullOrWhiteSpace($path)) { $path = '/' }
 
     # Reach is split from authority (see file header).
-    # Ask-class remote (Tailscale reach): POST /api/ask, GET ask journal/engine, GET/POST capture
-    # (create/dismiss/propose), POST /api/place/upload, POST /api/place, GET place/homes,
-    # GET preferences/settings/snapshot/meta - no Assert-MetraOpsLocalAuthority.
+    # Ask-class remote (Tailscale reach): POST /api/ask (allowlisted WhoIs when client-auth allowlist
+    # configured), GET ask journal/engine, GET/POST capture (create/dismiss/propose), POST /api/place/upload,
+    # POST /api/place, GET place/homes, GET preferences/settings/snapshot/meta - no Assert-MetraOpsLocalAuthority.
     # Remote-safe writes are bounded: capture candidate ledger only; place uploads quarantine only
     # (size/ext/random id; never project-tree). Capture promote / place confirm/correct need local authority.
-    # Profile check-in is bearer-scoped (X-Metra-Profile-Sync), not local-session alone.
+    # Profile check-in: device token (+ WhoIs when allowlist configured) or break-glass sync bearer.
     # Local-authority gates: refresh, watch, preferences PUT, ask/engine POST, attention mutations,
-    # place confirm/correct, settings, updates, open, profile issue-sync-token.
+    # place confirm/correct, settings, updates, open, profile issue-sync-token, pair approve, device revoke.
 
     try {
         if ($method -eq 'GET' -and $path -eq '/api/meta') {
@@ -734,9 +734,9 @@ function Invoke-MetraOpsApi {
         }
 
         if ($method -eq 'GET' -and $path -eq '/api/profile/status') {
-            if (-not (Test-MetraOpsProfileSyncAuthorized -Request $Request)) {
+            if (-not (Test-MetraOpsProfileSyncAuthorized -Request $Request -MetraRoot $MetraRoot)) {
                 Write-MetraOpsJsonResponse -Response $Response -StatusCode 403 -Object ([PSCustomObject]@{
-                        error      = 'Profile status requires operator machine, local session, or X-Metra-Profile-Sync bearer.'
+                        error      = 'Profile status requires operator machine, local session, device token, or break-glass sync token.'
                         reasonCode = 'profileSyncUnauthorized'
                     })
                 return
@@ -747,6 +747,11 @@ function Invoke-MetraOpsApi {
                 if (Test-MetraOpsRequestHasLocalAuthority -Request $Request) {
                     $roster = Get-MetraProfileSatelliteRoster -PublisherHash ([string]$status.contentHash)
                     $status | Add-Member -NotePropertyName satellites -NotePropertyValue @($roster.Satellites) -Force
+                    $devices = @(Get-MetraClientDeviceList)
+                    $pendingBag = Get-MetraClientPairPending
+                    $status | Add-Member -NotePropertyName devices -NotePropertyValue $devices -Force
+                    $status | Add-Member -NotePropertyName pairPending -NotePropertyValue @($pendingBag.Requests) -Force
+                    $status | Add-Member -NotePropertyName clientAuthConfigured -NotePropertyValue ([bool](Test-MetraClientAuthAllowlistConfigured -MetraRoot $MetraRoot)) -Force
                 }
                 Write-MetraOpsJsonResponse -Response $Response -Object $status -Depth 8
             }
@@ -775,11 +780,137 @@ function Invoke-MetraOpsApi {
             return
         }
 
+        if ($method -eq 'POST' -and $path -eq '/api/profile/pair') {
+            try {
+                $body = Read-MetraOpsRequestBody -Request $Request
+                $parsed = $null
+                if ($body) { $parsed = ConvertFrom-MetraOpsJsonBody -Body $body -AllowEmpty }
+                $label = [string](Get-MetraProp -Object $parsed -Name 'label' -Default '')
+                $paired = Invoke-MetraClientPairRequest -Request $Request -Label $label -MetraRoot $MetraRoot
+                if (-not $paired.Ok -and -not $paired.Pending) {
+                    Write-MetraOpsJsonResponse -Response $Response -StatusCode 403 -Object ([PSCustomObject]@{
+                            error      = [string]$paired.Message
+                            reasonCode = [string](Get-MetraProp -Object $paired -Name 'ReasonCode' -Default 'peerIdentityRequired')
+                        })
+                    return
+                }
+                if ($paired.Pending) {
+                    Write-MetraOpsJsonResponse -Response $Response -StatusCode 202 -Object ([PSCustomObject]@{
+                            ok         = $true
+                            pending    = $true
+                            requestId  = [string]$paired.RequestId
+                            message    = [string]$paired.Message
+                            reasonCode = 'pairPendingApprove'
+                        }) -Depth 6
+                    return
+                }
+                Write-MetraOpsJsonResponse -Response $Response -Object ([PSCustomObject]@{
+                        ok       = $true
+                        pending  = $false
+                        accepted = $true
+                        deviceId = [string]$paired.DeviceId
+                        label    = [string]$paired.Label
+                        token    = [string]$paired.Token
+                        header   = [string]$paired.Header
+                        message  = [string]$paired.Message
+                    }) -Depth 6
+            }
+            catch {
+                Write-MetraOpsJsonResponse -Response $Response -StatusCode 400 -Object ([PSCustomObject]@{
+                        error = $_.Exception.Message
+                    })
+            }
+            return
+        }
+
+        if ($method -eq 'GET' -and $path -eq '/api/profile/pair/pending') {
+            if (-not (Assert-MetraOpsLocalAuthority -Request $Request -Response $Response `
+                    -ErrorMessage 'Pending pair list requires the operator machine or a Host-issued local session.' `
+                    -ReasonCode 'pairPendingLocalOnly')) { return }
+            $pending = Get-MetraClientPairPending
+            Write-MetraOpsJsonResponse -Response $Response -Object ([PSCustomObject]@{
+                    ok       = $true
+                    requests = @($pending.Requests)
+                }) -Depth 8
+            return
+        }
+
+        if ($method -eq 'POST' -and $path -eq '/api/profile/pair/approve') {
+            if (-not (Assert-MetraOpsLocalAuthority -Request $Request -Response $Response `
+                    -ErrorMessage 'Approving a pair requires the operator machine or a Host-issued local session.' `
+                    -ReasonCode 'pairApproveLocalOnly')) { return }
+            try {
+                $body = Read-MetraOpsRequestBody -Request $Request
+                $parsed = ConvertFrom-MetraOpsJsonBody -Body $body
+                $requestId = [string](Get-MetraProp -Object $parsed -Name 'requestId' -Default '').Trim()
+                if ([string]::IsNullOrWhiteSpace($requestId)) {
+                    Write-MetraOpsBadRequest -Response $Response -Message 'requestId required'
+                    return
+                }
+                $approved = Approve-MetraClientPairRequest -RequestId $requestId -MetraRoot $MetraRoot
+                if (-not $approved.Ok) {
+                    Write-MetraOpsJsonResponse -Response $Response -StatusCode 404 -Object ([PSCustomObject]@{
+                            error      = [string]$approved.Message
+                            reasonCode = [string](Get-MetraProp -Object $approved -Name 'ReasonCode' -Default 'pairNotFound')
+                        })
+                    return
+                }
+                Write-MetraOpsJsonResponse -Response $Response -Object ([PSCustomObject]@{
+                        ok       = $true
+                        deviceId = [string]$approved.DeviceId
+                        label    = [string]$approved.Label
+                        token    = [string]$approved.Token
+                        header   = [string]$approved.Header
+                        message  = [string]$approved.Message
+                    }) -Depth 6
+            }
+            catch {
+                Write-MetraOpsJsonResponse -Response $Response -StatusCode 400 -Object ([PSCustomObject]@{
+                        error = $_.Exception.Message
+                    })
+            }
+            return
+        }
+
+        if ($method -eq 'GET' -and $path -eq '/api/profile/devices') {
+            if (-not (Assert-MetraOpsLocalAuthority -Request $Request -Response $Response `
+                    -ErrorMessage 'Device list requires the operator machine or a Host-issued local session.' `
+                    -ReasonCode 'devicesLocalOnly')) { return }
+            $includeRevoked = (Get-MetraOpsQueryValue -Request $Request -Name 'includeRevoked') -match '^(?i)(1|true|yes)$'
+            Write-MetraOpsJsonResponse -Response $Response -Object ([PSCustomObject]@{
+                    ok      = $true
+                    devices = @(Get-MetraClientDeviceList -IncludeRevoked:$includeRevoked)
+                }) -Depth 8
+            return
+        }
+
+        if ($method -eq 'POST' -and $path -match '^/api/profile/devices/([^/]+)/revoke$') {
+            if (-not (Assert-MetraOpsLocalAuthority -Request $Request -Response $Response `
+                    -ErrorMessage 'Revoking a device requires the operator machine or a Host-issued local session.' `
+                    -ReasonCode 'deviceRevokeLocalOnly')) { return }
+            $deviceId = [string]$Matches[1]
+            $revoked = Revoke-MetraClientDeviceToken -DeviceId $deviceId
+            if (-not $revoked.Ok) {
+                Write-MetraOpsJsonResponse -Response $Response -StatusCode 404 -Object ([PSCustomObject]@{
+                        error      = [string]$revoked.Message
+                        reasonCode = 'deviceNotFound'
+                    })
+                return
+            }
+            Write-MetraOpsJsonResponse -Response $Response -Object ([PSCustomObject]@{
+                    ok       = $true
+                    deviceId = [string]$revoked.DeviceId
+                    message  = [string]$revoked.Message
+                })
+            return
+        }
+
         if ($method -eq 'POST' -and $path -eq '/api/profile/check-in') {
-            # Satellite check-in is bearer-scoped so a local browser session cannot invent machine rows.
-            if (-not (Test-MetraOpsProfileSyncBearer -Request $Request)) {
+            # Satellite check-in: legacy break-glass token or device token (+ WhoIs when allowlist configured).
+            # Local session alone cannot invent machine rows.
+            if (-not (Test-MetraOpsProfileSyncBearer -Request $Request -MetraRoot $MetraRoot)) {
                 Write-MetraOpsJsonResponse -Response $Response -StatusCode 403 -Object ([PSCustomObject]@{
-                        error      = 'Profile check-in requires X-Metra-Profile-Sync bearer.'
+                        error      = 'Profile check-in requires a device token or break-glass X-Metra-Profile-Sync bearer.'
                         reasonCode = 'profileSyncUnauthorized'
                     })
                 return
@@ -812,11 +943,11 @@ function Invoke-MetraOpsApi {
         }
 
         if ($method -eq 'GET' -and $path -eq '/api/profile/export') {
-            # Bearer is profile-sync scoped (or local authority). Export must not include secrets
+            # Device/legacy bearer or local authority. Export must not include secrets
             # or the local session token - Export-MetraProfile owns that exclusion list.
-            if (-not (Test-MetraOpsProfileSyncAuthorized -Request $Request)) {
+            if (-not (Test-MetraOpsProfileSyncAuthorized -Request $Request -MetraRoot $MetraRoot)) {
                 Write-MetraOpsJsonResponse -Response $Response -StatusCode 403 -Object ([PSCustomObject]@{
-                        error      = 'Profile export requires operator machine, local session, or X-Metra-Profile-Sync bearer.'
+                        error      = 'Profile export requires operator machine, local session, device token, or break-glass sync token.'
                         reasonCode = 'profileSyncUnauthorized'
                     })
                 return
@@ -869,7 +1000,7 @@ function Invoke-MetraOpsApi {
 
         if ($method -eq 'POST' -and $path -eq '/api/profile/issue-sync-token') {
             if (-not (Assert-MetraOpsLocalAuthority -Request $Request -Response $Response `
-                    -ErrorMessage 'Issuing a profile sync token requires the operator machine (loopback or local session).' `
+                    -ErrorMessage 'Issuing a break-glass profile sync token requires the operator machine (loopback or local session).' `
                     -ReasonCode 'profileSyncTokenLocalOnly')) { return }
             $rotate = $false
             try {
@@ -888,6 +1019,7 @@ function Invoke-MetraOpsApi {
                     token     = $issued.Token
                     header    = 'X-Metra-Profile-Sync'
                     message   = [string]$issued.Message
+                    breakGlass = $true
                 }) -Depth 6
             return
         }
@@ -1143,6 +1275,15 @@ function Invoke-MetraOpsApi {
         }
 
         if ($method -eq 'POST' -and $path -eq '/api/ask') {
+            if (-not (Test-MetraOpsRequestHasLocalAuthority -Request $Request)) {
+                if (-not (Test-MetraOpsRemoteAskIdentityAllowed -Request $Request -MetraRoot $MetraRoot)) {
+                    Write-MetraOpsJsonResponse -Response $Response -StatusCode 403 -Object ([PSCustomObject]@{
+                            error      = 'Remote Ask requires an allowlisted Tailscale identity.'
+                            reasonCode = 'clientIdentityRequired'
+                        })
+                    return
+                }
+            }
             $body = Read-MetraOpsRequestBody -Request $Request
             $parsed = $null
             if ($body) { $parsed = $body | ConvertFrom-Json }
