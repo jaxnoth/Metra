@@ -2659,6 +2659,58 @@ Hey - yes, from the Ops desk things look fine.
         $afterClear.Count | Should -Be $first.Count
     }
 
+
+    It 'compound RoutingGraph: synthetic SQL phrase monopoly loses to ops cue (idempotent)' {
+        InModuleScope Metra {
+            $sql = [PSCustomObject]@{
+                Name = 'IWUDATA-SQL'; Root = 'work'; Path = 'x'; Purpose = 'sql'
+                Triggers = @('iwudata'); Serves = @(); Score = 4
+                MatchedTokens = @('phrase:iwudata'); HayLower = 'iwudata-sql iwudata sql'
+            }
+            $auto = [PSCustomObject]@{
+                Name = 'IWUDATA-Automation'; Root = 'work'; Path = 'y'; Purpose = 'auto'
+                Triggers = @('iwudata'); Serves = @(); Score = 2
+                MatchedTokens = @('iwudata'); HayLower = 'iwudata-automation iwudata automation'
+            }
+            $once = @(Update-MetraScoredRoutingWithCompoundCues -Query 'How did IWUDATA run today?' -Scored @($sql, $auto))
+            $autoRow = $once | Where-Object Name -eq 'IWUDATA-Automation' | Select-Object -First 1
+            $sqlRow = $once | Where-Object Name -eq 'IWUDATA-SQL' | Select-Object -First 1
+            [int]$autoRow.Score | Should -Be 6
+            [int]$sqlRow.Score | Should -Be 4
+            @($autoRow.MatchedTokens | Where-Object { $_ -eq 'compound:ops' }).Count | Should -Be 1
+            @($sqlRow.MatchedTokens | Where-Object { $_ -like 'compound:*' }).Count | Should -Be 0
+
+            $twice = @(Update-MetraScoredRoutingWithCompoundCues -Query 'How did IWUDATA run today?' -Scored $once)
+            $auto2 = $twice | Where-Object Name -eq 'IWUDATA-Automation' | Select-Object -First 1
+            [int]$auto2.Score | Should -Be 6
+            @($auto2.MatchedTokens | Where-Object { $_ -eq 'compound:ops' }).Count | Should -Be 1
+        }
+    }
+
+    It 'compound RoutingGraph: live ops/sql/bare/mixed cues' {
+        InModuleScope Metra {
+            $g = @(Get-MetraRoutingGraph | Where-Object { $_.Stem -eq 'IWUDATA' })
+            $g.Count | Should -BeGreaterThan 0
+            $g[0].Members.Ops | Should -Be 'IWUDATA-Automation'
+            $g[0].Members.Sql | Should -Be 'IWUDATA-SQL'
+
+            $run = Get-MetraRoutingAmbiguity -Query 'How did IWUDATA run today?'
+            $run.Primary.Name | Should -Be 'IWUDATA-Automation'
+            $run.Primary.MatchedTokens | Should -Contain 'compound:ops'
+
+            $sql = Get-MetraRoutingAmbiguity -Query 'iwudata sql deploy'
+            $sql.Primary.Name | Should -Be 'IWUDATA-SQL'
+            $sql.Primary.MatchedTokens | Should -Contain 'compound:sql'
+
+            $bare = Get-MetraRoutingAmbiguity -Query 'iwudata'
+            @($bare.Primary.MatchedTokens | Where-Object { $_ -like 'compound:*' }).Count | Should -Be 0
+
+            $mixed = Get-MetraRoutingAmbiguity -Query 'iwudata job deploy'
+            $mixed.Primary.Name | Should -Be 'IWUDATA-SQL'
+            $mixed.Primary.MatchedTokens | Should -Contain 'compound:sql'
+            $mixed.Primary.MatchedTokens | Should -Not -Contain 'compound:ops'
+        }
+    }
     It 'does not let stop-word substrings steal IWUDATA routes' {
         $amb = Get-MetraRoutingAmbiguity -Query 'Try to find what needs to be fixed in the job or sql components in the IWUDATA failure today.'
         $amb.Primary.Name | Should -BeIn @('IWUDATA-SQL', 'IWUDATA-Automation', 'Datamart')

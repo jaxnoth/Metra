@@ -547,6 +547,337 @@ function New-MetraTicketTrackerScoredProject {
     }
 }
 
+function Test-MetraRoutingQueryHasTerm {
+    <#
+    .SYNOPSIS
+        True when Query contains Term with Unicode letter/digit/underscore boundaries.
+    #>
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory)][string]$Query,
+        [Parameter(Mandatory)][string]$Term
+    )
+
+    $t = ([string]$Term).Trim()
+    if ([string]::IsNullOrWhiteSpace($t)) { return $false }
+    $pattern = '(?i)(?<![\p{L}\p{N}_])' + [regex]::Escape($t) + '(?![\p{L}\p{N}_])'
+    return [regex]::IsMatch($Query, $pattern)
+}
+
+function Get-MetraCompoundRoutingCueHits {
+    <#
+    .SYNOPSIS
+        Class-level compound cue hits from the raw query (not stop-word filtered tokens).
+    .DESCRIPTION
+        Returns OpsHits and SqlHits. today/morning stay visible here (routing stop words).
+        Multiple words support one class; they are not multiple elections.
+    #>
+    [CmdletBinding()]
+    param([Parameter(Mandatory)][string]$Query)
+
+    $opsLex = @(
+        'run', 'ran', 'job', 'status', 'failed', 'failure', 'today', 'morning',
+        'load', 'etl', 'start-automation'
+    )
+    $sqlLex = @('sql', 'procedure', 'deploy', 'script')
+
+    $opsHits = New-Object System.Collections.Generic.List[string]
+    foreach ($term in $opsLex) {
+        if (Test-MetraRoutingQueryHasTerm -Query $Query -Term $term) {
+            [void]$opsHits.Add($term)
+        }
+    }
+    $sqlHits = New-Object System.Collections.Generic.List[string]
+    foreach ($term in $sqlLex) {
+        if (Test-MetraRoutingQueryHasTerm -Query $Query -Term $term) {
+            [void]$sqlHits.Add($term)
+        }
+    }
+
+    return [PSCustomObject]@{
+        OpsHits = [string[]]@($opsHits.ToArray())
+        SqlHits = [string[]]@($sqlHits.ToArray())
+    }
+}
+
+function Get-MetraRoutingStemFromName {
+    <#
+    .SYNOPSIS
+        Product stem = project name before its final hyphen segment (or null if unusable).
+    #>
+    [CmdletBinding()]
+    param([Parameter(Mandatory)][string]$Name)
+
+    $n = ([string]$Name).Trim()
+    if ([string]::IsNullOrWhiteSpace($n)) { return $null }
+    $idx = $n.LastIndexOf('-')
+    if ($idx -lt 1 -or $idx -ge ($n.Length - 1)) { return $null }
+    $stem = $n.Substring(0, $idx).Trim()
+    if ([string]::IsNullOrWhiteSpace($stem)) { return $null }
+    return $stem
+}
+
+function Resolve-MetraRoutingGraphRole {
+    <#
+    .SYNOPSIS
+        Fail-closed Ops|Sql role from name/purpose/triggers (not related topology).
+    #>
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory)][string]$Name,
+        [string]$Purpose,
+        [string[]]$Triggers
+    )
+
+    $parts = New-Object System.Collections.Generic.List[string]
+    [void]$parts.Add([string]$Name)
+    if (-not [string]::IsNullOrWhiteSpace($Purpose)) { [void]$parts.Add([string]$Purpose) }
+    foreach ($tr in @($Triggers)) {
+        if (-not [string]::IsNullOrWhiteSpace([string]$tr)) { [void]$parts.Add([string]$tr) }
+    }
+    $text = ($parts -join ' ').ToLowerInvariant()
+
+    $opsEvidence = [regex]::IsMatch($text, '(?i)\b(automation|etl|load|job|jobs|run)\b') -or
+        ($Name -match '(?i)automation')
+    $sqlEvidence = [regex]::IsMatch($text, '(?i)\b(sql|procedure|deploy|script)\b') -or
+        ($Name -match '(?i)(^|-)sql($|-)')
+
+    if ($opsEvidence -and -not $sqlEvidence) { return 'Ops' }
+    if ($sqlEvidence -and -not $opsEvidence) { return 'Sql' }
+    return $null
+}
+
+function Get-MetraRoutingGraph {
+    <#
+    .SYNOPSIS
+        Registry-derived routing graph slice (stem + Ops|Sql members + concepts).
+    .DESCRIPTION
+        Phase 2 in-memory builder only. Families require mutual related + equal stem and
+        fail-closed Ops and Sql roles. Concepts are harvested; not scored in Phase 2.
+        Persistence / learned edges are later phases - scorer consumes this shape either way.
+    #>
+    [CmdletBinding()]
+    param(
+        [object]$Registry
+    )
+
+    if (-not $Registry) {
+        $Registry = Get-MetraProjectRegistry
+    }
+
+    $rows = @{}
+    foreach ($reg in @($Registry.projects)) {
+        $name = [string]$reg.name
+        if ([string]::IsNullOrWhiteSpace($name)) { continue }
+        $stem = Get-MetraRoutingStemFromName -Name $name
+        if (-not $stem) { continue }
+        $purpose = [string](Get-MetraProp -Object $reg -Name 'purpose' -Default '')
+        $triggers = @(Get-MetraProp -Object $reg -Name 'triggers' -Default @())
+        $related = @(Get-MetraProp -Object $reg -Name 'related' -Default @()) |
+            ForEach-Object { [string]$_ } |
+            Where-Object { -not [string]::IsNullOrWhiteSpace($_) }
+        $role = Resolve-MetraRoutingGraphRole -Name $name -Purpose $purpose -Triggers $triggers
+        if (-not $role) { continue }
+
+        $rows[$name.ToLowerInvariant()] = [PSCustomObject]@{
+            Name     = $name
+            Stem     = $stem
+            Role     = $role
+            Purpose  = $purpose
+            Triggers = @($triggers)
+            Related  = @($related)
+        }
+    }
+
+    $pairKeys = [System.Collections.Generic.HashSet[string]]::new([StringComparer]::OrdinalIgnoreCase)
+    $families = New-Object System.Collections.Generic.List[object]
+
+    foreach ($key in @($rows.Keys)) {
+        $a = $rows[$key]
+        foreach ($relName in @($a.Related)) {
+            $bKey = $relName.ToLowerInvariant()
+            if (-not $rows.ContainsKey($bKey)) { continue }
+            $b = $rows[$bKey]
+            if ($a.Stem -ne $b.Stem) { continue }
+            # Mutual related required
+            $aListsB = @($a.Related | Where-Object { $_.Equals($b.Name, [StringComparison]::OrdinalIgnoreCase) }).Count -gt 0
+            $bListsA = @($b.Related | Where-Object { $_.Equals($a.Name, [StringComparison]::OrdinalIgnoreCase) }).Count -gt 0
+            if (-not ($aListsB -and $bListsA)) { continue }
+            if ($a.Role -eq $b.Role) { continue }
+            if (@($a.Role, $b.Role) -notcontains 'Ops' -or @($a.Role, $b.Role) -notcontains 'Sql') { continue }
+
+            $pairKey = (@($a.Name, $b.Name) | Sort-Object) -join '|'
+            if (-not $pairKeys.Add($pairKey)) { continue }
+
+            $opsMember = if ($a.Role -eq 'Ops') { $a } else { $b }
+            $sqlMember = if ($a.Role -eq 'Sql') { $a } else { $b }
+
+            $conceptSet = [System.Collections.Generic.HashSet[string]]::new([StringComparer]::OrdinalIgnoreCase)
+            foreach ($src in @($opsMember, $sqlMember)) {
+                foreach ($w in @((($src.Purpose + ' ' + ($src.Triggers -join ' ')).ToLowerInvariant() -split '\W+'))) {
+                    if ($w.Length -lt 4) { continue }
+                    if (@('with', 'from', 'that', 'this', 'have', 'warehouse', 'primary', 'home') -contains $w) { continue }
+                    [void]$conceptSet.Add($w)
+                }
+            }
+
+            [void]$families.Add([PSCustomObject]@{
+                    Stem     = $a.Stem
+                    Roles    = @('Ops', 'Sql')
+                    Concepts = [string[]]@(@($conceptSet) | Select-Object -First 12)
+                    Members  = @{
+                        Ops = $opsMember.Name
+                        Sql = $sqlMember.Name
+                    }
+                    Edges    = @(
+                        [PSCustomObject]@{
+                            Stem         = $a.Stem
+                            IntentFamily = 'ops'
+                            TargetRole   = 'Ops'
+                            Weight       = 4
+                            Evidence     = @('registry-derived')
+                            Source       = 'registry'
+                        },
+                        [PSCustomObject]@{
+                            Stem         = $a.Stem
+                            IntentFamily = 'sql'
+                            TargetRole   = 'Sql'
+                            Weight       = 4
+                            Evidence     = @('registry-derived')
+                            Source       = 'registry'
+                        }
+                    )
+                })
+        }
+    }
+
+    return @($families.ToArray())
+}
+
+function New-MetraCompoundScoredRoutingRow {
+    <#
+    .SYNOPSIS
+        Builds a scored routing row for a sibling inserted by compound apply (live schema).
+    #>
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory)][string]$Name,
+        [Parameter(Mandatory)]$RegistryRow,
+        [Parameter(Mandatory)]$OnDisk,
+        [Parameter(Mandatory)][int]$Score,
+        [Parameter(Mandatory)][string[]]$MatchedTokens
+    )
+
+    $purpose = [string](Get-MetraProp -Object $RegistryRow -Name 'purpose' -Default '')
+    $triggers = @(Get-MetraProp -Object $RegistryRow -Name 'triggers' -Default @())
+    $serves = @(Get-MetraProp -Object $RegistryRow -Name 'serves' -Default @())
+    $hay = (@($Name) + $triggers + @($purpose) | ForEach-Object { [string]$_ }) -join ' '
+    return [PSCustomObject]@{
+        Name          = $Name
+        Root          = [string]$OnDisk.Root
+        Path          = [string]$OnDisk.Path
+        Purpose       = $purpose
+        Triggers      = @($triggers)
+        Serves        = @($serves)
+        Score         = $Score
+        MatchedTokens = [string[]]@($MatchedTokens)
+        HayLower      = $hay.ToLowerInvariant()
+    }
+}
+
+function Update-MetraScoredRoutingWithCompoundCues {
+    <#
+    .SYNOPSIS
+        Applies at most one compound stem+intent edge boost per family (idempotent).
+    .DESCRIPTION
+        SQL cue class wins over Ops when both present. +4 once per family; tags compound:ops
+        or compound:sql. Inserts missing sibling with the live scored-row schema.
+    #>
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory)][string]$Query,
+        [Parameter(Mandatory)][AllowEmptyCollection()][object[]]$Scored,
+        [object]$Registry,
+        [hashtable]$DiskByName
+    )
+
+    if (-not $Registry) {
+        $Registry = Get-MetraProjectRegistry
+    }
+    if (-not $DiskByName) {
+        $DiskByName = @{}
+        foreach ($p in @(Get-MetraProjects)) {
+            $DiskByName[$p.Name.ToLowerInvariant()] = $p
+        }
+    }
+
+    $cues = Get-MetraCompoundRoutingCueHits -Query $Query
+    $hasSql = @($cues.SqlHits).Count -gt 0
+    $hasOps = @($cues.OpsHits).Count -gt 0
+    if (-not $hasSql -and -not $hasOps) {
+        return @($Scored)
+    }
+
+    $intentFamily = if ($hasSql) { 'sql' } else { 'ops' }
+    $targetRole = if ($hasSql) { 'Sql' } else { 'Ops' }
+    $tag = if ($hasSql) { 'compound:sql' } else { 'compound:ops' }
+
+    $families = @(Get-MetraRoutingGraph -Registry $Registry)
+    if ($families.Count -eq 0) {
+        return @($Scored)
+    }
+
+    $regByName = @{}
+    foreach ($reg in @($Registry.projects)) {
+        $n = [string]$reg.name
+        if (-not [string]::IsNullOrWhiteSpace($n)) {
+            $regByName[$n.ToLowerInvariant()] = $reg
+        }
+    }
+
+    $list = New-Object System.Collections.Generic.List[object]
+    $byName = @{}
+    foreach ($row in @($Scored)) {
+        if (-not $row) { continue }
+        [void]$list.Add($row)
+        $byName[$row.Name.ToLowerInvariant()] = $row
+    }
+
+    foreach ($family in $families) {
+        $stem = [string]$family.Stem
+        if (-not (Test-MetraRoutingQueryHasTerm -Query $Query -Term $stem)) { continue }
+
+        $memberName = [string]$family.Members[$targetRole]
+        if ([string]::IsNullOrWhiteSpace($memberName)) { continue }
+
+        $existing = $byName[$memberName.ToLowerInvariant()]
+        if ($existing) {
+            $tokens = New-Object System.Collections.Generic.List[string]
+            foreach ($t in @($existing.MatchedTokens)) { [void]$tokens.Add([string]$t) }
+            if ($tokens -contains $tag) { continue }
+            [void]$tokens.Add($tag)
+            $existing.Score = [int]$existing.Score + 4
+            $existing.MatchedTokens = [string[]]@($tokens.ToArray())
+            continue
+        }
+
+        $regRow = $regByName[$memberName.ToLowerInvariant()]
+        $onDisk = $DiskByName[$memberName.ToLowerInvariant()]
+        if (-not $regRow -or -not $onDisk) { continue }
+
+        $inserted = New-MetraCompoundScoredRoutingRow `
+            -Name $memberName `
+            -RegistryRow $regRow `
+            -OnDisk $onDisk `
+            -Score 4 `
+            -MatchedTokens @($tag)
+        [void]$list.Add($inserted)
+        $byName[$memberName.ToLowerInvariant()] = $inserted
+    }
+
+    return @($list.ToArray())
+}
+
 function Get-MetraScoredRoutingProjects {
     <#
     .SYNOPSIS
@@ -555,6 +886,8 @@ function Get-MetraScoredRoutingProjects {
         Tokens match whole words in the project name / triggers / purpose haystack - not
         substrings. Stop words are dropped first so "to" / "in" / "the" / "or" cannot steal
         the primary route from noise inside purpose text (e.g. "get-together", "authority").
+        After haystack scoring, a compound cue pass may boost Ops|Sql siblings from the
+        registry-derived routing graph (Phase 2).
     #>
     [CmdletBinding()]
     param(
@@ -625,9 +958,21 @@ function Get-MetraScoredRoutingProjects {
             })
     }
 
+    $withCompound = @(Update-MetraScoredRoutingWithCompoundCues -Query $Query -Scored @($scored.ToArray()) -Registry $registry -DiskByName $disk)
+
+    # Prefer compound:sql over compound:ops on equal scores (mixed-cue SQL precedence).
     return @(
-        $scored |
-            Sort-Object @{ Expression = 'Score'; Descending = $true }, Name |
+        $withCompound |
+            Sort-Object `
+                @{ Expression = 'Score'; Descending = $true },
+                @{ Expression = {
+                        $tags = @($_.MatchedTokens)
+                        if ($tags -contains 'compound:sql') { 0 }
+                        elseif ($tags -contains 'compound:ops') { 1 }
+                        else { 2 }
+                    }
+                },
+                Name |
             Select-Object -First $Limit
     )
 }
@@ -730,10 +1075,14 @@ function Get-MetraRoutingAmbiguity {
         $ambiguous = Test-MetraRoutingAmbiguity -PrimaryScore ([int]$primary.Score) -RunnerUpScore ([int]$runnerUp.Score)
         if ($ambiguous) {
             $favoredList = New-Object System.Collections.Generic.List[string]
+            # Prefer compound evidence when it decided the primary.
+            foreach ($t in @($primary.MatchedTokens | Where-Object { $_ -like 'compound:*' } | Select-Object -Unique)) {
+                [void]$favoredList.Add($t)
+            }
             foreach ($t in $tokens) {
                 $inPrimary = $primary.HayLower.Contains($t)
                 $inRunner = $runnerUp.HayLower.Contains($t)
-                if ($inPrimary -and -not $inRunner) {
+                if ($inPrimary -and -not $inRunner -and -not ($favoredList -contains $t)) {
                     [void]$favoredList.Add($t)
                 }
             }
@@ -935,10 +1284,23 @@ function Show-MetraRoutingCli {
             Write-Host ''
             Write-MetraRelatedProjects -Related $relatedTopo
         }
+        $compoundTag = @($primary.MatchedTokens | Where-Object { $_ -like 'compound:*' } | Select-Object -First 1)
+        $cueLabel = $null
+        if ($compoundTag.Count -gt 0) {
+            $cueLabel = if ($compoundTag[0] -eq 'compound:sql') { 'product+sql' } else { 'product+ops' }
+        }
         $why = @(Get-MetraWhyHere -Project $primary.Name -Query $Query -Limit 3)
         if ($why.Count -gt 0) {
             Write-Host ''
             Write-MetraWhyHere -Project $primary.Name -Decisions $why
+            if ($cueLabel) {
+                Write-Host ("  Compound cue: {0}" -f $cueLabel)
+            }
+        }
+        elseif ($cueLabel) {
+            Write-Host ''
+            Write-Host ("Why here? {0}" -f $primary.Name)
+            Write-Host ("  Compound cue: {0}" -f $cueLabel)
         }
         if ($amb.IsAmbiguous -and $amb.RunnerUp) {
             $runner = $amb.RunnerUp
