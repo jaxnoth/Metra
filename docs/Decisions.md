@@ -20,6 +20,14 @@ Entry shape:
 
 ---
 
+## 2026-08-27 - Codex KB Sync Metra Attention deferred
+
+- Decision: Codex owns KB sync Observe / Recommend / Publish in-repo (`sync scan`, `sync recommend`, `sync draft`, `sync publish`). Metra Attention rows, `.\metra.ps1 ctx -Query "kb stale ..."`, and optional Metra coverage advisory consumed by `sync recommend -PortfolioReview` are **deferred**. When implemented, Metra may surface Codex ledger/registry evidence only; Metra must never auto-publish Expert pages from Attention.
+- Why: Sodexo pilot and portfolio missing-doc recommendations must not block on Metra product work. Scan/draft are safe unattended; `-Confirm` publish stays operator-affirmed in Codex.
+- See: `C:\Projects\Codex\docs\Sync.md`; Codex `config/kb-sources.example.json`; Codex `config/kb-coverage-rules.example.json`
+
+---
+
 ## 2026-08-27 - Atlas portfolio knowledge bus
 
 - Decision: Portfolio expanded plans/docs live in sibling project **Atlas** (`C:\Projects\Atlas`, `.\Atlas.ps1`, `.\metra.ps1 atlas`) with Stub + Notion providers. Notion Plans is long-term store for the shared bus; local `data/sync` is mirror + three-way ledger. `put` is local-only unless `-Publish`; sync conflicts fail closed. OCC, Decision Registry, and Decisions.md stay authoritative and are not two-way synced (References pointers only). Deletion is not propagated in v1. Vectors are a future retrieval accelerator over StableIds, not authority. Institutional KB remains Codex. Concept language may say "portfolio memory"; product name is Atlas.
@@ -841,6 +849,7 @@ Entry shape:
   | Kind of durable fact | Home | Not |
   |---|---|---|
   | Soft collaboration rhythm across the portfolio | OCC / `profile` | Project playbooks |
+  | Desk familiarity numeric register (humor-desk) | `docs/desk-familiarity.local.json` via `profile familiarity` | OCC, Decision Registry, Notion |
   | Portfolio-wide product / routing / persona policy | `docs/Decisions.md` or base `metra-persona.mdc` | OCC |
   | Project-local how-to / triage / runbook | That project's `AGENTS.md` (or README) | OCC, Decision Registry |
   | Recurring ticket pattern with reusable write-up | TicketTracker `solutions/` (+ index) | OCC |

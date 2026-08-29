@@ -52,7 +52,7 @@ Prefer a **separate overlay per person** (name / redistribution). Swap Persona A
 
 | Pack | Id | Role |
 |------|----|------|
-| [humor-desk](humor-desk/) | `humor-desk` | Desk-partner humor palette (dry asides, ticket intro beat, light sarcasm with evidence) |
+| [humor-desk](humor-desk/) | `humor-desk` | Companion warmth/curiosity/playful + dual desk familiarity; six-flavor Playful palette |
 | [teaching-gentle](teaching-gentle/) | `teaching-gentle` | Gentler pacing and plain words; explicit kid/family/beginner/educational ask only - never infer audience |
 
 ## Suggested later add-ons (not shipped yet)

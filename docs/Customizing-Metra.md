@@ -152,6 +152,25 @@ Opt-in tone dials under `profiles/addons/`. They raise chat color without changi
 
 Guardrails: add-ons may alter tone only - not routing, project selection, root isolation, evidence hierarchy, professional artifacts, or incident defaults. Catalog and suggested later dials: [profiles/addons/README.md](../profiles/addons/README.md). Single-file paths: copy `metra-humor.local.example.mdc` or `metra-teaching-gentle.local.example.mdc` to the matching `.local.mdc` name.
 
+### Desk familiarity (humor-desk companion)
+
+Numeric **working-together register** for humor-desk (session vs durable). Not OCC, not Decision Registry, not Notion.
+
+| Store | Path | Role |
+|-------|------|------|
+| Durable ledger | `docs/desk-familiarity.local.json` (gitignored) | Slow score 0-8 / Cold-Warming-Familiar; chat-analysis nudges |
+| Example | `docs/desk-familiarity.local.example.json` | Tracked defaults |
+| Prose prefs | OCC / `profile note` | Soft collaboration guidelines |
+
+```powershell
+.\metra.ps1 profile familiarity show
+.\metra.ps1 profile familiarity analyze-nudge -SessionPeak Familiar -SessionFloor Warming -Direction Up -Sustained -Note "sustained collaborative project brainstorming"
+```
+
+Agent performs bounded chat analysis and passes structured fields; CLI is mechanical (+/-1 nudge, UTC day rate limit, two-band outlier evidence-only, ticket-only excluded). Missing/corrupt ledger -> effective Warming without silent overwrite of a corrupt file. See humor-desk pack README.
+
+**v1 scale is intentionally fixed:** bands are exactly Cold / Warming / Familiar with score 0-8 (default 3 = Warming). Not schema-extensible in this slice - do not stretch the model to add bands without a deliberate redesign.
+
 ## What belongs where
 
 | Put in overlay | Put in Persona Add-on | Promote to base (fork) |

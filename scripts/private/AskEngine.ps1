@@ -303,7 +303,7 @@ function Get-MetraAskEnginePidFile {
 function Get-MetraAskEngineLogPath {
     param(
         [int]$Port = 7381,
-        [ValidateSet('stderr', 'stdout', 'base')]
+        [ValidateSet('stderr', 'stdout', 'runs', 'base')]
         [string]$Stream = 'stderr'
     )
 
@@ -313,8 +313,144 @@ function Get-MetraAskEngineLogPath {
     }
     switch ($Stream) {
         'stdout' { return Join-Path $dir "ask-engine-$Port.out.log" }
+        'runs' { return Join-Path $dir "ask-engine-$Port.runs.log" }
         'base' { return Join-Path $dir "ask-engine-$Port" }
         default { return Join-Path $dir "ask-engine-$Port.err.log" }
+    }
+}
+
+function Write-MetraAskEnginePidFile {
+    <#
+    .SYNOPSIS
+        Writes the Ask Cursor sidecar PID file (ASCII digits only).
+    #>
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory)][int]$Port,
+        [Parameter(Mandatory)][int]$ProcessId
+    )
+
+    if ($ProcessId -le 0) { return }
+    $pidFile = Get-MetraAskEnginePidFile -Port $Port
+    Set-Content -LiteralPath $pidFile -Value $ProcessId -Encoding ASCII
+}
+
+function Sync-MetraAskEnginePidFile {
+    <#
+    .SYNOPSIS
+        Aligns ask-engine-PORT.pid with a live Metra Cursor sidecar listener on the port.
+    .OUTPUTS
+        [int] Chosen listener PID, or $null when none.
+    #>
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory)][int]$Port
+    )
+
+    $listeners = @(Get-MetraAskCursorSidecarListenerProcessIds -Port $Port)
+    if ($listeners.Count -eq 0) { return $null }
+
+    $pidFile = Get-MetraAskEnginePidFile -Port $Port
+    $recorded = 0
+    $hasRecorded = $false
+    if (Test-Path -LiteralPath $pidFile) {
+        $hasRecorded = [int]::TryParse((Get-Content -LiteralPath $pidFile -Raw).Trim(), [ref]$recorded)
+    }
+
+    $chosen = $listeners[0]
+    if ($hasRecorded -and $recorded -gt 0 -and $listeners -contains $recorded) {
+        $chosen = $recorded
+    }
+
+    Write-MetraAskEnginePidFile -Port $Port -ProcessId $chosen
+    return $chosen
+}
+
+function Clear-MetraAskEngineStalePidFile {
+    <#
+    .SYNOPSIS
+        Removes the PID file when it points at a dead process (or unreadable content).
+    #>
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory)][int]$Port
+    )
+
+    $pidFile = Get-MetraAskEnginePidFile -Port $Port
+    if (-not (Test-Path -LiteralPath $pidFile)) { return }
+    $recorded = 0
+    if (-not [int]::TryParse((Get-Content -LiteralPath $pidFile -Raw).Trim(), [ref]$recorded) -or $recorded -le 0) {
+        Remove-Item -LiteralPath $pidFile -Force -ErrorAction SilentlyContinue
+        return
+    }
+    if ($recorded -eq $PID) {
+        Remove-Item -LiteralPath $pidFile -Force -ErrorAction SilentlyContinue
+        return
+    }
+    if (-not (Get-Process -Id $recorded -ErrorAction SilentlyContinue)) {
+        Remove-Item -LiteralPath $pidFile -Force -ErrorAction SilentlyContinue
+    }
+}
+
+function Test-MetraAskCursorPortHealth {
+    <#
+    .SYNOPSIS
+        True when GET /health on the Cursor Ask loopback port returns ok.
+    #>
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory)][int]$Port,
+        [int]$TimeoutSec = 1
+    )
+
+    try {
+        $url = "http://127.0.0.1:$Port/health"
+        $response = Invoke-RestMethod -Uri $url -Method Get -TimeoutSec $TimeoutSec
+        return [bool](Get-MetraProp -Object $response -Name 'ok' -Default $false)
+    }
+    catch {
+        return $false
+    }
+}
+
+function Wait-MetraAskCursorPortHealth {
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory)][int]$Port,
+        [int]$TimeoutSec = 20
+    )
+
+    $deadline = [datetime]::UtcNow.AddSeconds([Math]::Max(1, $TimeoutSec))
+    while ([datetime]::UtcNow -lt $deadline) {
+        if (Test-MetraAskCursorPortHealth -Port $Port -TimeoutSec 1) { return $true }
+        Start-Sleep -Milliseconds 400
+    }
+    return (Test-MetraAskCursorPortHealth -Port $Port -TimeoutSec 1)
+}
+
+function Initialize-MetraAskEngineSpawnLogs {
+    <#
+    .SYNOPSIS
+        Rotates non-empty sidecar stdout/stderr logs to *.1 before Start-Process truncates them.
+    .NOTES
+        Start-Process -RedirectStandard* always truncates the target file. Keep one previous
+        generation so EADDRINUSE / SDK errors survive a failed second start.
+    #>
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory)][int]$Port
+    )
+
+    foreach ($stream in @('stdout', 'stderr')) {
+        $path = Get-MetraAskEngineLogPath -Port $Port -Stream $stream
+        if (-not (Test-Path -LiteralPath $path)) { continue }
+        $item = Get-Item -LiteralPath $path -ErrorAction SilentlyContinue
+        if (-not $item -or $item.Length -le 0) { continue }
+        $prev = "$path.1"
+        if (Test-Path -LiteralPath $prev) {
+            Remove-Item -LiteralPath $prev -Force -ErrorAction SilentlyContinue
+        }
+        Move-Item -LiteralPath $path -Destination $prev -Force -ErrorAction SilentlyContinue
     }
 }
 
@@ -793,10 +929,13 @@ function New-MetraAskSettingsWithOverrides {
     }
 }
 
-function Start-MetraAskCursorSidecar {
+function Invoke-MetraAskCursorSidecarEnsure {
     <#
     .SYNOPSIS
-        Starts the Cursor Ask sidecar for a port/model regardless of ask.engine (Inspect override path).
+        Ensures one healthy Cursor Ask sidecar on the port: adopt listeners first, spawn only if needed.
+    .NOTES
+        Writes the PID file only after /health succeeds (or after adopting a live Metra listener).
+        Failed second starts no longer overwrite a good PID with a dead process id.
     #>
     [CmdletBinding()]
     param(
@@ -806,13 +945,22 @@ function Start-MetraAskCursorSidecar {
         [string]$CursorOptimizeFor = 'cost'
     )
 
-    # Always probe the Cursor port - do not use Test-MetraAskEngineHealth (that follows ask.engine).
-    try {
-        $url = "http://127.0.0.1:$CursorPort/health"
-        $response = Invoke-RestMethod -Uri $url -Method Get -TimeoutSec 1
-        if ([bool](Get-MetraProp -Object $response -Name 'ok' -Default $false)) { return $true }
+    if (Test-MetraAskCursorPortHealth -Port $CursorPort -TimeoutSec 1) {
+        $null = Sync-MetraAskEnginePidFile -Port $CursorPort
+        return $true
     }
-    catch { }
+
+    $existing = @(Get-MetraAskCursorSidecarListenerProcessIds -Port $CursorPort)
+    if ($existing.Count -gt 0) {
+        $null = Sync-MetraAskEnginePidFile -Port $CursorPort
+        if (Wait-MetraAskCursorPortHealth -Port $CursorPort -TimeoutSec 8) {
+            $null = Sync-MetraAskEnginePidFile -Port $CursorPort
+            return $true
+        }
+        Write-Warning ("Ask Cursor sidecar listener(s) on port {0} but /health is not ok. Not starting a second process. See {1}" -f `
+            $CursorPort, (Get-MetraAskEngineLogPath -Port $CursorPort -Stream stderr))
+        return $false
+    }
 
     $nodePath = Get-MetraAskNodePath -MetraRoot $MetraRoot
     $sidecar = Get-MetraAskCursorSidecarPath -MetraRoot $MetraRoot
@@ -821,14 +969,18 @@ function Start-MetraAskCursorSidecar {
         return $false
     }
 
-    $pidFile = Get-MetraAskEnginePidFile -Port $CursorPort
+    Clear-MetraAskEngineStalePidFile -Port $CursorPort
+    Initialize-MetraAskEngineSpawnLogs -Port $CursorPort
+
     $logOut = Get-MetraAskEngineLogPath -Port $CursorPort -Stream stdout
     $logErr = Get-MetraAskEngineLogPath -Port $CursorPort -Stream stderr
+    $logDir = Split-Path -Parent $logOut
     $proc = $null
     $prevPort = $env:METRA_ASK_PORT
     $prevModel = $env:METRA_ASK_MODEL
     $prevOpt = $env:METRA_ASK_OPTIMIZE_FOR
     $prevEng = $env:METRA_ASK_ENGINE
+    $prevLogDir = $env:METRA_ASK_LOG_DIR
     try {
         $previous = $env:CURSOR_API_KEY
         $env:CURSOR_API_KEY = $key
@@ -836,7 +988,9 @@ function Start-MetraAskCursorSidecar {
         $env:METRA_ASK_MODEL = $CursorModel
         $env:METRA_ASK_OPTIMIZE_FOR = $CursorOptimizeFor
         $env:METRA_ASK_ENGINE = 'cursor'
+        $env:METRA_ASK_LOG_DIR = $logDir
         try {
+            # Temporary process environment: Windows PowerShell Start-Process lacks per-child -Environment.
             $proc = Start-Process -FilePath $nodePath -ArgumentList @($sidecar) `
                 -WorkingDirectory (Split-Path -Parent $sidecar) `
                 -PassThru -WindowStyle Hidden `
@@ -850,26 +1004,62 @@ function Start-MetraAskCursorSidecar {
             if ($null -eq $prevModel) { Remove-Item Env:METRA_ASK_MODEL -ErrorAction SilentlyContinue } else { $env:METRA_ASK_MODEL = $prevModel }
             if ($null -eq $prevOpt) { Remove-Item Env:METRA_ASK_OPTIMIZE_FOR -ErrorAction SilentlyContinue } else { $env:METRA_ASK_OPTIMIZE_FOR = $prevOpt }
             if ($null -eq $prevEng) { Remove-Item Env:METRA_ASK_ENGINE -ErrorAction SilentlyContinue } else { $env:METRA_ASK_ENGINE = $prevEng }
+            if ($null -eq $prevLogDir) { Remove-Item Env:METRA_ASK_LOG_DIR -ErrorAction SilentlyContinue } else { $env:METRA_ASK_LOG_DIR = $prevLogDir }
         }
-        if (-not $proc) { return $false }
-        Set-Content -LiteralPath $pidFile -Value $proc.Id -Encoding ASCII
-
-        $deadline = [datetime]::UtcNow.AddSeconds(20)
-        while ([datetime]::UtcNow -lt $deadline) {
-            try {
-                $url = "http://127.0.0.1:$CursorPort/health"
-                $response = Invoke-RestMethod -Uri $url -Method Get -TimeoutSec 1
-                if ([bool](Get-MetraProp -Object $response -Name 'ok' -Default $false)) { return $true }
-            }
-            catch { }
-            Start-Sleep -Milliseconds 400
-        }
-        return $false
     }
     catch {
         Write-Warning "Ask Cursor sidecar start failed: $($_.Exception.Message)"
         return $false
     }
+
+    if (-not $proc) {
+        Write-Warning 'Ask Cursor sidecar Start-Process returned no process handle.'
+        return $false
+    }
+
+    # Do not write the PID file until /health succeeds - a failed bind (EADDRINUSE) must not replace a good PID.
+    if (Wait-MetraAskCursorPortHealth -Port $CursorPort -TimeoutSec 20) {
+        $synced = Sync-MetraAskEnginePidFile -Port $CursorPort
+        if ($null -eq $synced -and -not $proc.HasExited -and (Test-MetraAskCursorSidecarProcessId -ProcessId $proc.Id)) {
+            Write-MetraAskEnginePidFile -Port $CursorPort -ProcessId $proc.Id
+        }
+        return $true
+    }
+
+    $listenersNow = @(Get-MetraAskCursorSidecarListenerProcessIds -Port $CursorPort)
+    if ($listenersNow.Count -gt 0 -and (Wait-MetraAskCursorPortHealth -Port $CursorPort -TimeoutSec 5)) {
+        $null = Sync-MetraAskEnginePidFile -Port $CursorPort
+        if (-not $proc.HasExited -and -not ($listenersNow -contains $proc.Id) -and (Test-MetraAskCursorSidecarProcessId -ProcessId $proc.Id)) {
+            try { Stop-Process -Id $proc.Id -Force -ErrorAction Stop } catch { }
+        }
+        return $true
+    }
+
+    if ($proc -and -not $proc.HasExited) {
+        Write-Warning ("Ask Cursor sidecar started (PID {0}) but health is still false on port {1}. Port may be held by another process - not killing automatically. See {2} (and {2}.1 if rotated)." -f `
+            $proc.Id, $CursorPort, $logErr)
+    }
+    else {
+        Write-Warning ("Ask Cursor sidecar exited before health on port {0}. See {1} (and {1}.1 if rotated)." -f $CursorPort, $logErr)
+    }
+    return $false
+}
+
+function Start-MetraAskCursorSidecar {
+    <#
+    .SYNOPSIS
+        Starts the Cursor Ask sidecar for a port/model regardless of ask.engine (Inspect override path).
+    #>
+    [CmdletBinding()]
+    param(
+        [string]$MetraRoot = (Get-MetraRoot),
+        [int]$CursorPort = 7381,
+        [string]$CursorModel = 'composer-2.5',
+        [string]$CursorOptimizeFor = 'cost'
+    )
+
+    return (Invoke-MetraAskCursorSidecarEnsure -MetraRoot $MetraRoot -CursorPort $CursorPort `
+            -CursorModel $CursorModel -CursorOptimizeFor $CursorOptimizeFor)
 }
 
 function Invoke-MetraAskEngine {
@@ -1158,79 +1348,23 @@ function Start-MetraAskEngine {
     <#
     .SYNOPSIS
         Starts Cursor sidecar when selected; openai_compat engines need no Metra process.
+    .NOTES
+        When ask.engine is cursor, always runs adopt/ensure so a stale PID file is repaired
+        even if /health is already ok.
     #>
     [CmdletBinding()]
     param([string]$MetraRoot = (Get-MetraRoot))
 
     $cap = Get-MetraAskCapability -MetraRoot $MetraRoot
     if (-not $cap.selected) { return $cap }
-    if ($cap.available) { return $cap }
 
     $settings = Get-MetraAskSettings -MetraRoot $MetraRoot
     if ($settings.engine -ne 'cursor') {
         return Get-MetraAskCapability -MetraRoot $MetraRoot
     }
 
-    $nodePath = Get-MetraAskNodePath -MetraRoot $MetraRoot
-    $sidecar = Get-MetraAskCursorSidecarPath -MetraRoot $MetraRoot
-    $key = Get-MetraCursorApiKey
-    if (-not $nodePath -or -not $sidecar -or [string]::IsNullOrWhiteSpace($key) -or -not (Test-MetraAskCursorSidecarDeps -MetraRoot $MetraRoot)) {
-        return Get-MetraAskCapability -MetraRoot $MetraRoot
-    }
-
-    if (Test-MetraAskEngineHealth -MetraRoot $MetraRoot -TimeoutSec 1) {
-        return Get-MetraAskCapability -MetraRoot $MetraRoot
-    }
-
-    $pidFile = Get-MetraAskEnginePidFile -Port $settings.cursorPort
-    $logOut = Get-MetraAskEngineLogPath -Port $settings.cursorPort -Stream stdout
-    $logErr = Get-MetraAskEngineLogPath -Port $settings.cursorPort -Stream stderr
-    $proc = $null
-    try {
-        # Temporary process environment: Windows PowerShell Start-Process lacks per-child -Environment.
-        # PowerShell 7+ could use Start-Process -Environment; restore immediately after launch either way.
-        $previous = $env:CURSOR_API_KEY
-        $env:CURSOR_API_KEY = $key
-        $env:METRA_ASK_PORT = "$($settings.cursorPort)"
-        $env:METRA_ASK_MODEL = $settings.cursorModel
-        $env:METRA_ASK_OPTIMIZE_FOR = $settings.cursorOptimizeFor
-        $env:METRA_ASK_ENGINE = 'cursor'
-        try {
-            $proc = Start-Process -FilePath $nodePath -ArgumentList @($sidecar) `
-                -WorkingDirectory (Split-Path -Parent $sidecar) `
-                -PassThru -WindowStyle Hidden `
-                -RedirectStandardOutput $logOut `
-                -RedirectStandardError $logErr
-        }
-        finally {
-            if ($null -eq $previous) { Remove-Item Env:CURSOR_API_KEY -ErrorAction SilentlyContinue }
-            else { $env:CURSOR_API_KEY = $previous }
-            Remove-Item Env:METRA_ASK_PORT -ErrorAction SilentlyContinue
-            Remove-Item Env:METRA_ASK_MODEL -ErrorAction SilentlyContinue
-            Remove-Item Env:METRA_ASK_OPTIMIZE_FOR -ErrorAction SilentlyContinue
-            Remove-Item Env:METRA_ASK_ENGINE -ErrorAction SilentlyContinue
-        }
-        if (-not $proc) {
-            throw 'Ask Cursor sidecar Start-Process returned no process handle.'
-        }
-        Set-Content -LiteralPath $pidFile -Value $proc.Id -Encoding ASCII
-
-        $deadline = [datetime]::UtcNow.AddSeconds(20)
-        $healthy = $false
-        while ([datetime]::UtcNow -lt $deadline) {
-            if (Test-MetraAskEngineHealth -MetraRoot $MetraRoot -TimeoutSec 1) {
-                $healthy = $true
-                break
-            }
-            Start-Sleep -Milliseconds 400
-        }
-        if (-not $healthy -and $proc -and -not $proc.HasExited) {
-            Write-Warning ("Ask Cursor sidecar started (PID {0}) but health is still false on port {1}. Port may be held by another process - not killing automatically." -f $proc.Id, $settings.cursorPort)
-        }
-    }
-    catch {
-        Write-Warning "Ask engine start failed: $($_.Exception.Message)"
-    }
+    $null = Invoke-MetraAskCursorSidecarEnsure -MetraRoot $MetraRoot -CursorPort $settings.cursorPort `
+        -CursorModel $settings.cursorModel -CursorOptimizeFor $settings.cursorOptimizeFor
 
     return Get-MetraAskCapability -MetraRoot $MetraRoot
 }

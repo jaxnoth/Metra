@@ -470,9 +470,144 @@ Describe 'Ask engine lifecycle and routing' {
                     reason = 'ok'
                 }
             }
-            Mock Start-Process { throw 'Start-Process should not run when available' }
+            Mock Get-MetraAskSettings {
+                [PSCustomObject]@{
+                    engine = 'cursor'; cursorPort = 7381
+                    cursorModel = 'auto-smart'; cursorOptimizeFor = 'cost'
+                }
+            }
+            Mock Invoke-MetraAskCursorSidecarEnsure { $true }
+            Mock Start-Process { throw 'Start-Process should not run when Ensure is mocked' }
             $cap = Start-MetraAskEngine
             $cap.available | Should -BeTrue
+            Should -Invoke Invoke-MetraAskCursorSidecarEnsure -Times 1
+            Should -Invoke Start-Process -Times 0
+        }
+    }
+
+    It 'Initialize-MetraAskEngineSpawnLogs rotates non-empty stderr to .1' {
+        $drive = $TestDrive
+        InModuleScope Metra -Parameters @{ Drive = $drive } {
+            $dir = Join-Path $Drive 'ask-log-rotate'
+            New-Item -ItemType Directory -Path $dir -Force | Out-Null
+            $err = Join-Path $dir 'ask-engine-17381.err.log'
+            $out = Join-Path $dir 'ask-engine-17381.out.log'
+            Set-Content -LiteralPath $err -Value "EADDRINUSE prior" -Encoding utf8
+            # Truly empty stdout (Set-Content '' still writes a newline / BOM on Windows).
+            [System.IO.File]::WriteAllBytes($out, [byte[]]@())
+            Mock Get-MetraAskEngineLogPath {
+                param($Port, $Stream)
+                if ($Stream -eq 'stdout') { return $out }
+                return $err
+            }
+            Initialize-MetraAskEngineSpawnLogs -Port 17381
+            (Test-Path -LiteralPath "$err.1") | Should -BeTrue
+            (Get-Content -LiteralPath "$err.1" -Raw) | Should -Match 'EADDRINUSE'
+            (Test-Path -LiteralPath $err) | Should -BeFalse
+            (Test-Path -LiteralPath "$out.1") | Should -BeFalse
+            (Test-Path -LiteralPath $out) | Should -BeTrue
+        }
+    }
+
+    It 'Sync-MetraAskEnginePidFile writes the live listener PID' {
+        $pidFile = Join-Path $TestDrive 'ask-engine-sync.pid'
+        Set-Content -LiteralPath $pidFile -Value '111' -Encoding ASCII
+        InModuleScope Metra -Parameters @{ PidFile = $pidFile } {
+            Mock Get-MetraAskEnginePidFile { $PidFile }
+            Mock Get-MetraAskCursorSidecarListenerProcessIds { return @(26164) }
+            $chosen = Sync-MetraAskEnginePidFile -Port 7381
+            $chosen | Should -Be 26164
+            (Get-Content -LiteralPath $PidFile -Raw).Trim() | Should -Be '26164'
+        }
+    }
+
+    It 'Clear-MetraAskEngineStalePidFile removes dead recorded PID' {
+        $pidFile = Join-Path $TestDrive 'ask-engine-stale.pid'
+        Set-Content -LiteralPath $pidFile -Value '55496' -Encoding ASCII
+        InModuleScope Metra -Parameters @{ PidFile = $pidFile } {
+            Mock Get-MetraAskEnginePidFile { $PidFile }
+            Mock Get-Process { $null }
+            Clear-MetraAskEngineStalePidFile -Port 7381
+            (Test-Path -LiteralPath $PidFile) | Should -BeFalse
+        }
+    }
+
+    It 'Ensure adopts healthy port without Start-Process and syncs PID' {
+        InModuleScope Metra {
+            Mock Test-MetraAskCursorPortHealth { $true }
+            Mock Sync-MetraAskEnginePidFile { return 26164 }
+            Mock Start-Process { throw 'Start-Process should not run when port is healthy' }
+            $ok = Invoke-MetraAskCursorSidecarEnsure -CursorPort 7381
+            $ok | Should -BeTrue
+            Should -Invoke Sync-MetraAskEnginePidFile -Times 1
+            Should -Invoke Start-Process -Times 0
+        }
+    }
+
+    It 'Ensure does not write PID before health when spawn stays unhealthy' {
+        $pidFile = Join-Path $TestDrive 'ask-engine-no-premature-pid.pid'
+        $drive = $TestDrive
+        if (Test-Path -LiteralPath $pidFile) { Remove-Item -LiteralPath $pidFile -Force }
+        InModuleScope Metra -Parameters @{ PidFile = $pidFile; Drive = $drive } {
+            Mock Test-MetraAskCursorPortHealth { $false }
+            Mock Wait-MetraAskCursorPortHealth { $false }
+            Mock Get-MetraAskCursorSidecarListenerProcessIds { return @() }
+            Mock Get-MetraAskNodePath { 'C:\fake\node.exe' }
+            Mock Get-MetraAskCursorSidecarPath { 'C:\fake\server.mjs' }
+            Mock Get-MetraCursorApiKey { 'test-key' }
+            Mock Test-MetraAskCursorSidecarDeps { $true }
+            Mock Clear-MetraAskEngineStalePidFile { }
+            Mock Initialize-MetraAskEngineSpawnLogs { }
+            Mock Get-MetraAskEngineLogPath {
+                param($Port, $Stream)
+                Join-Path $Drive ("spawn-$Stream.log")
+            }
+            Mock Get-MetraAskEnginePidFile { $PidFile }
+            Mock Write-MetraAskEnginePidFile { throw 'PID must not be written before health' }
+            Mock Sync-MetraAskEnginePidFile { return $null }
+            Mock Start-Process {
+                [PSCustomObject]@{ Id = 99901; HasExited = $true }
+            }
+            Mock Test-MetraAskCursorSidecarProcessId { $false }
+            $ok = Invoke-MetraAskCursorSidecarEnsure -CursorPort 17382
+            $ok | Should -BeFalse
+            Should -Invoke Write-MetraAskEnginePidFile -Times 0
+            (Test-Path -LiteralPath $PidFile) | Should -BeFalse
+        }
+    }
+
+    It 'Ensure adopts when spawn loses the port race to an existing Metra listener' {
+        $drive = $TestDrive
+        InModuleScope Metra -Parameters @{ Drive = $drive } {
+            Mock Test-MetraAskCursorPortHealth { $false }
+            Mock Wait-MetraAskCursorPortHealth {
+                param($Port, $TimeoutSec)
+                # First wait (after spawn) fails; second wait (adopt) succeeds.
+                if ($TimeoutSec -le 5) { return $true }
+                return $false
+            }
+            $script:ListenerPhase = 0
+            Mock Get-MetraAskCursorSidecarListenerProcessIds {
+                $script:ListenerPhase++
+                if ($script:ListenerPhase -le 1) { return @() }
+                return @(26164)
+            }
+            Mock Get-MetraAskNodePath { 'C:\fake\node.exe' }
+            Mock Get-MetraAskCursorSidecarPath { 'C:\fake\server.mjs' }
+            Mock Get-MetraCursorApiKey { 'test-key' }
+            Mock Test-MetraAskCursorSidecarDeps { $true }
+            Mock Clear-MetraAskEngineStalePidFile { }
+            Mock Initialize-MetraAskEngineSpawnLogs { }
+            Mock Get-MetraAskEngineLogPath { Join-Path $Drive 'race.log' }
+            Mock Sync-MetraAskEnginePidFile { return 26164 }
+            Mock Start-Process {
+                [PSCustomObject]@{ Id = 55496; HasExited = $true }
+            }
+            Mock Test-MetraAskCursorSidecarProcessId { param($ProcessId) $ProcessId -eq 26164 }
+            Mock Stop-Process { throw 'Stop-Process should not run for exited loser' }
+            $ok = Invoke-MetraAskCursorSidecarEnsure -CursorPort 17383
+            $ok | Should -BeTrue
+            Should -Invoke Sync-MetraAskEnginePidFile -Times 1
         }
     }
 

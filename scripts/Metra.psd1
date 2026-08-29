@@ -65,6 +65,7 @@
         'Test-MetraProfileSyncToken'
         'Invoke-MetraSetup'
         'Invoke-MetraOperatorContractCommand',
+        'Invoke-MetraDeskFamiliarityCommand',
         'Invoke-MetraDecisionRegistryCommand',
         'Show-MetraRoutingCli',
         'Show-MetraKnowledgeCoverageCli',

@@ -10,6 +10,41 @@ import { Agent, CursorAgentError } from '@cursor/sdk'
 
 const PORT = Number(process.env.METRA_ASK_PORT || 7381)
 const ENGINE = 'cursor'
+const RUNS_LOG_MAX_BYTES = 512 * 1024
+
+function getAskLogDir() {
+  if (process.env.METRA_ASK_LOG_DIR && String(process.env.METRA_ASK_LOG_DIR).trim()) {
+    return String(process.env.METRA_ASK_LOG_DIR).trim()
+  }
+  const localApp = process.env.LOCALAPPDATA || process.env.HOME || process.cwd()
+  return path.join(localApp, 'Metra', 'logs')
+}
+
+function getRunsLogPath() {
+  return path.join(getAskLogDir(), `ask-engine-${PORT}.runs.log`)
+}
+
+/** Append-only run/listen diagnostics. Survives Start-Process truncating stdout/stderr redirects. */
+function appendRunsLog(line) {
+  try {
+    const file = getRunsLogPath()
+    fs.mkdirSync(path.dirname(file), { recursive: true })
+    let existing = ''
+    try {
+      if (fs.existsSync(file) && fs.statSync(file).size > RUNS_LOG_MAX_BYTES) {
+        existing = fs.readFileSync(file, 'utf8')
+        const keepFrom = Math.max(0, existing.length - Math.floor(RUNS_LOG_MAX_BYTES / 2))
+        existing = existing.slice(keepFrom)
+        fs.writeFileSync(file, existing, 'utf8')
+      }
+    } catch {
+      /* ignore rotate read failures */
+    }
+    fs.appendFileSync(file, `${new Date().toISOString()} ${line}\n`, 'utf8')
+  } catch {
+    /* never fail the request on log I/O */
+  }
+}
 
 /**
  * Cursor Ask defaults to composer-2.5 (Ask API slug). auto-* tokens still map
@@ -672,9 +707,9 @@ async function complete({ prompt, cwd, context, sessionId, images, model }) {
       const message = scrubbed.text
         ? `The Ask engine run failed: ${scrubbed.text}`
         : 'The Ask engine run failed. Try again, or use Classify for routing only.'
-      console.error(
-        `[ask-cursor] run error id=${result.id || 'n/a'} requestId=${result.requestId || 'n/a'} durationMs=${result.durationMs ?? 'n/a'} detail=${scrubbed.text || '(none)'}`,
-      )
+      const errLine = `[ask-cursor] run error id=${result.id || 'n/a'} requestId=${result.requestId || 'n/a'} durationMs=${result.durationMs ?? 'n/a'} detail=${scrubbed.text || '(none)'}`
+      console.error(errLine)
+      appendRunsLog(errLine)
       return {
         message,
         engine: ENGINE,
@@ -815,8 +850,19 @@ const server = http.createServer(async (req, res) => {
   sendJson(res, 404, { error: 'not found' })
 })
 
+server.on('error', (err) => {
+  const code = err && err.code ? String(err.code) : ''
+  const msg = err && err.message ? String(err.message) : String(err)
+  const line = `[ask-cursor] listen error code=${code || 'n/a'} detail=${msg}`
+  console.error(line)
+  appendRunsLog(line)
+  process.exit(1)
+})
+
 server.listen(PORT, '127.0.0.1', () => {
-  console.log(`Metra Ask engine (cursor) on http://127.0.0.1:${PORT}`)
+  const line = `Metra Ask engine (cursor) on http://127.0.0.1:${PORT} pid=${process.pid}`
+  console.log(line)
+  appendRunsLog(`[ask-cursor] listen ok ${line}`)
 })
 
 function shutdown() {

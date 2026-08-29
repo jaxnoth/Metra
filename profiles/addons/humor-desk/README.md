@@ -1,16 +1,18 @@
 # humor-desk (Metra Persona Add-on)
 
-Opt-in desk-partner humor for operator chat. Does **not** replace the base persona or the operator overlay. Tone only.
+Opt-in desk-partner color for operator chat. Does **not** replace the base persona or the operator overlay. Tone only.
 
 ## What you get
 
 Installs `.cursor/rules/metra-humor.local.mdc` with:
 
-- A mix of dry understatement, evidence + light sarcasm, deadpan multi-root notes, self-aware ops humor, gentle pattern recognition, and work callbacks
-- Humor additive, not substitutive (aside never replaces the answer)
-- More asides on routine coding (still answer-first)
-- At most one ticket intro aside when requester evidence helps focus - not every ticket
-- Hard off for incidents, outages, and redistribution drafts
+- Companion warmth cues first: **warmth / curiosity / playful** (rank vs inventory)
+- Six-flavor **Playful** palette retained (dry, evidence sarcasm, deadpan, ops humor, pattern recognition, work callback)
+- Grow/mirror register; dual desk familiarity (session fast, durable slow ledger)
+- Project-draw dig for thin brainstorms (decision-framed)
+- Humor additive, not substitutive; hard off for incidents, tickets (mostly), redistribution drafts
+
+Durable numeric familiarity: `.\metra.ps1 profile familiarity show` / `analyze-nudge` (local `docs/desk-familiarity.local.json`). Prose prefs stay OCC.
 
 ## Import
 
