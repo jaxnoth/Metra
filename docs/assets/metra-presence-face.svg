@@ -1,0 +1,356 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="256" height="256" viewBox="0 0 256 256"
+     role="img" aria-labelledby="title desc"
+     data-mood="warm" data-variant="attend" data-layout="nodes" id="metra-presence-face">
+  <title id="title">Metra presence face - nodes</title>
+  <desc id="desc">Nodes face. Warm: soft solid ovals, no iris, faint smile. Curious: reversed eyes (teal sclera + light iris) with nameplate lean. Playful: distinct eye shapes and letter motion.</desc>
+  <!--
+    warm: attend | empath | welcome
+    curious: glance | ask | lean
+    playful: wave | spark | cheeky
+  -->
+  <defs>
+    <style type="text/css"><![CDATA[
+      .teal-stroke { stroke: #0f766e; fill: none; stroke-width: 6; stroke-linecap: round; stroke-linejoin: round; }
+      .teal-fill { fill: #0f766e; }
+      .open-node { fill: #ffffff; stroke: #0f766e; stroke-width: 5; }
+      .pill { fill: #e6f4f1; }
+      .sclera { fill: #ffffff; stroke: #0f766e; stroke-width: 4; }
+      .iris { fill: #0f766e; }
+      .L {
+        fill: #0f766e;
+        font-family: "Segoe UI", system-ui, sans-serif;
+        font-weight: 700;
+        text-anchor: middle;
+      }
+      @media (prefers-color-scheme: dark) {
+        .teal-stroke { stroke: #2dd4bf; }
+        .teal-fill { fill: #2dd4bf; }
+        .open-node { fill: #1f2937; stroke: #2dd4bf; }
+        .pill { fill: #263b3a; }
+        .sclera { fill: #1f2937; stroke: #2dd4bf; }
+        .iris { fill: #5eead4; }
+        .L { fill: #5eead4; }
+      }
+
+      #presence { transform-origin: 128px 128px; }
+      #nameplate { transform-origin: 128px 48px; }
+      #eyes { transform-origin: 128px 118px; }
+      #eye-l, #eye-r { transform-box: fill-box; transform-origin: center; }
+      #iris-l, #iris-r { transform-box: fill-box; transform-origin: center; }
+      #mouth-o-wrap { transform-origin: 128px 168px; }
+      #mouth-soft { transform-origin: 128px 168px; }
+      #L1 { transform-origin: 88px 55px; }
+      #L2 { transform-origin: 108px 55px; }
+      #L3 { transform-origin: 128px 55px; }
+      #L4 { transform-origin: 146px 55px; }
+      #L5 { transform-origin: 164px 55px; }
+
+      /* default mouth + eye shapes */
+      #mouth-soft, #mouth-smile { opacity: 0; }
+      #mouth-flat { opacity: 1; }
+      #sclera-l, #sclera-r { rx: 14; ry: 14; }
+      #iris-l, #iris-r { /* centered gaze */ }
+
+      .eye-spark, .eye-cheeky { display: none; }
+      .eye-round { display: inline; }
+
+      /* ========== WARM: soft solid ovals (shape kept, no iris), faint smile ========== */
+      svg[data-mood="warm"] #mouth-flat { opacity: 0; }
+      svg[data-mood="warm"] #mouth-soft { opacity: 1; }
+      /* Soft smile mid sits ~173.5; seat open node on the route, not hanging below. */
+      svg[data-mood="warm"] #mouth-o { cy: 173.5; }
+      svg[data-mood="warm"] #mouth-o-wrap { transform-origin: 128px 173.5px; }
+      svg[data-mood="warm"] #iris-l,
+      svg[data-mood="warm"] #iris-r { display: none; }
+      svg[data-mood="warm"] #sclera-l,
+      svg[data-mood="warm"] #sclera-r {
+        fill: #0f766e;
+        stroke: none;
+        rx: 17;
+        ry: 13;
+      }
+      svg[data-mood="warm"] .L { font-size: 26px; font-weight: 650; letter-spacing: 0.03em; }
+      @media (prefers-color-scheme: dark) {
+        svg[data-mood="warm"] #sclera-l,
+        svg[data-mood="warm"] #sclera-r { fill: #2dd4bf; }
+      }
+
+      svg[data-mood="warm"][data-variant="attend"] #eyes { animation: soft-engage 5s ease-in-out infinite; }
+      svg[data-mood="warm"][data-variant="attend"] #eye-l,
+      svg[data-mood="warm"][data-variant="attend"] #eye-r { animation: blink-soft 6.5s ease-in-out infinite; }
+      svg[data-mood="warm"][data-variant="attend"] #presence { animation: lean-in 5s ease-in-out infinite; }
+      svg[data-mood="warm"][data-variant="attend"] #mouth-o-wrap { animation: listen-pulse 5s ease-in-out infinite; }
+
+      svg[data-mood="warm"][data-variant="empath"] #sclera-l,
+      svg[data-mood="warm"][data-variant="empath"] #sclera-r { rx: 19; ry: 11; }
+      svg[data-mood="warm"][data-variant="empath"] #eyes { animation: soft-engage 4.5s ease-in-out infinite; }
+      svg[data-mood="warm"][data-variant="empath"] #eye-l,
+      svg[data-mood="warm"][data-variant="empath"] #eye-r { animation: blink-soft 7s ease-in-out infinite; }
+      svg[data-mood="warm"][data-variant="empath"] #mouth-soft { animation: soft-smile-breathe 4.5s ease-in-out infinite; }
+      svg[data-mood="warm"][data-variant="empath"] #presence { animation: lean-in 5.5s ease-in-out infinite; }
+
+      svg[data-mood="warm"][data-variant="welcome"] #sclera-l,
+      svg[data-mood="warm"][data-variant="welcome"] #sclera-r { rx: 15; ry: 15; }
+      svg[data-mood="warm"][data-variant="welcome"] #eyes { transform: scale(1.08); animation: soft-engage 4s ease-in-out infinite; }
+      svg[data-mood="warm"][data-variant="welcome"] #eye-l,
+      svg[data-mood="warm"][data-variant="welcome"] #eye-r { animation: blink-soft 6s ease-in-out infinite; }
+      svg[data-mood="warm"][data-variant="welcome"] #mouth-soft { animation: soft-smile-breathe 4s ease-in-out infinite; }
+      svg[data-mood="warm"][data-variant="welcome"] #nameplate { animation: settle 4s ease-in-out infinite; }
+      svg[data-mood="warm"][data-variant="welcome"] .L { font-weight: 700; }
+
+      /* ========== CURIOUS: reversed eyes (teal sclera + light iris), nameplate lean back ========== */
+      svg[data-mood="curious"] #sclera-l,
+      svg[data-mood="curious"] #sclera-r {
+        fill: #0f766e;
+        stroke: none;
+        rx: 14;
+        ry: 16;
+      }
+      svg[data-mood="curious"] #iris-l,
+      svg[data-mood="curious"] #iris-r {
+        fill: #ffffff;
+        r: 5;
+      }
+      svg[data-mood="curious"] .L { font-size: 27px; font-style: italic; font-weight: 700; }
+      @media (prefers-color-scheme: dark) {
+        svg[data-mood="curious"] #sclera-l,
+        svg[data-mood="curious"] #sclera-r { fill: #2dd4bf; }
+        svg[data-mood="curious"] #iris-l,
+        svg[data-mood="curious"] #iris-r { fill: #0f172a; }
+      }
+
+      /* glance: gaze up-right + nameplate leans right */
+      svg[data-mood="curious"][data-variant="glance"] #iris-l { cx: 95; cy: 111; animation: iris-glance 2.8s ease-in-out infinite; }
+      svg[data-mood="curious"][data-variant="glance"] #iris-r { cx: 175; cy: 111; animation: iris-glance 2.8s ease-in-out infinite; }
+      svg[data-mood="curious"][data-variant="glance"] #nameplate { animation: lean-right 2.8s ease-in-out infinite; }
+      svg[data-mood="curious"][data-variant="glance"] #mouth-o-wrap { animation: mouth-o-pulse 2.8s ease-in-out infinite; }
+
+      svg[data-mood="curious"][data-variant="ask"] #iris-l { cx: 84; cy: 111; r: 6; }
+      svg[data-mood="curious"][data-variant="ask"] #iris-r { cx: 172; cy: 113; r: 4.5; }
+      svg[data-mood="curious"][data-variant="ask"] #sclera-l { rx: 16; ry: 18; }
+      svg[data-mood="curious"][data-variant="ask"] #sclera-r { rx: 12; ry: 14; }
+      svg[data-mood="curious"][data-variant="ask"] #L5 { animation: ask-mark 2.4s ease-in-out infinite; }
+      svg[data-mood="curious"][data-variant="ask"] #eye-l { animation: eye-ask-l 2.4s ease-in-out infinite; }
+      svg[data-mood="curious"][data-variant="ask"] #mouth-o-wrap { animation: mouth-o-strong 2.4s ease-in-out infinite; }
+      svg[data-mood="curious"][data-variant="ask"] #nameplate { animation: tilt-mild 2.4s ease-in-out infinite; }
+
+      /* lean: gaze left + nameplate leans left (restored) */
+      svg[data-mood="curious"][data-variant="lean"] #iris-l { cx: 81; cy: 115; }
+      svg[data-mood="curious"][data-variant="lean"] #iris-r { cx: 161; cy: 115; }
+      svg[data-mood="curious"][data-variant="lean"] #nameplate { animation: lean-left 2.6s ease-in-out infinite; }
+      svg[data-mood="curious"][data-variant="lean"] #eyes { animation: lean-eyes 2.6s ease-in-out infinite; }
+      svg[data-mood="curious"][data-variant="lean"] #mouth-o-wrap { animation: mouth-o-pulse 2.6s ease-in-out infinite; }
+
+      /* ========== PLAYFUL / wave - round eyes, letter wave, one wink ========== */
+      svg[data-mood="playful"] #mouth-flat { opacity: 0; }
+      svg[data-mood="playful"] #mouth-smile { opacity: 1; }
+      svg[data-mood="playful"] .L { font-weight: 800; }
+
+      svg[data-mood="playful"][data-variant="wave"] #sclera-l, svg[data-mood="playful"][data-variant="wave"] #sclera-r { rx: 14; ry: 14; }
+      svg[data-mood="playful"][data-variant="wave"] #iris-l { cx: 88; cy: 118; }
+      svg[data-mood="playful"][data-variant="wave"] #iris-r { cx: 168; cy: 118; }
+      svg[data-mood="playful"][data-variant="wave"] .L { font-size: 28px; }
+      svg[data-mood="playful"][data-variant="wave"] #L1 { animation: wave 1.2s ease-in-out infinite; animation-delay: 0s; }
+      svg[data-mood="playful"][data-variant="wave"] #L2 { animation: wave 1.2s ease-in-out infinite; animation-delay: 0.08s; }
+      svg[data-mood="playful"][data-variant="wave"] #L3 { animation: wave 1.2s ease-in-out infinite; animation-delay: 0.16s; }
+      svg[data-mood="playful"][data-variant="wave"] #L4 { animation: wave 1.2s ease-in-out infinite; animation-delay: 0.24s; }
+      svg[data-mood="playful"][data-variant="wave"] #L5 { animation: wave 1.2s ease-in-out infinite; animation-delay: 0.32s; }
+      svg[data-mood="playful"][data-variant="wave"] #nameplate { animation: bounce-pill 1.6s ease-in-out infinite; }
+      svg[data-mood="playful"][data-variant="wave"] #eye-r { animation: wink 2.2s ease-in-out infinite; }
+
+      /* ========== PLAYFUL / spark - diamond eyes, big hops, plate spin ========== */
+      svg[data-mood="playful"][data-variant="spark"] .eye-round { display: none; }
+      svg[data-mood="playful"][data-variant="spark"] .eye-spark { display: inline; }
+      svg[data-mood="playful"][data-variant="spark"] #iris-l { cx: 88; cy: 118; r: 5; }
+      svg[data-mood="playful"][data-variant="spark"] #iris-r { cx: 168; cy: 118; r: 5; }
+      svg[data-mood="playful"][data-variant="spark"] .L { font-size: 30px; }
+      svg[data-mood="playful"][data-variant="spark"] #L1 { animation: hop-big 0.7s ease-in-out infinite; animation-delay: 0s; }
+      svg[data-mood="playful"][data-variant="spark"] #L2 { animation: hop-big 0.7s ease-in-out infinite; animation-delay: 0.07s; }
+      svg[data-mood="playful"][data-variant="spark"] #L3 { animation: hop-big 0.7s ease-in-out infinite; animation-delay: 0.14s; }
+      svg[data-mood="playful"][data-variant="spark"] #L4 { animation: hop-big 0.7s ease-in-out infinite; animation-delay: 0.21s; }
+      svg[data-mood="playful"][data-variant="spark"] #L5 { animation: hop-big 0.7s ease-in-out infinite; animation-delay: 0.28s; }
+      svg[data-mood="playful"][data-variant="spark"] #nameplate { animation: spin-bounce 1.1s ease-in-out infinite; }
+      svg[data-mood="playful"][data-variant="spark"] #eyes { animation: spark-pulse 1.1s ease-in-out infinite; }
+      svg[data-mood="playful"][data-variant="spark"] #mouth-o-wrap { animation: mouth-o-strong 1.1s ease-in-out infinite; }
+
+      /* ========== PLAYFUL / cheeky - flat squint eyes, huge grin energy ========== */
+      svg[data-mood="playful"][data-variant="cheeky"] .eye-round { display: none; }
+      svg[data-mood="playful"][data-variant="cheeky"] .eye-cheeky { display: inline; }
+      svg[data-mood="playful"][data-variant="cheeky"] #iris-l,
+      svg[data-mood="playful"][data-variant="cheeky"] #iris-r { display: none; }
+      svg[data-mood="playful"][data-variant="cheeky"] .L { font-size: 31px; }
+      svg[data-mood="playful"][data-variant="cheeky"] #L1 { animation: tumble 0.9s ease-in-out infinite; animation-delay: 0s; }
+      svg[data-mood="playful"][data-variant="cheeky"] #L2 { animation: tumble 0.9s ease-in-out infinite; animation-delay: 0.05s; }
+      svg[data-mood="playful"][data-variant="cheeky"] #L3 { animation: tumble 0.9s ease-in-out infinite; animation-delay: 0.1s; }
+      svg[data-mood="playful"][data-variant="cheeky"] #L4 { animation: tumble 0.9s ease-in-out infinite; animation-delay: 0.15s; }
+      svg[data-mood="playful"][data-variant="cheeky"] #L5 { animation: tumble 0.9s ease-in-out infinite; animation-delay: 0.2s; }
+      svg[data-mood="playful"][data-variant="cheeky"] #nameplate { animation: bounce-big 0.9s ease-in-out infinite; }
+      svg[data-mood="playful"][data-variant="cheeky"] #presence { animation: tip 1.4s ease-in-out infinite; }
+      svg[data-mood="playful"][data-variant="cheeky"] #mouth-smile { stroke-width: 8; }
+
+      /* ----- keyframes ----- */
+      @keyframes soft-engage {
+        0%, 100% { transform: scale(1.04); }
+        50% { transform: scale(1.08); }
+      }
+      @keyframes blink-soft {
+        0%, 93%, 100% { transform: scaleY(1); }
+        95% { transform: scaleY(0.2); }
+      }
+      @keyframes lean-in {
+        0%, 100% { transform: scale(1) translateY(0); }
+        50% { transform: scale(1.015) translateY(-1px); }
+      }
+      @keyframes listen-pulse {
+        0%, 100% { transform: scale(1); opacity: 1; }
+        50% { transform: scale(1.12); opacity: 0.92; }
+      }
+      @keyframes soft-smile-breathe {
+        0%, 100% { transform: scaleX(1); }
+        50% { transform: scaleX(1.05); }
+      }
+      @keyframes settle {
+        0%, 100% { transform: translateY(0); }
+        50% { transform: translateY(-2px); }
+      }
+      @keyframes iris-glance {
+        0%, 100% { transform: translate(0, 0); }
+        40%, 75% { transform: translate(3px, -3px); }
+      }
+      @keyframes tilt-mild {
+        0%, 100% { transform: rotate(-3deg); }
+        50% { transform: rotate(-6deg) translate(0, -1px); }
+      }
+      @keyframes eye-ask-l {
+        0%, 100% { transform: scale(1.1); }
+        50% { transform: scale(1.2); }
+      }
+      @keyframes mouth-o-pulse {
+        0%, 100% { transform: scale(1); }
+        50% { transform: scale(1.25); }
+      }
+      @keyframes mouth-o-strong {
+        0%, 100% { transform: scale(1.1); }
+        50% { transform: scale(1.5); }
+      }
+      @keyframes ask-mark {
+        0%, 100% { transform: translate(0, 0) scale(1); }
+        50% { transform: translate(0, -4px) scale(1.1); }
+      }
+      @keyframes lean-plate {
+        0%, 100% { transform: rotate(-8deg) translate(-2px, 0); }
+        50% { transform: rotate(-12deg) translate(-3px, -2px); }
+      }
+      @keyframes lean-left {
+        0%, 100% { transform: rotate(-10deg) translate(-4px, 0); }
+        50% { transform: rotate(-16deg) translate(-6px, -2px); }
+      }
+      @keyframes lean-right {
+        0%, 100% { transform: rotate(8deg) translate(3px, 0); }
+        50% { transform: rotate(14deg) translate(5px, -2px); }
+      }
+      @keyframes lean-eyes {
+        0%, 100% { transform: rotate(-4deg) translate(-3px, -2px); }
+        50% { transform: rotate(-6deg) translate(-5px, -4px); }
+      }
+      @keyframes bounce-pill {
+        0%, 100% { transform: translateY(0); }
+        50% { transform: translateY(-6px); }
+      }
+      @keyframes bounce-big {
+        0%, 100% { transform: translateY(0) rotate(0deg); }
+        50% { transform: translateY(-14px) rotate(-4deg); }
+      }
+      @keyframes spin-bounce {
+        0%, 100% { transform: translateY(0) rotate(-8deg); }
+        50% { transform: translateY(-10px) rotate(8deg); }
+      }
+      @keyframes spark-pulse {
+        0%, 100% { transform: scale(1) rotate(0deg); }
+        50% { transform: scale(1.12) rotate(6deg); }
+      }
+      @keyframes wink {
+        0%, 70%, 100% { transform: scaleY(1); }
+        78%, 88% { transform: scaleY(0.12); }
+      }
+      @keyframes wave {
+        0%, 100% { transform: translateY(0) rotate(0deg); }
+        50% { transform: translateY(-5px) rotate(-8deg); }
+      }
+      @keyframes hop-big {
+        0%, 100% { transform: translateY(0) scale(1); }
+        50% { transform: translateY(-12px) scale(1.15); }
+      }
+      @keyframes tumble {
+        0%, 100% { transform: translateY(0) rotate(0deg); }
+        50% { transform: translateY(-10px) rotate(18deg); }
+      }
+      @keyframes tip {
+        0%, 100% { transform: rotate(-2deg); }
+        50% { transform: rotate(3deg); }
+      }
+
+      @media (prefers-reduced-motion: reduce) {
+        #presence, #nameplate, #eyes, #eye-l, #eye-r, #iris-l, #iris-r, #mouth-o-wrap, #mouth-soft,
+        #L1, #L2, #L3, #L4, #L5 { animation: none !important; }
+        svg[data-mood="warm"] #eyes { transform: scale(1.05); }
+        svg[data-mood="curious"][data-variant="glance"] #iris-l { cx: 95; cy: 111; }
+        svg[data-mood="curious"][data-variant="glance"] #iris-r { cx: 175; cy: 111; }
+        svg[data-mood="curious"][data-variant="glance"] #nameplate { transform: rotate(10deg); }
+        svg[data-mood="curious"][data-variant="lean"] #nameplate { transform: rotate(-12deg); }
+        svg[data-mood="curious"][data-variant="ask"] #eye-l { transform: scale(1.15); }
+      }
+    ]]></style>
+  </defs>
+
+  <rect class="pill" width="256" height="256" rx="48" opacity="0.55"/>
+
+  <g id="presence">
+    <g id="nameplate">
+      <rect class="pill" x="62" y="28" width="132" height="40" rx="20"/>
+      <g id="word" aria-label="Metra">
+        <text id="L1" class="L" x="88" y="55">M</text>
+        <text id="L2" class="L" x="108" y="55">e</text>
+        <text id="L3" class="L" x="128" y="55">t</text>
+        <text id="L4" class="L" x="146" y="55">r</text>
+        <text id="L5" class="L" x="164" y="55">a</text>
+      </g>
+      <path class="teal-stroke" d="M128 68v22" stroke-width="5"/>
+    </g>
+
+    <g id="eyes">
+      <!-- Round / oval sclera (warm, curious, playful wave) -->
+      <g id="eye-l" class="eye-round">
+        <ellipse id="sclera-l" class="sclera" cx="88" cy="118" rx="14" ry="14"/>
+      </g>
+      <g id="eye-r" class="eye-round">
+        <ellipse id="sclera-r" class="sclera" cx="168" cy="118" rx="14" ry="14"/>
+      </g>
+
+      <!-- Spark: diamond / rotated-square eyes -->
+      <g class="eye-spark">
+        <rect class="sclera" x="76" y="106" width="24" height="24" rx="4" transform="rotate(45 88 118)"/>
+        <rect class="sclera" x="156" y="106" width="24" height="24" rx="4" transform="rotate(45 168 118)"/>
+      </g>
+
+      <!-- Cheeky: flat squint lozenges -->
+      <g class="eye-cheeky">
+        <ellipse class="teal-fill" cx="88" cy="118" rx="20" ry="7"/>
+        <ellipse class="teal-fill" cx="168" cy="118" rx="20" ry="7"/>
+      </g>
+
+      <!-- Irises (gaze). Hidden for cheeky squint. -->
+      <circle id="iris-l" class="iris" cx="88" cy="118" r="7"/>
+      <circle id="iris-r" class="iris" cx="168" cy="118" r="7"/>
+    </g>
+
+    <g id="mouth">
+      <path id="mouth-flat" class="teal-stroke" d="M72 168h112"/>
+      <path id="mouth-soft" class="teal-stroke" d="M78 166c16 10 68 10 100 0"/>
+      <path id="mouth-smile" class="teal-stroke" d="M76 162c20 22 84 22 104 0"/>
+      <g id="mouth-o-wrap">
+        <circle id="mouth-o" class="open-node" cx="128" cy="168" r="8"/>
+      </g>
+    </g>
+  </g>
+</svg>

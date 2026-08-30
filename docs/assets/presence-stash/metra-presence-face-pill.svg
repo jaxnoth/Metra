@@ -1,0 +1,146 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="256" height="256" viewBox="0 0 256 256"
+     role="img" aria-labelledby="title desc" data-mood="warm" data-layout="pill-eye" id="metra-presence-face-pill">
+  <title id="title">Metra presence face - single pill eye</title>
+  <desc id="desc">Layout B: labeled Mist pill on top is one eye. Letterforms shift with mood. Route mouth below.</desc>
+  <defs>
+    <style type="text/css"><![CDATA[
+      .teal-stroke { stroke: #0f766e; fill: none; stroke-width: 6; stroke-linecap: round; stroke-linejoin: round; }
+      .teal-fill { fill: #0f766e; }
+      .open-node { fill: #ffffff; stroke: #0f766e; stroke-width: 5; }
+      .pill { fill: #e6f4f1; }
+      .L {
+        fill: #0f766e;
+        font-family: "Segoe UI", system-ui, sans-serif;
+        font-weight: 700;
+        text-anchor: middle;
+      }
+      @media (prefers-color-scheme: dark) {
+        .teal-stroke { stroke: #2dd4bf; }
+        .teal-fill { fill: #2dd4bf; }
+        .open-node { fill: #1f2937; stroke: #2dd4bf; }
+        .pill { fill: #263b3a; }
+        .L { fill: #5eead4; }
+      }
+
+      #presence { transform-origin: 128px 128px; }
+      #eye-pill { transform-origin: 128px 72px; }
+      #mouth-o-wrap { transform-origin: 128px 168px; }
+      #L1 { transform-origin: 88px 79px; }
+      #L2 { transform-origin: 108px 79px; }
+      #L3 { transform-origin: 128px 79px; }
+      #L4 { transform-origin: 146px 79px; }
+      #L5 { transform-origin: 164px 79px; }
+
+      /* ----- warm: calm, even, soft ----- */
+      svg[data-mood="warm"] .L {
+        font-size: 27px;
+        font-style: normal;
+        font-weight: 650;
+        letter-spacing: 0.02em;
+      }
+      svg[data-mood="warm"] #word { animation: word-warm 3.2s ease-in-out infinite; }
+      svg[data-mood="warm"] #presence { animation: breathe 3.2s ease-in-out infinite; }
+      svg[data-mood="warm"] #eye-pill { animation: blink-pill 5.5s ease-in-out infinite; }
+      svg[data-mood="warm"] #mouth-smile { opacity: 0; }
+      svg[data-mood="warm"] #mouth-flat { opacity: 1; }
+
+      /* ----- curious: italic lean, climb, a bit larger ----- */
+      svg[data-mood="curious"] .L {
+        font-size: 30px;
+        font-style: italic;
+        font-weight: 700;
+      }
+      svg[data-mood="curious"] #L1 { transform: rotate(-6deg) translate(0, 3px); }
+      svg[data-mood="curious"] #L2 { transform: rotate(-8deg) translate(0, 1px); }
+      svg[data-mood="curious"] #L3 { transform: rotate(-10deg) translate(0, -1px); }
+      svg[data-mood="curious"] #L4 { transform: rotate(-12deg) translate(0, -3px); }
+      svg[data-mood="curious"] #L5 { transform: rotate(-14deg) translate(0, -5px); animation: peek 2.4s ease-in-out infinite; }
+      svg[data-mood="curious"] #eye-pill { animation: tilt-curious 2.4s ease-in-out infinite; }
+      svg[data-mood="curious"] #mouth-o-wrap { animation: mouth-o-pulse 2.4s ease-in-out infinite; }
+      svg[data-mood="curious"] #mouth-smile { opacity: 0; }
+      svg[data-mood="curious"] #mouth-flat { opacity: 1; }
+
+      /* ----- playful: bounce wave, slight spins ----- */
+      svg[data-mood="playful"] .L {
+        font-size: 29px;
+        font-style: normal;
+        font-weight: 800;
+      }
+      svg[data-mood="playful"] #L1 { animation: wave 1.2s ease-in-out infinite; animation-delay: 0s; }
+      svg[data-mood="playful"] #L2 { animation: wave 1.2s ease-in-out infinite; animation-delay: 0.08s; }
+      svg[data-mood="playful"] #L3 { animation: wave 1.2s ease-in-out infinite; animation-delay: 0.16s; }
+      svg[data-mood="playful"] #L4 { animation: wave 1.2s ease-in-out infinite; animation-delay: 0.24s; }
+      svg[data-mood="playful"] #L5 { animation: wave 1.2s ease-in-out infinite; animation-delay: 0.32s; }
+      svg[data-mood="playful"] #eye-pill { animation: bounce-pill 1.6s ease-in-out infinite; }
+      svg[data-mood="playful"] #mouth-flat { opacity: 0; }
+      svg[data-mood="playful"] #mouth-smile { opacity: 1; }
+
+      @keyframes breathe {
+        0%, 100% { transform: scale(1); }
+        50% { transform: scale(1.03); }
+      }
+      @keyframes word-warm {
+        0%, 100% { opacity: 1; }
+        50% { opacity: 0.88; }
+      }
+      @keyframes blink-pill {
+        0%, 90%, 100% { transform: scaleY(1); }
+        94% { transform: scaleY(0.22); }
+      }
+      @keyframes tilt-curious {
+        0%, 100% { transform: rotate(-6deg) scale(1.03); }
+        50% { transform: rotate(-10deg) translate(1px, -2px) scale(1.06); }
+      }
+      @keyframes peek {
+        0%, 100% { transform: rotate(-14deg) translate(0, -5px) scale(1); }
+        50% { transform: rotate(-16deg) translate(1px, -8px) scale(1.12); }
+      }
+      @keyframes mouth-o-pulse {
+        0%, 100% { transform: scale(1); }
+        50% { transform: scale(1.3); }
+      }
+      @keyframes bounce-pill {
+        0%, 100% { transform: translateY(0); }
+        50% { transform: translateY(-4px); }
+      }
+      @keyframes wave {
+        0%, 100% { transform: translateY(0) rotate(0deg); }
+        50% { transform: translateY(-6px) rotate(-8deg); }
+      }
+
+      @media (prefers-reduced-motion: reduce) {
+        #presence, #eye-pill, #mouth-o-wrap, #word, #L1, #L2, #L3, #L4, #L5 {
+          animation: none !important;
+        }
+        svg[data-mood="curious"] #eye-pill { transform: rotate(-8deg) scale(1.04); }
+        svg[data-mood="curious"] #L5 { transform: rotate(-12deg) translate(0, -4px); }
+      }
+    ]]></style>
+  </defs>
+
+  <rect class="pill" width="256" height="256" rx="48" opacity="0.55"/>
+
+  <g id="presence">
+    <g id="eye-pill">
+      <rect class="pill" x="62" y="52" width="132" height="40" rx="20"/>
+      <g id="word" aria-label="Metra">
+        <text id="L1" class="L" x="88" y="79">M</text>
+        <text id="L2" class="L" x="108" y="79">e</text>
+        <text id="L3" class="L" x="128" y="79">t</text>
+        <text id="L4" class="L" x="146" y="79">r</text>
+        <text id="L5" class="L" x="164" y="79">a</text>
+      </g>
+      <path class="teal-stroke" d="M128 92v28" stroke-width="5"/>
+    </g>
+
+    <g id="mouth">
+      <path id="mouth-flat" class="teal-stroke" d="M56 168h144"/>
+      <path id="mouth-smile" class="teal-stroke" d="M60 162c28 24 108 24 136 0"/>
+      <circle class="teal-fill" cx="56" cy="168" r="8"/>
+      <circle class="teal-fill" cx="200" cy="168" r="8"/>
+      <g id="mouth-o-wrap">
+        <circle id="mouth-o" class="open-node" cx="128" cy="168" r="9"/>
+      </g>
+    </g>
+  </g>
+</svg>

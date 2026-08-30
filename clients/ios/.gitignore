@@ -1,0 +1,5 @@
+**/xcuserdata/
+**/DerivedData/
+*.xcworkspace/xcuserdata/
+MetraCompanion.xcodeproj/project.xcworkspace/xcuserdata/
+MetraCompanion.xcodeproj/xcuserdata/

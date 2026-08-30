@@ -1,0 +1,43 @@
+name: MetraCompanion
+options:
+  bundleIdPrefix: app.metra
+  deploymentTarget:
+    iOS: "18.0"
+  createIntermediateGroups: true
+  developmentLanguage: en
+settings:
+  BASE_SDK: iphoneos
+  SWIFT_VERSION: "6.0"
+  TARGETED_DEVICE_FAMILY: "1,2"
+targets:
+  MetraCompanion:
+    type: application
+    platform: iOS
+    sources:
+      - path: MetraCompanion
+    settings:
+      PRODUCT_BUNDLE_IDENTIFIER: app.metra.companion
+      DEVELOPMENT_TEAM: "642GT45K9V"
+      INFOPLIST_KEY_CFBundleDisplayName: Metra
+      INFOPLIST_KEY_UIApplicationSceneManifest_Generation: true
+      INFOPLIST_KEY_UILaunchScreen_Generation: true
+      INFOPLIST_KEY_UISupportedInterfaceOrientations: UIInterfaceOrientationPortrait
+      GENERATE_INFOPLIST_FILE: YES
+      CURRENT_PROJECT_VERSION: 1
+      MARKETING_VERSION: "0.1.0"
+    info:
+      path: MetraCompanion/Info.plist
+      properties:
+        CFBundleDisplayName: Metra
+        UILaunchScreen: {}
+        UISupportedInterfaceOrientations:
+          - UIInterfaceOrientationPortrait
+        NSAppTransportSecurity:
+          NSAllowsArbitraryLoads: false
+schemes:
+  MetraCompanion:
+    build:
+      targets:
+        MetraCompanion: all
+    run:
+      config: Debug

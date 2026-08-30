@@ -90,7 +90,7 @@ Composition (locked):
 3. Open center node (interchange / classification point)
 4. Short stem from the open node up into a Mist pill labeled **Metra**
 
-Do **not** recolor the terminal nodes blue, amber, or other hues for ΓÇ£direction.ΓÇ¥ Geometry already carries origin ΓåÆ interchange ΓåÆ destination. Extra endpoint colors invent categories the product does not have and dilute brand coherence.
+Do **not** recolor the terminal nodes blue, amber, or other hues for “direction.” Geometry already carries origin → interchange → destination. Extra endpoint colors invent categories the product does not have and dilute brand coherence.
 
 Dark mode uses a brighter teal on charcoal; light mode uses Signal Teal + Mist. Prefer `prefers-color-scheme` in the SVG for GitHub README.
 
@@ -119,6 +119,25 @@ Voice remains optional. While Ask (or Classify) is in flight, the desk may set `
 
 The presence mark is an **awareness companion**, not a health dashboard. Presence-first Ops puts one truthful first-person Metra observation directly below the mark, then the shared Ask / Put somewhere composer. Updated time stays quiet; waiting / held counts live on the compact expandable Attention surface below the composer. Attention may present multiple compact summaries, but actions remain on a single focused detail card. Workload truth supports the relationship - it does not replace Metra with a scoreboard. See Decisions 2026-08-06 Ops presence-first correction, Ops desk three-layer model, and Attention volume handling.
 
+### iOS companion presence
+
+The iOS companion may use a **facial reading of the same nodes mark** (terminals as eyes, open center as mouth). That reading is **surface-specific**. It does not change the public mark, the README mark, or the HTML Ops desk rule above (Ops stays route geometry - no face, mascot, or separate avatar).
+
+**Locked contract:** [ios-presence-behavior.plan.md](ios-presence-behavior.plan.md)
+
+| Rule | Brand stance |
+|------|----------------|
+| Default / recovery / incident settle / cross-mood hub | `warm/attend` |
+| Catalog | Nine variants (Warm / Curious / Playful × three each) |
+| Cross-mood movement | Always through a perceptually stable Attend pose |
+| Playful entry | Cue-gated; enters only via `playful/wave` |
+| Incident | Static Attend; severity lives in surrounding UI, not a new face or MARK withdrawal |
+| Speech / listen | Open-center **node** overlay only (Appendix A); no jaw, lips, teeth, or second mouth |
+| Voice identity (which TTS voice) | Voice module / settings; provisional default **Siri Voice 4** - see [ios-voice-identity.plan.md](ios-voice-identity.plan.md). Not a face concern. |
+| Conversation policy (Desk vs Company) | Separate from face geometry - see [ios-conversation-policy.plan.md](ios-conversation-policy.plan.md). Company = warmer Metra, not a second character. Intimacy ceiling: warm company + personal support; no romance / sexual partner roleplay. Personal support uses ephemeral retention (off Metra saved history; local or no-retain provider when available). |
+
+Assets: [`assets/metra-presence-face.svg`](assets/metra-presence-face.svg) (gallery HTML alongside). Base mark remains [`assets/metra-mark.svg`](assets/metra-mark.svg).
+
 ### Visual vocabulary
 
 Prefer:
@@ -129,7 +148,7 @@ Avoid as brand chrome:
 
 - brains, robots, assistants, chat bubbles, lightning bolts, mascots, emoji
 
-Those cliches say ΓÇ£AI product.ΓÇ¥ MetraΓÇÖs distinctive claim is portfolio operations and wayfinding.
+Those cliches say “AI product.” Metra’s distinctive claim is portfolio operations and wayfinding.
 
 ## Typography
 
@@ -243,6 +262,10 @@ Pass = both columns feel like one product at different times of day. Fail = dark
 
 - [Overview.md](Overview.md) - audience overview / leave-behind (prose twin of self-doc canvas)
 - [Customizing-Metra.md](Customizing-Metra.md) - persona, Origin, and overlays
+- [ios-presence-behavior.plan.md](ios-presence-behavior.plan.md) - iOS companion face / presence contract
+- [ios-conversation-policy.plan.md](ios-conversation-policy.plan.md) - Desk / Company / Deliver conversation policies
+- [ios-voice-identity.plan.md](ios-voice-identity.plan.md) - provisional speak identity (Siri Voice 4)
+- [ios-companion-app.plan.md](ios-companion-app.plan.md) - umbrella iOS companion roadmap
 - [Decisions.md](Decisions.md) - append-only portfolio decisions (incl. brand bounds)
 - [Integrations.md](Integrations.md) - core vs Cursor
 - [Context-Routing.md](Context-Routing.md) - Ops board refresh

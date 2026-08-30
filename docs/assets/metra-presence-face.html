@@ -1,0 +1,205 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8"/>
+  <meta name="viewport" content="width=device-width, initial-scale=1"/>
+  <title>Metra presence - nodes variants</title>
+  <style>
+    :root {
+      --bg: #f7faf9;
+      --ink: #1f2937;
+      --teal: #0f766e;
+      --mist: #e6f4f1;
+      --line: #d1d5db;
+    }
+    @media (prefers-color-scheme: dark) {
+      :root {
+        --bg: #111827;
+        --ink: #e5e7eb;
+        --teal: #2dd4bf;
+        --mist: #263b3a;
+        --line: #374151;
+      }
+    }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      min-height: 100vh;
+      font-family: "Segoe UI", system-ui, sans-serif;
+      color: var(--ink);
+      background: var(--bg);
+      padding: 1.5rem 1rem 3rem;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      gap: 0.75rem;
+    }
+    h1 { margin: 0; font-size: 1.15rem; font-weight: 650; color: var(--teal); }
+    h2 {
+      margin: 1.1rem 0 0.25rem;
+      font-size: 0.95rem;
+      font-weight: 650;
+      color: var(--teal);
+      width: min(980px, 100%);
+    }
+    p { margin: 0; max-width: 48rem; text-align: center; line-height: 1.45; font-size: 0.92rem; opacity: 0.9; }
+    .note { font-size: 0.82rem; opacity: 0.8; max-width: 48rem; text-align: center; }
+    .row {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+      gap: 0.85rem;
+      width: min(980px, 100%);
+    }
+    .card {
+      border: 1px solid var(--line);
+      border-radius: 1rem;
+      background: #fff;
+      padding: 0.75rem;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      gap: 0.4rem;
+    }
+    @media (prefers-color-scheme: dark) {
+      .card { background: #0b1220; }
+    }
+    .card.favorite { border-color: color-mix(in srgb, var(--teal) 55%, var(--line)); }
+    .card h3 { margin: 0; font-size: 0.9rem; font-weight: 650; }
+    .card .blurb { margin: 0; font-size: 0.76rem; text-align: center; line-height: 1.35; opacity: 0.85; min-height: 3.2em; }
+    .stage {
+      width: min(180px, 70vw);
+      height: min(180px, 70vw);
+      border-radius: 0.85rem;
+      border: 1px solid var(--line);
+      display: grid;
+      place-items: center;
+      overflow: hidden;
+      background: color-mix(in srgb, var(--mist) 35%, transparent);
+    }
+    .stage svg { width: 92%; height: 92%; }
+    code { font-size: 0.85em; }
+  </style>
+</head>
+<body>
+  <h1>Metra presence - nodes variants</h1>
+  <p>
+    Warm: soft solid ovals (no iris), faint smile. Curious: reversed eyes (teal + light
+    gaze dot) and nameplate lean restored. Playful stays - that one landed.
+  </p>
+
+  <h2>Warm (redesigned)</h2>
+  <div class="row" id="row-warm"></div>
+
+  <h2>Curious (kept)</h2>
+  <div class="row" id="row-curious"></div>
+
+  <h2>Playful</h2>
+  <div class="row" id="row-playful"></div>
+
+  <p class="note">
+    <code>metra-presence-face.svg</code> · <code>data-mood</code> + <code>data-variant</code> ·
+    pill layouts in <code>presence-stash/</code>
+  </p>
+
+  <script>
+    const catalog = [
+      {
+        row: "row-warm",
+        mood: "warm",
+        variant: "attend",
+        title: "Warm / attend",
+        blurb: "Soft solid ovals (no iris), faint smile, gentle lean-in."
+      },
+      {
+        row: "row-warm",
+        mood: "warm",
+        variant: "empath",
+        title: "Warm / empath",
+        blurb: "Wider soft ovals, smile breathes. Still no iris."
+      },
+      {
+        row: "row-warm",
+        mood: "warm",
+        variant: "welcome",
+        title: "Warm / welcome",
+        blurb: "Rounder soft ovals, quiet encouragement, settled plate."
+      },
+      {
+        row: "row-curious",
+        mood: "curious",
+        variant: "glance",
+        title: "Curious / glance",
+        blurb: "Reversed eyes + light iris up-right. Nameplate leans right."
+      },
+      {
+        row: "row-curious",
+        mood: "curious",
+        variant: "ask",
+        title: "Curious / ask",
+        blurb: "Uneven reversed eyes, stronger mouth-o, last letter peeks."
+      },
+      {
+        row: "row-curious",
+        mood: "curious",
+        variant: "lean",
+        title: "Curious / lean",
+        blurb: "Light iris shifts left. Nameplate lean left restored."
+      },
+      {
+        row: "row-playful",
+        favorite: true,
+        mood: "playful",
+        variant: "wave",
+        title: "Playful / wave",
+        blurb: "Round eyes, letter wave, one wink, medium bounce. Favorite."
+      },
+      {
+        row: "row-playful",
+        mood: "playful",
+        variant: "spark",
+        title: "Playful / spark",
+        blurb: "Diamond eyes, big letter hops, plate spins, mouth-o pops."
+      },
+      {
+        row: "row-playful",
+        mood: "playful",
+        variant: "cheeky",
+        title: "Playful / cheeky",
+        blurb: "Flat squint eyes (no iris), tumbling letters, big bounce + tip."
+      }
+    ];
+
+    let template = "";
+
+    async function boot() {
+      const res = await fetch("metra-presence-face.svg");
+      if (!res.ok) throw new Error("svg " + res.status);
+      template = await res.text();
+
+      for (const item of catalog) {
+        const row = document.getElementById(item.row);
+        const card = document.createElement("article");
+        card.className = "card" + (item.favorite ? " favorite" : "");
+        card.innerHTML =
+          "<h3>" + item.title + "</h3>" +
+          "<p class='blurb'>" + item.blurb + "</p>" +
+          "<div class='stage'></div>";
+        const stage = card.querySelector(".stage");
+        stage.innerHTML = template;
+        const svg = stage.querySelector("svg");
+        svg.removeAttribute("id");
+        svg.setAttribute("data-mood", item.mood);
+        svg.setAttribute("data-variant", item.variant);
+        row.appendChild(card);
+      }
+    }
+
+    boot().catch((err) => {
+      document.body.insertAdjacentHTML(
+        "beforeend",
+        "<p style='color:#b91c1c'>Load failed (" + err + "). Serve this folder over http.</p>"
+      );
+    });
+  </script>
+</body>
+</html>
