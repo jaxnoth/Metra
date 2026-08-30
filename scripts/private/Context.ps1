@@ -297,7 +297,7 @@ function Export-MetraContextPack {
             $pack['atlasUnavailable'] = [string]$_.Exception.Message
         }
 
-        $amb = Get-MetraRoutingAmbiguity -Query $Query
+        $amb = Get-MetraRoutingAmbiguity -Query $Query -Source ctx
         if ($amb.IsAmbiguous -and $amb.RunnerUp) {
             $runnerName = [string]$amb.RunnerUp.Name
             $pack['whyNotFor'] = $runnerName
