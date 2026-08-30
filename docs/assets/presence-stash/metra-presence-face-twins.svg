@@ -1,0 +1,162 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="256" height="256" viewBox="0 0 256 256"
+     role="img" aria-labelledby="title desc" data-mood="warm" data-layout="twins" id="metra-presence-face-twins">
+  <title id="title">Metra presence face - twin pill eyes</title>
+  <desc id="desc">Layout C: two Mist pills as left/right eyes. Route + open node as mouth. Moods via data-mood.</desc>
+  <!--
+    Layout: twin Mist capsules = eyes (pill DNA, clearly binocular).
+    Mouth: route line + open interchange (terminals omitted so eyes stay unique).
+    Wordmark caption below.
+  -->
+  <defs>
+    <style type="text/css"><![CDATA[
+      .teal-stroke { stroke: #0f766e; fill: none; stroke-width: 6; stroke-linecap: round; stroke-linejoin: round; }
+      .teal-fill { fill: #0f766e; }
+      .open-node { fill: #ffffff; stroke: #0f766e; stroke-width: 5; }
+      .pill { fill: #e6f4f1; }
+      .L {
+        fill: #0f766e;
+        font-family: "Segoe UI", system-ui, sans-serif;
+        font-weight: 700;
+        text-anchor: middle;
+      }
+      @media (prefers-color-scheme: dark) {
+        .teal-stroke { stroke: #2dd4bf; }
+        .teal-fill { fill: #2dd4bf; }
+        .open-node { fill: #1f2937; stroke: #2dd4bf; }
+        .pill { fill: #263b3a; }
+        .L { fill: #5eead4; }
+      }
+
+      #presence { transform-origin: 128px 128px; }
+      #eye-l-wrap { transform-origin: 84px 110px; }
+      #eye-r-wrap { transform-origin: 172px 110px; }
+      #pupil-l { transform-origin: 84px 110px; }
+      #pupil-r { transform-origin: 172px 110px; }
+      #mouth-o-wrap { transform-origin: 128px 168px; }
+      #L1 { transform-origin: 88px 220px; }
+      #L2 { transform-origin: 108px 220px; }
+      #L3 { transform-origin: 128px 220px; }
+      #L4 { transform-origin: 146px 220px; }
+      #L5 { transform-origin: 164px 220px; }
+
+      svg[data-mood="warm"] .L { font-size: 22px; font-style: normal; font-weight: 650; }
+      svg[data-mood="warm"] #word { animation: word-warm 3.2s ease-in-out infinite; }
+      svg[data-mood="warm"] #presence { animation: breathe 3.2s ease-in-out infinite; }
+      svg[data-mood="warm"] #pupil-l,
+      svg[data-mood="warm"] #pupil-r { animation: blink 5.5s ease-in-out infinite; }
+      svg[data-mood="warm"] #mouth-smile { opacity: 0; }
+      svg[data-mood="warm"] #mouth-flat { opacity: 1; }
+
+      svg[data-mood="curious"] .L { font-size: 24px; font-style: italic; font-weight: 700; }
+      svg[data-mood="curious"] #L1 { transform: rotate(-6deg) translate(0, 2px); }
+      svg[data-mood="curious"] #L2 { transform: rotate(-8deg) translate(0, 0); }
+      svg[data-mood="curious"] #L3 { transform: rotate(-10deg) translate(0, -2px); }
+      svg[data-mood="curious"] #L4 { transform: rotate(-12deg) translate(0, -3px); }
+      svg[data-mood="curious"] #L5 { transform: rotate(-14deg) translate(0, -5px); animation: peek 2.4s ease-in-out infinite; }
+      svg[data-mood="curious"] #eye-l-wrap { animation: twin-curious-l 2.4s ease-in-out infinite; }
+      svg[data-mood="curious"] #eye-r-wrap { animation: twin-curious-r 2.4s ease-in-out infinite; }
+      svg[data-mood="curious"] #mouth-o-wrap { animation: mouth-o-pulse 2.4s ease-in-out infinite; }
+      svg[data-mood="curious"] #mouth-smile { opacity: 0; }
+      svg[data-mood="curious"] #mouth-flat { opacity: 1; }
+
+      svg[data-mood="playful"] .L { font-size: 23px; font-style: normal; font-weight: 800; }
+      svg[data-mood="playful"] #L1 { animation: wave 1.2s ease-in-out infinite; animation-delay: 0s; }
+      svg[data-mood="playful"] #L2 { animation: wave 1.2s ease-in-out infinite; animation-delay: 0.08s; }
+      svg[data-mood="playful"] #L3 { animation: wave 1.2s ease-in-out infinite; animation-delay: 0.16s; }
+      svg[data-mood="playful"] #L4 { animation: wave 1.2s ease-in-out infinite; animation-delay: 0.24s; }
+      svg[data-mood="playful"] #L5 { animation: wave 1.2s ease-in-out infinite; animation-delay: 0.32s; }
+      svg[data-mood="playful"] #eye-l-wrap,
+      svg[data-mood="playful"] #eye-r-wrap { animation: twin-bounce 1.6s ease-in-out infinite; }
+      svg[data-mood="playful"] #eye-r-wrap { animation: twin-bounce 1.6s ease-in-out infinite, wink-wrap 2.2s ease-in-out infinite; }
+      svg[data-mood="playful"] #pupil-r { animation: wink 2.2s ease-in-out infinite; }
+      svg[data-mood="playful"] #mouth-flat { opacity: 0; }
+      svg[data-mood="playful"] #mouth-smile { opacity: 1; }
+
+      @keyframes breathe {
+        0%, 100% { transform: scale(1); }
+        50% { transform: scale(1.03); }
+      }
+      @keyframes blink {
+        0%, 92%, 100% { transform: scaleY(1); }
+        95% { transform: scaleY(0.15); }
+      }
+      @keyframes twin-curious-l {
+        0%, 100% { transform: rotate(-8deg) translate(0, -2px) scale(1.05); }
+        50% { transform: rotate(-12deg) translate(-2px, -4px) scale(1.1); }
+      }
+      @keyframes twin-curious-r {
+        0%, 100% { transform: rotate(4deg) translate(0, 0) scale(1.02); }
+        50% { transform: rotate(7deg) translate(2px, -2px) scale(1.06); }
+      }
+      @keyframes mouth-o-pulse {
+        0%, 100% { transform: scale(1); }
+        50% { transform: scale(1.3); }
+      }
+      @keyframes twin-bounce {
+        0%, 100% { transform: translateY(0); }
+        50% { transform: translateY(-5px); }
+      }
+      @keyframes wink-wrap {
+        0%, 70%, 100% { transform: translateY(0) scaleY(1); }
+        78%, 88% { transform: translateY(2px) scaleY(0.55); }
+      }
+      @keyframes wink {
+        0%, 70%, 100% { transform: scaleY(1); }
+        78%, 88% { transform: scaleY(0.12); }
+      }
+      @keyframes word-warm {
+        0%, 100% { opacity: 1; }
+        50% { opacity: 0.88; }
+      }
+      @keyframes peek {
+        0%, 100% { transform: rotate(-14deg) translate(0, -5px) scale(1); }
+        50% { transform: rotate(-16deg) translate(1px, -7px) scale(1.1); }
+      }
+      @keyframes wave {
+        0%, 100% { transform: translateY(0) rotate(0deg); }
+        50% { transform: translateY(-5px) rotate(-8deg); }
+      }
+
+      @media (prefers-reduced-motion: reduce) {
+        #presence, #eye-l-wrap, #eye-r-wrap, #pupil-l, #pupil-r, #mouth-o-wrap, #word, #L1, #L2, #L3, #L4, #L5 {
+          animation: none !important;
+        }
+        svg[data-mood="curious"] #eye-l-wrap { transform: rotate(-8deg) scale(1.05); }
+        svg[data-mood="curious"] #eye-r-wrap { transform: rotate(4deg); }
+        svg[data-mood="curious"] #mouth-o-wrap { transform: scale(1.15); }
+      }
+    ]]></style>
+  </defs>
+
+  <rect class="pill" width="256" height="256" rx="48" opacity="0.55"/>
+
+  <g id="presence">
+    <g id="eyes">
+      <g id="eye-l-wrap">
+        <rect class="pill" x="52" y="92" width="64" height="36" rx="18"/>
+        <circle id="pupil-l" class="teal-fill" cx="84" cy="110" r="8"/>
+      </g>
+      <g id="eye-r-wrap">
+        <rect class="pill" x="140" y="92" width="64" height="36" rx="18"/>
+        <circle id="pupil-r" class="teal-fill" cx="172" cy="110" r="8"/>
+      </g>
+      <path class="teal-stroke" d="M128 128v20" stroke-width="5"/>
+    </g>
+
+    <g id="mouth">
+      <path id="mouth-flat" class="teal-stroke" d="M72 168h112"/>
+      <path id="mouth-smile" class="teal-stroke" d="M76 162c20 22 84 22 104 0"/>
+      <g id="mouth-o-wrap">
+        <circle id="mouth-o" class="open-node" cx="128" cy="168" r="8"/>
+      </g>
+    </g>
+
+    <g id="word" aria-label="Metra">
+      <text id="L1" class="L" x="88" y="220">M</text>
+      <text id="L2" class="L" x="108" y="220">e</text>
+      <text id="L3" class="L" x="128" y="220">t</text>
+      <text id="L4" class="L" x="146" y="220">r</text>
+      <text id="L5" class="L" x="164" y="220">a</text>
+    </g>
+  </g>
+</svg>
