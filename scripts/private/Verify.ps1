@@ -152,7 +152,7 @@ function Invoke-MetraVerify {
     try {
         $ttRow = @(Get-MetraRoutingTable -Name @('TicketTracker') | Select-Object -First 1)
         if ($ttRow -and $ttRow.Present) {
-            $idAmb = Get-MetraRoutingAmbiguity -Query '1035299'
+            $idAmb = Get-MetraRoutingAmbiguity -Query '1035299' -SkipTelemetry
             if ($idAmb.Primary.Name -eq 'TicketTracker') {
                 Add-VerifyResult -Name 'routing query 1035299' -Status 'PASS' -Detail 'Primary TicketTracker' -Category 'routing'
             }
@@ -160,7 +160,7 @@ function Invoke-MetraVerify {
                 Add-VerifyResult -Name 'routing query 1035299' -Status 'FAIL' -Detail ("Primary={0}" -f $idAmb.Primary.Name) -Category 'routing'
             }
 
-            $thriveAmb = Get-MetraRoutingAmbiguity -Query 'Thrive 360 access denied'
+            $thriveAmb = Get-MetraRoutingAmbiguity -Query 'Thrive 360 access denied' -SkipTelemetry
             if ($thriveAmb.Primary.Name -eq 'TicketTracker') {
                 Add-VerifyResult -Name 'routing query Thrive 360 access denied' -Status 'PASS' -Detail 'Primary TicketTracker (solutions keywords)' -Category 'routing'
             }

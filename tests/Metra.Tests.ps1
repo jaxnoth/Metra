@@ -2580,13 +2580,13 @@ Hey - yes, from the Ops desk things look fine.
     }
 
     It 'keeps Metra as home until a stronger route wins' {
-        $hello = Get-MetraRoutingAmbiguity -Query 'Hello Metra'
+        $hello = Get-MetraRoutingAmbiguity -Query 'Hello Metra' -SkipTelemetry
         $hello.Primary.Name | Should -Be 'Metra'
 
-        $weak = Get-MetraRoutingAmbiguity -Query 'zzqx-noroute-xyzzy-qwerty'
+        $weak = Get-MetraRoutingAmbiguity -Query 'zzqx-noroute-xyzzy-qwerty' -SkipTelemetry
         $weak.Primary.Name | Should -Be 'Metra'
 
-        $ticket = Get-MetraRoutingAmbiguity -Query 'ticket disk alert'
+        $ticket = Get-MetraRoutingAmbiguity -Query 'ticket disk alert' -SkipTelemetry
         $ticket.Primary.Name | Should -BeIn @('TicketTracker', 'Solarwinds')
     }
 
@@ -2597,13 +2597,13 @@ Hey - yes, from the Ops desk things look fine.
             return
         }
 
-        $bareId = Get-MetraRoutingAmbiguity -Query '1035299'
+        $bareId = Get-MetraRoutingAmbiguity -Query '1035299' -SkipTelemetry
         $bareId.Primary.Name | Should -Be 'TicketTracker'
 
-        $lookAt = Get-MetraRoutingAmbiguity -Query 'Look at 1035299'
+        $lookAt = Get-MetraRoutingAmbiguity -Query 'Look at 1035299' -SkipTelemetry
         $lookAt.Primary.Name | Should -Be 'TicketTracker'
 
-        $unknown = Get-MetraRoutingAmbiguity -Query 'zzqx-unknown-widget-access'
+        $unknown = Get-MetraRoutingAmbiguity -Query 'zzqx-unknown-widget-access' -SkipTelemetry
         $unknown.Primary.Name | Should -Be 'Metra'
 
         $keywords = @(InModuleScope Metra { Get-MetraTicketTrackerSolutionsKeywords })
@@ -2612,10 +2612,10 @@ Hey - yes, from the Ops desk things look fine.
             return
         }
 
-        $thrive = Get-MetraRoutingAmbiguity -Query 'Thrive 360 access denied'
+        $thrive = Get-MetraRoutingAmbiguity -Query 'Thrive 360 access denied' -SkipTelemetry
         $thrive.Primary.Name | Should -Be 'TicketTracker'
 
-        $pharos = Get-MetraRoutingAmbiguity -Query 'Pharos sync problem'
+        $pharos = Get-MetraRoutingAmbiguity -Query 'Pharos sync problem' -SkipTelemetry
         $pharos.Primary.Name | Should -Be 'TicketTracker'
     }
 
@@ -2694,25 +2694,25 @@ Hey - yes, from the Ops desk things look fine.
             $g[0].Members.Ops | Should -Be 'IWUDATA-Automation'
             $g[0].Members.Sql | Should -Be 'IWUDATA-SQL'
 
-            $run = Get-MetraRoutingAmbiguity -Query 'How did IWUDATA run today?'
+            $run = Get-MetraRoutingAmbiguity -Query 'How did IWUDATA run today?' -SkipTelemetry
             $run.Primary.Name | Should -Be 'IWUDATA-Automation'
             $run.Primary.MatchedTokens | Should -Contain 'compound:ops'
 
-            $sql = Get-MetraRoutingAmbiguity -Query 'iwudata sql deploy'
+            $sql = Get-MetraRoutingAmbiguity -Query 'iwudata sql deploy' -SkipTelemetry
             $sql.Primary.Name | Should -Be 'IWUDATA-SQL'
             $sql.Primary.MatchedTokens | Should -Contain 'compound:sql'
 
-            $bare = Get-MetraRoutingAmbiguity -Query 'iwudata'
+            $bare = Get-MetraRoutingAmbiguity -Query 'iwudata' -SkipTelemetry
             @($bare.Primary.MatchedTokens | Where-Object { $_ -like 'compound:*' }).Count | Should -Be 0
 
-            $mixed = Get-MetraRoutingAmbiguity -Query 'iwudata job deploy'
+            $mixed = Get-MetraRoutingAmbiguity -Query 'iwudata job deploy' -SkipTelemetry
             $mixed.Primary.Name | Should -Be 'IWUDATA-SQL'
             $mixed.Primary.MatchedTokens | Should -Contain 'compound:sql'
             $mixed.Primary.MatchedTokens | Should -Not -Contain 'compound:ops'
         }
     }
     It 'does not let stop-word substrings steal IWUDATA routes' {
-        $amb = Get-MetraRoutingAmbiguity -Query 'Try to find what needs to be fixed in the job or sql components in the IWUDATA failure today.'
+        $amb = Get-MetraRoutingAmbiguity -Query 'Try to find what needs to be fixed in the job or sql components in the IWUDATA failure today.' -SkipTelemetry
         $amb.Primary.Name | Should -BeIn @('IWUDATA-SQL', 'IWUDATA-Automation', 'Datamart')
         $amb.Primary.Name | Should -Not -Be 'Trivia'
 
@@ -2759,6 +2759,167 @@ Labeled preview - authoritative Why Here remains routing -Query / ctx -Query.
             $clean | Should -Not -Match '(?m)^Where$'
             $clean | Should -Not -Match 'Trivia'
             $clean | Should -Not -Match 'Labeled preview'
+        }
+    }
+}
+
+Describe 'Metra routing telemetry' {
+    BeforeEach {
+        $script:originalLocalAppData = $env:LOCALAPPDATA
+        $env:LOCALAPPDATA = Join-Path $TestDrive ([guid]::NewGuid().ToString('N'))
+    }
+
+    AfterEach {
+        $env:LOCALAPPDATA = $script:originalLocalAppData
+    }
+
+    It 'writes a confident compound routing event' {
+        InModuleScope Metra {
+            $primary = [PSCustomObject]@{
+                Name          = 'IWUDATA-Automation'
+                Score         = 6
+                MatchedTokens = @('iwudata', 'compound:ops')
+            }
+            $result = [PSCustomObject]@{
+                Primary       = $primary
+                RunnerUp      = $null
+                IsAmbiguous   = $false
+                FavoredTokens = @()
+            }
+            Add-MetraRoutingTelemetryEvent -Query 'How did IWUDATA run today?' -Source routing -RoutingResult $result
+            $path = Get-MetraRoutingTelemetryEventsPath
+            Test-Path -LiteralPath $path | Should -BeTrue
+            $lines = @(Get-Content -LiteralPath $path)
+            $lines.Count | Should -Be 1
+            $evt = $lines[0] | ConvertFrom-Json
+            $evt.outcome | Should -Be 'confident'
+            $evt.primary | Should -Be 'IWUDATA-Automation'
+            $evt.source | Should -Be 'routing'
+            @($evt.matchedTokens) | Should -Contain 'compound:ops'
+            @($evt.favoredTokens).Count | Should -Be 0
+            $null -eq $evt.runnerUp | Should -BeTrue
+            $null -eq $evt.runnerUpScore | Should -BeTrue
+
+            # Live compound path still lands Automation with compound:ops (score gap may be ambiguous).
+            $live = Get-MetraRoutingAmbiguity -Query 'How did IWUDATA run today?' -Source routing
+            $live.Primary.Name | Should -Be 'IWUDATA-Automation'
+            $live.Primary.MatchedTokens | Should -Contain 'compound:ops'
+            $lines2 = @(Get-Content -LiteralPath $path)
+            $lines2.Count | Should -Be 2
+        }
+    }
+
+    It 'writes an ambiguous event with runner-up and favored tokens' {
+        InModuleScope Metra {
+            # Force an ambiguous result without depending on live score gaps.
+            $primary = [PSCustomObject]@{
+                Name = 'IWUDATA-Automation'; Score = 4
+                MatchedTokens = @('iwudata', 'compound:ops')
+            }
+            $runner = [PSCustomObject]@{
+                Name = 'IWUDATA-SQL'; Score = 3
+                MatchedTokens = @('iwudata')
+            }
+            $result = [PSCustomObject]@{
+                Primary       = $primary
+                RunnerUp      = $runner
+                IsAmbiguous   = $true
+                FavoredTokens = @('compound:ops')
+            }
+            Add-MetraRoutingTelemetryEvent -Query 'iwudata status' -Source other -RoutingResult $result
+            $evt = (Get-Content -LiteralPath (Get-MetraRoutingTelemetryEventsPath) | Select-Object -Last 1) | ConvertFrom-Json
+            $evt.outcome | Should -Be 'ambiguous'
+            $evt.runnerUp | Should -Be 'IWUDATA-SQL'
+            [int]$evt.runnerUpScore | Should -Be 3
+            @($evt.favoredTokens) | Should -Contain 'compound:ops'
+        }
+    }
+
+    It 'writes a home event for a weak query' {
+        InModuleScope Metra {
+            $null = Get-MetraRoutingAmbiguity -Query 'zzqx-noroute-xyzzy-qwerty' -Source other
+            $evt = (Get-Content -LiteralPath (Get-MetraRoutingTelemetryEventsPath) | Select-Object -Last 1) | ConvertFrom-Json
+            $evt.outcome | Should -Be 'home'
+            $evt.primary | Should -Be 'Metra'
+            $null -eq $evt.runnerUp | Should -BeTrue
+            $null -eq $evt.runnerUpScore | Should -BeTrue
+        }
+    }
+
+    It 'appends rather than replacing the first event' {
+        InModuleScope Metra {
+            $null = Get-MetraRoutingAmbiguity -Query 'How did IWUDATA run today?'
+            $null = Get-MetraRoutingAmbiguity -Query 'zzqx-noroute-xyzzy-qwerty'
+            $lines = @(Get-Content -LiteralPath (Get-MetraRoutingTelemetryEventsPath))
+            $lines.Count | Should -Be 2
+        }
+    }
+
+    It 'writes nothing when SkipTelemetry is specified' {
+        InModuleScope Metra {
+            $null = Get-MetraRoutingAmbiguity -Query 'How did IWUDATA run today?' -SkipTelemetry
+            Test-Path -LiteralPath (Get-MetraRoutingTelemetryEventsPath) | Should -BeFalse
+            Test-Path -LiteralPath (Get-MetraRoutingTelemetryRoot) | Should -BeFalse
+        }
+    }
+
+    It 'does not change repeated scorer results' {
+        InModuleScope Metra {
+            $q = 'How did IWUDATA run today?'
+            $before = @(Get-MetraScoredRoutingProjects -Query $q -Limit 10)
+            $null = Get-MetraRoutingAmbiguity -Query $q
+            $after = @(Get-MetraScoredRoutingProjects -Query $q -Limit 10)
+            ($before | ConvertTo-Json -Depth 8 -Compress) | Should -Be ($after | ConvertTo-Json -Depth 8 -Compress)
+        }
+    }
+
+    It 'does not throw when the telemetry directory cannot be written' {
+        InModuleScope Metra {
+            $blocker = Join-Path $env:LOCALAPPDATA 'Metra'
+            $null = New-Item -ItemType File -Path $blocker -Force
+            { Get-MetraRoutingAmbiguity -Query 'How did IWUDATA run today?' } | Should -Not -Throw
+        }
+    }
+
+    It 'does not create the sink when routing events only reads' {
+        InModuleScope Metra {
+            $out = Show-MetraRoutingEventsCli -Last 5 *>&1 | Out-String
+            $out | Should -Match 'No routing events recorded'
+            Test-Path -LiteralPath (Get-MetraRoutingTelemetryRoot) | Should -BeFalse
+        }
+    }
+
+    It 'skips a malformed JSONL line in the CLI reader' {
+        InModuleScope Metra {
+            $root = Get-MetraRoutingTelemetryRoot
+            $null = New-Item -ItemType Directory -Path $root -Force
+            $path = Get-MetraRoutingTelemetryEventsPath
+            @(
+                '{not json',
+                '{"tsUtc":"2026-08-29T00:00:00Z","source":"other","query":"ok","outcome":"home","primary":"Metra","primaryScore":0,"runnerUp":null,"runnerUpScore":null,"isAmbiguous":false,"matchedTokens":[],"favoredTokens":[]}'
+            ) | Set-Content -LiteralPath $path -Encoding utf8
+            $events = @(Get-MetraRoutingTelemetryEvents -Last 20)
+            $events.Count | Should -Be 1
+            $events[0].outcome | Should -Be 'home'
+        }
+    }
+
+    It 'normalizes empty and multiline queries into valid single-line JSON' {
+        InModuleScope Metra {
+            $null = Get-MetraRoutingAmbiguity -Query ''
+            $null = Get-MetraRoutingAmbiguity -Query ("line1`r`nline2 how did iwudata run")
+            $lines = @(Get-Content -LiteralPath (Get-MetraRoutingTelemetryEventsPath))
+            $lines.Count | Should -Be 2
+            foreach ($line in $lines) {
+                $line | Should -Not -Match '\n'
+                $evt = $line | ConvertFrom-Json
+                $evt.query | Should -Not -Match '\n'
+            }
+            $first = $lines[0] | ConvertFrom-Json
+            $first.query | Should -Be ''
+            $first.outcome | Should -Be 'home'
+            $second = $lines[1] | ConvertFrom-Json
+            $second.query.Length | Should -BeLessOrEqual 512
         }
     }
 }

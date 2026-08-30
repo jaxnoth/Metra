@@ -2563,7 +2563,7 @@ function Get-MetraDeskHandoff {
         }
     }
 
-    $amb = Get-MetraRoutingAmbiguity -Query $q
+    $amb = Get-MetraRoutingAmbiguity -Query $q -SkipTelemetry
     $primary = $amb.Primary
     $runner = if ($amb.IsAmbiguous) { $amb.RunnerUp } else { $null }
     $ambiguous = [bool]$amb.IsAmbiguous

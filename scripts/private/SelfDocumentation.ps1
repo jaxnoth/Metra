@@ -106,7 +106,7 @@ function Resolve-MetraSelfDocVerifiedAsk {
     foreach ($ask in @($CandidateAsks | Where-Object { -not [string]::IsNullOrWhiteSpace([string]$_) })) {
         $query = [string]$ask
         try {
-            $amb = Get-MetraRoutingAmbiguity -Query $query
+            $amb = Get-MetraRoutingAmbiguity -Query $query -SkipTelemetry
         }
         catch {
             continue
@@ -263,7 +263,7 @@ function Get-MetraSelfDocBehaviorExamples {
         if ($seenQuery.ContainsKey($key)) { return }
         $seenQuery[$key] = $true
         try {
-            $amb = Get-MetraRoutingAmbiguity -Query $Query
+            $amb = Get-MetraRoutingAmbiguity -Query $Query -SkipTelemetry
         }
         catch {
             [void]$examples.Add([PSCustomObject]@{

@@ -78,6 +78,7 @@ $script:MetraCompatibilityFunctions = @(
     'Invoke-MetraDeskFamiliarityCommand',
     'Invoke-MetraDecisionRegistryCommand',
     'Show-MetraRoutingCli',
+    'Show-MetraRoutingEventsCli',
     'Show-MetraKnowledgeCoverageCli',
     'Show-MetraInspectCli',
     'Show-MetraUnblockCli',

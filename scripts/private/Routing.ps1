@@ -349,7 +349,11 @@ function Test-MetraTicketShapedQuery {
         True when the query contains a 6-8 digit token (iSupport-style ticket id).
     #>
     [CmdletBinding()]
-    param([Parameter(Mandatory)][string]$Query)
+    param(
+        [Parameter(Mandatory)]
+        [AllowEmptyString()]
+        [string]$Query
+    )
 
     return [bool]([regex]::IsMatch($Query, '(?<!\d)\d{6,8}(?!\d)'))
 }
@@ -360,7 +364,11 @@ function Test-MetraTicketHelpdeskVocabulary {
         True when query tokens include durable ticket/helpdesk workflow vocabulary.
     #>
     [CmdletBinding()]
-    param([Parameter(Mandatory)][string]$Query)
+    param(
+        [Parameter(Mandatory)]
+        [AllowEmptyString()]
+        [string]$Query
+    )
 
     $tokens = @(Get-MetraQueryTokens -Query $Query)
     $ticketTokens = @('ticket', 'tickets', 'isupport', 'helpdesk', 'incident', 'incidents')
@@ -457,7 +465,9 @@ function Test-MetraQueryContainsRoutingKeyword {
     #>
     [CmdletBinding()]
     param(
-        [Parameter(Mandatory)][string]$Query,
+        [Parameter(Mandatory)]
+        [AllowEmptyString()]
+        [string]$Query,
         [Parameter(Mandatory)][string]$Keyword
     )
 
@@ -481,7 +491,11 @@ function Test-MetraTicketTrackerSolutionsKeywordHit {
         True when the query contains a solutions-index keyword/phrase (length >= 3).
     #>
     [CmdletBinding()]
-    param([Parameter(Mandatory)][string]$Query)
+    param(
+        [Parameter(Mandatory)]
+        [AllowEmptyString()]
+        [string]$Query
+    )
 
     foreach ($k in @(Get-MetraTicketTrackerSolutionsKeywords)) {
         if (Test-MetraQueryContainsRoutingKeyword -Query $Query -Keyword ([string]$k)) {
@@ -498,7 +512,9 @@ function Test-MetraQueryNamesProject {
     #>
     [CmdletBinding()]
     param(
-        [Parameter(Mandatory)][string]$Query,
+        [Parameter(Mandatory)]
+        [AllowEmptyString()]
+        [string]$Query,
         [Parameter(Mandatory)][string]$ProjectName
     )
 
@@ -554,7 +570,9 @@ function Test-MetraRoutingQueryHasTerm {
     #>
     [CmdletBinding()]
     param(
-        [Parameter(Mandatory)][string]$Query,
+        [Parameter(Mandatory)]
+        [AllowEmptyString()]
+        [string]$Query,
         [Parameter(Mandatory)][string]$Term
     )
 
@@ -573,7 +591,11 @@ function Get-MetraCompoundRoutingCueHits {
         Multiple words support one class; they are not multiple elections.
     #>
     [CmdletBinding()]
-    param([Parameter(Mandatory)][string]$Query)
+    param(
+        [Parameter(Mandatory)]
+        [AllowEmptyString()]
+        [string]$Query
+    )
 
     $opsLex = @(
         'run', 'ran', 'job', 'status', 'failed', 'failure', 'today', 'morning',
@@ -795,7 +817,9 @@ function Update-MetraScoredRoutingWithCompoundCues {
     #>
     [CmdletBinding()]
     param(
-        [Parameter(Mandatory)][string]$Query,
+        [Parameter(Mandatory)]
+        [AllowEmptyString()]
+        [string]$Query,
         [Parameter(Mandatory)][AllowEmptyCollection()][object[]]$Scored,
         [object]$Registry,
         [hashtable]$DiskByName
@@ -891,7 +915,9 @@ function Get-MetraScoredRoutingProjects {
     #>
     [CmdletBinding()]
     param(
-        [Parameter(Mandatory)][string]$Query,
+        [Parameter(Mandatory)]
+        [AllowEmptyString()]
+        [string]$Query,
         [int]$Limit = 25
     )
 
@@ -997,6 +1023,202 @@ function Test-MetraRoutingAmbiguity {
     return $false
 }
 
+function Get-MetraRoutingTelemetryRoot {
+    <#
+    .SYNOPSIS
+        Machine-local routing telemetry directory path (does not create it).
+    #>
+    [CmdletBinding()]
+    param()
+
+    Join-Path $env:LOCALAPPDATA 'Metra\routing'
+}
+
+function Get-MetraRoutingTelemetryEventsPath {
+    <#
+    .SYNOPSIS
+        Path to routing telemetry events.jsonl (does not create it).
+    #>
+    [CmdletBinding()]
+    param()
+
+    Join-Path (Get-MetraRoutingTelemetryRoot) 'events.jsonl'
+}
+
+function Get-MetraRoutingTelemetryOutcome {
+    <#
+    .SYNOPSIS
+        Classifies a completed ambiguity result as confident, ambiguous, or home.
+    .DESCRIPTION
+        Witness-only: reads Primary / IsAmbiguous / home name. Does not re-score.
+    #>
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory)][object]$RoutingResult
+    )
+
+    if ([bool]$RoutingResult.IsAmbiguous) {
+        return 'ambiguous'
+    }
+
+    $homeName = Get-MetraHomeDestinationName
+    $primary = $RoutingResult.Primary
+    $primaryName = if ($primary) { [string]$primary.Name } else { '' }
+    $primaryScore = if ($primary) { [int]$primary.Score } else { 0 }
+    if ($primaryName -eq $homeName -and $primaryScore -lt 2) {
+        return 'home'
+    }
+
+    return 'confident'
+}
+
+function Add-MetraRoutingTelemetryEvent {
+    <#
+    .SYNOPSIS
+        Appends one Observe-only routing event to machine-local JSONL.
+    .DESCRIPTION
+        Creates the telemetry directory if needed. Never throws into the routing hot path.
+        Maps fields from the completed ambiguity result only - no re-scoring.
+    #>
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory)]
+        [AllowEmptyString()]
+        [string]$Query,
+
+        [string]$Source = 'other',
+
+        [Parameter(Mandatory)]
+        [object]$RoutingResult
+    )
+
+    try {
+        $src = [string]$Source
+        if ($src -notin @('routing', 'ctx', 'other')) {
+            $src = 'other'
+        }
+
+        $root = Get-MetraRoutingTelemetryRoot
+        $path = Get-MetraRoutingTelemetryEventsPath
+        if (-not (Test-Path -LiteralPath $root -PathType Container)) {
+            $null = New-Item -ItemType Directory -Path $root -Force
+        }
+
+        $queryText = ([string]$Query -replace '\r?\n', ' ').Trim()
+        if ($queryText.Length -gt 512) {
+            $queryText = $queryText.Substring(0, 512)
+        }
+
+        $outcome = Get-MetraRoutingTelemetryOutcome -RoutingResult $RoutingResult
+        $primary = $RoutingResult.Primary
+        $runnerUp = $RoutingResult.RunnerUp
+        $isAmbiguous = [bool]$RoutingResult.IsAmbiguous
+
+        $matchedTokens = @(if ($primary) { @($primary.MatchedTokens) } else { @() })
+        $favoredTokens = [string[]]@(
+            if ($isAmbiguous) { @($RoutingResult.FavoredTokens) }
+        )
+
+        $event = [ordered]@{
+            tsUtc          = [datetime]::UtcNow.ToString('o')
+            source         = $src
+            query          = $queryText
+            outcome        = [string]$outcome
+            primary        = if ($primary) { [string]$primary.Name } else { $null }
+            primaryScore   = if ($primary) { [int]$primary.Score } else { 0 }
+            runnerUp       = if ($runnerUp) { [string]$runnerUp.Name } else { $null }
+            runnerUpScore  = if ($runnerUp) { [int]$runnerUp.Score } else { $null }
+            isAmbiguous    = $isAmbiguous
+            matchedTokens  = [string[]]@($matchedTokens)
+            favoredTokens  = $favoredTokens
+        }
+
+        $line = ($event | ConvertTo-Json -Compress -Depth 6)
+        Add-Content -LiteralPath $path -Value $line -Encoding utf8 -ErrorAction Stop
+    }
+    catch {
+        # Telemetry must never interrupt routing.
+    }
+}
+
+function Get-MetraRoutingTelemetryEvents {
+    <#
+    .SYNOPSIS
+        Reads the last N routing telemetry events (read-only; never creates the sink).
+    #>
+    [CmdletBinding()]
+    param(
+        [ValidateRange(1, [int]::MaxValue)]
+        [int]$Last = 20
+    )
+
+    $path = Get-MetraRoutingTelemetryEventsPath
+    if (-not (Test-Path -LiteralPath $path -PathType Leaf)) {
+        return @()
+    }
+
+    try {
+        $lines = @(Get-Content -LiteralPath $path -ErrorAction Stop)
+    }
+    catch {
+        return @()
+    }
+
+    if ($lines.Count -eq 0) { return @() }
+    $slice = if ($lines.Count -le $Last) { $lines } else { $lines[($lines.Count - $Last)..($lines.Count - 1)] }
+    $parsed = New-Object System.Collections.Generic.List[object]
+    foreach ($line in $slice) {
+        if ([string]::IsNullOrWhiteSpace($line)) { continue }
+        try {
+            $obj = $line | ConvertFrom-Json -ErrorAction Stop
+            [void]$parsed.Add($obj)
+        }
+        catch {
+            # Skip malformed or partial trailing lines.
+        }
+    }
+    return @($parsed.ToArray())
+}
+
+function Show-MetraRoutingEventsCli {
+    <#
+    .SYNOPSIS
+        Host table of recent routing telemetry events (read-only).
+    #>
+    [CmdletBinding()]
+    param(
+        [ValidateRange(1, [int]::MaxValue)]
+        [int]$Last = 20
+    )
+
+    $path = Get-MetraRoutingTelemetryEventsPath
+    if (-not (Test-Path -LiteralPath $path -PathType Leaf)) {
+        Write-Host 'No routing events recorded.'
+        return
+    }
+
+    $events = @(Get-MetraRoutingTelemetryEvents -Last $Last)
+    if ($events.Count -eq 0) {
+        Write-Host 'No routing events recorded.'
+        return
+    }
+
+    $rows = @(
+        foreach ($e in $events) {
+            $q = [string]$e.query
+            if ($q.Length -gt 60) { $q = $q.Substring(0, 57) + '...' }
+            [PSCustomObject]@{
+                ts       = [string]$e.tsUtc
+                outcome  = [string]$e.outcome
+                primary  = [string]$e.primary
+                runnerUp = if ($null -eq $e.runnerUp -or [string]::IsNullOrWhiteSpace([string]$e.runnerUp)) { '' } else { [string]$e.runnerUp }
+                query    = $q
+            }
+        }
+    )
+    $rows | Format-Table -AutoSize
+}
+
 function Get-MetraRoutingAmbiguity {
     <#
     .SYNOPSIS
@@ -1006,10 +1228,17 @@ function Get-MetraRoutingAmbiguity {
         (score >= 2). Weak incidental matches do not displace Metra.
         Precedence before technical score: ticket-shaped id > ticket/helpdesk vocabulary >
         TicketTracker solutions-index keywords. Product names are not registry triggers.
+        After the result is built, optionally appends Observe-only telemetry (never influences the result).
     #>
     [CmdletBinding()]
     param(
-        [Parameter(Mandatory)][string]$Query
+        [Parameter(Mandatory)]
+        [AllowEmptyString()]
+        [string]$Query,
+
+        [string]$Source = 'other',
+
+        [switch]$SkipTelemetry
     )
 
     $scored = @(Get-MetraScoredRoutingProjects -Query $Query -Limit 10)
@@ -1058,12 +1287,16 @@ function Get-MetraRoutingAmbiguity {
     if (-not $confident) {
         $homeFromScore = $scored | Where-Object { $_.Name -eq $homeName } | Select-Object -First 1
         $primary = if ($homeFromScore) { $homeFromScore } else { New-MetraHomeScoredProject -Score 0 }
-        return [PSCustomObject]@{
+        $result = [PSCustomObject]@{
             Primary       = $primary
             RunnerUp      = $null
             IsAmbiguous   = $false
             FavoredTokens = @()
         }
+        if (-not $SkipTelemetry) {
+            Add-MetraRoutingTelemetryEvent -Query $Query -Source $Source -RoutingResult $result
+        }
+        return $result
     }
 
     $primary = $confident
@@ -1098,12 +1331,16 @@ function Get-MetraRoutingAmbiguity {
         }
     }
 
-    return [PSCustomObject]@{
+    $result = [PSCustomObject]@{
         Primary       = $primary
         RunnerUp      = $runnerUp
         IsAmbiguous   = $ambiguous
         FavoredTokens = $favored
     }
+    if (-not $SkipTelemetry) {
+        Add-MetraRoutingTelemetryEvent -Query $Query -Source $Source -RoutingResult $result
+    }
+    return $result
 }
 
 function Write-MetraForWhom {
@@ -1263,7 +1500,7 @@ function Show-MetraRoutingCli {
     )
 
     if (-not [string]::IsNullOrWhiteSpace($Query) -and (-not $Name -or $Name.Count -eq 0) -and -not $SharedOnly -and -not $MissingOnly) {
-        $amb = Get-MetraRoutingAmbiguity -Query $Query
+        $amb = Get-MetraRoutingAmbiguity -Query $Query -Source routing
         if (-not $amb.Primary) {
             Write-Host ("No present projects matched query: {0}" -f $Query) -ForegroundColor Yellow
             return

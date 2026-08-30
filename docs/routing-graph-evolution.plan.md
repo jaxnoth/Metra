@@ -27,8 +27,8 @@ Registry (+ optional graph file later)
 | Phase | Plan file | Done means |
 |-------|-----------|------------|
 | **2 Foundation** | [routing-graph-phase2-foundation.plan.md](routing-graph-phase2-foundation.plan.md) | Stem+Ops/Sql+compound cue; IWUDATA run routes correctly |
-| **3 Telemetry** | create when P2 ships | Observe routes/confirms/ambiguity; **no learning** |
-| **4 Persistence** | create when P3 ships | Durable graph + accepted edges; misroutes ≫ routine confirms |
+| **3 Telemetry** | [routing-graph-phase3-telemetry.plan.md](routing-graph-phase3-telemetry.plan.md) | Observe routes/confirms/ambiguity; **no learning** |
+| **4 Persistence** | create when P3 ships | Durable graph + accepted edges; misroutes ≫ routine confirms. Carry-forward: JSONL reader should use `-Tail` / streaming (P3 full-file read is OK only at low volume). |
 | **5 Review** | create when P4 ships | Metra proposes; operator accepts/rejects (highest long-term ROI) |
 | **6 Concept / multi-hop** | create when P5 ships | Concept→product and bounded cross-stem paths |
 | **7 Similarity tie-break** | **optional; do not author until P4–P6 prove need** | Tie-breaker only |

@@ -97,7 +97,8 @@ param(
     [switch]$BindTailscale,
     [switch]$AcceptAsk,
     [switch]$Quiet,
-    [switch]$WhatIf
+    [switch]$WhatIf,
+    [int]$Last = 0
 )
 
 $ErrorActionPreference = 'Stop'
@@ -133,6 +134,8 @@ Usage:
       With -Query: primary stop + Why here? (and Why not? when scores are close).
       With -Name: registry row(s) + Why here? for present named projects.
       With neither: full registry table (no Why Here dump).
+  .\metra.ps1 routing events [-Last 20]
+      Read-only tail of machine-local routing Observe events (never creates the sink).
   .\metra.ps1 export-profile -Path <dir-or-zip> [-Force]
   .\metra.ps1 import-profile -Path <dir-or-zip> [-Preview] [-Force]
   .\metra.ps1 ctx [-Query 'terms'] [-Path <file|->] [-Format markdown|json] [-Limit 25]
@@ -279,7 +282,13 @@ switch ($Command) {
 
     'routing' {
         # Why Here helpers stay private; Show-MetraRoutingCli is a thin compatibility export for the CLI.
-        Show-MetraRoutingCli -Query $Query -Name $Name -SharedOnly:$SharedOnly -MissingOnly:$MissingOnly
+        if ($Rest -and $Rest.Count -gt 0 -and [string]$Rest[0] -eq 'events') {
+            $n = if ($Last -ge 1) { $Last } else { 20 }
+            Show-MetraRoutingEventsCli -Last $n
+        }
+        else {
+            Show-MetraRoutingCli -Query $Query -Name $Name -SharedOnly:$SharedOnly -MissingOnly:$MissingOnly
+        }
     }
 
     'status' {
