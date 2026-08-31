@@ -588,7 +588,7 @@ function Get-MetraAskCapability {
     }
 
     $ideInstalled = Test-MetraCursorInstall
-    $apiKeyPresent = -not [string]::IsNullOrWhiteSpace((Get-MetraCursorApiKey))
+    $apiKeyPresent = -not [string]::IsNullOrWhiteSpace((Get-MetraCursorApiKey -PreferUser))
     $nodePath = Get-MetraAskNodePath -MetraRoot $MetraRoot
     $nodeReady = -not [string]::IsNullOrWhiteSpace($nodePath)
     $sidecar = Get-MetraAskCursorSidecarPath -MetraRoot $MetraRoot
@@ -1054,7 +1054,7 @@ function Invoke-MetraAskCursorSidecarEnsure {
 
     $nodePath = Get-MetraAskNodePath -MetraRoot $MetraRoot
     $sidecar = Get-MetraAskCursorSidecarPath -MetraRoot $MetraRoot
-    $key = Get-MetraCursorApiKey
+    $key = Get-MetraCursorApiKey -PreferUser
     if (-not $nodePath -or -not $sidecar -or [string]::IsNullOrWhiteSpace($key) -or -not (Test-MetraAskCursorSidecarDeps -MetraRoot $MetraRoot)) {
         return $false
     }
@@ -1831,6 +1831,12 @@ function Restart-MetraAskEngine {
         return $cancelled
     }
 
+    $port = [int](Resolve-MetraOpsDeskBinding -MetraRoot $MetraRoot).Port
+    if (Test-MetraOpsDeskResponding -Port $port -TimeoutSec 2) {
+        $null = Restart-MetraOpsDesk -Port $port -MetraRoot $MetraRoot -NoRefresh
+        return Get-MetraAskCapability -MetraRoot $MetraRoot
+    }
+
     $pidBefore = Get-MetraAskEngineRecordedProcessId -MetraRoot $MetraRoot
 
     $null = Stop-MetraAskEngine -MetraRoot $MetraRoot -IncludePortListeners -Confirm:$false
@@ -1882,21 +1888,117 @@ function Get-MetraAskEngineRecordedProcessId {
     return $null
 }
 
-function Restart-MetraAskSidecarAfterKeyChange {
+function Get-MetraAskEngineFailureMessage {
     <#
     .SYNOPSIS
-        Recycles the Cursor Ask sidecar when ask.engine is cursor (key is process env at start).
+        Operator-safe Ask engine failure text (surfaces licensing/quota when present).
+    #>
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory)]$EngineResult,
+        [string]$HandoffNext = ''
+    )
+
+    $engineErr = [string](Get-MetraProp -Object $EngineResult -Name 'message' -Default '')
+    $errorCode = [string](Get-MetraProp -Object $EngineResult -Name 'errorCode' -Default '')
+    $errorDetail = [string](Get-MetraProp -Object $EngineResult -Name 'errorDetail' -Default '')
+
+    if ($errorCode -eq 'cursor_usage_limit' -or $errorCode -eq 'cursor_billing_limit') {
+        $detail = if (-not [string]::IsNullOrWhiteSpace($errorDetail)) { $errorDetail } else { $engineErr }
+        $detail = ($detail -replace '^The Ask engine run failed:\s*', '').Trim()
+        $detail = ($detail -replace '^Ask engine could not start:\s*', '').Trim()
+        return @"
+Cursor Ask billing or usage limit:
+
+$detail
+
+Metra can still route work and recommend durable homes. Switch Ask to Ollama (.\metra.ps1 ask recommend) or use a personal API key with quota remaining.
+"@.Trim()
+    }
+
+    if ($errorCode -eq 'cursor_model_unavailable') {
+        $detail = if (-not [string]::IsNullOrWhiteSpace($errorDetail)) { $errorDetail } else { $engineErr }
+        $detail = ($detail -replace '^The Ask engine run failed:\s*', '').Trim()
+        $detail = ($detail -replace '^Ask engine could not start:\s*', '').Trim()
+        return @"
+Ask model not available for this API key:
+
+$detail
+
+Pin a supported model: .\metra.ps1 ask engine set cursor -Model default
+(or gemini-3.7-flash, composer-2.5). Team keys usually support auto-smart; when auto-smart is missing, Metra falls back to a concrete catalog id. gemini-3.7-flash is valid on personal keys when listed for the key.
+"@.Trim()
+    }
+
+    if ($errorCode -eq 'cursor_auth_error') {
+        $detail = if (-not [string]::IsNullOrWhiteSpace($errorDetail)) { $errorDetail } else { $engineErr }
+        $detail = ($detail -replace '^The Ask engine run failed:\s*', '').Trim()
+        $detail = ($detail -replace '^Ask engine could not start:\s*', '').Trim()
+        return @"
+Cursor Ask authentication failed (key or session), not a model restriction:
+
+$detail
+
+Re-set the User key and recycle Ask: .\metra.ps1 ask key set <key>
+Then: .\metra.ps1 ask engine restart -Confirm:`$false
+Inspect may keep pinning gemini-3.7-flash on personal keys.
+"@.Trim()
+    }
+
+    if (-not [string]::IsNullOrWhiteSpace($engineErr)) {
+        return $engineErr.Trim()
+    }
+
+    $next = if (-not [string]::IsNullOrWhiteSpace($HandoffNext)) { $HandoffNext } else { 'Try .\metra.ps1 ops -Stop then .\metra.ps1 ops -NoBrowser, or .\metra.ps1 ask engine restart -Confirm:$false.' }
+    return @"
+Ask engine unavailable.
+
+The Ask engine returned an error. Metra can still route work and recommend durable homes.
+
+$next
+"@.Trim()
+}
+
+function Restart-MetraAskDeskAfterKeyChange {
+    <#
+    .SYNOPSIS
+        Recycles Ops desk + Ask sidecar after CURSOR_API_KEY change (one product lifecycle).
     #>
     [CmdletBinding()]
     param([string]$MetraRoot = (Get-MetraRoot))
 
     $settings = Get-MetraAskSettings -MetraRoot $MetraRoot
-    if ($settings.engine -ne 'cursor') {
-        return [PSCustomObject]@{
-            sidecarRestarted       = $null
-            sidecarRestartWarning  = $null
+    $port = [int](Resolve-MetraOpsDeskBinding -MetraRoot $MetraRoot).Port
+
+    if (Test-MetraOpsDeskResponding -Port $port -TimeoutSec 2) {
+        try {
+            $deskResult = Restart-MetraOpsDesk -Port $port -MetraRoot $MetraRoot -NoRefresh
+            return [PSCustomObject]@{
+                sidecarRestarted      = $true
+                sidecarRestartWarning = $null
+                deskRestarted         = [bool]$deskResult.restarted
+                deskRestartWarning    = $(if ($deskResult.restarted) { $null } else { [string]$deskResult.reason })
+            }
+        }
+        catch {
+            return [PSCustomObject]@{
+                sidecarRestarted      = $false
+                sidecarRestartWarning = $_.Exception.Message
+                deskRestarted         = $false
+                deskRestartWarning    = $_.Exception.Message
+            }
         }
     }
+
+    if ($settings.engine -ne 'cursor') {
+        return [PSCustomObject]@{
+            sidecarRestarted      = $null
+            sidecarRestartWarning = $null
+            deskRestarted         = $null
+            deskRestartWarning    = 'Ops desk was not running.'
+        }
+    }
+
     try {
         $pidBefore = Get-MetraAskEngineRecordedProcessId -MetraRoot $MetraRoot
         $cap = Restart-MetraAskEngine -MetraRoot $MetraRoot -Confirm:$false
@@ -1906,19 +2008,36 @@ function Restart-MetraAskSidecarAfterKeyChange {
             $restarted = $false
         }
         return [PSCustomObject]@{
-            sidecarRestarted       = $restarted
-            sidecarRestartWarning  = $(if ($restarted) { $null } else { [string]$cap.reason })
+            sidecarRestarted      = $restarted
+            sidecarRestartWarning = $(if ($restarted) { $null } else { [string]$cap.reason })
+            deskRestarted         = $null
+            deskRestartWarning    = 'Ops desk was not running; sidecar-only recycle.'
         }
     }
     catch {
-        $msg = 'Ask sidecar restart failed after key change. Run Stop-MetraAskEngine; Start-MetraAskEngine manually.'
+        $msg = 'Ask sidecar restart failed after key change.'
         Write-Warning $msg
         Write-Verbose $_.Exception.Message
         return [PSCustomObject]@{
-            sidecarRestarted       = $false
-            sidecarRestartWarning  = $msg
+            sidecarRestarted      = $false
+            sidecarRestartWarning = $msg
+            deskRestarted         = $null
+            deskRestartWarning    = $null
         }
     }
+}
+
+function Restart-MetraAskSidecarAfterKeyChange {
+    <#
+    .SYNOPSIS
+        Recycles the Cursor Ask sidecar when ask.engine is cursor (key is process env at start).
+    .NOTES
+        Prefer Restart-MetraAskDeskAfterKeyChange for operator key set (Ops + Ask together).
+    #>
+    [CmdletBinding()]
+    param([string]$MetraRoot = (Get-MetraRoot))
+
+    return Restart-MetraAskDeskAfterKeyChange -MetraRoot $MetraRoot
 }
 
 function Set-MetraCursorApiKey {
@@ -1969,8 +2088,14 @@ function Set-MetraCursorApiKey {
             }
         }
         $result | Add-Member -NotePropertyName sidecarRestarted -NotePropertyValue $restart.sidecarRestarted -Force
+        if ($null -ne $restart.deskRestarted) {
+            $result | Add-Member -NotePropertyName deskRestarted -NotePropertyValue $restart.deskRestarted -Force
+        }
         if ($restart.sidecarRestartWarning) {
             $result | Add-Member -NotePropertyName sidecarRestartWarning -NotePropertyValue $restart.sidecarRestartWarning -Force
+        }
+        if ($restart.deskRestartWarning) {
+            $result | Add-Member -NotePropertyName deskRestartWarning -NotePropertyValue $restart.deskRestartWarning -Force
         }
         return $result
     }
@@ -2014,8 +2139,14 @@ function Set-MetraCursorApiKey {
     if ($null -ne $restart.sidecarRestarted) {
         $result | Add-Member -NotePropertyName sidecarRestarted -NotePropertyValue $restart.sidecarRestarted -Force
     }
+    if ($null -ne $restart.deskRestarted) {
+        $result | Add-Member -NotePropertyName deskRestarted -NotePropertyValue $restart.deskRestarted -Force
+    }
     if ($restart.sidecarRestartWarning) {
         $result | Add-Member -NotePropertyName sidecarRestartWarning -NotePropertyValue $restart.sidecarRestartWarning -Force
+    }
+    if ($restart.deskRestartWarning) {
+        $result | Add-Member -NotePropertyName deskRestartWarning -NotePropertyValue $restart.deskRestartWarning -Force
     }
     return $result
 }

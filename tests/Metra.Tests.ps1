@@ -547,6 +547,28 @@ Describe 'Get-MetraChat cloud option' {
         }
     }
 
+    It 'PreferUser picks User scope over a different process env key' {
+        $prevUser = [Environment]::GetEnvironmentVariable('CURSOR_API_KEY', 'User')
+        if ([string]::IsNullOrWhiteSpace($prevUser)) {
+            Set-ItResult -Skipped -Because 'User CURSOR_API_KEY not set on this machine'
+            return
+        }
+        $prevProc = $env:CURSOR_API_KEY
+        try {
+            $env:CURSOR_API_KEY = 'process-stale-team-key-for-prefer-user-test'
+            $resolved = & (Get-Module Metra) { Get-MetraCursorApiKey -PreferUser }
+            $resolved | Should -Be $prevUser
+        }
+        finally {
+            if ($null -ne $prevProc -and $prevProc -ne '') {
+                $env:CURSOR_API_KEY = $prevProc
+            }
+            elseif (Test-Path Env:CURSOR_API_KEY) {
+                Remove-Item Env:CURSOR_API_KEY -ErrorAction SilentlyContinue
+            }
+        }
+    }
+
     It 'accepts -Cloud and warns when API key resolver returns null' {
         InModuleScope Metra {
             Mock Get-MetraCursorApiKey { $null }
@@ -3092,6 +3114,159 @@ Describe 'Metra routing persistence' {
         InModuleScope Metra {
             $out = Show-MetraRoutingEdgesCli *>&1 | Out-String
             $out | Should -Match 'No accepted routing edges'
+        }
+    }
+}
+
+Describe 'Metra routing review' {
+    BeforeEach {
+        $script:originalLocalAppData = $env:LOCALAPPDATA
+        $env:LOCALAPPDATA = Join-Path $TestDrive ([guid]::NewGuid().ToString('N'))
+    }
+
+    AfterEach {
+        $env:LOCALAPPDATA = $script:originalLocalAppData
+    }
+
+    It 'propose creates pending proposal when compound misroute repeats' {
+        InModuleScope Metra {
+            $root = Get-MetraRoutingTelemetryRoot
+            $null = New-Item -ItemType Directory -Path $root -Force
+            $eventsPath = Get-MetraRoutingTelemetryEventsPath
+            @(
+                '{"tsUtc":"2026-08-31T00:00:00Z","source":"routing","query":"iwudata status","outcome":"ambiguous","primary":"IWUDATA-SQL","primaryScore":4,"runnerUp":"IWUDATA-Automation","runnerUpScore":3,"isAmbiguous":true,"matchedTokens":["iwudata","compound:ops"],"favoredTokens":["compound:ops"]}',
+                '{"tsUtc":"2026-08-31T00:00:01Z","source":"routing","query":"iwudata status","outcome":"ambiguous","primary":"IWUDATA-SQL","primaryScore":4,"runnerUp":"IWUDATA-Automation","runnerUpScore":3,"isAmbiguous":true,"matchedTokens":["iwudata","compound:ops"],"favoredTokens":["compound:ops"]}'
+            ) | Set-Content -LiteralPath $eventsPath -Encoding utf8
+
+            $graphPath = Get-MetraRoutingDurableGraphPath
+            $proposalsPath = Get-MetraRoutingProposalsPath
+            Test-Path -LiteralPath $graphPath | Should -BeFalse
+            Test-Path -LiteralPath $proposalsPath | Should -BeFalse
+
+            $result = Update-MetraRoutingEdgeProposals -Last 10 -MinCount 2
+            Test-Path -LiteralPath $graphPath | Should -BeFalse
+            Test-Path -LiteralPath $proposalsPath | Should -BeTrue
+            $result.addedCount | Should -Be 1
+            $result.added[0].stem | Should -Be 'IWUDATA'
+            $result.added[0].cueClass | Should -Be 'ops'
+            $result.added[0].target | Should -Be 'IWUDATA-Automation'
+            $result.added[0].status | Should -Be 'pending'
+        }
+    }
+
+    It 'propose skips when Count is below MinCount' {
+        InModuleScope Metra {
+            $root = Get-MetraRoutingTelemetryRoot
+            $null = New-Item -ItemType Directory -Path $root -Force
+            $eventsPath = Get-MetraRoutingTelemetryEventsPath
+            @(
+                '{"tsUtc":"2026-08-31T00:00:00Z","source":"routing","query":"iwudata status","outcome":"ambiguous","primary":"IWUDATA-SQL","primaryScore":4,"runnerUp":"IWUDATA-Automation","runnerUpScore":3,"isAmbiguous":true,"matchedTokens":["iwudata","compound:ops"],"favoredTokens":["compound:ops"]}'
+            ) | Set-Content -LiteralPath $eventsPath -Encoding utf8
+
+            $result = Update-MetraRoutingEdgeProposals -Last 10 -MinCount 2
+            $result.addedCount | Should -Be 0
+            Test-Path -LiteralPath (Get-MetraRoutingProposalsPath) | Should -BeFalse
+        }
+    }
+
+    It 'affirm applies graph edge and marks proposal affirmed' {
+        InModuleScope Metra {
+            $root = Get-MetraRoutingTelemetryRoot
+            $null = New-Item -ItemType Directory -Path $root -Force
+            $eventsPath = Get-MetraRoutingTelemetryEventsPath
+            @(
+                '{"tsUtc":"2026-08-31T00:00:00Z","source":"routing","query":"iwudata status","outcome":"ambiguous","primary":"IWUDATA-SQL","primaryScore":4,"runnerUp":"IWUDATA-Automation","runnerUpScore":3,"isAmbiguous":true,"matchedTokens":["iwudata","compound:ops"],"favoredTokens":["compound:ops"]}',
+                '{"tsUtc":"2026-08-31T00:00:01Z","source":"routing","query":"iwudata status","outcome":"ambiguous","primary":"IWUDATA-SQL","primaryScore":4,"runnerUp":"IWUDATA-Automation","runnerUpScore":3,"isAmbiguous":true,"matchedTokens":["iwudata","compound:ops"],"favoredTokens":["compound:ops"]}'
+            ) | Set-Content -LiteralPath $eventsPath -Encoding utf8
+
+            $proposed = Update-MetraRoutingEdgeProposals -Last 10 -MinCount 2
+            $id = [string]$proposed.added[0].id
+
+            $affirmed = Invoke-MetraRoutingEdgeAffirm -Id $id -Note 'test affirm'
+            $affirmed.edge.target | Should -Be 'IWUDATA-Automation'
+            @((Get-MetraRoutingDurableGraph).edges).Count | Should -Be 1
+
+            $doc = Get-MetraRoutingProposals
+            $row = @($doc.proposals | Where-Object { $_.id -eq $id } | Select-Object -First 1)
+            $row.status | Should -Be 'affirmed'
+            $row.resolvedAtUtc | Should -Not -BeNullOrEmpty
+        }
+    }
+
+    It 'reject updates proposals only and never writes graph.json' {
+        InModuleScope Metra {
+            $root = Get-MetraRoutingTelemetryRoot
+            $null = New-Item -ItemType Directory -Path $root -Force
+            $eventsPath = Get-MetraRoutingTelemetryEventsPath
+            @(
+                '{"tsUtc":"2026-08-31T00:00:00Z","source":"routing","query":"iwudata status","outcome":"ambiguous","primary":"IWUDATA-SQL","primaryScore":4,"runnerUp":"IWUDATA-Automation","runnerUpScore":3,"isAmbiguous":true,"matchedTokens":["iwudata","compound:ops"],"favoredTokens":["compound:ops"]}',
+                '{"tsUtc":"2026-08-31T00:00:01Z","source":"routing","query":"iwudata status","outcome":"ambiguous","primary":"IWUDATA-SQL","primaryScore":4,"runnerUp":"IWUDATA-Automation","runnerUpScore":3,"isAmbiguous":true,"matchedTokens":["iwudata","compound:ops"],"favoredTokens":["compound:ops"]}'
+            ) | Set-Content -LiteralPath $eventsPath -Encoding utf8
+
+            $proposed = Update-MetraRoutingEdgeProposals -Last 10 -MinCount 2
+            $id = [string]$proposed.added[0].id
+            $graphPath = Get-MetraRoutingDurableGraphPath
+
+            $rejected = Invoke-MetraRoutingEdgeReject -Id $id -Note 'not now'
+            $rejected.status | Should -Be 'rejected'
+            Test-Path -LiteralPath $graphPath | Should -BeFalse
+
+            $again = Update-MetraRoutingEdgeProposals -Last 10 -MinCount 2
+            $again.addedCount | Should -Be 0
+        }
+    }
+
+    It 'propose skips when durable graph already has stem+cue+target' {
+        InModuleScope Metra {
+            $root = Get-MetraRoutingTelemetryRoot
+            $null = New-Item -ItemType Directory -Path $root -Force
+            $eventsPath = Get-MetraRoutingTelemetryEventsPath
+            @(
+                '{"tsUtc":"2026-08-31T00:00:00Z","source":"routing","query":"iwudata status","outcome":"ambiguous","primary":"IWUDATA-SQL","primaryScore":4,"runnerUp":"IWUDATA-Automation","runnerUpScore":3,"isAmbiguous":true,"matchedTokens":["iwudata","compound:ops"],"favoredTokens":["compound:ops"]}',
+                '{"tsUtc":"2026-08-31T00:00:01Z","source":"routing","query":"iwudata status","outcome":"ambiguous","primary":"IWUDATA-SQL","primaryScore":4,"runnerUp":"IWUDATA-Automation","runnerUpScore":3,"isAmbiguous":true,"matchedTokens":["iwudata","compound:ops"],"favoredTokens":["compound:ops"]}'
+            ) | Set-Content -LiteralPath $eventsPath -Encoding utf8
+
+            $null = Add-MetraRoutingAcceptedEdge -Stem 'IWUDATA' -CueClass ops -Target 'IWUDATA-Automation'
+            $result = Update-MetraRoutingEdgeProposals -Last 10 -MinCount 2
+            $result.addedCount | Should -Be 0
+        }
+    }
+
+    It 'candidates still never writes graph.json or proposals.json' {
+        InModuleScope Metra {
+            $root = Get-MetraRoutingTelemetryRoot
+            $null = New-Item -ItemType Directory -Path $root -Force
+            $eventsPath = Get-MetraRoutingTelemetryEventsPath
+            @(
+                '{"tsUtc":"2026-08-31T00:00:00Z","source":"routing","query":"iwudata status","outcome":"ambiguous","primary":"IWUDATA-Automation","primaryScore":4,"runnerUp":"IWUDATA-SQL","runnerUpScore":3,"isAmbiguous":true,"matchedTokens":["iwudata","compound:ops"],"favoredTokens":["compound:ops"]}'
+            ) | Set-Content -LiteralPath $eventsPath -Encoding utf8
+
+            $graphPath = Get-MetraRoutingDurableGraphPath
+            $proposalsPath = Get-MetraRoutingProposalsPath
+            Test-Path -LiteralPath $graphPath | Should -BeFalse
+            Test-Path -LiteralPath $proposalsPath | Should -BeFalse
+
+            $candidates = @(Get-MetraRoutingEdgeCandidates -Last 10)
+            $candidates.Count | Should -Be 1
+            Test-Path -LiteralPath $graphPath | Should -BeFalse
+            Test-Path -LiteralPath $proposalsPath | Should -BeFalse
+        }
+    }
+
+    It 'review CLI lists pending proposals' {
+        InModuleScope Metra {
+            $root = Get-MetraRoutingTelemetryRoot
+            $null = New-Item -ItemType Directory -Path $root -Force
+            $eventsPath = Get-MetraRoutingTelemetryEventsPath
+            @(
+                '{"tsUtc":"2026-08-31T00:00:00Z","source":"routing","query":"iwudata status","outcome":"ambiguous","primary":"IWUDATA-SQL","primaryScore":4,"runnerUp":"IWUDATA-Automation","runnerUpScore":3,"isAmbiguous":true,"matchedTokens":["iwudata","compound:ops"],"favoredTokens":["compound:ops"]}',
+                '{"tsUtc":"2026-08-31T00:00:01Z","source":"routing","query":"iwudata status","outcome":"ambiguous","primary":"IWUDATA-SQL","primaryScore":4,"runnerUp":"IWUDATA-Automation","runnerUpScore":3,"isAmbiguous":true,"matchedTokens":["iwudata","compound:ops"],"favoredTokens":["compound:ops"]}'
+            ) | Set-Content -LiteralPath $eventsPath -Encoding utf8
+
+            $null = Update-MetraRoutingEdgeProposals -Last 10 -MinCount 2
+            $out = Show-MetraRoutingEdgesCli -SubCommand @('review') -Status 'pending' *>&1 | Out-String
+            $out | Should -Match 'IWUDATA'
+            $out | Should -Match 'IWUDATA-Automation'
         }
     }
 }

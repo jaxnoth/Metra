@@ -255,21 +255,36 @@ function Get-MetraChatTitle {
 function Get-MetraCursorApiKey {
     <#
     .SYNOPSIS
-        Resolves a Cursor API key for Cloud Agents reads.
+        Resolves a Cursor API key for Cloud Agents reads and Ask sidecar spawn.
     .DESCRIPTION
-        Prefers process $env:CURSOR_API_KEY, then User scope, then Machine scope.
+        Default order: process $env:CURSOR_API_KEY, then User scope, then Machine scope.
+        -PreferUser flips to User first so an operator personal key set via
+        `.\metra.ps1 ask key set` wins over a stale team key injected into the IDE process.
         Cursor agent shells often miss User vars set after the IDE started - User lookup
         covers that. Never prompts and never writes secrets to disk. Returns $null when
         unset so callers can skip cloud search quietly.
     #>
     [CmdletBinding()]
-    param()
+    param(
+        [switch]$PreferUser
+    )
 
-    foreach ($candidate in @(
+    $order = if ($PreferUser) {
+        @(
+            [Environment]::GetEnvironmentVariable('CURSOR_API_KEY', 'User')
+            [string]$env:CURSOR_API_KEY
+            [Environment]::GetEnvironmentVariable('CURSOR_API_KEY', 'Machine')
+        )
+    }
+    else {
+        @(
             [string]$env:CURSOR_API_KEY
             [Environment]::GetEnvironmentVariable('CURSOR_API_KEY', 'User')
             [Environment]::GetEnvironmentVariable('CURSOR_API_KEY', 'Machine')
-        )) {
+        )
+    }
+
+    foreach ($candidate in $order) {
         if (-not [string]::IsNullOrWhiteSpace($candidate)) {
             $trimmed = $candidate.Trim()
             # Keep process env warm for later calls in this session

@@ -7,7 +7,7 @@ Loopback sidecar implementing the Metra Ask contract:
 
 Uses `@cursor/sdk` with the **local** runtime. Answer-only posture is enforced in the prompt wrapper.
 
-**Model default:** Cursor Router **Auto Cost** (`auto-smart` + `optimize_for=cost`) - legacy Auto behavior on the Cursor Models pool. Prefer this over Auto Balance when Other Models quota is tight (Balance bills routed models and can exhaust Other Models). Pin overrides remain available via `ask.cursor.model` / `.\metra.ps1 ask engine set cursor -Model <id>` (aliases: `auto-cost`, `auto-balance`, `auto-intelligence`).
+**Model default:** Cursor Router **Auto Cost** (`auto-smart` + `optimize_for=cost`) when the API key supports it. Keys that cannot use `auto-smart` are adapted at runtime to `default` / another catalog id. Concrete pins such as Inspect `gemini-3.7-flash` are valid on personal and team keys when listed in `Cursor.models.list()`; only true "cannot use this model" responses trigger one create/run fallback. Auth/session errors are surfaced as key problems (not as model unavailability). Pin overrides: `ask.cursor.model` / `inspect.cursor.model` / `.\metra.ps1 ask engine set cursor -Model <id>` (aliases: `auto-cost`, `auto-balance`, `auto-intelligence`; concrete ids: `default`, `gemini-3.7-flash`, `composer-2.5`, …). Ask sidecar spawn prefers the User-scope `CURSOR_API_KEY` when set so `.\metra.ps1 ask key set` wins over a stale team key in the IDE process.
 
 Secrets scrub (defense in depth): the sidecar mirrors Metra's high-signal secret patterns on inbound prompt/context and outbound message. PowerShell (`AskSecrets.ps1` + journal write) remains authoritative - do not treat the Node mirror as the only gate.
 

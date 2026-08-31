@@ -2234,7 +2234,8 @@ function Get-MetraDeskAskResult {
     # Handoff early so lane classifier has integer routeScore (threshold 2).
     $handoff = Get-MetraDeskHandoff -Query $q -MetraRoot $MetraRoot
     $routeScore = [int](Get-MetraProp -Object $handoff -Name 'score' -Default 0)
-    $lanePre = Resolve-MetraAskLane -Prompt $q -RouteScore $routeScore -EvidenceQuality 'none'
+    $routeWhere = [string](Get-MetraProp -Object $handoff -Name 'where' -Default '')
+    $lanePre = Resolve-MetraAskLane -Prompt $q -RouteScore $routeScore -EvidenceQuality 'none' -RouteWhere $routeWhere
 
     # Honesty / capture / clarify / authority - Chat lane landing (before evidence pack).
     if ($lanePre.reason -eq 'social_greeting') {
@@ -2254,8 +2255,7 @@ function Get-MetraDeskAskResult {
     }
     if ($lanePre.reason -eq 'authority_requires_confirm' -or
         $lanePre.reason -eq 'sparse_intake_clarify' -or
-        ($lanePre.reason -eq 'capture_intent' -and [string]$lanePre.answerType -eq 'capture_ack') -or
-        $lanePre.reason -eq 'high_intent_no_route') {
+        ($lanePre.reason -eq 'capture_intent' -and [string]$lanePre.answerType -eq 'capture_ack')) {
         return New-MetraAskChatLaneResult -Prompt $q -Handoff $handoff -Lane $lanePre `
             -Continuity $continuity -SessionId $SessionId -MetraRoot $MetraRoot
     }
@@ -2266,6 +2266,11 @@ function Get-MetraDeskAskResult {
     # Ops owns Ask: revive a dead sidecar on demand.
     if (-not $capability.available -and $capability.selected) {
         $capability = Start-MetraAskEngine -MetraRoot $MetraRoot
+    }
+
+    if (Test-MetraAskOpsStatusIntent -Prompt $q) {
+        return New-MetraAskOpsStatusResult -Prompt $q -Handoff $handoff -Capability $capability `
+            -Continuity $continuity -SessionId $SessionId -MetraRoot $MetraRoot
     }
 
     $pack = New-MetraAskEvidencePack -Prompt $q -Handoff $handoff -Continuity $continuity `
@@ -2280,7 +2285,7 @@ function Get-MetraDeskAskResult {
         }
     }
 
-    $lane = Resolve-MetraAskLane -Prompt $q -RouteScore $routeScore -EvidenceQuality $quality
+    $lane = Resolve-MetraAskLane -Prompt $q -RouteScore $routeScore -EvidenceQuality $quality -RouteWhere $routeWhere
 
     # Chat lane for thin/none-but-routed (and residual chat) - human landing, not router failure.
     if ($lane.lane -eq 'chat') {
@@ -2447,7 +2452,8 @@ function Get-MetraDeskAskResult {
         })
     }
 
-    if (-not $engineResult.ok -or [string]::IsNullOrWhiteSpace($engineResult.message)) {
+    if (-not $engineResult.ok) {
+        $failMsg = Get-MetraAskEngineFailureMessage -EngineResult $engineResult -HandoffNext $handoffNext
         $failCap = [PSCustomObject]@{
             enabled       = $capability.enabled
             selected      = $capability.selected
@@ -2455,11 +2461,7 @@ function Get-MetraDeskAskResult {
             engine        = $capability.engine
             providerLabel = $capability.providerLabel
             reason        = 'engine_error'
-            message       = @"
-Ask engine unavailable.
-
-The Ask engine returned an error. Metra can still route work and recommend durable homes.
-"@.Trim()
+            message       = $failMsg
             port          = $capability.port
             model         = $capability.model
         }

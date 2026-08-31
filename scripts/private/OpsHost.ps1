@@ -467,6 +467,151 @@ function Open-MetraOpsDeskBrowser {
     }
 }
 
+function Stop-MetraOpsDesk {
+    <#
+    .SYNOPSIS
+        Stops Metra Ops desk and the Ask sidecar together (one product lifecycle).
+    #>
+    [CmdletBinding()]
+    param(
+        [int]$Port = 0,
+        [string]$MetraRoot = (Get-MetraRoot)
+    )
+
+    if ($Port -le 0) {
+        $Port = [int](Resolve-MetraOpsDeskBinding -MetraRoot $MetraRoot).Port
+    }
+
+    try {
+        $null = Stop-MetraAskEngine -MetraRoot $MetraRoot -IncludePortListeners -Confirm:$false
+    }
+    catch {
+        Write-Warning "Ask sidecar stop during desk stop: $($_.Exception.Message)"
+    }
+
+    Stop-MetraOpsServer -Port $Port
+}
+
+function Restart-MetraOpsDesk {
+    <#
+    .SYNOPSIS
+        Recycles Ops desk + Ask sidecar (background child when desk was up).
+    #>
+    [CmdletBinding()]
+    param(
+        [int]$Port = 0,
+        [string]$MetraRoot = (Get-MetraRoot),
+        [switch]$NoRefresh,
+        [switch]$Quick
+    )
+
+    if ($Port -le 0) {
+        $Port = [int](Resolve-MetraOpsDeskBinding -MetraRoot $MetraRoot).Port
+    }
+
+    $wasUp = Test-MetraOpsDeskResponding -Port $Port -TimeoutSec 2
+    Stop-MetraOpsDesk -Port $Port -MetraRoot $MetraRoot
+
+    if (-not $wasUp) {
+        return [PSCustomObject]@{
+            restarted = $false
+            reason    = 'desk_was_down'
+            port      = $Port
+        }
+    }
+
+    $child = Start-MetraOpsChildProcess -MetraRoot $MetraRoot -Port $Port -NoRefresh:$NoRefresh -Quick:$Quick
+    return [PSCustomObject]@{
+        restarted = $true
+        childPid  = $child.Id
+        port      = $Port
+    }
+}
+
+function Start-MetraOpsDesk {
+    <#
+    .SYNOPSIS
+        Starts Metra Ops + Ask in a detached background process (terminal can close safely).
+    .DESCRIPTION
+        Ops child runs Start-MetraOpsServer -Foreground, which owns the Ask sidecar for that session.
+    #>
+    [CmdletBinding()]
+    param(
+        [int]$Port = 0,
+        [switch]$Quick,
+        [switch]$Full,
+        [switch]$NoBrowser,
+        [switch]$NoRefresh,
+        [switch]$ForceLocal,
+        [string]$OpsBaseUrl,
+        [string]$MetraRoot = (Get-MetraRoot)
+    )
+
+    Assert-MetraOpsMayStartLocally -ForceLocal:$ForceLocal -OpsBaseUrl $OpsBaseUrl -MetraRoot $MetraRoot
+
+    if ($ForceLocal) {
+        $env:METRA_OPS_FORCE_LOCAL = '1'
+    }
+
+    if ($Port -le 0) {
+        $binding = Resolve-MetraOpsDeskBinding -MetraRoot $MetraRoot
+        $Port = [int]$binding.Port
+    }
+    else {
+        $binding = Get-MetraOpsDeskBindingForPort -Port $Port -MetraRoot $MetraRoot
+    }
+
+    if ($Port -lt 1 -or $Port -gt 65535) {
+        throw "Invalid port: $Port"
+    }
+
+    $shareUrl = [string](Get-MetraProp -Object $binding -Name 'ShareUrl' -Default ([string]$binding.BrowserUrl))
+    if ([string]::IsNullOrWhiteSpace($shareUrl)) { $shareUrl = [string]$binding.BrowserUrl }
+    $operatorUrl = Get-MetraOpsOperatorOpenUrl -Binding $binding
+    $deskDisplay = if ($shareUrl -and (Test-MetraOpsMemorableDeskBaseUrl -Url $shareUrl -OperatorUrl $operatorUrl)) {
+        $shareUrl
+    }
+    else { $operatorUrl }
+
+    if (Test-MetraOpsDeskResponding -Port $Port) {
+        Write-Host ("Metra Ops desk already serving: {0}" -f $deskDisplay) -ForegroundColor Green
+        $askCap = Get-MetraAskCapability -MetraRoot $MetraRoot
+        if ([bool]$askCap.selected) {
+            if ([bool]$askCap.available) {
+                Write-Host ("Ask engine: {0} on port {1} (healthy)." -f $askCap.providerLabel, $askCap.port) -ForegroundColor DarkGray
+            }
+            else {
+                Write-Host ("Ask engine: selected but unavailable ({0})." -f $askCap.reason) -ForegroundColor DarkYellow
+            }
+        }
+        if (-not $NoBrowser) {
+            try {
+                $authorizedOpenUrl = Get-MetraOpsDeskOpenUrl -Binding $binding
+                Start-Process $authorizedOpenUrl | Out-Null
+            }
+            catch {
+                Write-Warning "Could not open browser: $($_.Exception.Message)"
+            }
+        }
+        Write-Host ("Restart with: .\metra.ps1 ops -Stop -Port {0}" -f $Port) -ForegroundColor DarkGray
+        return
+    }
+
+    if (-not $NoRefresh) {
+        Write-Host 'Refreshing desk snapshot...' -ForegroundColor Cyan
+        $null = Get-MetraDeskPayload -Refresh -Full:$Full -MetraRoot $MetraRoot
+    }
+
+    $child = Start-MetraOpsChildProcess -MetraRoot $MetraRoot -Port $Port -NoRefresh -Quick:$Quick
+    Write-Host ("Metra Ops desk started in background (process {0}): {1}" -f $child.Id, $deskDisplay) -ForegroundColor Green
+    Write-Host 'Ops and Ask run together in that process; closing this terminal will not stop the desk.' -ForegroundColor DarkGray
+    Write-Host ("Stop with: .\metra.ps1 ops -Stop -Port {0}" -f $Port) -ForegroundColor DarkGray
+
+    if (-not $NoBrowser) {
+        Open-MetraOpsDeskBrowser -Port $Port -MetraRoot $MetraRoot
+    }
+}
+
 function Start-MetraOpsChildProcess {
     <#
     .SYNOPSIS
@@ -498,6 +643,7 @@ function Start-MetraOpsChildProcess {
         '-WindowStyle', 'Hidden'
         '-File', $bootstrap
         '-NoBrowser'
+        '-Foreground'
         '-Port', "$Port"
     )
     if ($NoRefresh) { $argList += '-NoRefresh' }
@@ -608,7 +754,7 @@ function Stop-MetraOpsHost {
         [switch]$Force
     )
 
-    try { Stop-MetraOpsServer -Port $Port } catch { Write-Warning $_.Exception.Message }
+    try { Stop-MetraOpsDesk -Port $Port } catch { Write-Warning $_.Exception.Message }
 
     $state = Get-MetraOpsHostState
     $statePort = if ($state) { [int](Get-MetraProp -Object $state -Name 'opsPort' -Default 0) } else { 0 }

@@ -187,6 +187,123 @@ function New-MetraAskChatLaneResult {
     return Merge-MetraAskLaneIntoResult -Result $result -Lane $Lane
 }
 
+function Test-MetraAskOpsStatusIntent {
+    <#
+    .SYNOPSIS
+        Metra/Ops desk health questions - answer from capability probes, not Chat capture landing.
+    #>
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory)][AllowEmptyString()][string]$Prompt
+    )
+
+    $q = $Prompt.Trim()
+    if ([string]::IsNullOrWhiteSpace($q)) { return $false }
+    return [bool]($q -match '(?i)\b(running well|running ok|are you (ok|up|there|online|working)|you (ok|up|online|working)|ask engine|sidecar|ops desk|desk (status|health)|metra (status|health|running)|health check|doing ok|everything ok)\b')
+}
+
+function New-MetraAskOpsStatusResult {
+    <#
+    .SYNOPSIS
+        Grounded Ops/Ask status from local capability + sidecar /health (no SDK completion).
+    #>
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory)][string]$Prompt,
+        [Parameter(Mandatory)]$Handoff,
+        [Parameter(Mandatory)]$Capability,
+        $Continuity,
+        [string]$SessionId,
+        [string]$MetraRoot = (Get-MetraRoot)
+    )
+
+    $cap = $Capability
+    $engine = [string](Get-MetraProp -Object $cap -Name 'engine' -Default '')
+    $provider = [string](Get-MetraProp -Object $cap -Name 'providerLabel' -Default $engine)
+    $port = [int](Get-MetraProp -Object $cap -Name 'port' -Default 0)
+    $available = [bool](Get-MetraProp -Object $cap -Name 'available' -Default $false)
+    $healthy = [bool](Get-MetraProp -Object $cap -Name 'engineHealthy' -Default $false)
+    $reason = [string](Get-MetraProp -Object $cap -Name 'reason' -Default '')
+    $model = [string](Get-MetraProp -Object $cap -Name 'model' -Default '')
+
+    $runHealth = $null
+    if ($engine -eq 'cursor' -and $port -gt 0) {
+        try {
+            $runHealth = Invoke-RestMethod -Uri "http://127.0.0.1:$port/health" -Method Get -TimeoutSec 2
+        }
+        catch { }
+    }
+
+    $lines = @('From the Ops desk:')
+    $lines += '- Desk Ask path is up (this reply came from the local Ops server).'
+
+    if (-not [bool](Get-MetraProp -Object $cap -Name 'selected' -Default $false)) {
+        $lines += '- Ask engine: not selected or disabled.'
+    }
+    elseif ($available -and $healthy) {
+        $lines += "- Ask engine ($provider): sidecar listening on port $port; /health ok."
+        $consecutive = Get-MetraProp -Object $runHealth -Name 'consecutiveRunErrors' -Default $null
+        $lastStatus = [string](Get-MetraProp -Object $runHealth -Name 'lastRunStatus' -Default '')
+        if ($null -ne $consecutive -and [int]$consecutive -gt 0) {
+            $lines += "- Recent completions: $consecutive consecutive run error(s) (last status: $(if ($lastStatus) { $lastStatus } else { 'unknown' }))."
+            $lines += '  Try: .\metra.ps1 ask engine restart -Confirm:$false'
+        }
+        elseif ($lastStatus -eq 'error') {
+            $lines += '- Last completion failed; sidecar is up but SDK runs may still error.'
+            $lines += '  Try: .\metra.ps1 ask engine restart -Confirm:$false'
+        }
+        else {
+            $lines += $(if ($model) { "- Model pin: $model." } else { '- Model pin: default.' })
+        }
+    }
+    elseif ($reason) {
+        $lines += "- Ask engine ($provider): not ready ($reason)."
+        $capMsg = [string](Get-MetraProp -Object $cap -Name 'message' -Default '')
+        if ($capMsg) {
+            $first = ($capMsg -split "`n" | Where-Object { -not [string]::IsNullOrWhiteSpace($_) } | Select-Object -First 1)
+            if ($first) { $lines += "  $first" }
+        }
+    }
+    else {
+        $lines += '- Ask engine: unavailable.'
+    }
+
+    $lines += 'Stop with: .\metra.ps1 ops -Stop (stops Ops and Ask together).'
+
+    $msg = ($lines -join "`n").Trim()
+    $spoken = ($lines | Select-Object -First 3) -join ' '
+    $voice = New-MetraVoiceResponse -Spoken $spoken -Display $msg -Durable $msg
+
+    $lane = New-MetraAskLaneResultObject -Lane 'chat' -Reason 'ops_status_report' `
+        -ResponseObjective 'GroundedAnswer' -IntentConfidence 1.0 `
+        -RouteScore ([int](Get-MetraProp -Object $Handoff -Name 'score' -Default 0)) `
+        -EvidenceQuality 'adequate' -TurnMode 'Query'
+
+    $result = [PSCustomObject]@{
+        handoff          = $Handoff
+        message          = $msg
+        sessionId        = $(if (-not [string]::IsNullOrWhiteSpace($SessionId)) { $SessionId.Trim() } else { $null })
+        capability       = $cap
+        engine           = $engine
+        model            = $model
+        answered         = $true
+        answerType       = 'grounded'
+        evidenceQuality  = 'adequate'
+        nextStep         = 'Ask a portfolio question, or run .\metra.ps1 ask engine show if completions keep failing.'
+        continuity       = $Continuity
+        secretsScrubbed  = $false
+        secretsNotice    = $null
+        secretsKinds     = @()
+        secretsReason    = $null
+        scrubbedPrompt   = $Prompt
+        suggestCapture   = $false
+        images           = @()
+        voice            = $voice
+    }
+
+    return Merge-MetraAskLaneIntoResult -Result $result -Lane $lane
+}
+
 function Test-MetraAskAmbiguousReminderIntent {
     <#
     .SYNOPSIS
@@ -249,6 +366,7 @@ function Get-MetraAskTurnMode {
     if ([string]::IsNullOrWhiteSpace($q)) { return 'Chat' }
     if (Test-MetraAskAuthorityIntent -Prompt $q) { return 'Route' }
     if (Test-MetraDeskGreeting -Query $q) { return 'Chat' }
+    if (Test-MetraAskOpsStatusIntent -Prompt $q) { return 'Query' }
     if (Test-MetraAskPersonalObservationIntent -Prompt $q) { return 'Chat' }
     if (Test-MetraAskParkOrSaveIntent -Prompt $q) { return 'Capture' }
     if (Test-MetraAskAmbiguousReminderIntent -Prompt $q) { return 'Capture' }
@@ -422,7 +540,8 @@ function Resolve-MetraAskLane {
     param(
         [Parameter(Mandatory)][AllowEmptyString()][string]$Prompt,
         [int]$RouteScore = 0,
-        [ValidateSet('adequate', 'thin', 'none')][string]$EvidenceQuality = 'none'
+        [ValidateSet('adequate', 'thin', 'none')][string]$EvidenceQuality = 'none',
+        [string]$RouteWhere = ''
     )
 
     $thresholds = Get-MetraAskLaneThresholds
@@ -430,6 +549,8 @@ function Resolve-MetraAskLane {
     $turnMode = Get-MetraAskTurnMode -Prompt $Prompt
     $routeScore = [Math]::Max(0, [int]$RouteScore)
     $eq = $EvidenceQuality
+    $home = Get-MetraHomeDestinationName
+    $atHome = (-not [string]::IsNullOrWhiteSpace($RouteWhere) -and $RouteWhere -eq $home)
 
     $common = @{
         IntentConfidence = $intent
@@ -472,6 +593,16 @@ function Resolve-MetraAskLane {
 
     # 6) Route match + adequate -> routed
     if ($routeScore -ge [int]$thresholds.RouteConfidentScore -and $eq -eq 'adequate') {
+        return New-MetraAskLaneResultObject @common -Lane 'routed' -Reason 'evidence_adequate_routed' -ResponseObjective 'GroundedAnswer'
+    }
+
+    # 6b) Metra home below confident score: pack-backed evidence uses the executor.
+    if ($atHome -and $routeScore -lt [int]$thresholds.RouteConfidentScore -and $eq -in @('adequate', 'thin')) {
+        return New-MetraAskLaneResultObject @common -Lane 'routed' -Reason 'evidence_adequate_routed' -ResponseObjective 'GroundedAnswer'
+    }
+
+    # 6c) Thin evidence + real question -> executor (provisional), not capture landing.
+    if ($eq -eq 'thin' -and $turnMode -in @('Query', 'Route')) {
         return New-MetraAskLaneResultObject @common -Lane 'routed' -Reason 'evidence_adequate_routed' -ResponseObjective 'GroundedAnswer'
     }
 

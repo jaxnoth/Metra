@@ -695,7 +695,7 @@ function Invoke-MetraAskEngineCommand {
                     }
                     return Set-MetraCursorApiKey -ApiKey $key
                 }
-                'clear' { return Set-MetraCursorApiKey -ApiKey 'x' -Clear }
+                'clear' { return Set-MetraCursorApiKey -Clear }
                 default { throw 'Usage: ask key status|set|clear' }
             }
         }

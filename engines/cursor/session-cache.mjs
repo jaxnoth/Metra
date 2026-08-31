@@ -246,6 +246,36 @@ export function getConsecutiveRunErrors() {
  */
 export function classifyRunError(detailScrubbed) {
   const detail = detailScrubbed && String(detailScrubbed).trim() ? String(detailScrubbed).trim() : ''
+  const lower = detail.toLowerCase()
+  if (
+    /usage limit|usage limits|billing|quota|subscription|license|payment required|plan limit|reached its limit/.test(
+      lower,
+    )
+  ) {
+    return {
+      errorCode: 'cursor_usage_limit',
+      errorDetail: detail,
+      retryClass: 'licensing_error',
+    }
+  }
+  if (/cannot use this model/i.test(lower)) {
+    return {
+      errorCode: 'cursor_model_unavailable',
+      errorDetail: detail,
+      retryClass: 'model_error',
+    }
+  }
+  if (
+    /authentication error|not authenticated|unauthorized|log(?:ging)? out and back in/.test(
+      lower,
+    )
+  ) {
+    return {
+      errorCode: 'cursor_auth_error',
+      errorDetail: detail,
+      retryClass: 'model_error',
+    }
+  }
   const opaque =
     !detail ||
     detail.startsWith('requestId=') ||
