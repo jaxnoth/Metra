@@ -1,0 +1,12 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "inspect-request",
+  "type": "object",
+  "required": ["schemaVersion"],
+  "properties": {
+    "schemaVersion": { "type": "integer", "const": 1 },
+    "projectName": { "type": "string" },
+    "planPath": { "type": "string" },
+    "allowedPaths": { "type": "array", "items": { "type": "string" } }
+  }
+}

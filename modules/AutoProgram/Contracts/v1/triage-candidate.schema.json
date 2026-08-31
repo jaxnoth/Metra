@@ -1,0 +1,12 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "triage-candidate",
+  "type": "object",
+  "required": ["id", "summary", "eligible"],
+  "properties": {
+    "id": { "type": "string", "pattern": "^CAND-\\d{8}-\\d{4}$" },
+    "summary": { "type": "string" },
+    "eligible": { "type": "boolean" },
+    "ineligibleReasons": { "type": "array", "items": { "type": "string" } }
+  }
+}
