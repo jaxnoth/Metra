@@ -2006,8 +2006,8 @@ function Stop-MetraOpsServer {
     .SYNOPSIS
         Stops a Metra Ops desk on a loopback port, including one orphaned by a closed console.
     .DESCRIPTION
-        Does not call Stop-MetraAskEngine. The desk process finally block stops Ask for that session;
-        killing an orphaned listener must not tear down Ask belonging to another Ops process.
+        Stops only the Ops HTTP listener process. Prefer Stop-MetraOpsDesk to stop Ops and Ask together.
+        The desk process finally block stops Ask for that session when it exits cleanly.
     #>
     [CmdletBinding()]
     param([int]$Port = 7380)

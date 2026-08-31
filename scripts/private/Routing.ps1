@@ -1297,6 +1297,472 @@ function Get-MetraRoutingEdgeCandidates {
     )
 }
 
+function Get-MetraRoutingProposalsPath {
+    <#
+    .SYNOPSIS
+        Path to machine-local routing proposals.json (does not create file or directory).
+    #>
+    [CmdletBinding()]
+    param()
+
+    Join-Path (Get-MetraRoutingTelemetryRoot) 'proposals.json'
+}
+
+function Get-MetraRoutingProposalId {
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory)][string]$Stem,
+        [Parameter(Mandatory)][string]$CueClass,
+        [Parameter(Mandatory)][string]$Target
+    )
+
+    $edgeId = Get-MetraRoutingAcceptedEdgeId -Stem $Stem -CueClass $CueClass -Target $Target
+    return 'p' + $edgeId.Substring(1)
+}
+
+function Test-MetraRoutingProposalRecord {
+    <#
+    .SYNOPSIS
+        True when a parsed proposal object meets schema v1 minimum requirements.
+    #>
+    [CmdletBinding()]
+    param([Parameter(Mandatory)]$Proposal)
+
+    if ($null -eq $Proposal) { return $false }
+
+    $id = [string](Get-MetraProp -Object $Proposal -Name 'id' -Default '')
+    $stem = [string](Get-MetraProp -Object $Proposal -Name 'stem' -Default '')
+    $target = [string](Get-MetraProp -Object $Proposal -Name 'target' -Default '')
+    $cueClass = [string](Get-MetraProp -Object $Proposal -Name 'cueClass' -Default '').Trim().ToLowerInvariant()
+    $status = [string](Get-MetraProp -Object $Proposal -Name 'status' -Default '').Trim().ToLowerInvariant()
+    $reason = Get-MetraProp -Object $Proposal -Name 'reason' -Default $null
+    $source = [string](Get-MetraProp -Object $Proposal -Name 'source' -Default '')
+    $proposedRaw = [string](Get-MetraProp -Object $Proposal -Name 'proposedAtUtc' -Default '')
+    $evidence = Get-MetraProp -Object $Proposal -Name 'evidence' -Default $null
+
+    if ([string]::IsNullOrWhiteSpace($id)) { return $false }
+    if ([string]::IsNullOrWhiteSpace($stem)) { return $false }
+    if ([string]::IsNullOrWhiteSpace($target)) { return $false }
+    if ($cueClass -notin @('ops', 'sql')) { return $false }
+    if ($status -notin @('pending', 'affirmed', 'rejected')) { return $false }
+    if ($null -eq $reason) { return $false }
+    if ($source -ne 'review') { return $false }
+    if ($null -eq $evidence) { return $false }
+
+    try {
+        $null = [datetime]::Parse($proposedRaw, [System.Globalization.CultureInfo]::InvariantCulture, [System.Globalization.DateTimeStyles]::AssumeUniversal)
+    }
+    catch {
+        return $false
+    }
+
+    $resolvedRaw = Get-MetraProp -Object $Proposal -Name 'resolvedAtUtc' -Default $null
+    if ($status -eq 'pending') {
+        if ($null -ne $resolvedRaw -and -not [string]::IsNullOrWhiteSpace([string]$resolvedRaw)) { return $false }
+    }
+    else {
+        if ($null -eq $resolvedRaw -or [string]::IsNullOrWhiteSpace([string]$resolvedRaw)) { return $false }
+        try {
+            $null = [datetime]::Parse([string]$resolvedRaw, [System.Globalization.CultureInfo]::InvariantCulture, [System.Globalization.DateTimeStyles]::AssumeUniversal)
+        }
+        catch {
+            return $false
+        }
+    }
+
+    return $true
+}
+
+function Get-MetraRoutingProposals {
+    <#
+    .SYNOPSIS
+        Loads routing edge proposals (fail-soft empty v1; never rewrites on read).
+    #>
+    [CmdletBinding()]
+    param()
+
+    $empty = [PSCustomObject]@{ version = 1; proposals = @() }
+    $path = Get-MetraRoutingProposalsPath
+    if (-not (Test-Path -LiteralPath $path -PathType Leaf)) {
+        return $empty
+    }
+
+    try {
+        $raw = [System.IO.File]::ReadAllText($path)
+    }
+    catch {
+        return $empty
+    }
+
+    if ([string]::IsNullOrWhiteSpace($raw)) { return $empty }
+
+    try {
+        $doc = $raw | ConvertFrom-Json -ErrorAction Stop
+    }
+    catch {
+        return $empty
+    }
+
+    $version = [int](Get-MetraProp -Object $doc -Name 'version' -Default 0)
+    if ($version -ne 1) { return $empty }
+
+    $proposalRaw = Get-MetraProp -Object $doc -Name 'proposals' -Default $null
+    if ($null -eq $proposalRaw) { return $empty }
+
+    $valid = New-Object System.Collections.Generic.List[object]
+    foreach ($proposal in @($proposalRaw)) {
+        if (Test-MetraRoutingProposalRecord -Proposal $proposal) {
+            [void]$valid.Add($proposal)
+        }
+    }
+
+    return [PSCustomObject]@{
+        version   = 1
+        proposals = @($valid.ToArray())
+    }
+}
+
+function Save-MetraRoutingProposals {
+    <#
+    .SYNOPSIS
+        Validates and atomically writes routing proposals.json (fail-loud).
+    #>
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory)]$Doc
+    )
+
+    $version = [int](Get-MetraProp -Object $Doc -Name 'version' -Default 0)
+    if ($version -ne 1) {
+        throw 'unsupported proposals version'
+    }
+
+    $proposalRaw = Get-MetraProp -Object $Doc -Name 'proposals' -Default @()
+    $proposals = @($proposalRaw)
+    foreach ($proposal in $proposals) {
+        if (-not (Test-MetraRoutingProposalRecord -Proposal $proposal)) {
+            throw 'invalid proposal record'
+        }
+    }
+
+    $payload = [ordered]@{
+        version   = 1
+        proposals = @(
+            foreach ($proposal in $proposals) {
+                $status = ([string]$proposal.status).Trim().ToLowerInvariant()
+                $resolved = Get-MetraProp -Object $proposal -Name 'resolvedAtUtc' -Default $null
+                $evidence = Get-MetraProp -Object $proposal -Name 'evidence' -Default @{}
+                [ordered]@{
+                    id            = [string]$proposal.id
+                    stem          = ([string]$proposal.stem).Trim().ToUpperInvariant()
+                    cueClass      = ([string]$proposal.cueClass).Trim().ToLowerInvariant()
+                    target        = [string]$proposal.target
+                    status        = $status
+                    reason        = [string]$proposal.reason
+                    evidence      = $evidence
+                    proposedAtUtc = [string]$proposal.proposedAtUtc
+                    resolvedAtUtc = if ($status -eq 'pending') { $null } else { [string]$resolved }
+                    source        = 'review'
+                }
+            }
+        )
+    }
+
+    $path = Get-MetraRoutingProposalsPath
+    $dir = Split-Path -Parent $path
+    if ($dir -and -not (Test-Path -LiteralPath $dir -PathType Container)) {
+        $null = New-Item -ItemType Directory -Path $dir -Force
+    }
+
+    $json = ($payload | ConvertTo-Json -Depth 8 -Compress)
+    $tmp = "$path.tmp"
+    [System.IO.File]::WriteAllText($tmp, ($json + "`r`n"))
+    Move-Item -LiteralPath $tmp -Destination $path -Force
+}
+
+function Get-MetraRoutingSuggestedTargetForStemCue {
+    <#
+    .SYNOPSIS
+        Registry-graph sibling for stem + cueClass (Ops|Sql role), or null.
+    #>
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory)][string]$Stem,
+        [Parameter(Mandatory)]
+        [ValidateSet('ops', 'sql')]
+        [string]$CueClass,
+        [object[]]$GraphFamilies
+    )
+
+    $stemNorm = ([string]$Stem).Trim().ToUpperInvariant()
+    if (-not $GraphFamilies) {
+        $GraphFamilies = @(Get-MetraRoutingGraph)
+    }
+
+    foreach ($family in @($GraphFamilies)) {
+        if ([string]$family.Stem -ne $stemNorm) { continue }
+        $members = Get-MetraProp -Object $family -Name 'Members' -Default $null
+        if (-not $members) { continue }
+        if ($CueClass -eq 'ops') {
+            $name = [string](Get-MetraProp -Object $members -Name 'Ops' -Default '')
+            if (-not [string]::IsNullOrWhiteSpace($name)) { return $name }
+        }
+        if ($CueClass -eq 'sql') {
+            $name = [string](Get-MetraProp -Object $members -Name 'Sql' -Default '')
+            if (-not [string]::IsNullOrWhiteSpace($name)) { return $name }
+        }
+    }
+
+    return $null
+}
+
+function Test-MetraRoutingProposalFingerprintExists {
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory)][string]$Stem,
+        [Parameter(Mandatory)][string]$CueClass,
+        [Parameter(Mandatory)][string]$Target,
+        [Parameter(Mandatory)][string[]]$Statuses,
+        [object[]]$Proposals
+    )
+
+    $stemNorm = ([string]$Stem).Trim().ToUpperInvariant()
+    $cueNorm = ([string]$CueClass).Trim().ToLowerInvariant()
+    $targetNorm = ([string]$Target).Trim()
+
+    foreach ($proposal in @($Proposals)) {
+        $pStem = ([string]$proposal.stem).Trim().ToUpperInvariant()
+        $pCue = ([string]$proposal.cueClass).Trim().ToLowerInvariant()
+        $pTarget = ([string]$proposal.target).Trim()
+        $pStatus = ([string]$proposal.status).Trim().ToLowerInvariant()
+        if ($pStem -eq $stemNorm -and $pCue -eq $cueNorm -and $pTarget -eq $targetNorm -and ($Statuses -contains $pStatus)) {
+            return $true
+        }
+    }
+
+    return $false
+}
+
+function Test-MetraRoutingDurableEdgeMatches {
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory)][string]$Stem,
+        [Parameter(Mandatory)][string]$CueClass,
+        [Parameter(Mandatory)][string]$Target,
+        [object]$Graph
+    )
+
+    if (-not $Graph) {
+        $Graph = Get-MetraRoutingDurableGraph
+    }
+
+    $stemNorm = ([string]$Stem).Trim().ToUpperInvariant()
+    $cueNorm = ([string]$CueClass).Trim().ToLowerInvariant()
+    $targetNorm = ([string]$Target).Trim()
+
+    foreach ($edge in @($Graph.edges)) {
+        $eStem = ([string]$edge.stem).Trim().ToUpperInvariant()
+        $eCue = ([string]$edge.cueClass).Trim().ToLowerInvariant()
+        $eTarget = ([string]$edge.target).Trim()
+        if ($eStem -eq $stemNorm -and $eCue -eq $cueNorm -and $eTarget -eq $targetNorm) {
+            return $true
+        }
+    }
+
+    return $false
+}
+
+function Update-MetraRoutingEdgeProposals {
+    <#
+    .SYNOPSIS
+        Refreshes pending proposals from ambiguous telemetry candidates (never writes graph.json).
+    #>
+    [CmdletBinding()]
+    param(
+        [ValidateRange(1, [int]::MaxValue)]
+        [int]$Last = 200,
+        [ValidateRange(1, [int]::MaxValue)]
+        [int]$MinCount = 2
+    )
+
+    $candidates = @(Get-MetraRoutingEdgeCandidates -Last $Last)
+    $graphFamilies = @(Get-MetraRoutingGraph)
+    $durableGraph = Get-MetraRoutingDurableGraph
+    $doc = Get-MetraRoutingProposals
+    $existing = New-Object System.Collections.Generic.List[object]
+    foreach ($p in @($doc.proposals)) { [void]$existing.Add($p) }
+
+    $added = New-Object System.Collections.Generic.List[object]
+    $now = [datetime]::UtcNow.ToString('o')
+
+    foreach ($candidate in $candidates) {
+        if ([int]$candidate.Count -lt $MinCount) { continue }
+
+        $stem = ([string]$candidate.Stem).Trim().ToUpperInvariant()
+        $cueClass = ([string]$candidate.CueClass).Trim().ToLowerInvariant()
+        $primary = [string]$candidate.Primary
+        $runnerUp = [string]$candidate.RunnerUp
+        if ($cueClass -notin @('ops', 'sql')) { continue }
+
+        $suggested = Get-MetraRoutingSuggestedTargetForStemCue -Stem $stem -CueClass $cueClass -GraphFamilies $graphFamilies
+        if ([string]::IsNullOrWhiteSpace($suggested)) { continue }
+        if ($primary -eq $suggested) { continue }
+
+        if (Test-MetraRoutingDurableEdgeMatches -Stem $stem -CueClass $cueClass -Target $suggested -Graph $durableGraph) {
+            continue
+        }
+        if (Test-MetraRoutingProposalFingerprintExists -Stem $stem -CueClass $cueClass -Target $suggested -Statuses @('pending', 'rejected') -Proposals @($existing.ToArray())) {
+            continue
+        }
+
+        $reg = Get-MetraRegistryProject -Registry (Get-MetraProjectRegistry) -Name $suggested
+        if (-not $reg) { continue }
+        $canonicalTarget = [string]$reg.name
+
+        if (Test-MetraRoutingProposalFingerprintExists -Stem $stem -CueClass $cueClass -Target $canonicalTarget -Statuses @('pending', 'rejected') -Proposals @($existing.ToArray())) {
+            continue
+        }
+        if (Test-MetraRoutingDurableEdgeMatches -Stem $stem -CueClass $cueClass -Target $canonicalTarget -Graph $durableGraph) {
+            continue
+        }
+
+        $proposal = [PSCustomObject]@{
+            id            = (Get-MetraRoutingProposalId -Stem $stem -CueClass $cueClass -Target $canonicalTarget)
+            stem          = $stem
+            cueClass      = $cueClass
+            target        = $canonicalTarget
+            status        = 'pending'
+            reason        = ("ambiguous x{0}: compound:{1} favored; primary was {2}" -f [int]$candidate.Count, $cueClass, $primary)
+            evidence      = [ordered]@{
+                count    = [int]$candidate.Count
+                primary  = $primary
+                runnerUp = $runnerUp
+                source   = 'telemetry'
+            }
+            proposedAtUtc = $now
+            resolvedAtUtc = $null
+            source        = 'review'
+        }
+
+        [void]$existing.Add($proposal)
+        [void]$added.Add($proposal)
+    }
+
+    if ($added.Count -gt 0) {
+        Save-MetraRoutingProposals -Doc ([PSCustomObject]@{ version = 1; proposals = @($existing.ToArray()) })
+    }
+
+    return [PSCustomObject]@{
+        added     = @($added.ToArray())
+        addedCount = $added.Count
+    }
+}
+
+function Invoke-MetraRoutingEdgeAffirm {
+    <#
+    .SYNOPSIS
+        Affirm pending proposal: Apply edge via Add-MetraRoutingAcceptedEdge; mark proposal affirmed.
+    #>
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory)][string]$Id,
+        [string]$Note = ''
+    )
+
+    $want = ([string]$Id).Trim()
+    if ([string]::IsNullOrWhiteSpace($want)) { throw 'Id required' }
+
+    $doc = Get-MetraRoutingProposals
+    $found = $null
+    $rest = New-Object System.Collections.Generic.List[object]
+    foreach ($proposal in @($doc.proposals)) {
+        if ([string]$proposal.id -eq $want) {
+            $found = $proposal
+            continue
+        }
+        [void]$rest.Add($proposal)
+    }
+
+    if (-not $found) { throw "Proposal not found: $want" }
+    if ([string]$found.status -ne 'pending') { throw "Proposal is not pending: $want" }
+
+    $edge = Add-MetraRoutingAcceptedEdge -Stem $found.stem -CueClass $found.cueClass -Target $found.target -Note $Note
+    $resolved = [datetime]::UtcNow.ToString('o')
+    $affirmed = [PSCustomObject]@{
+        id            = [string]$found.id
+        stem          = [string]$found.stem
+        cueClass      = [string]$found.cueClass
+        target        = [string]$found.target
+        status        = 'affirmed'
+        reason        = [string]$found.reason
+        evidence      = Get-MetraProp -Object $found -Name 'evidence' -Default @{}
+        proposedAtUtc = [string]$found.proposedAtUtc
+        resolvedAtUtc = $resolved
+        source        = 'review'
+    }
+
+    [void]$rest.Add($affirmed)
+    Save-MetraRoutingProposals -Doc ([PSCustomObject]@{ version = 1; proposals = @($rest.ToArray()) })
+
+    return [PSCustomObject]@{
+        proposal = $affirmed
+        edge     = $edge
+    }
+}
+
+function Invoke-MetraRoutingEdgeReject {
+    <#
+    .SYNOPSIS
+        Reject pending proposal (proposals.json only; never writes graph.json).
+    #>
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory)][string]$Id,
+        [string]$Note = ''
+    )
+
+    $want = ([string]$Id).Trim()
+    if ([string]::IsNullOrWhiteSpace($want)) { throw 'Id required' }
+
+    $doc = Get-MetraRoutingProposals
+    $found = $null
+    $rest = New-Object System.Collections.Generic.List[object]
+    foreach ($proposal in @($doc.proposals)) {
+        if ([string]$proposal.id -eq $want) {
+            $found = $proposal
+            continue
+        }
+        [void]$rest.Add($proposal)
+    }
+
+    if (-not $found) { throw "Proposal not found: $want" }
+    if ([string]$found.status -ne 'pending') { throw "Proposal is not pending: $want" }
+
+    $reason = [string]$found.reason
+    if (-not [string]::IsNullOrWhiteSpace($Note)) {
+        $reason = "$reason | rejected: $Note"
+    }
+
+    $resolved = [datetime]::UtcNow.ToString('o')
+    $rejected = [PSCustomObject]@{
+        id            = [string]$found.id
+        stem          = [string]$found.stem
+        cueClass      = [string]$found.cueClass
+        target        = [string]$found.target
+        status        = 'rejected'
+        reason        = $reason
+        evidence      = Get-MetraProp -Object $found -Name 'evidence' -Default @{}
+        proposedAtUtc = [string]$found.proposedAtUtc
+        resolvedAtUtc = $resolved
+        source        = 'review'
+    }
+
+    [void]$rest.Add($rejected)
+    Save-MetraRoutingProposals -Doc ([PSCustomObject]@{ version = 1; proposals = @($rest.ToArray()) })
+
+    return $rejected
+}
+
 function Get-MetraScoredRoutingProjects {
     <#
     .SYNOPSIS
@@ -1987,15 +2453,20 @@ function Show-MetraRoutingCli {
 function Show-MetraRoutingEdgesCli {
     <#
     .SYNOPSIS
-        Operator CLI for durable accepted routing edges (list / candidates / accept / remove).
+        Operator CLI for durable accepted routing edges and review proposals.
     .DESCRIPTION
-        Only accept and remove mutate graph.json. Candidates and list are read-only.
+        accept, affirm, and remove mutate graph.json. propose and reject mutate proposals.json only.
+        Candidates and review list are read-only on graph.json.
     #>
     [CmdletBinding()]
     param(
         [string[]]$SubCommand = @(),
         [ValidateRange(1, [int]::MaxValue)]
         [int]$Last = 200,
+        [ValidateRange(1, [int]::MaxValue)]
+        [int]$MinCount = 2,
+        [ValidateSet('pending', 'affirmed', 'rejected', 'all')]
+        [string]$Status = 'pending',
         [string]$Stem,
         [string]$CueClass,
         [string]$Target,
@@ -2037,6 +2508,31 @@ function Show-MetraRoutingEdgesCli {
                 Select-Object Stem, CueClass, Primary, RunnerUp, Count |
                 Format-Table -AutoSize
         }
+        'propose' {
+            $result = Update-MetraRoutingEdgeProposals -Last $Last -MinCount $MinCount
+            if ($result.addedCount -eq 0) {
+                Write-Host 'No new routing edge proposals.'
+                return
+            }
+            Write-Host ("Added {0} proposal(s)." -f $result.addedCount) -ForegroundColor Cyan
+            $result.added |
+                Select-Object Id, Stem, CueClass, Target, Reason, @{ N = 'Count'; E = { $_.evidence.count } } |
+                Format-Table -AutoSize
+        }
+        'review' {
+            $doc = Get-MetraRoutingProposals
+            $proposals = @($doc.proposals)
+            if ($Status -ne 'all') {
+                $proposals = @($proposals | Where-Object { ([string]$_.status).ToLowerInvariant() -eq $Status })
+            }
+            if ($proposals.Count -eq 0) {
+                Write-Host ("No routing proposals ({0})." -f $Status)
+                return
+            }
+            $proposals |
+                Select-Object Id, Stem, CueClass, Target, Status, Reason, ProposedAtUtc, ResolvedAtUtc |
+                Format-Table -AutoSize
+        }
         'accept' {
             if ([string]::IsNullOrWhiteSpace($Stem)) { throw 'accept requires -Stem' }
             if ([string]::IsNullOrWhiteSpace($CueClass)) { throw 'accept requires -CueClass ops|sql' }
@@ -2051,6 +2547,22 @@ function Show-MetraRoutingEdgesCli {
                 Write-Host ("Accepted edge {0}+{1} -> {2} ({3})" -f $edge.stem, $edge.cueClass, $edge.target, $edge.id) -ForegroundColor Green
             }
         }
+        'affirm' {
+            if ([string]::IsNullOrWhiteSpace($Id)) { throw 'affirm requires -Id' }
+            $result = Invoke-MetraRoutingEdgeAffirm -Id $Id -Note $Note
+            $e = $result.edge
+            if ($e.replaced) {
+                Write-Host ("Affirmed proposal {0}; replaced prior {1}+{2} edge -> {3} ({4})" -f $Id, $e.stem, $e.cueClass, $e.target, $e.id) -ForegroundColor Cyan
+            }
+            else {
+                Write-Host ("Affirmed proposal {0}; accepted edge {1}+{2} -> {3} ({4})" -f $Id, $e.stem, $e.cueClass, $e.target, $e.id) -ForegroundColor Green
+            }
+        }
+        'reject' {
+            if ([string]::IsNullOrWhiteSpace($Id)) { throw 'reject requires -Id' }
+            $rejected = Invoke-MetraRoutingEdgeReject -Id $Id -Note $Note
+            Write-Host ("Rejected proposal {0} ({1}+{2} -> {3})" -f $rejected.id, $rejected.stem, $rejected.cueClass, $rejected.target) -ForegroundColor Yellow
+        }
         'remove' {
             if ([string]::IsNullOrWhiteSpace($Id)) { throw 'remove requires -Id' }
             $result = Remove-MetraRoutingAcceptedEdge -Id $Id
@@ -2062,7 +2574,7 @@ function Show-MetraRoutingEdgesCli {
             Write-Host ("Removed edge {0} ({1}+{2} -> {3})" -f $e.id, $e.stem, $e.cueClass, $e.target) -ForegroundColor Green
         }
         default {
-            throw "Unknown routing edges subcommand '$action'. Use list, candidates, accept, or remove."
+            throw "Unknown routing edges subcommand '$action'. Use list, candidates, propose, review, accept, affirm, reject, or remove."
         }
     }
 }

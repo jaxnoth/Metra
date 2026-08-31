@@ -180,6 +180,34 @@ Describe 'Ask lane - routed adequate' {
         }
     }
 
+    It 'routeScore 0 adequate -> routed (Metra home)' {
+        InModuleScope Metra {
+            $home = Get-MetraHomeDestinationName
+            $r = Resolve-MetraAskLane -Prompt 'How does ctx work?' -RouteScore 0 -EvidenceQuality 'adequate' -RouteWhere $home
+            $r.lane | Should -Be 'routed'
+            $r.reason | Should -Be 'evidence_adequate_routed'
+            $r.responseObjective | Should -Be 'GroundedAnswer'
+        }
+    }
+
+    It 'routeScore 1 adequate at Metra home -> routed' {
+        InModuleScope Metra {
+            $home = Get-MetraHomeDestinationName
+            $r = Resolve-MetraAskLane -Prompt 'How does ctx work?' -RouteScore 1 -EvidenceQuality 'adequate' -RouteWhere $home
+            $r.lane | Should -Be 'routed'
+            $r.reason | Should -Be 'evidence_adequate_routed'
+        }
+    }
+
+    It 'routeScore 0 thin at Metra home -> routed' {
+        InModuleScope Metra {
+            $home = Get-MetraHomeDestinationName
+            $r = Resolve-MetraAskLane -Prompt 'sidecar health check' -RouteScore 0 -EvidenceQuality 'thin' -RouteWhere $home
+            $r.lane | Should -Be 'routed'
+            $r.reason | Should -Be 'evidence_adequate_routed'
+        }
+    }
+
     It 'routeScore 2 adequate -> routed GroundedAnswer' {
         InModuleScope Metra {
             $r = Resolve-MetraAskLane -Prompt 'How does TicketTracker brief work?' -RouteScore 2 -EvidenceQuality 'adequate'
@@ -240,6 +268,19 @@ Describe 'Ask lane - Ops badge kinds stay distinct from capture_ack' {
 }
 
 Describe 'Ask lane Phase 2 - Get-MetraDeskAskResult wire' {
+    It 'Ops status intent -> ops_status_report grounded (Are you running well now?)' {
+        InModuleScope Metra {
+            Test-MetraAskOpsStatusIntent -Prompt 'Are you running well now?' | Should -BeTrue
+            Mock Invoke-MetraAskEngine { throw 'should not invoke engine for ops status' }
+            $ask = Get-MetraDeskAskResult -Prompt 'Are you running well now?'
+            $ask.reason | Should -Be 'ops_status_report'
+            $ask.answerType | Should -Be 'grounded'
+            $ask.message | Should -Match 'Ops desk'
+            $ask.message | Should -Not -Match 'I am with you'
+            Should -Invoke Invoke-MetraAskEngine -Times 0 -Exactly
+        }
+    }
+
     It 'greeting keeps answerType greeting and lane chat; showWhere false' {
         InModuleScope Metra {
             Mock Invoke-MetraAskEngine {

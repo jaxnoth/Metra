@@ -6,7 +6,15 @@
 import http from 'node:http'
 import fs from 'node:fs'
 import path from 'node:path'
-import { Agent, CursorAgentError } from '@cursor/sdk'
+import { Agent, Cursor, CursorAgentError } from '@cursor/sdk'
+import {
+  adaptSelectionForAvailableModels,
+  isRetryableModelFailure,
+  pickFallbackExcluding,
+  resolveModelSelection,
+  selectionModelKey,
+  toSdkModelOpt,
+} from './model-selection.mjs'
 import {
   acquireSessionLease,
   classifyRunError,
@@ -60,81 +68,52 @@ function appendRunsLog(line) {
 }
 
 /**
- * Cursor Ask defaults to composer-2.5 (Ask API slug). auto-* tokens still map
- * to auto-smart router tiers. IDE agent names like composer-2.5-fast are aliased.
- * Optional rawId overrides process env (per-request Inspect pin).
+ * Cursor Ask defaults to composer-2.5 when env unset. auto-smart is adapted at runtime
+ * when the API key cannot use Cursor Router (see model-selection.mjs).
  */
-function resolveModelSelection(rawIdOverride) {
-  const rawId = String(
-    rawIdOverride != null && String(rawIdOverride).trim()
-      ? rawIdOverride
-      : process.env.METRA_ASK_MODEL || 'composer-2.5',
-  ).trim()
-  const rawOpt = String(process.env.METRA_ASK_OPTIMIZE_FOR || 'cost')
-    .trim()
-    .toLowerCase()
-  const aliasMap = {
-    'auto-cost': 'auto-smart',
-    'auto cost': 'auto-smart',
-    cost: 'auto-smart',
-    auto: 'auto-smart',
-    'auto-balance': 'auto-smart',
-    'auto balance': 'auto-smart',
-    balance: 'auto-smart',
-    balanced: 'auto-smart',
-    'auto-intelligence': 'auto-smart',
-    'auto intelligence': 'auto-smart',
-    intelligence: 'auto-smart',
-    'composer-2.5-fast': 'composer-2.5',
-  }
-  const aliasOptimize = {
-    'auto-cost': 'cost',
-    'auto cost': 'cost',
-    cost: 'cost',
-    auto: 'cost',
-    'auto-balance': 'balanced',
-    'auto balance': 'balanced',
-    balance: 'balanced',
-    balanced: 'balanced',
-    'auto-intelligence': 'intelligence',
-    'auto intelligence': 'intelligence',
-    intelligence: 'intelligence',
-  }
-  const rawLower = rawId.toLowerCase()
-  // Display labels like auto-smart/cost from Metra settings.model
-  if (rawLower.startsWith('auto-smart/')) {
-    const tier = rawLower.slice('auto-smart/'.length)
-    const optimizeFor = ['cost', 'balanced', 'intelligence'].includes(tier)
-      ? tier
-      : 'cost'
-    return {
-      id: 'auto-smart',
-      params: [{ id: 'optimize_for', value: optimizeFor }],
-      label: `auto-smart/${optimizeFor}`,
-    }
-  }
-  const id = aliasMap[rawLower] || rawId || 'composer-2.5'
-  if (id === 'auto-smart') {
-    const fromAlias = aliasOptimize[rawLower]
-    const optimizeFor = fromAlias
-      ? fromAlias
-      : ['cost', 'balanced', 'intelligence'].includes(rawOpt)
-        ? rawOpt
-        : 'cost'
-    return {
-      id: 'auto-smart',
-      params: [{ id: 'optimize_for', value: optimizeFor }],
-      label: `auto-smart/${optimizeFor}`,
-    }
-  }
-  return { id, label: id }
-}
-
 const MODEL_SELECTION = resolveModelSelection()
 const MODEL = MODEL_SELECTION.label
 
-function selectionModelKey(selection) {
-  return selection && selection.label ? String(selection.label) : ''
+/** @type {string[] | null} */
+let cachedAvailableModelIds = null
+/** @type {number} */
+let cachedAvailableModelIdsAt = 0
+const MODEL_CACHE_MS = 5 * 60 * 1000
+let activeModelLabel = MODEL
+
+async function getAvailableModelIds(apiKey) {
+  const now = Date.now()
+  if (cachedAvailableModelIds && now - cachedAvailableModelIdsAt < MODEL_CACHE_MS) {
+    return cachedAvailableModelIds
+  }
+  try {
+    const result = await Cursor.models.list({ apiKey })
+    const raw = result?.models ?? result ?? []
+    const ids = (Array.isArray(raw) ? raw : [])
+      .map((m) => (typeof m === 'string' ? m : m?.id))
+      .filter(Boolean)
+    if (ids.length > 0) {
+      cachedAvailableModelIds = ids.map((id) => String(id).trim())
+      cachedAvailableModelIdsAt = now
+      return cachedAvailableModelIds
+    }
+  } catch (err) {
+    appendRunsLog(`models.list failed: ${err?.message || err}`)
+  }
+  return null
+}
+
+async function resolveSdkSelection(apiKey, selection) {
+  const available = await getAvailableModelIds(apiKey)
+  if (!available) return selection
+  const adapted = adaptSelectionForAvailableModels(selection, available)
+  if (adapted.adapted) {
+    appendRunsLog(
+      `router fallback ${adapted.fallbackFrom} -> ${adapted.fallbackTo}`,
+    )
+    activeModelLabel = adapted.selection.label
+  }
+  return adapted.selection
 }
 
 function readJson(req) {
@@ -576,6 +555,14 @@ function extractRunErrorDetail(result, run) {
   } else if (result?.result && typeof result.result === 'object') {
     detail = String(result.result.message || result.result.error || '').trim()
   }
+  // Current @cursor/sdk puts failure text on result.error.message (not result.result).
+  if (!detail && result?.error) {
+    if (typeof result.error === 'string' && result.error.trim()) {
+      detail = result.error.trim()
+    } else if (typeof result.error === 'object') {
+      detail = String(result.error.message || result.error.error || '').trim()
+    }
+  }
   if (!detail && typeof run?.result === 'string' && run.result.trim()) {
     detail = run.result.trim()
   }
@@ -588,6 +575,17 @@ function extractRunErrorDetail(result, run) {
 
 async function extractRunErrorDetailAsync(result, run) {
   let detail = extractRunErrorDetail(result, run)
+  if (run && run._error) {
+    const err = run._error
+    if ((!detail || detail.startsWith('requestId=')) && typeof err === 'string' && err.trim()) {
+      detail = err.trim()
+    } else if ((!detail || detail.startsWith('requestId=')) && err && typeof err.message === 'string' && err.message.trim()) {
+      detail = err.message.trim()
+    } else if ((!detail || detail.startsWith('requestId=')) && err && typeof err === 'object') {
+      const nested = String(err.message || err.error || '').trim()
+      if (nested) detail = nested
+    }
+  }
   if (detail && !detail.startsWith('requestId=')) return detail
   if (run && typeof run.conversation === 'function') {
     try {
@@ -620,11 +618,12 @@ async function complete({ prompt, cwd, context, sessionId, images, model }) {
     throw err
   }
 
-  const selection =
+  let selection =
     model != null && String(model).trim()
       ? resolveModelSelection(String(model).trim())
       : MODEL_SELECTION
-  const modelLabel = selection.label
+  selection = await resolveSdkSelection(apiKey, selection)
+  let modelLabel = selection.label
 
   const promptScrub = scrubSecretsText(prompt)
   const ctxScrub = scrubSecretsValue(context || {})
@@ -646,19 +645,59 @@ async function complete({ prompt, cwd, context, sessionId, images, model }) {
 
   const workDir = cwd && typeof cwd === 'string' && cwd.length > 0 ? cwd : process.cwd()
   const sdkImages = loadImagesFromRefs(images)
-  const modelKey = selectionModelKey(selection)
-  const modelOpt =
-    selection.params && selection.params.length > 0
-      ? { id: selection.id, params: selection.params }
-      : { id: selection.id }
 
-  async function createAgent() {
-    return Agent.create({
-      apiKey,
-      model: modelOpt,
-      local: { cwd: workDir, settingSources: [] },
-    })
+  async function createAgentForSelection(currentSelection) {
+    const opt = toSdkModelOpt(currentSelection)
+    try {
+      const agent = await Agent.create({
+        apiKey,
+        model: opt,
+        local: { cwd: workDir, settingSources: [] },
+      })
+      return { agent, selection: currentSelection }
+    } catch (err) {
+      const msg = String(err?.message || '')
+      const shouldFallback =
+        (currentSelection.id === 'auto-smart' &&
+          err instanceof CursorAgentError &&
+          /cannot use this model/i.test(msg)) ||
+        isRetryableModelFailure(msg)
+      if (shouldFallback) {
+        const available = (await getAvailableModelIds(apiKey)) || [
+          'default',
+          'composer-2.5',
+        ]
+        const fallbackId = pickFallbackExcluding(
+          available,
+          currentSelection.id,
+          currentSelection.params?.find((p) => p.id === 'optimize_for')?.value ||
+            'cost',
+        )
+        if (
+          fallbackId &&
+          fallbackId.toLowerCase() !== String(currentSelection.id).toLowerCase()
+        ) {
+          const fallback = {
+            id: fallbackId,
+            label: `${fallbackId} (${currentSelection.id} unavailable)`,
+          }
+          appendRunsLog(
+            `createAgent fallback ${currentSelection.id} -> ${fallbackId}`,
+          )
+          activeModelLabel = fallback.label
+          const agent = await Agent.create({
+            apiKey,
+            model: { id: fallback.id },
+            local: { cwd: workDir, settingSources: [] },
+          })
+          return { agent, selection: fallback }
+        }
+      }
+      throw err
+    }
   }
+
+  let modelKey = selectionModelKey(selection)
 
   let entry = null
   let agent = null
@@ -679,14 +718,22 @@ async function complete({ prompt, cwd, context, sessionId, images, model }) {
         if (existing) {
           await retireSession(requestedId, existing)
         }
-        agent = await createAgent()
+        const created = await createAgentForSelection(selection)
+        selection = created.selection
+        modelLabel = selection.label
+        modelKey = selectionModelKey(selection)
+        agent = created.agent
         entry = createSessionEntry(agent, modelKey)
         acquireSessionLease(entry)
         newSession = true
         await putSession(requestedId, entry)
       }
     } else {
-      agent = await createAgent()
+      const created = await createAgentForSelection(selection)
+      selection = created.selection
+      modelLabel = selection.label
+      modelKey = selectionModelKey(selection)
+      agent = created.agent
       entry = createSessionEntry(agent, modelKey)
       acquireSessionLease(entry)
       newSession = true
@@ -701,34 +748,87 @@ async function complete({ prompt, cwd, context, sessionId, images, model }) {
       hasImages: sdkImages.length > 0,
     })
 
-    const run =
-      sdkImages.length > 0
-        ? await agent.send({ text: wrapped, images: sdkImages })
-        : await agent.send(wrapped)
-    const result = await run.wait()
+    async function sendAndWait(activeAgent) {
+      const activeRun =
+        sdkImages.length > 0
+          ? await activeAgent.send({ text: wrapped, images: sdkImages })
+          : await activeAgent.send(wrapped)
+      const activeResult = await activeRun.wait()
+      return { run: activeRun, result: activeResult }
+    }
+
+    let { run, result } = await sendAndWait(agent)
     if (result.status === 'error') {
-      recordRunError()
       const detail = await extractRunErrorDetailAsync(result, run)
       const scrubbed = detail ? scrubSecretsText(detail) : { text: '' }
       const classified = classifyRunError(scrubbed.text || '')
-      const message = scrubbed.text
-        ? `The Ask engine run failed: ${scrubbed.text}`
-        : 'The Ask engine run failed. Try again, or use Classify for routing only.'
-      const errLine = `[ask-cursor] run error id=${result.id || 'n/a'} requestId=${result.requestId || 'n/a'} durationMs=${result.durationMs ?? 'n/a'} detail=${scrubbed.text || '(none)'} retryClass=${classified.retryClass}`
-      console.error(errLine)
-      appendRunsLog(errLine)
-      await retireSession(id, entry)
-      return {
-        message,
-        engine: ENGINE,
-        model: modelLabel,
-        sessionId: id,
-        status: 'error',
-        runId: result.id || null,
-        requestId: result.requestId || null,
-        errorCode: classified.errorCode,
-        errorDetail: classified.errorDetail,
-        retryClass: classified.retryClass,
+      const failedModelId = selection.id
+
+      // Personal / restricted keys often auth-fail on pinned inspect models (e.g. gemini).
+      // Retry once on a concrete catalog fallback; do not retry usage/billing limits.
+      if (isRetryableModelFailure(scrubbed.text || classified.errorDetail || '')) {
+        const available = (await getAvailableModelIds(apiKey)) || [
+          'default',
+          'composer-2.5',
+        ]
+        const fallbackId = pickFallbackExcluding(
+          available,
+          failedModelId,
+          selection.params?.find((p) => p.id === 'optimize_for')?.value || 'cost',
+        )
+        if (
+          fallbackId &&
+          fallbackId.toLowerCase() !== String(failedModelId).toLowerCase()
+        ) {
+          appendRunsLog(
+            `run fallback ${failedModelId} -> ${fallbackId} (${classified.errorCode})`,
+          )
+          await retireSession(id, entry)
+          await releaseSessionLease(entry)
+          entry = null
+          const fallbackSelection = {
+            id: fallbackId,
+            label: `${fallbackId} (${failedModelId} unavailable)`,
+          }
+          const created = await createAgentForSelection(fallbackSelection)
+          selection = created.selection
+          modelLabel = selection.label
+          activeModelLabel = modelLabel
+          modelKey = selectionModelKey(selection)
+          agent = created.agent
+          entry = createSessionEntry(agent, modelKey)
+          acquireSessionLease(entry)
+          newSession = true
+          id = requestedId || agent.agentId || `local-${Date.now()}`
+          await putSession(id, entry)
+          ;({ run, result } = await sendAndWait(agent))
+        }
+      }
+
+      if (result.status === 'error') {
+        recordRunError()
+        const finalDetail = await extractRunErrorDetailAsync(result, run)
+        const scrubbedFinal = finalDetail ? scrubSecretsText(finalDetail) : { text: '' }
+        const classifiedFinal = classifyRunError(scrubbedFinal.text || '')
+        const message = scrubbedFinal.text
+          ? `The Ask engine run failed: ${scrubbedFinal.text}`
+          : 'The Ask engine run failed. Try again, or use Classify for routing only.'
+        const errLine = `[ask-cursor] run error id=${result.id || 'n/a'} requestId=${result.requestId || 'n/a'} durationMs=${result.durationMs ?? 'n/a'} detail=${scrubbedFinal.text || '(none)'} retryClass=${classifiedFinal.retryClass}`
+        console.error(errLine)
+        appendRunsLog(errLine)
+        await retireSession(id, entry)
+        return {
+          message,
+          engine: ENGINE,
+          model: modelLabel,
+          sessionId: id,
+          status: 'error',
+          runId: result.id || null,
+          requestId: result.requestId || null,
+          errorCode: classifiedFinal.errorCode,
+          errorDetail: classifiedFinal.errorDetail,
+          retryClass: classifiedFinal.retryClass,
+        }
       }
     }
 
@@ -840,7 +940,7 @@ const server = http.createServer(async (req, res) => {
       200,
       getHealthPayload({
         engine: ENGINE,
-        model: MODEL,
+        model: activeModelLabel || MODEL,
         apiKeyPresent: Boolean(process.env.CURSOR_API_KEY),
       }),
     )

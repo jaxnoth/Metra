@@ -79,6 +79,7 @@ param(
     [switch]$NoRefresh,
     [switch]$Full,
     [switch]$Stop,
+    [switch]$Foreground,
     [switch]$ForceLocal,
     [switch]$Local,
     [switch]$Draft,
@@ -99,6 +100,8 @@ param(
     [switch]$Quiet,
     [switch]$WhatIf,
     [int]$Last = 0,
+    [int]$MinCount = 0,
+    [string]$Status,
     [string]$Stem,
     [string]$CueClass,
     [string]$Target,
@@ -127,9 +130,9 @@ Usage:
       -MetadataOnly: route registry metadata advisories only (skips recursive tree scan; never fails as drift).
   .\metra.ps1 snapshot [-ScanDepth 2] [-Quick] [-RefreshSelfDocumentation]
   .\metra.ps1 selfdoc
-  .\metra.ps1 ops [-Quick] [-Full] [-Port 7380] [-NoBrowser] [-NoRefresh] [-Stop] [-ForceLocal]
-      Console Ops desk (operator/debug). -Stop frees the port when a desk outlived its console.
-      Mode B (remote OpsBaseUrl) refuses local Ops unless -ForceLocal.
+  .\metra.ps1 ops [-Quick] [-Full] [-Port 7380] [-NoBrowser] [-NoRefresh] [-Stop] [-Foreground] [-ForceLocal]
+      Starts Ops + Ask as one background desk (terminal can close safely). -Stop stops both together.
+      -Foreground blocks in this console (debug). Mode B refuses local Ops unless -ForceLocal.
   .\metra.ps1 host [-Port 7380] [-NoBrowser] [-NoRefresh] [-Quick] [-Stop] [-ForceLocal]
       User-session tray host so Metra stays alive without a console. Host starts Ops only (Ops owns Ask).
       Second launch opens the browser when the desk is already up. Mode B refuses unless -ForceLocal.
@@ -145,7 +148,13 @@ Usage:
       List operator-accepted durable routing edges (machine-local graph.json).
   .\metra.ps1 routing edges candidates [-Last 200]
       Aggregate ambiguous telemetry into stem/cue/primary/runner-up counts (Observe-only).
+  .\metra.ps1 routing edges propose [-Last 200] [-MinCount 2]
+      Propose durable edges from ambiguous misroutes (writes proposals.json only).
+  .\metra.ps1 routing edges review [-Status pending|affirmed|rejected|all]
+      List routing edge proposals awaiting or past operator review.
   .\metra.ps1 routing edges accept -Stem IWUDATA -CueClass ops -Target IWUDATA-Automation [-Note '…']
+  .\metra.ps1 routing edges affirm -Id p_IWUDATA_ops_iwudata_automation [-Note '…']
+  .\metra.ps1 routing edges reject -Id p_IWUDATA_ops_iwudata_automation [-Note '…']
   .\metra.ps1 routing edges remove -Id e_IWUDATA_ops_iwudata_automation
   .\metra.ps1 export-profile -Path <dir-or-zip> [-Force]
   .\metra.ps1 import-profile -Path <dir-or-zip> [-Preview] [-Force]
@@ -300,7 +309,9 @@ switch ($Command) {
         elseif ($Rest -and $Rest.Count -gt 0 -and [string]$Rest[0] -eq 'edges') {
             $edgeRest = if ($Rest.Count -gt 1) { @($Rest[1..($Rest.Count - 1)]) } else { @() }
             $n = if ($Last -ge 1) { $Last } else { 200 }
-            Show-MetraRoutingEdgesCli -SubCommand $edgeRest -Last $n -Stem $Stem -CueClass $CueClass -Target $Target -Note $Note -Id $Id
+            $min = if ($MinCount -ge 1) { $MinCount } else { 2 }
+            $reviewStatus = if ([string]::IsNullOrWhiteSpace($Status)) { 'pending' } else { $Status.Trim().ToLowerInvariant() }
+            Show-MetraRoutingEdgesCli -SubCommand $edgeRest -Last $n -MinCount $min -Status $reviewStatus -Stem $Stem -CueClass $CueClass -Target $Target -Note $Note -Id $Id
         }
         else {
             Show-MetraRoutingCli -Query $Query -Name $Name -SharedOnly:$SharedOnly -MissingOnly:$MissingOnly
@@ -418,7 +429,7 @@ switch ($Command) {
             $Port = [int](Resolve-MetraOpsDeskBinding).Port
         }
         if ($Stop) {
-            Stop-MetraOpsServer -Port $Port
+            Stop-MetraOpsDesk -Port $Port
             return
         }
         $params = @{
@@ -430,7 +441,11 @@ switch ($Command) {
         if ($NoRefresh) { $params.NoRefresh = $true }
         if ($ForceLocal) { $params.ForceLocal = $true }
         if ($OpsBaseUrl) { $params.OpsBaseUrl = $OpsBaseUrl }
-        Start-MetraOpsServer @params
+        if ($Foreground) {
+            Start-MetraOpsServer @params
+            return
+        }
+        Start-MetraOpsDesk @params
     }
 
     'host' {

@@ -128,6 +128,21 @@ test('classifyRunError opaque vs nonempty', () => {
   assert.equal(classifyRunError('').retryClass, 'opaque_sdk_failure')
   assert.equal(classifyRunError('requestId=abc').retryClass, 'opaque_sdk_failure')
   assert.equal(classifyRunError('rate limited').retryClass, 'sdk_run_error')
+  assert.equal(classifyRunError('Your team has reached its usage limit').errorCode, 'cursor_usage_limit')
+  assert.equal(classifyRunError('Your team has reached its usage limit').retryClass, 'licensing_error')
+  assert.equal(classifyRunError('Cannot use this model: auto-smart').errorCode, 'cursor_model_unavailable')
+  assert.equal(
+    classifyRunError(
+      'Authentication error If you are logged in, try logging out and back in.',
+    ).errorCode,
+    'cursor_auth_error',
+  )
+  assert.equal(
+    classifyRunError(
+      'Authentication error If you are logged in, try logging out and back in.',
+    ).retryClass,
+    'model_error',
+  )
 })
 
 test('disposeAgent tolerates null and prefer asyncDispose once', async () => {

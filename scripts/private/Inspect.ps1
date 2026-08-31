@@ -2563,14 +2563,14 @@ function Get-MetraInspectReviewSeverityTier {
     #>
     [CmdletBinding()]
     param(
-        [Parameter(Mandatory)][string]$Severity
+        [Parameter(Mandatory)][AllowEmptyString()][string]$Severity
     )
 
     switch -Regex ($Severity) {
         '^Critical$' { return 'Critical' }
         '^High$' { return 'High' }
         '^Medium$' { return 'Medium' }
-        default { return 'Low' } # Low and Info
+        default { return 'Low' } # Low, Info, empty
     }
 }
 
@@ -2588,7 +2588,7 @@ function Get-MetraInspectReviewSeverityCounts {
     }
     foreach ($f in @($Findings)) {
         if ($null -eq $f) { continue }
-        $tier = Get-MetraInspectReviewSeverityTier -Severity ([string]$f.severity)
+        $tier = Get-MetraInspectReviewSeverityTier -Severity ([string](Get-MetraProp -Object $f -Name 'severity' -Default ''))
         $counts[$tier]++
     }
     return [PSCustomObject]$counts
@@ -2810,7 +2810,9 @@ function Get-MetraInspectReviewFindingIdentityList {
         if ($null -eq $f) { continue }
         [void]$list.Add((New-MetraInspectFindingIdentityRecord -Finding $f -ProjectRoot $ProjectRoot))
     }
-    return @($list.ToArray())
+    # Return the List (not Object[]) so an empty result stays a real object under the caller
+    # instead of collapsing to $null. Callers should wrap with @(...).
+    return $list
 }
 
 function Test-MetraInspectReviewBaselineFingerprintsCompatible {
@@ -2985,7 +2987,7 @@ function Compare-MetraInspectReviewFindings {
         [AllowEmptyCollection()][string[]]$TouchSet = @()
     )
 
-    $currentIds = Get-MetraInspectReviewFindingIdentityList -Findings $CurrentFindings -ProjectRoot $ProjectRoot
+    $currentIds = @(Get-MetraInspectReviewFindingIdentityList -Findings $CurrentFindings -ProjectRoot $ProjectRoot)
     $baseByFp = @{}
     $baseByKey = @{}
     foreach ($b in @($BaselineFingerprints)) {
@@ -3020,9 +3022,12 @@ function Compare-MetraInspectReviewFindings {
     $resolvedCount = 0
 
     foreach ($c in $currentIds) {
-        $fp = [string]$c.fingerprint
-        $ik = [string]$c.issueKey
-        $inTouch = $touch.Count -eq 0 -or $touch.Contains([string]$c.file)
+        if ($null -eq $c) { continue }
+        $fp = [string](Get-MetraProp -Object $c -Name 'fingerprint' -Default '')
+        $ik = [string](Get-MetraProp -Object $c -Name 'issueKey' -Default '')
+        $sev = [string](Get-MetraProp -Object $c -Name 'severity' -Default '')
+        $file = [string](Get-MetraProp -Object $c -Name 'file' -Default '')
+        $inTouch = $touch.Count -eq 0 -or $touch.Contains($file)
         if ($baseByFp.ContainsKey($fp)) {
             [void]$matchedBaseFp.Add($fp)
             $persistentCount++
@@ -3030,8 +3035,8 @@ function Compare-MetraInspectReviewFindings {
                     Kind        = 'Persistent'
                     Fingerprint = $fp
                     IssueKey    = $ik
-                    File        = [string]$c.file
-                    Severity    = [string]$c.severity
+                    File        = $file
+                    Severity    = $sev
                     InTouchSet  = [bool]$inTouch
                 })
             continue
@@ -3048,7 +3053,7 @@ function Compare-MetraInspectReviewFindings {
             $relFp = [string](Get-MetraProp -Object $related -Name 'fingerprint' -Default '')
             if (-not [string]::IsNullOrWhiteSpace($relFp)) { [void]$matchedBaseFp.Add($relFp) }
             $oldSev = Get-MetraInspectFindingNormalizedToken -Token ([string](Get-MetraProp -Object $related -Name 'severity' -Default ''))
-            $newSev = Get-MetraInspectFindingNormalizedToken -Token ([string]$c.severity)
+            $newSev = Get-MetraInspectFindingNormalizedToken -Token $sev
             $oldRank = if ($severityRank.ContainsKey($oldSev)) { [int]$severityRank[$oldSev] } else { 0 }
             $newRank = if ($severityRank.ContainsKey($newSev)) { [int]$severityRank[$newSev] } else { 0 }
             if ($newRank -gt $oldRank) {
@@ -3057,8 +3062,8 @@ function Compare-MetraInspectReviewFindings {
                         Kind        = 'Worsened'
                         Fingerprint = $fp
                         IssueKey    = $ik
-                        File        = [string]$c.file
-                        Severity    = [string]$c.severity
+                        File        = $file
+                        Severity    = $sev
                         InTouchSet  = [bool]$inTouch
                     })
             }
@@ -3068,8 +3073,8 @@ function Compare-MetraInspectReviewFindings {
                         Kind        = 'Persistent'
                         Fingerprint = $fp
                         IssueKey    = $ik
-                        File        = [string]$c.file
-                        Severity    = [string]$c.severity
+                        File        = $file
+                        Severity    = $sev
                         InTouchSet  = [bool]$inTouch
                     })
             }
@@ -3081,8 +3086,8 @@ function Compare-MetraInspectReviewFindings {
                 Kind        = 'New'
                 Fingerprint = $fp
                 IssueKey    = $ik
-                File        = [string]$c.file
-                Severity    = [string]$c.severity
+                File        = $file
+                Severity    = $sev
                 InTouchSet  = [bool]$inTouch
             })
     }
@@ -3095,7 +3100,8 @@ function Compare-MetraInspectReviewFindings {
         # issueKey still present under a new fingerprint counts as not resolved
         $still = $false
         foreach ($c in $currentIds) {
-            if ([string]::Equals([string]$c.issueKey, $ik, [StringComparison]::OrdinalIgnoreCase)) {
+            if ($null -eq $c) { continue }
+            if ([string]::Equals([string](Get-MetraProp -Object $c -Name 'issueKey' -Default ''), $ik, [StringComparison]::OrdinalIgnoreCase)) {
                 $still = $true
                 break
             }
@@ -3123,11 +3129,12 @@ function Compare-MetraInspectReviewFindings {
         }
         $wantRank = [int]$tierRank[$Tier]
         foreach ($x in @($Ids)) {
-            $sevTier = Get-MetraInspectReviewSeverityTier -Severity ([string]$x.severity)
+            if ($null -eq $x) { continue }
+            $sevTier = Get-MetraInspectReviewSeverityTier -Severity ([string](Get-MetraProp -Object $x -Name 'severity' -Default ''))
             if ($sevTier -ne $Tier) { continue }
-            if ($touch.Count -gt 0 -and -not $touch.Contains([string]$x.file)) { continue }
+            if ($touch.Count -gt 0 -and -not $touch.Contains([string](Get-MetraProp -Object $x -Name 'file' -Default ''))) { continue }
             # Demotion of the same issueKey from a higher baseline severity is not a population increase.
-            $ik = [string]$x.issueKey
+            $ik = [string](Get-MetraProp -Object $x -Name 'issueKey' -Default '')
             if ($BaselineKeyMaxRank -and -not [string]::IsNullOrWhiteSpace($ik) -and $BaselineKeyMaxRank.ContainsKey($ik)) {
                 if ([int]$BaselineKeyMaxRank[$ik] -gt $wantRank) { continue }
             }
@@ -3251,10 +3258,11 @@ function Test-MetraInspectReviewRegressed {
             $afKey = [string]$id.issueKey
         }
         foreach ($c in $currentIds) {
-            $tier = Get-MetraInspectReviewSeverityTier -Severity ([string]$c.severity)
+            if ($null -eq $c) { continue }
+            $tier = Get-MetraInspectReviewSeverityTier -Severity ([string](Get-MetraProp -Object $c -Name 'severity' -Default ''))
             if ($tier -ne 'High' -and $tier -ne 'Critical') { continue }
-            $fpMatch = (-not [string]::IsNullOrWhiteSpace($afFp)) -and [string]::Equals([string]$c.fingerprint, $afFp, [StringComparison]::OrdinalIgnoreCase)
-            $keyMatch = (-not [string]::IsNullOrWhiteSpace($afKey)) -and [string]::Equals([string]$c.issueKey, $afKey, [StringComparison]::OrdinalIgnoreCase)
+            $fpMatch = (-not [string]::IsNullOrWhiteSpace($afFp)) -and [string]::Equals([string](Get-MetraProp -Object $c -Name 'fingerprint' -Default ''), $afFp, [StringComparison]::OrdinalIgnoreCase)
+            $keyMatch = (-not [string]::IsNullOrWhiteSpace($afKey)) -and [string]::Equals([string](Get-MetraProp -Object $c -Name 'issueKey' -Default ''), $afKey, [StringComparison]::OrdinalIgnoreCase)
             if ($fpMatch -or $keyMatch) {
                 $affirmedReappeared++
                 break
@@ -3543,19 +3551,20 @@ function Export-MetraInspectReviewFixQueue {
     $path = Get-MetraInspectReviewFixQueuePath -SlotKey $SlotKey
     $idx = 0
     $items = @(@($Report.findings) | ForEach-Object {
+            if ($null -eq $_) { return }
             $idx++
-            $sev = [string]$_.severity
+            $sev = [string](Get-MetraProp -Object $_ -Name 'severity' -Default '')
             [ordered]@{
                 id                         = (Get-MetraInspectReviewFindingId -RoundNum $RoundNum -Index1Based $idx)
                 status                     = 'Pending'
                 dispatchEligibleBySeverity = [bool](Test-MetraInspectReviewDispatchEligibleBySeverity -Severity $sev)
                 severity                   = $sev
-                confidence                 = [string]$_.confidence
-                category                   = [string]$_.category
-                file                       = [string]$_.file
+                confidence                 = [string](Get-MetraProp -Object $_ -Name 'confidence' -Default '')
+                category                   = [string](Get-MetraProp -Object $_ -Name 'category' -Default '')
+                file                       = [string](Get-MetraProp -Object $_ -Name 'file' -Default '')
                 line                       = [int](Get-MetraProp -Object $_ -Name 'line' -Default 0)
-                finding                    = [string]$_.finding
-                recommendation             = [string]$_.recommendation
+                finding                    = [string](Get-MetraProp -Object $_ -Name 'finding' -Default '')
+                recommendation             = [string](Get-MetraProp -Object $_ -Name 'recommendation' -Default '')
             }
         })
     $payload = [ordered]@{

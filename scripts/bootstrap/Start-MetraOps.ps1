@@ -10,6 +10,7 @@ param(
     [switch]$Full,
     [switch]$Quick,
     [switch]$ForceLocal,
+    [switch]$Foreground,
     [ValidateRange(1, 65535)]
     [int]$Port = 7380
 )
@@ -37,6 +38,7 @@ if ($NoRefresh) { $opsArgs.NoRefresh = $true }
 if ($Full) { $opsArgs.Full = $true }
 if ($Quick) { $opsArgs.Quick = $true }
 if ($ForceLocal) { $opsArgs.ForceLocal = $true }
+if ($Foreground) { $opsArgs.Foreground = $true }
 
 & $metraCli 'ops' @opsArgs
 exit $(if ($null -ne $LASTEXITCODE) { $LASTEXITCODE } else { 0 })
