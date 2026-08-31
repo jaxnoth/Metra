@@ -33,6 +33,10 @@ $env:CURSOR_API_KEY = '...'   # or ask key set
 
 Ops auto-starts the sidecar when `ask.engine=cursor` and Node + deps + key are ready.
 
+**SDK pin:** `@cursor/sdk` is pinned to **1.0.26** (exact; see `package-lock.json`). Versions **1.0.27+** (including 1.0.30) access-violated during local Agent runs on Windows operator desks - do not bump without a live `POST /v1/complete` smoke. After pull, refresh local deps with `npm ci` under `engines/cursor`. Installer packaging uses `packaging/Stage-MetraCursorAsk.ps1` (`npm ci` when lockfile present). Do not commit `node_modules`.
+
+**Health:** `GET /health` `ok` means operationally usable (consecutive SDK run errors under threshold 2), not merely that the process is listening.
+
 ## Evidence context contract (ladder 2)
 
 `POST /v1/complete` accepts a `context` object. PowerShell builds it via `New-MetraAskEvidencePack` before the call. Prefer structured fields; flat aliases remain for cutover.

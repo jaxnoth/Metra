@@ -552,6 +552,7 @@ Describe 'Ask engine lifecycle and routing' {
             Mock Test-MetraAskCursorPortHealth { $false }
             Mock Wait-MetraAskCursorPortHealth { $false }
             Mock Get-MetraAskCursorSidecarListenerProcessIds { return @() }
+            Mock Get-MetraAskCursorForeignListenerProcessIds { return @() }
             Mock Get-MetraAskNodePath { 'C:\fake\node.exe' }
             Mock Get-MetraAskCursorSidecarPath { 'C:\fake\server.mjs' }
             Mock Get-MetraCursorApiKey { 'test-key' }
@@ -592,6 +593,7 @@ Describe 'Ask engine lifecycle and routing' {
                 if ($script:ListenerPhase -le 1) { return @() }
                 return @(26164)
             }
+            Mock Get-MetraAskCursorForeignListenerProcessIds { return @() }
             Mock Get-MetraAskNodePath { 'C:\fake\node.exe' }
             Mock Get-MetraAskCursorSidecarPath { 'C:\fake\server.mjs' }
             Mock Get-MetraCursorApiKey { 'test-key' }
@@ -844,6 +846,214 @@ It 'Engine Model overrides do not mutate Get-MetraAskSettings and pass ollama mo
             $null = Invoke-MetraAskEngine -Prompt 'hi' -Cwd (Get-MetraRoot)
             $script:captured.engine | Should -Be 'ollama'
             $script:captured.model | Should -Be 'qwen2.5:7b'
+        }
+    }
+}
+
+Describe 'Ask cursor health response and opaque recovery' {
+    It 'Test-MetraAskCursorHealthResponseOk requires Boolean true' {
+        InModuleScope Metra {
+            (Test-MetraAskCursorHealthResponseOk -Response ([PSCustomObject]@{ ok = $true })) | Should -BeTrue
+            (Test-MetraAskCursorHealthResponseOk -Response ([PSCustomObject]@{ ok = $false })) | Should -BeFalse
+            (Test-MetraAskCursorHealthResponseOk -Response ([PSCustomObject]@{ ok = 'false' })) | Should -BeFalse
+            (Test-MetraAskCursorHealthResponseOk -Response ([PSCustomObject]@{ ok = 'true' })) | Should -BeFalse
+            (Test-MetraAskCursorHealthResponseOk -Response ([PSCustomObject]@{})) | Should -BeFalse
+            (Test-MetraAskCursorHealthResponseOk -Response $null) | Should -BeFalse
+        }
+    }
+
+    It 'Convert-MetraAskCursorResponse surfaces retryClass and errorDetail' {
+        InModuleScope Metra {
+            $settings = [PSCustomObject]@{ engine = 'cursor'; model = 'auto-smart/cost' }
+            $response = [PSCustomObject]@{
+                status      = 'error'
+                message     = 'The Ask engine run failed.'
+                engine      = 'cursor'
+                model       = 'auto-smart/cost'
+                sessionId   = 's1'
+                errorCode   = 'cursor_sdk_run_error'
+                errorDetail = ''
+                retryClass  = 'opaque_sdk_failure'
+            }
+            $promptScrub = [PSCustomObject]@{ Matched = $false; Text = 'test'; Notice = $null; Kinds = @() }
+            $ctxScrub = [PSCustomObject]@{ Matched = $false; Notice = $null; Kinds = @() }
+            Mock Invoke-MetraAskSecretsScrubText { param($Text) [PSCustomObject]@{ Text = $Text; Matched = $false; Notice = $null; Kinds = @(); Refuse = $false } }
+            $r = Convert-MetraAskCursorResponse -Response $response -Settings $settings -SessionId 's1' -PromptScrub $promptScrub -CtxScrub $ctxScrub
+            $r.ok | Should -BeFalse
+            $r.retryClass | Should -Be 'opaque_sdk_failure'
+            $r.errorDetail | Should -Be ''
+            (Test-MetraAskOpaqueSdkFailure -EngineResult $r) | Should -BeTrue
+        }
+    }
+
+    It 'Test-MetraAskOpaqueSdkFailure is false for nonempty diagnostic' {
+        InModuleScope Metra {
+            $r = [PSCustomObject]@{
+                ok          = $false
+                status      = 'error'
+                error       = 'engine_request_failed'
+                errorDetail = 'rate limited'
+                retryClass  = 'sdk_run_error'
+                secretsRefuse = $false
+            }
+            (Test-MetraAskOpaqueSdkFailure -EngineResult $r) | Should -BeFalse
+        }
+    }
+
+    It 'Ensure recycles owned unhealthy listener (Stop then Start-Process)' {
+        InModuleScope Metra {
+            Mock Test-MetraAskCursorPortHealth { $false }
+            $script:waitPhase = 0
+            Mock Wait-MetraAskCursorPortHealth {
+                $script:waitPhase++
+                # First wait (owned unhealthy probe) fails; later wait after spawn succeeds.
+                return ($script:waitPhase -ge 2)
+            }
+            Mock Get-MetraAskCursorSidecarListenerProcessIds {
+                if (-not $script:ensureListenerPhase) { $script:ensureListenerPhase = 0 }
+                $script:ensureListenerPhase++
+                if ($script:ensureListenerPhase -eq 1) { return @(4242) }
+                return @()
+            }
+            Mock Get-MetraAskCursorForeignListenerProcessIds { return @() }
+            Mock Stop-MetraAskEngine { $script:stopped = $true }
+            Mock Get-MetraAskNodePath { 'C:\fake\node.exe' }
+            Mock Get-MetraAskCursorSidecarPath { 'C:\fake\server.mjs' }
+            Mock Get-MetraCursorApiKey { 'test-key' }
+            Mock Test-MetraAskCursorSidecarDeps { $true }
+            Mock Clear-MetraAskEngineStalePidFile { }
+            Mock Initialize-MetraAskEngineSpawnLogs { }
+            Mock Get-MetraAskEngineLogPath { 'C:\fake\log' }
+            Mock Sync-MetraAskEnginePidFile { return 99001 }
+            Mock Write-MetraAskEnginePidFile { }
+            Mock Test-MetraAskCursorSidecarProcessId { param($ProcessId) $ProcessId -eq 99001 }
+            Mock Start-Process {
+                $script:started = $true
+                [PSCustomObject]@{ Id = 99001; HasExited = $false }
+            }
+            $script:stopped = $false
+            $script:started = $false
+            $script:ensureListenerPhase = 0
+            $ok = Invoke-MetraAskCursorSidecarEnsure -CursorPort 17390
+            $ok | Should -BeTrue
+            $script:stopped | Should -BeTrue
+            $script:started | Should -BeTrue
+        }
+    }
+
+    It 'Ensure fails closed on foreign listener without Stop' {
+        InModuleScope Metra {
+            Mock Test-MetraAskCursorPortHealth { $false }
+            Mock Get-MetraAskCursorSidecarListenerProcessIds { return @() }
+            Mock Get-MetraAskCursorForeignListenerProcessIds { return @(5555) }
+            Mock Stop-MetraAskEngine { throw 'should not stop foreign' }
+            Mock Start-Process { throw 'should not spawn' }
+            $ok = Invoke-MetraAskCursorSidecarEnsure -CursorPort 17391
+            $ok | Should -BeFalse
+            Should -Invoke Stop-MetraAskEngine -Times 0
+            Should -Invoke Start-Process -Times 0
+        }
+    }
+
+    It 'Ensure recycle then foreign occupant does not spawn' {
+        InModuleScope Metra {
+            Mock Test-MetraAskCursorPortHealth { $false }
+            Mock Wait-MetraAskCursorPortHealth { $false }
+            Mock Get-MetraAskCursorSidecarListenerProcessIds {
+                if (-not $script:recycleForeignPhase) { $script:recycleForeignPhase = 0 }
+                $script:recycleForeignPhase++
+                if ($script:recycleForeignPhase -eq 1) { return @(4242) }
+                return @()
+            }
+            Mock Get-MetraAskCursorForeignListenerProcessIds { return @(7777) }
+            Mock Stop-MetraAskEngine { $script:stopped = $true }
+            Mock Start-Process { throw 'should not spawn after foreign' }
+            Mock Get-MetraAskEngineLogPath { 'C:\fake\log' }
+            $script:stopped = $false
+            $script:recycleForeignPhase = 0
+            $ok = Invoke-MetraAskCursorSidecarEnsure -CursorPort 17392
+            $ok | Should -BeFalse
+            $script:stopped | Should -BeTrue
+            Should -Invoke Start-Process -Times 0
+        }
+    }
+
+    It 'opaque recovery tolerates null Context under StrictMode' {
+        InModuleScope Metra {
+            Set-StrictMode -Version Latest
+            $failed = [PSCustomObject]@{
+                ok            = $false
+                status        = 'error'
+                error         = 'engine_request_failed'
+                errorDetail   = ''
+                retryClass    = 'opaque_sdk_failure'
+                message       = 'opaque'
+                secretsRefuse = $false
+            }
+            Mock Get-MetraAskCursorSidecarGeneration {
+                [PSCustomObject]@{ ProcessId = 1; StartTimeUtc = 't'; Token = '1|t' }
+            }
+            Mock Invoke-MetraAskCursorSingleFlightRestart {
+                [PSCustomObject]@{
+                    restarted = $true; skipped = $false; reason = 'restart_ok'; ok = $true
+                    capability = [PSCustomObject]@{ available = $true; engineHealthy = $true }
+                }
+            }
+            Mock Invoke-MetraAskEngine {
+                [PSCustomObject]@{ ok = $true; message = 'recovered'; status = 'finished' }
+            }
+            $recovery = Invoke-MetraAskCursorOpaqueRecovery -EngineResult $failed `
+                -Prompt 'x' -Cwd 'C:\Projects\_meta' -Context $null
+            $recovery.attempted | Should -BeTrue
+            $recovery.result.ok | Should -BeTrue
+        }
+    }
+
+    It 'opaque recovery restarts once and retries once' {
+        InModuleScope Metra {
+            $failed = [PSCustomObject]@{
+                ok          = $false
+                status      = 'error'
+                error       = 'engine_request_failed'
+                errorDetail = ''
+                retryClass  = 'opaque_sdk_failure'
+                message     = 'opaque'
+                secretsRefuse = $false
+            }
+            Mock Get-MetraAskCursorSidecarGeneration {
+                [PSCustomObject]@{ ProcessId = 1; StartTimeUtc = 't'; Token = '1|t' }
+            }
+            Mock Invoke-MetraAskCursorSingleFlightRestart {
+                [PSCustomObject]@{
+                    restarted = $true; skipped = $false; reason = 'restart_ok'; ok = $true
+                    capability = [PSCustomObject]@{ available = $true; engineHealthy = $true }
+                }
+            }
+            $invokeCount = 0
+            Mock Invoke-MetraAskEngine {
+                $script:invokeCount++
+                [PSCustomObject]@{ ok = $true; status = 'finished'; message = 'recovered'; error = $null }
+            }
+            $script:invokeCount = 0
+            $r = Invoke-MetraAskCursorOpaqueRecovery -EngineResult $failed -Prompt 'ping' -Cwd (Get-MetraRoot) -Context @{}
+            $r.attempted | Should -BeTrue
+            $r.result.ok | Should -BeTrue
+            Should -Invoke Invoke-MetraAskCursorSingleFlightRestart -Times 1
+            $script:invokeCount | Should -Be 1
+        }
+    }
+
+    It 'non-opaque failure does not attempt recovery' {
+        InModuleScope Metra {
+            $failed = [PSCustomObject]@{
+                ok = $false; status = 'error'; error = 'engine_request_failed'
+                errorDetail = 'quota exhausted'; retryClass = 'sdk_run_error'; secretsRefuse = $false
+            }
+            Mock Invoke-MetraAskCursorSingleFlightRestart { throw 'should not restart' }
+            Mock Invoke-MetraAskEngine { throw 'should not retry' }
+            $r = Invoke-MetraAskCursorOpaqueRecovery -EngineResult $failed -Prompt 'ping' -Cwd (Get-MetraRoot)
+            $r.attempted | Should -BeFalse
+            $r.result.errorDetail | Should -Be 'quota exhausted'
         }
     }
 }

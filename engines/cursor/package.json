@@ -12,6 +12,6 @@
     "node": ">=18"
   },
   "dependencies": {
-    "@cursor/sdk": "^1.0.18"
+    "@cursor/sdk": "1.0.26"
   }
 }

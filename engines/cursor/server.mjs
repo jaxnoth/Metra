@@ -7,6 +7,19 @@ import http from 'node:http'
 import fs from 'node:fs'
 import path from 'node:path'
 import { Agent, CursorAgentError } from '@cursor/sdk'
+import {
+  acquireSessionLease,
+  classifyRunError,
+  createSessionEntry,
+  disposeAllSessions,
+  getHealthPayload,
+  getSession,
+  putSession,
+  recordRunError,
+  recordRunFinished,
+  releaseSessionLease,
+  retireSession,
+} from './session-cache.mjs'
 
 const PORT = Number(process.env.METRA_ASK_PORT || 7381)
 const ENGINE = 'cursor'
@@ -119,26 +132,6 @@ function resolveModelSelection(rawIdOverride) {
 
 const MODEL_SELECTION = resolveModelSelection()
 const MODEL = MODEL_SELECTION.label
-
-/**
- * Session cache keyed by sessionId.
- * Stores { agent, modelKey } so a reused session cannot silently keep an old
- * Agent.create model while responses report a newer per-request override.
- * Legacy bare-agent entries are treated as unknown modelKey and recreated.
- * @type {Map<string, { agent: Awaited<ReturnType<typeof Agent.create>>, modelKey: string } | Awaited<ReturnType<typeof Agent.create>>>}
- */
-const sessions = new Map()
-
-function normalizeSessionEntry(raw) {
-  if (!raw) return null
-  if (raw.agent) {
-    return {
-      agent: raw.agent,
-      modelKey: raw.modelKey != null ? String(raw.modelKey) : null,
-    }
-  }
-  return { agent: raw, modelKey: null }
-}
 
 function selectionModelKey(selection) {
   return selection && selection.label ? String(selection.label) : ''
@@ -635,6 +628,7 @@ async function complete({ prompt, cwd, context, sessionId, images, model }) {
 
   const promptScrub = scrubSecretsText(prompt)
   const ctxScrub = scrubSecretsValue(context || {})
+  // Pre-SDK validation / secrets refuse must not increment consecutiveRunErrors.
   if (promptScrub.refuse || ctxScrub.refuse) {
     return {
       message:
@@ -666,50 +660,64 @@ async function complete({ prompt, cwd, context, sessionId, images, model }) {
     })
   }
 
-  let agent
+  let entry = null
+  let agent = null
   let newSession = false
   const requestedId =
     sessionId && String(sessionId).trim() ? String(sessionId).trim() : null
-  if (requestedId && sessions.has(requestedId)) {
-    const entry = normalizeSessionEntry(sessions.get(requestedId))
-    if (entry && entry.modelKey === modelKey) {
-      agent = entry.agent
-    } else {
-      // Model override changed (or legacy entry lacked modelKey): recreate agent.
-      agent = await createAgent()
-      newSession = true
-      sessions.set(requestedId, { agent, modelKey })
-    }
-  } else {
-    agent = await createAgent()
-    newSession = true
-  }
-
-  const id = requestedId || agent.agentId || `local-${Date.now()}`
-  if (newSession) {
-    sessions.set(id, { agent, modelKey })
-  }
-
-  const wrapped = buildPrompt(promptScrub.text, ctxScrub.value || {}, {
-    includeJournalContinuity: newSession,
-    hasImages: sdkImages.length > 0,
-  })
+  let id = requestedId
 
   try {
+    if (requestedId) {
+      const existing = getSession(requestedId)
+      if (existing && existing.modelKey === modelKey && !existing.retiring) {
+        entry = existing
+        agent = entry.agent
+        // Lease before any further await so concurrent putSession cannot dispose us.
+        acquireSessionLease(entry)
+      } else {
+        if (existing) {
+          await retireSession(requestedId, existing)
+        }
+        agent = await createAgent()
+        entry = createSessionEntry(agent, modelKey)
+        acquireSessionLease(entry)
+        newSession = true
+        await putSession(requestedId, entry)
+      }
+    } else {
+      agent = await createAgent()
+      entry = createSessionEntry(agent, modelKey)
+      acquireSessionLease(entry)
+      newSession = true
+      id = agent.agentId || `local-${Date.now()}`
+      await putSession(id, entry)
+    }
+
+    id = requestedId || agent.agentId || id || `local-${Date.now()}`
+
+    const wrapped = buildPrompt(promptScrub.text, ctxScrub.value || {}, {
+      includeJournalContinuity: newSession,
+      hasImages: sdkImages.length > 0,
+    })
+
     const run =
       sdkImages.length > 0
         ? await agent.send({ text: wrapped, images: sdkImages })
         : await agent.send(wrapped)
     const result = await run.wait()
     if (result.status === 'error') {
+      recordRunError()
       const detail = await extractRunErrorDetailAsync(result, run)
       const scrubbed = detail ? scrubSecretsText(detail) : { text: '' }
+      const classified = classifyRunError(scrubbed.text || '')
       const message = scrubbed.text
         ? `The Ask engine run failed: ${scrubbed.text}`
         : 'The Ask engine run failed. Try again, or use Classify for routing only.'
-      const errLine = `[ask-cursor] run error id=${result.id || 'n/a'} requestId=${result.requestId || 'n/a'} durationMs=${result.durationMs ?? 'n/a'} detail=${scrubbed.text || '(none)'}`
+      const errLine = `[ask-cursor] run error id=${result.id || 'n/a'} requestId=${result.requestId || 'n/a'} durationMs=${result.durationMs ?? 'n/a'} detail=${scrubbed.text || '(none)'} retryClass=${classified.retryClass}`
       console.error(errLine)
       appendRunsLog(errLine)
+      await retireSession(id, entry)
       return {
         message,
         engine: ENGINE,
@@ -718,7 +726,9 @@ async function complete({ prompt, cwd, context, sessionId, images, model }) {
         status: 'error',
         runId: result.id || null,
         requestId: result.requestId || null,
-        errorDetail: scrubbed.text || null,
+        errorCode: classified.errorCode,
+        errorDetail: classified.errorDetail,
+        retryClass: classified.retryClass,
       }
     }
 
@@ -737,6 +747,7 @@ async function complete({ prompt, cwd, context, sessionId, images, model }) {
     }
     const hadModelText = Boolean(text && String(text).trim())
     const outScrub = scrubSecretsText(stripDeskChrome(hadModelText ? text : ''))
+    // Output secrets refuse is post-SDK; do not treat as run-health wedge.
     if (outScrub.refuse) {
       return {
         message:
@@ -759,8 +770,9 @@ async function complete({ prompt, cwd, context, sessionId, images, model }) {
         'Metra answered, but the engine returned no text.'
     }
     const status = rawStatus || (hadModelText ? 'finished' : 'unknown')
-    // Only include resolvedModel when the transport/SDK actually names a served model.
-    // Do not copy modelLabel into resolvedModel. Do not stringify model objects.
+    if (status === 'finished' || hadModelText) {
+      recordRunFinished()
+    }
     let transportResolved = null
     if (result && typeof result.model === 'string' && result.model.trim()) {
       transportResolved = result.model.trim()
@@ -782,16 +794,29 @@ async function complete({ prompt, cwd, context, sessionId, images, model }) {
     }
     return payload
   } catch (err) {
+    // Any SDK/transport failure after a session is in play: count toward health and retire.
+    // CursorAgentError returns a structured body; other throws become HTTP 500 above.
+    recordRunError()
+    if (entry && id) {
+      await retireSession(id, entry)
+    }
     if (err instanceof CursorAgentError) {
+      const scrubbed = scrubSecretsText(err.message || '')
+      const classified = classifyRunError(scrubbed.text || '')
       return {
-        message: `Ask engine could not start: ${err.message}`,
+        message: `Ask engine could not start: ${scrubbed.text || err.message}`,
         engine: ENGINE,
         model: modelLabel,
-        sessionId: id,
+        sessionId: id || requestedId || null,
         status: 'error',
+        errorCode: classified.errorCode,
+        errorDetail: classified.errorDetail,
+        retryClass: classified.retryClass,
       }
     }
     throw err
+  } finally {
+    await releaseSessionLease(entry)
   }
 }
 
@@ -809,16 +834,22 @@ const server = http.createServer(async (req, res) => {
   }
 
   if (req.method === 'GET' && url.pathname === '/health') {
-    sendJson(res, 200, {
-      ok: true,
-      engine: ENGINE,
-      model: MODEL,
-      apiKeyPresent: Boolean(process.env.CURSOR_API_KEY),
-    })
+    // ok = operationally usable (consecutive SDK run errors under threshold), not TCP-only.
+    sendJson(
+      res,
+      200,
+      getHealthPayload({
+        engine: ENGINE,
+        model: MODEL,
+        apiKeyPresent: Boolean(process.env.CURSOR_API_KEY),
+      }),
+    )
     return
   }
 
   if (req.method === 'POST' && url.pathname === '/v1/complete') {
+    // Node http does not serialize handlers; overlapping /v1/complete is real (Inspect + Ops).
+    // Session activeRuns lease is the disposal safety net (defense in depth).
     try {
       const body = await readJson(req)
       const prompt = String(body.prompt || '').trim()
@@ -865,22 +896,19 @@ server.listen(PORT, '127.0.0.1', () => {
   appendRunsLog(`[ask-cursor] listen ok ${line}`)
 })
 
-function shutdown() {
-  for (const agent of sessions.values()) {
-    try {
-      if (typeof agent[Symbol.asyncDispose] === 'function') {
-        void agent[Symbol.asyncDispose]()
-      } else if (typeof agent.close === 'function') {
-        agent.close()
-      }
-    } catch {
-      /* ignore */
-    }
+async function shutdown() {
+  try {
+    await disposeAllSessions()
+  } catch {
+    /* ignore */
   }
-  sessions.clear()
   server.close(() => process.exit(0))
   setTimeout(() => process.exit(0), 2000).unref()
 }
 
-process.on('SIGINT', shutdown)
-process.on('SIGTERM', shutdown)
+process.on('SIGINT', () => {
+  void shutdown()
+})
+process.on('SIGTERM', () => {
+  void shutdown()
+})

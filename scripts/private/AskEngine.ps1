@@ -392,10 +392,27 @@ function Clear-MetraAskEngineStalePidFile {
     }
 }
 
+function Test-MetraAskCursorHealthResponseOk {
+    <#
+    .SYNOPSIS
+        True only when health JSON has Boolean ok -eq $true (not string "false" / missing).
+    #>
+    [CmdletBinding()]
+    param($Response)
+
+    if ($null -eq $Response) { return $false }
+    $ok = Get-MetraProp -Object $Response -Name 'ok' -Default $null
+    if ($ok -is [bool]) { return ($ok -eq $true) }
+    # Reject string/"1"/missing - operational health must be a real Boolean true.
+    return $false
+}
+
 function Test-MetraAskCursorPortHealth {
     <#
     .SYNOPSIS
-        True when GET /health on the Cursor Ask loopback port returns ok.
+        True when GET /health on the Cursor Ask loopback port returns ok Boolean true.
+    .NOTES
+        ok means operationally usable (sidecar consecutive-run gate), not merely HTTP 200.
     #>
     [CmdletBinding()]
     param(
@@ -406,7 +423,7 @@ function Test-MetraAskCursorPortHealth {
     try {
         $url = "http://127.0.0.1:$Port/health"
         $response = Invoke-RestMethod -Uri $url -Method Get -TimeoutSec $TimeoutSec
-        return [bool](Get-MetraProp -Object $response -Name 'ok' -Default $false)
+        return [bool](Test-MetraAskCursorHealthResponseOk -Response $response)
     }
     catch {
         return $false
@@ -535,7 +552,7 @@ function Test-MetraAskEngineHealth {
             try {
                 $url = "http://127.0.0.1:$($settings.cursorPort)/health"
                 $response = Invoke-RestMethod -Uri $url -Method Get -TimeoutSec $TimeoutSec
-                return [bool](Get-MetraProp -Object $response -Name 'ok' -Default $false)
+                return [bool](Test-MetraAskCursorHealthResponseOk -Response $response)
             }
             catch { return $false }
         }
@@ -929,6 +946,58 @@ function New-MetraAskSettingsWithOverrides {
     }
 }
 
+function Get-MetraAskCursorForeignListenerProcessIds {
+    <#
+    .SYNOPSIS
+        Returns PIDs listening on the Ask port that are NOT proven Metra Cursor sidecars.
+    #>
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory)][int]$Port
+    )
+
+    $owned = New-Object 'System.Collections.Generic.HashSet[int]'
+    foreach ($id in @(Get-MetraAskCursorSidecarListenerProcessIds -Port $Port)) {
+        [void]$owned.Add([int]$id)
+    }
+
+    $foreign = New-Object System.Collections.Generic.List[int]
+    # Any bind on the Ask port counts (loopback, 0.0.0.0, ::, *). Owned Metra PIDs are excluded above.
+    try {
+        $conns = @(Get-NetTCPConnection -LocalPort $Port -State Listen -ErrorAction Stop)
+        foreach ($conn in $conns) {
+            $listenerPid = [int]$conn.OwningProcess
+            if ($listenerPid -le 0 -or $listenerPid -eq $PID) { continue }
+            if ($owned.Contains($listenerPid)) { continue }
+            if (-not $foreign.Contains($listenerPid)) {
+                [void]$foreign.Add($listenerPid)
+            }
+        }
+    }
+    catch {
+        $patterns = @(
+            "127\.0\.0\.1:$Port\s+\S+\s+LISTENING\s+(\d+)",
+            "0\.0\.0\.0:$Port\s+\S+\s+LISTENING\s+(\d+)",
+            "\[\:\:1\]:$Port\s+\S+\s+LISTENING\s+(\d+)",
+            "\[\:\:\]:$Port\s+\S+\s+LISTENING\s+(\d+)",
+            "\*\:$Port\s+\S+\s+LISTENING\s+(\d+)"
+        )
+        foreach ($pattern in $patterns) {
+            foreach ($line in @(netstat -ano | Select-String -Pattern $pattern)) {
+                $m = [regex]::Match([string]$line, $pattern)
+                if (-not $m.Success) { continue }
+                $listenerPid = [int]$m.Groups[1].Value
+                if ($listenerPid -le 0 -or $listenerPid -eq $PID) { continue }
+                if ($owned.Contains($listenerPid)) { continue }
+                if (-not $foreign.Contains($listenerPid)) {
+                    [void]$foreign.Add($listenerPid)
+                }
+            }
+        }
+    }
+    return @($foreign)
+}
+
 function Invoke-MetraAskCursorSidecarEnsure {
     <#
     .SYNOPSIS
@@ -952,13 +1021,34 @@ function Invoke-MetraAskCursorSidecarEnsure {
 
     $existing = @(Get-MetraAskCursorSidecarListenerProcessIds -Port $CursorPort)
     if ($existing.Count -gt 0) {
-        $null = Sync-MetraAskEnginePidFile -Port $CursorPort
-        if (Wait-MetraAskCursorPortHealth -Port $CursorPort -TimeoutSec 8) {
+        if (Wait-MetraAskCursorPortHealth -Port $CursorPort -TimeoutSec 2) {
             $null = Sync-MetraAskEnginePidFile -Port $CursorPort
             return $true
         }
-        Write-Warning ("Ask Cursor sidecar listener(s) on port {0} but /health is not ok. Not starting a second process. See {1}" -f `
+        # Owned Metra listener present but health not ok - recycle (do not adopt wedged process).
+        Write-Warning ("Ask Cursor sidecar listener(s) on port {0} unhealthy; recycling owned process. See {1}" -f `
             $CursorPort, (Get-MetraAskEngineLogPath -Port $CursorPort -Stream stderr))
+        try {
+            $null = Stop-MetraAskEngine -MetraRoot $MetraRoot -Port $CursorPort -IncludePortListeners -Confirm:$false
+        }
+        catch {
+            Write-Warning "Ask Cursor sidecar stop failed before recycle spawn: $($_.Exception.Message)"
+            return $false
+        }
+        $stillOwned = @(Get-MetraAskCursorSidecarListenerProcessIds -Port $CursorPort)
+        if ($stillOwned.Count -gt 0) {
+            Write-Warning ("Ask Cursor sidecar still listening after stop on port {0}; not spawning. See {1}" -f `
+                $CursorPort, (Get-MetraAskEngineLogPath -Port $CursorPort -Stream stderr))
+            return $false
+        }
+        # Fall through to cold spawn below (foreign check is shared with no-owned path).
+    }
+
+    # Before any cold spawn (including after owned recycle): fail closed on non-Metra occupants.
+    $foreign = @(Get-MetraAskCursorForeignListenerProcessIds -Port $CursorPort)
+    if ($foreign.Count -gt 0) {
+        Write-Warning ("Port {0} is in use by non-Metra process(es) ({1}); not starting Ask sidecar." -f `
+            $CursorPort, ($foreign -join ','))
         return $false
     }
 
@@ -1225,6 +1315,16 @@ function Convert-MetraAskCursorResponse {
         if ([string]::IsNullOrWhiteSpace($errMsg)) {
             $errMsg = 'Ask engine request failed.'
         }
+        $errorDetail = [string](Get-MetraProp -Object $Response -Name 'errorDetail' -Default '')
+        $errorCode = [string](Get-MetraProp -Object $Response -Name 'errorCode' -Default '')
+        $retryClass = [string](Get-MetraProp -Object $Response -Name 'retryClass' -Default '')
+        if ([string]::IsNullOrWhiteSpace($errorCode)) { $errorCode = 'engine_request_failed' }
+        if ([string]::IsNullOrWhiteSpace($retryClass) -and [string]::IsNullOrWhiteSpace($errorDetail)) {
+            $retryClass = 'opaque_sdk_failure'
+        }
+        elseif ([string]::IsNullOrWhiteSpace($retryClass)) {
+            $retryClass = 'sdk_run_error'
+        }
         return [PSCustomObject]@{
             ok              = $false
             message         = $errMsg
@@ -1234,6 +1334,9 @@ function Convert-MetraAskCursorResponse {
             sessionId       = [string](Get-MetraProp -Object $Response -Name 'sessionId' -Default $SessionId)
             status          = $status
             error           = 'engine_request_failed'
+            errorCode       = $errorCode
+            errorDetail     = $errorDetail
+            retryClass      = $retryClass
             secretsRefuse   = $false
             secretsReason   = $null
             secretsNotice   = $notice
@@ -1436,6 +1539,275 @@ function Stop-MetraAskEngine {
         if ($PSCmdlet.ShouldProcess($pidFile, 'Remove stale Ask engine PID file')) {
             Remove-Item -LiteralPath $pidFile -Force -ErrorAction SilentlyContinue
         }
+    }
+}
+
+function Get-MetraAskCursorSidecarGeneration {
+    <#
+    .SYNOPSIS
+        Sidecar generation identity: owned listener PID + process StartTime (or recorded PID).
+    #>
+    [CmdletBinding()]
+    param(
+        [string]$MetraRoot = (Get-MetraRoot),
+        [int]$Port = 0
+    )
+
+    $settings = Get-MetraAskSettings -MetraRoot $MetraRoot
+    if ($Port -le 0) { $Port = [int]$settings.cursorPort }
+    $listenerIds = @(Get-MetraAskCursorSidecarListenerProcessIds -Port $Port)
+    $pidValue = if ($listenerIds.Count -gt 0) { [int]$listenerIds[0] } else { Get-MetraAskEngineRecordedProcessId -MetraRoot $MetraRoot }
+    if (-not $pidValue -or $pidValue -le 0) {
+        return [PSCustomObject]@{ ProcessId = $null; StartTimeUtc = $null; Token = 'none' }
+    }
+    $proc = Get-Process -Id $pidValue -ErrorAction SilentlyContinue
+    $start = if ($proc -and $proc.StartTime) { $proc.StartTime.ToUniversalTime().ToString('o') } else { 'unknown' }
+    return [PSCustomObject]@{
+        ProcessId     = $pidValue
+        StartTimeUtc  = $start
+        Token         = "$pidValue|$start"
+    }
+}
+
+function Test-MetraAskOpaqueSdkFailure {
+    <#
+    .SYNOPSIS
+        True when a cursor engine result is classified as opaque_sdk_failure (structured fields).
+    #>
+    [CmdletBinding()]
+    param($EngineResult)
+
+    if ($null -eq $EngineResult) { return $false }
+    if ([bool](Get-MetraProp -Object $EngineResult -Name 'ok' -Default $false)) { return $false }
+    if ([bool](Get-MetraProp -Object $EngineResult -Name 'secretsRefuse' -Default $false)) { return $false }
+    $status = [string](Get-MetraProp -Object $EngineResult -Name 'status' -Default '')
+    if ($status -eq 'finished' -or $status -eq 'refused' -or $status -eq 'degraded') { return $false }
+    $retryClass = [string](Get-MetraProp -Object $EngineResult -Name 'retryClass' -Default '')
+    if ($retryClass -eq 'opaque_sdk_failure') { return $true }
+    $error = [string](Get-MetraProp -Object $EngineResult -Name 'error' -Default '')
+    $detail = [string](Get-MetraProp -Object $EngineResult -Name 'errorDetail' -Default '')
+    if ($error -eq 'engine_request_failed' -and [string]::IsNullOrWhiteSpace($detail)) { return $true }
+    return $false
+}
+
+if (-not (Get-Variable -Name MetraAskSidecarRestartLock -Scope Script -ErrorAction SilentlyContinue)) {
+    $script:MetraAskSidecarRestartLock = New-Object object
+    $script:MetraAskSidecarRestartGate = @{
+        InFlightToken  = $null
+        CompletedToken = $null
+        CompletedOk    = $null
+        CompletedAt    = $null
+    }
+}
+
+function Invoke-MetraAskCursorSingleFlightRestart {
+    <#
+    .SYNOPSIS
+        Restarts the Cursor sidecar at most once per generation (PID+start). Concurrent callers wait or skip.
+    #>
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory)][string]$FailedGenerationToken,
+        [string]$MetraRoot = (Get-MetraRoot)
+    )
+
+    $gate = $script:MetraAskSidecarRestartGate
+    $lock = $script:MetraAskSidecarRestartLock
+    $current = Get-MetraAskCursorSidecarGeneration -MetraRoot $MetraRoot
+    # 'none' is not a reusable generation - each dead-sidecar failure must attempt restart.
+    if ($FailedGenerationToken -ne 'none' -and $current.Token -ne $FailedGenerationToken -and $current.Token -ne 'none') {
+        # Another caller already recycled; skip restart.
+        return [PSCustomObject]@{
+            restarted = $false
+            skipped   = $true
+            reason    = 'generation_changed'
+            ok        = [bool](Test-MetraAskEngineHealth -MetraRoot $MetraRoot -TimeoutSec 2)
+            capability = Get-MetraAskCapability -MetraRoot $MetraRoot
+        }
+    }
+
+    $ownRestart = $false
+    $deadline = [datetime]::UtcNow.AddSeconds(90)
+    $flightToken = if ($FailedGenerationToken -eq 'none') {
+        "none|$([guid]::NewGuid().ToString('n'))"
+    } else {
+        $FailedGenerationToken
+    }
+    while ([datetime]::UtcNow -lt $deadline) {
+        $shouldStart = $false
+        [System.Threading.Monitor]::Enter($lock)
+        try {
+            if ($FailedGenerationToken -ne 'none' -and $gate.CompletedToken -eq $FailedGenerationToken -and $null -ne $gate.CompletedOk) {
+                $okDone = [bool]$gate.CompletedOk
+                return [PSCustomObject]@{
+                    restarted  = $true
+                    skipped    = $false
+                    reason     = 'joined_completed'
+                    ok         = $okDone
+                    capability = Get-MetraAskCapability -MetraRoot $MetraRoot
+                }
+            }
+            if ([string]::IsNullOrWhiteSpace([string]$gate.InFlightToken)) {
+                $gate.InFlightToken = $flightToken
+                $gate.CompletedToken = $null
+                $gate.CompletedOk = $null
+                $shouldStart = $true
+                $ownRestart = $true
+            }
+        }
+        finally {
+            [System.Threading.Monitor]::Exit($lock)
+        }
+
+        if ($shouldStart) { break }
+
+        $nowGen = Get-MetraAskCursorSidecarGeneration -MetraRoot $MetraRoot
+        if ($FailedGenerationToken -ne 'none' -and $nowGen.Token -ne $FailedGenerationToken -and $nowGen.Token -ne 'none') {
+            return [PSCustomObject]@{
+                restarted  = $false
+                skipped    = $true
+                reason     = 'generation_changed_while_waiting'
+                ok         = [bool](Test-MetraAskEngineHealth -MetraRoot $MetraRoot -TimeoutSec 2)
+                capability = Get-MetraAskCapability -MetraRoot $MetraRoot
+            }
+        }
+        Start-Sleep -Milliseconds 200
+    }
+
+    if (-not $ownRestart) {
+        return [PSCustomObject]@{
+            restarted  = $false
+            skipped    = $true
+            reason     = 'restart_wait_timeout'
+            ok         = [bool](Test-MetraAskEngineHealth -MetraRoot $MetraRoot -TimeoutSec 2)
+            capability = Get-MetraAskCapability -MetraRoot $MetraRoot
+        }
+    }
+
+    try {
+        $cap = Restart-MetraAskEngine -MetraRoot $MetraRoot -Confirm:$false
+        $ok = [bool](Get-MetraProp -Object $cap -Name 'available' -Default $false) -and `
+            [bool](Get-MetraProp -Object $cap -Name 'engineHealthy' -Default $false)
+        if (-not $ok) {
+            $ok = [bool](Test-MetraAskEngineHealth -MetraRoot $MetraRoot -TimeoutSec 2)
+        }
+        [System.Threading.Monitor]::Enter($lock)
+        try {
+            # Never persist CompletedToken='none' - that would short-circuit future dead-sidecar restarts.
+            $gate.CompletedToken = $(if ($FailedGenerationToken -eq 'none') { $null } else { $FailedGenerationToken })
+            $gate.CompletedOk = $ok
+            $gate.CompletedAt = [datetime]::UtcNow
+            $gate.InFlightToken = $null
+        }
+        finally {
+            [System.Threading.Monitor]::Exit($lock)
+        }
+        return [PSCustomObject]@{
+            restarted  = $true
+            skipped    = $false
+            reason     = $(if ($ok) { 'restart_ok' } else { 'restart_failed' })
+            ok         = $ok
+            capability = $cap
+        }
+    }
+    catch {
+        [System.Threading.Monitor]::Enter($lock)
+        try {
+            $gate.CompletedToken = $(if ($FailedGenerationToken -eq 'none') { $null } else { $FailedGenerationToken })
+            $gate.CompletedOk = $false
+            $gate.CompletedAt = [datetime]::UtcNow
+            $gate.InFlightToken = $null
+        }
+        finally {
+            [System.Threading.Monitor]::Exit($lock)
+        }
+        return [PSCustomObject]@{
+            restarted  = $true
+            skipped    = $false
+            reason     = 'restart_threw'
+            ok         = $false
+            capability = Get-MetraAskCapability -MetraRoot $MetraRoot
+            error      = $_.Exception.Message
+        }
+    }
+}
+
+function Invoke-MetraAskCursorOpaqueRecovery {
+    <#
+    .SYNOPSIS
+        One Restart (single-flight) + one retry for opaque Cursor SDK failures.
+    #>
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory)]$EngineResult,
+        [Parameter(Mandatory)][string]$Prompt,
+        [Parameter(Mandatory)][string]$Cwd,
+        [hashtable]$Context = @{},
+        [string]$SessionId,
+        [object[]]$Images = @(),
+        [string]$MetraRoot = (Get-MetraRoot),
+        [int]$TimeoutSec = 180
+    )
+
+    if (-not (Test-MetraAskOpaqueSdkFailure -EngineResult $EngineResult)) {
+        return [PSCustomObject]@{
+            attempted = $false
+            result    = $EngineResult
+        }
+    }
+
+    $failedGen = Get-MetraAskCursorSidecarGeneration -MetraRoot $MetraRoot
+    $restart = Invoke-MetraAskCursorSingleFlightRestart -FailedGenerationToken $failedGen.Token -MetraRoot $MetraRoot
+
+    $safeContext = @{}
+    if ($null -ne $Context) {
+        foreach ($k in @($Context.Keys)) {
+            $safeContext[$k] = $Context[$k]
+        }
+    }
+    $safeContext['forceContinuity'] = $true
+
+    if (-not [bool]$restart.ok -and -not [bool]$restart.skipped) {
+        $trail = "Cursor Ask failed after one sidecar recycle attempt. Initial failure: opaque SDK error. Restart: $($restart.reason)."
+        $failed = $EngineResult | Select-Object *
+        $failed | Add-Member -NotePropertyName message -NotePropertyValue $trail -Force
+        $failed | Add-Member -NotePropertyName recoveryTrail -NotePropertyValue $trail -Force
+        $failed | Add-Member -NotePropertyName restartReason -NotePropertyValue $restart.reason -Force
+        return [PSCustomObject]@{
+            attempted = $true
+            result    = $failed
+            restart   = $restart
+        }
+    }
+
+    $retry = Invoke-MetraAskEngine -Prompt $Prompt -Cwd $Cwd -Context $safeContext `
+        -SessionId $SessionId -Images $Images -MetraRoot $MetraRoot -TimeoutSec $TimeoutSec
+
+    if ([bool](Get-MetraProp -Object $retry -Name 'ok' -Default $false)) {
+        $retry | Add-Member -NotePropertyName recoveryTrail -NotePropertyValue 'opaque_sdk_failure: recycled once and retry succeeded' -Force
+        return [PSCustomObject]@{
+            attempted = $true
+            result    = $retry
+            restart   = $restart
+        }
+    }
+
+    $detail = [string](Get-MetraProp -Object $retry -Name 'errorDetail' -Default '')
+    if ([string]::IsNullOrWhiteSpace($detail)) {
+        $detail = [string](Get-MetraProp -Object $retry -Name 'message' -Default 'engine_request_failed')
+    }
+    $trail = @(
+        'Cursor Ask failed after one sidecar recycle and retry.'
+        'Initial failure: opaque SDK error'
+        "Restart: $($restart.reason)"
+        "Retry: $(Get-MetraProp -Object $retry -Name 'error' -Default 'engine_request_failed'), detail: $detail"
+    ) -join "`n"
+    $retry | Add-Member -NotePropertyName recoveryTrail -NotePropertyValue $trail -Force
+    $retry | Add-Member -NotePropertyName message -NotePropertyValue $trail -Force
+    return [PSCustomObject]@{
+        attempted = $true
+        result    = $retry
+        restart   = $restart
     }
 }
 

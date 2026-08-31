@@ -2385,13 +2385,36 @@ function Get-MetraDeskAskResult {
         })
     }
 
-    if (-not $engineResult.ok -and [string](Get-MetraProp -Object $engineResult -Name 'error' -Default '') -ne 'secrets_refuse' -and -not (Test-MetraAskEngineHealth -MetraRoot $MetraRoot -TimeoutSec 2)) {
-        $revived = Start-MetraAskEngine -MetraRoot $MetraRoot
-        if ($revived.available) {
-            $capability = $revived
-            $safeContext['forceContinuity'] = $true
-            $engineResult = Invoke-MetraAskEngine -Prompt $enginePrompt -Cwd $cwd -Context $safeContext `
-                -Images $resolvedImages -MetraRoot $MetraRoot
+    if (-not $engineResult.ok -and [string](Get-MetraProp -Object $engineResult -Name 'error' -Default '') -ne 'secrets_refuse') {
+        $settingsNow = Get-MetraAskSettings -MetraRoot $MetraRoot
+        $didOpaque = $false
+        if ($settingsNow.engine -eq 'cursor' -and (Test-MetraAskOpaqueSdkFailure -EngineResult $engineResult)) {
+            $recovery = Invoke-MetraAskCursorOpaqueRecovery -EngineResult $engineResult `
+                -Prompt $enginePrompt -Cwd $cwd -Context $safeContext `
+                -SessionId $SessionId -Images $resolvedImages -MetraRoot $MetraRoot
+            if ([bool]$recovery.attempted) {
+                $engineResult = $recovery.result
+                $didOpaque = $true
+                if ([bool](Get-MetraProp -Object $engineResult -Name 'ok' -Default $false)) {
+                    $capability = Get-MetraAskCapability -MetraRoot $MetraRoot
+                }
+            }
+        }
+        if (-not $didOpaque -and -not (Test-MetraAskEngineHealth -MetraRoot $MetraRoot -TimeoutSec 2)) {
+            # Health false (including consecutive-run gate): Restart when a listener exists, else Start.
+            $owned = @(Get-MetraAskCursorSidecarListenerProcessIds -Port $settingsNow.cursorPort)
+            if ($owned.Count -gt 0 -and $settingsNow.engine -eq 'cursor') {
+                $revived = Restart-MetraAskEngine -MetraRoot $MetraRoot -Confirm:$false
+            }
+            else {
+                $revived = Start-MetraAskEngine -MetraRoot $MetraRoot
+            }
+            if ([bool](Get-MetraProp -Object $revived -Name 'available' -Default $false)) {
+                $capability = $revived
+                $safeContext['forceContinuity'] = $true
+                $engineResult = Invoke-MetraAskEngine -Prompt $enginePrompt -Cwd $cwd -Context $safeContext `
+                    -SessionId $SessionId -Images $resolvedImages -MetraRoot $MetraRoot
+            }
         }
     }
 
