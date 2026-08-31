@@ -22,6 +22,40 @@ Entry shape:
 
 ---
 
+---
+
+## 2026-08-31 - Loom is the governed-execution product name
+
+- Decision: The fourth portfolio product (governed plan execution: queue, journal, branches, review, operator acceptance) is named **Loom**. Portfolio line: **Atlas** remembers; **Metra** coordinates; **Forge** generates; **Loom** executes. **AutoProgram** remains the working name for module path, CLI (`metra.ps1 autoprogram`), and queue IDs (`AP-*`, `CAND-*`) through M2 boundary work; rename executes on a separate track after the M2 isolation gate, not in the same release as module extraction.
+- Why: Operator naming decision 2026-08-31 after Bing review (Loom over Assembly). Describes role (weaving approved work through stages) rather than implementation technique (auto coding).
+- See: [docs/autoprogram-product-boundary.plan.md](autoprogram-product-boundary.plan.md) Section 17
+
+---
+
+## 2026-08-31 - Completion is evidence; acceptance is authority
+
+- Decision: Machine **completion** is evidence that a governed process met its contract (inspect goal, verify, scope, done-when). Operator **acceptance** is authority to integrate (merge, push, promote, close). **Completion without acceptance is forbidden** for AutoProgram queue items, TicketWatch recommendations, Atlas knowledge promotion, and future agentic write surfaces. No harness may treat its own judgment as operator approval.
+- Why: Portfolio principle surfaced during AutoProgram boundary review (Bing 2026-08-31). Prevents authority drift as automation grows.
+- See: [docs/autoprogram-product-boundary.plan.md](autoprogram-product-boundary.plan.md); AutoProgram roadmap plan Slice 4+ daily gate
+
+---
+
+## 2026-08-31 - AutoProgram dependency direction (adapters, not private imports)
+
+- Decision: AutoProgram domain code calls Metra only through **documented adapters** to public Metra surfaces (routing, Capture read, plan roots, inspect, verify, Ops health). **Forbidden:** Loom/AutoProgram importing or dot-sourcing `scripts/private/Routing.ps1`, `Capture.ps1`, or other Metra private implementation files. Direction: `Loom (AutoProgram) → Adapters → Metra`. Extraction readiness requires AutoProgram module tests green **without** `Import-Module Metra.psm1`.
+- Why: Difference between a future extractable module and a permanent god module (Bing 2026-08-31). Highest-value rule in boundary plan Section 6.
+- See: [docs/autoprogram-product-boundary.plan.md](autoprogram-product-boundary.plan.md) Section 6, 10.5
+
+---
+
+## 2026-08-31 - Loom is a governed-execution domain (not Forge)
+
+- Decision: Portfolio products: **Atlas** remembers; **Metra** coordinates; **Forge** generates declarative artifacts from structured definitions; **Loom** executes governed plans (approved formal plans → governed queue → isolated mutation → review → operator acceptance). Working name through M2: **AutoProgram** (`metra.ps1 autoprogram`, `modules/AutoProgram/`). Loom does **not** move into Forge. Forge authority is regenerable output; Loom authority is mutable execution history (queue, journal, branches, review evidence, acceptance records). Metra hosts the CLI façade temporarily; module boundary must be extractable before sibling repo. **Non-goals:** move into Forge; sibling repo during M0–M2; autonomous merge/push/accept; Notion as queue backend. **Extraction:** sibling repo only when Section 15 triggers in [autoprogram-product-boundary.plan.md](autoprogram-product-boundary.plan.md) are met (any two, including isolation gate).
+- Why: Forge and Loom have different operating models (regenerate vs accumulate evidence). Bing boundary review approved this split 2026-08-31.
+- See: [docs/autoprogram-product-boundary.plan.md](autoprogram-product-boundary.plan.md) Sections 1, 15, 16; tag `boundary-correction-start` (`7d90ebe`)
+
+---
+
 ## 2026-08-30 - Cursor Ask sidecar recovery and agent lifecycle
 
 - Decision: Cursor Ask `GET /health` `ok` means operational usability, not TCP/HTTP availability alone. The sidecar keeps a process-local count of consecutive SDK run errors and reports unhealthy after two consecutive failures without paid health probes. Ensure may adopt an owned listener only when `/health` returns Boolean `ok -eq $true`; otherwise it recycles the owned Metra listener (identity-checked stop, then cold spawn). An opaque Cursor SDK run failure (`retryClass: opaque_sdk_failure` or empty `errorDetail`) may trigger one single-flight restart and one retry per Ask turn, with no retry loop. Cached Cursor agents use retire-then-dispose (never dispose while `activeRuns > 0`), with the session map capped at eight LRU entries. Cursor Ask pins `@cursor/sdk` to version **1.0.26** (exact; lockfile committed) on Windows - smoke showed **1.0.27+** (through 1.0.30) access-violates (`0xC0000005`) during local `Agent` runs on this host. Do not raise the pin past 1.0.26 without a live Windows complete smoke. Do not lower the consecutive-error threshold to 1 without a new Decision (churn risk).
@@ -32,9 +66,17 @@ Entry shape:
 
 ## 2026-08-30 - Durable routing edges are operator-applied only
 
-- Decision: Accepted routing edges persist machine-locally under `%LOCALAPPDATA%\Metra\routing\graph.json` and apply only via explicit `routing edges accept` / `remove`. Routing telemetry and `routing edges candidates` remain Observe-only and never write accepted edges.
+- Decision: Accepted routing edges persist machine-locally under `%LOCALAPPDATA%\Metra\routing\graph.json` and apply only via explicit `routing edges accept` / `affirm` / `remove`. Routing telemetry and `routing edges candidates` remain Observe-only and never write accepted edges. Review proposals live in `proposals.json`; `propose` and `reject` never write `graph.json`.
 - Why: Misroutes outweigh routine confirms; silent Observe→Apply would recreate untrusted routing state.
-- See: [docs/routing-graph-phase4-persistence.plan.md](routing-graph-phase4-persistence.plan.md)
+- See: [docs/routing-graph-phase4-persistence.plan.md](routing-graph-phase4-persistence.plan.md), [docs/routing-graph-phase5-review.plan.md](routing-graph-phase5-review.plan.md)
+
+---
+
+## 2026-08-31 - Routing graph Review proposes; operator affirms
+
+- Decision: Phase 5 Review derives pending edge proposals from ambiguous telemetry (`routing edges propose`) when compound cue evidence disagrees with the ambiguous primary (MinCount default 2). Operator **affirm** applies via `Add-MetraRoutingAcceptedEdge`; **reject** dismisses without graph write. Rejected fingerprints are not re-proposed; manual `accept` remains valid.
+- Why: Closes Observe → Recommend → Approve → Apply without silent learning or LLM routing.
+- See: [docs/routing-graph-phase5-review.plan.md](routing-graph-phase5-review.plan.md)
 
 ---
 
