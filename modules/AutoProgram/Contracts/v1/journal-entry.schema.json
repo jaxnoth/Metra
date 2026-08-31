@@ -1,0 +1,14 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "journal-entry",
+  "type": "object",
+  "required": ["timestamp", "itemId", "from", "to", "actor"],
+  "properties": {
+    "timestamp": { "type": "string" },
+    "itemId": { "type": "string" },
+    "from": { "type": "string" },
+    "to": { "type": "string" },
+    "actor": { "type": "string" },
+    "reason": { "type": "string" }
+  }
+}

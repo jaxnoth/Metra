@@ -1,0 +1,13 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "blocker-report",
+  "type": "object",
+  "required": ["schemaVersion", "tier", "class", "message"],
+  "properties": {
+    "schemaVersion": { "type": "integer", "const": 1 },
+    "tier": { "type": "string", "enum": ["stop", "auto-recover", "daily-gate"] },
+    "class": { "type": "string" },
+    "message": { "type": "string" },
+    "recoveryAttempts": { "type": "array" }
+  }
+}

@@ -1,0 +1,17 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "plan-record",
+  "type": "object",
+  "required": ["path", "name", "planStatus", "approved"],
+  "properties": {
+    "path": { "type": "string" },
+    "name": { "type": "string" },
+    "overview": { "type": "string" },
+    "planStatus": { "type": "string" },
+    "bingReviewed": { "type": "boolean" },
+    "approved": { "type": "boolean" },
+    "todos": { "type": "array" },
+    "verifyCommands": { "type": "array", "items": { "type": "string" } },
+    "doneWhen": { "type": "array", "items": { "type": "string" } }
+  }
+}

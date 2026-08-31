@@ -3,12 +3,14 @@
 
 BeforeAll {
     $metraRoot = (Resolve-Path (Join-Path $PSScriptRoot '..')).Path
+    # M2: domain lives in AutoProgram; Metra façade still loads for CLI/adapters.
+    Import-Module (Join-Path $metraRoot 'modules\AutoProgram\AutoProgram.psd1') -Force
     Import-Module (Join-Path $metraRoot 'scripts\Metra.psd1') -Force
 }
 
 Describe 'Autoprogram transitions (Phase A)' {
     It 'allows @new -> queued and queued -> blocked only' {
-        InModuleScope Metra {
+        InModuleScope AutoProgram {
             Test-MetraAutoprogramTransition -From '@new' -To 'queued' | Should -BeTrue
             Test-MetraAutoprogramTransition -From 'queued' -To 'blocked' | Should -BeTrue
             Test-MetraAutoprogramTransition -From 'queued' -To 'accepted' | Should -BeFalse
@@ -19,7 +21,7 @@ Describe 'Autoprogram transitions (Phase A)' {
 
 Describe 'Autoprogram journal append-only' {
     It 'appends journal lines without rewriting prior entries' {
-        InModuleScope Metra {
+        InModuleScope AutoProgram {
             $root = Join-Path ([IO.Path]::GetTempPath()) ('metra-ap-' + [guid]::NewGuid().ToString('n'))
             try {
                 Initialize-MetraAutoprogramLayout -Root $root
@@ -43,7 +45,7 @@ Describe 'Autoprogram journal append-only' {
 
 Describe 'Autoprogram enqueue and block' {
     It 'creates queued item and blocks with journal pairing' {
-        InModuleScope Metra {
+        InModuleScope AutoProgram {
             $root = Join-Path ([IO.Path]::GetTempPath()) ('metra-ap-' + [guid]::NewGuid().ToString('n'))
             try {
                 $cand = [PSCustomObject]@{
@@ -51,7 +53,7 @@ Describe 'Autoprogram enqueue and block' {
                     summary        = 'Test item'
                     source         = [PSCustomObject]@{ type = 'operator' }
                     project        = [PSCustomObject]@{
-                        registryName = 'Metra'; root = (Get-MetraRoot)
+                        registryName = 'Metra'; root = (Get-AutoProgramHostRoot)
                         routingConfidence = 0.99; routingEvidence = 'test'
                     }
                     classification = @{
@@ -88,7 +90,7 @@ Describe 'Autoprogram enqueue and block' {
 
 Describe 'Autoprogram deterministic scoring' {
     It 'returns the same total for the same inputs' {
-        InModuleScope Metra {
+        InModuleScope AutoProgram {
             $classification = @{
                 reversibility = 'code'; crossRoot = $false; productionTouch = $false
                 externalSideEffect = $false; manualTestClass = 'none'
@@ -105,7 +107,7 @@ Describe 'Autoprogram deterministic scoring' {
 
 Describe 'Autoprogram eligibility' {
     It 'rejects capture-like items without contract' {
-        InModuleScope Metra {
+        InModuleScope AutoProgram {
             $classification = [PSCustomObject]@{
                 reversibility = 'code'; crossRoot = $false; productionTouch = $false; externalSideEffect = $false
             }
@@ -119,7 +121,7 @@ Describe 'Autoprogram eligibility' {
     }
 
     It 'rejects non-approved formal plans' {
-        InModuleScope Metra {
+        InModuleScope AutoProgram {
             $classification = [PSCustomObject]@{
                 reversibility = 'code'; crossRoot = $false; productionTouch = $false; externalSideEffect = $false
             }
@@ -136,7 +138,7 @@ Describe 'Autoprogram eligibility' {
 
 Describe 'Autoprogram plan indexer' {
     It 'detects Approved status in plan body' {
-        InModuleScope Metra {
+        InModuleScope AutoProgram {
             $root = Join-Path ([IO.Path]::GetTempPath()) ('metra-ap-' + [guid]::NewGuid().ToString('n'))
             try {
                 $planPath = Join-Path $root 'sample.plan.md'
@@ -156,8 +158,8 @@ todos:
 
 Run ``Invoke-Pester .\tests\Sample.Tests.ps1``
 "@
-                Write-MetraAtomicUtf8Text -Path $planPath -Text $body
-                $parsed = Read-MetraAutoprogramPlanFile -Path $planPath -MetraRoot (Get-MetraRoot)
+                Write-AutoProgramAtomicUtf8Text -Path $planPath -Text $body
+                $parsed = Read-MetraAutoprogramPlanFile -Path $planPath -MetraRoot (Get-AutoProgramHostRoot)
                 $parsed.approved | Should -BeTrue
                 $parsed.name | Should -Be 'Sample Plan'
             }
@@ -170,10 +172,10 @@ Run ``Invoke-Pester .\tests\Sample.Tests.ps1``
 
 Describe 'Autoprogram triage dry-run' {
     It 'does not enqueue queue items' {
-        InModuleScope Metra {
+        InModuleScope AutoProgram {
             $root = Join-Path ([IO.Path]::GetTempPath()) ('metra-ap-' + [guid]::NewGuid().ToString('n'))
             try {
-                $report = Invoke-MetraAutoprogramTriage -Root $root -MetraRoot (Get-MetraRoot)
+                $report = Invoke-MetraAutoprogramTriage -Root $root -MetraRoot (Get-AutoProgramHostRoot)
                 $report.dryRun | Should -BeTrue
                 @(Get-MetraAutoprogramQueueItems -Root $root).Count | Should -Be 0
                 @($report.candidates).Count | Should -BeGreaterThan 0
@@ -187,7 +189,7 @@ Describe 'Autoprogram triage dry-run' {
 
 Describe 'Autoprogram enqueue from plan' {
     It 'sets source.type formal-plan with path provenance' {
-        InModuleScope Metra {
+        InModuleScope AutoProgram {
             $root = Join-Path ([IO.Path]::GetTempPath()) ('metra-ap-' + [guid]::NewGuid().ToString('n'))
             $planRoot = Join-Path ([IO.Path]::GetTempPath()) ('metra-ap-plan-' + [guid]::NewGuid().ToString('n'))
             try {
@@ -204,8 +206,8 @@ overview: "Metra autoprogram harness state"
 
 Accept when Pester passes.
 "@
-                Write-MetraAtomicUtf8Text -Path $planPath -Text $body
-                $item = Invoke-MetraAutoprogramEnqueueFromPlan -Root $root -Path $planPath -MetraRoot (Get-MetraRoot)
+                Write-AutoProgramAtomicUtf8Text -Path $planPath -Text $body
+                $item = Invoke-MetraAutoprogramEnqueueFromPlan -Root $root -Path $planPath -MetraRoot (Get-AutoProgramHostRoot)
                 $item.source.type | Should -Be 'formal-plan'
                 [string]$item.source.path | Should -Be $planPath
                 $item.status | Should -Be 'queued'
@@ -218,7 +220,7 @@ Accept when Pester passes.
     }
 
     It 'rejects Pending Bing plans' {
-        InModuleScope Metra {
+        InModuleScope AutoProgram {
             $root = Join-Path ([IO.Path]::GetTempPath()) ('metra-ap-' + [guid]::NewGuid().ToString('n'))
             $planRoot = Join-Path ([IO.Path]::GetTempPath()) ('metra-ap-plan-' + [guid]::NewGuid().ToString('n'))
             try {
@@ -228,8 +230,8 @@ Accept when Pester passes.
 
 **Status:** Pending Bing Review
 "@
-                Write-MetraAtomicUtf8Text -Path $planPath -Text $body
-                { Invoke-MetraAutoprogramEnqueueFromPlan -Root $root -Path $planPath -MetraRoot (Get-MetraRoot) } |
+                Write-AutoProgramAtomicUtf8Text -Path $planPath -Text $body
+                { Invoke-MetraAutoprogramEnqueueFromPlan -Root $root -Path $planPath -MetraRoot (Get-AutoProgramHostRoot) } |
                     Should -Throw '*not Approved*'
             }
             finally {
@@ -242,10 +244,10 @@ Accept when Pester passes.
 
 Describe 'Autoprogram daily stub' {
     It 'writes intake doc with three sections' {
-        InModuleScope Metra {
+        InModuleScope AutoProgram {
             $root = Join-Path ([IO.Path]::GetTempPath()) ('metra-ap-' + [guid]::NewGuid().ToString('n'))
             try {
-                $result = Invoke-MetraAutoprogramDailyStub -Root $root -MetraRoot (Get-MetraRoot)
+                $result = Invoke-MetraAutoprogramDailyStub -Root $root -MetraRoot (Get-AutoProgramHostRoot)
                 Test-Path -LiteralPath $result.path | Should -BeTrue
                 $text = [System.IO.File]::ReadAllText($result.path)
                 $text | Should -Match '## 1\. Overarching changes made'
@@ -261,7 +263,7 @@ Describe 'Autoprogram daily stub' {
 
 Describe 'Autoprogram path and id guards' {
     It 'rejects traversal and invalid queue ids' {
-        InModuleScope Metra {
+        InModuleScope AutoProgram {
             $root = Join-Path ([IO.Path]::GetTempPath()) ('metra-ap-' + [guid]::NewGuid().ToString('n'))
             try {
                 Initialize-MetraAutoprogramLayout -Root $root
@@ -279,7 +281,7 @@ Describe 'Autoprogram path and id guards' {
     }
 
     It 'does not treat sibling folder names as under Metra root' {
-        InModuleScope Metra {
+        InModuleScope AutoProgram {
             $base = Join-Path ([IO.Path]::GetTempPath()) ('metra-ap-sib-' + [guid]::NewGuid().ToString('n'))
             $metraRoot = Join-Path $base '_meta'
             $sibling = Join-Path $base '_meta-evil'
@@ -287,7 +289,7 @@ Describe 'Autoprogram path and id guards' {
                 New-Item -ItemType Directory -Path $metraRoot -Force | Out-Null
                 New-Item -ItemType Directory -Path $sibling -Force | Out-Null
                 $planPath = Join-Path $sibling 'x.plan.md'
-                Write-MetraAtomicUtf8Text -Path $planPath -Text "# X`n"
+                Write-AutoProgramAtomicUtf8Text -Path $planPath -Text "# X`n"
                 $resolved = Resolve-MetraAutoprogramPlanProject -Path $planPath -MetraRoot $metraRoot -Title 'Other'
                 $resolved.routingEvidence | Should -Not -Be 'plan-path-under-metra-root'
             }
@@ -297,3 +299,4 @@ Describe 'Autoprogram path and id guards' {
         }
     }
 }
+

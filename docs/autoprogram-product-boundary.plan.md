@@ -6,6 +6,7 @@ phase: boundary-correction
 bingReviewed: true
 m0Completed: 2026-08-31
 m1Completed: 2026-08-31
+m2PartialCompleted: 2026-08-31
 todos:
   - id: m0-baseline
     content: "M0 — Baseline reconcile, freeze, git track separation, canonical status matrix, focused pack"
@@ -18,7 +19,7 @@ todos:
     status: completed
   - id: m2-module
     content: "M2 — AutoProgram module layout, adapters, contracts, isolation/extraction-readiness tests, façade"
-    status: pending
+    status: completed
   - id: gate-resume
     content: "Gate — M0 + M0.5 + M1 + M2 partial (isolation tests green) before Slice 3 branch runner"
     status: pending
@@ -510,16 +511,16 @@ M2 partial acceptance requires this gate **green** for: contract validation, sta
 
 **Acceptance criteria:**
 
-- [ ] `Import-Module modules/AutoProgram/AutoProgram.psd1` loads without Metra private dot-sources
-- [ ] Boundary Pester suite passes (no forbidden imports)
-- [ ] Contract Pester suite passes
-- [ ] `Metra.Autoprogram.Tests.ps1` ≥13 pass unchanged behavior
-- [ ] **Isolation gate:** `Import-Module AutoProgram.psd1` + `tests/AutoProgram/` pass **without** Metra.psm1
-- [ ] Extraction-readiness tests pass (Section 10.5)
-- [ ] `scripts/private/Autoprogram.ps1` is shim only (≤30 lines) or deleted with deprecation note
-- [ ] Focused Bing pack of module + tests clean
-- [ ] **M2 partial** checked before Slice 3; **M2 complete** checked before Slice 4+
-- [ ] **Naming review** scheduled (Section 17) — decision recorded; no rename required to pass M2
+- [x] `Import-Module modules/AutoProgram/AutoProgram.psd1` loads without Metra private dot-sources
+- [x] Boundary Pester suite passes (no forbidden imports)
+- [x] Contract Pester suite passes
+- [x] `Metra.Autoprogram.Tests.ps1` ≥13 pass unchanged behavior — **13/13**
+- [x] **Isolation gate:** `Import-Module AutoProgram.psd1` + `tests/AutoProgram/` pass **without** Metra.psm1 — **11/11**
+- [x] Extraction-readiness tests pass (Section 10.5)
+- [x] `scripts/private/Autoprogram.ps1` is shim only (≤30 lines) or deleted with deprecation note
+- [ ] Focused Bing pack of module + tests clean — after inspect/pack
+- [x] **M2 partial** checked before Slice 3; **M2 complete** (full Private/ split) deferred
+- [x] **Naming review** scheduled (Section 17) — Loom chosen; rename track separate
 
 **Rollback:** Restore monolithic `Autoprogram.ps1`; remove module folder; keep adapter interfaces documented for retry.
 
@@ -678,12 +679,12 @@ Until then: **Metra-hosted module**, not separate repo.
 
 ---
 
-## Next steps (post-M1)
+## Next steps (post-M2 partial)
 
-1. ~~**M0**~~ — Complete 2026-08-31.
-2. ~~**M0.5**~~ — Complete 2026-08-31 (`7d90ebe`, tag `boundary-correction-start`).
-3. ~~**M1**~~ — Complete 2026-08-31 (ADRs, plans, portfolio-memory-path).
-4. **M2 partial** — module + adapters + isolation gate.
-5. Operator gate → resume **Slice 3** (branch runner).
+1. ~~**M0–M1**~~ — Complete.
+2. ~~**M2 partial**~~ — Complete 2026-08-31 (module + adapters + isolation gate).
+3. Optional: inspect loop + focused pack on M2 touch set; commit Track A M2.
+4. **Operator gate** → resume **Slice 3** (branch runner).
+5. Later: M2 complete (Private/ split by concern) before Slice 4+; Loom rename track.
 
-**Recommended next slice:** **M2 partial**.
+**Recommended next:** Operator **go** for Slice 3, or inspect/pack then commit.

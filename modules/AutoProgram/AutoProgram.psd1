@@ -1,0 +1,64 @@
+@{
+    RootModule        = 'AutoProgram.psm1'
+    ModuleVersion     = '0.1.0'
+    GUID              = 'a8c0e2f4-7b91-4d3e-9f06-2c1a5b8d4e70'
+    Author            = 'Metra'
+    CompanyName       = 'IWU'
+    Copyright         = '(c) Metra'
+    Description       = 'Loom (working name AutoProgram): governed plan execution — queue, journal, triage. Product rename deferred post-M2.'
+    PowerShellVersion = '5.1'
+    FunctionsToExport = @(
+        'Invoke-AutoProgramCommand'
+        'Get-AutoProgramStatusCatalog'
+        'Get-AutoProgramActiveTransitions'
+        'Get-AutoProgramRoutingContext'
+        'Invoke-AutoProgramInspectAdapter'
+        'Invoke-AutoProgramVerifyAdapter'
+        'Get-AutoProgramHostRoot'
+        'Get-MetraAutoprogramSchemaVersion'
+        'Get-MetraAutoprogramRoot'
+        'Get-MetraAutoprogramMinimumRoutingConfidence'
+        'Get-MetraAutoprogramPhaseATransitions'
+        'Test-MetraAutoprogramTransition'
+        'Initialize-MetraAutoprogramLayout'
+        'Get-MetraAutoprogramState'
+        'Save-MetraAutoprogramState'
+        'Get-MetraAutoprogramJournalPath'
+        'Add-MetraAutoprogramJournalEntry'
+        'Get-MetraAutoprogramJournalEntries'
+        'Test-MetraAutoprogramItemId'
+        'Resolve-MetraAutoprogramItemPath'
+        'Get-MetraAutoprogramQueueItemPath'
+        'Get-MetraAutoprogramQueueItems'
+        'Get-MetraAutoprogramQueueItem'
+        'Save-MetraAutoprogramQueueItem'
+        'Test-MetraAutoprogramQueueItemSchema'
+        'New-MetraAutoprogramQueueId'
+        'New-MetraAutoprogramCandidateId'
+        'Invoke-MetraAutoprogramStateChange'
+        'Get-MetraAutoprogramPlanRoots'
+        'Get-MetraAutoprogramFormalPlans'
+        'Read-MetraAutoprogramPlanFile'
+        'Resolve-MetraAutoprogramPlanProject'
+        'Measure-MetraAutoprogramTriageScore'
+        'Test-MetraAutoprogramEligibility'
+        'Save-MetraAutoprogramCandidate'
+        'Get-MetraAutoprogramCandidate'
+        'Add-MetraAutoprogramQueueItem'
+        'New-MetraAutoprogramQueueItemFromCandidate'
+        'Invoke-MetraAutoprogramTriage'
+        'Invoke-MetraAutoprogramEnqueueFromPlan'
+        'Invoke-MetraAutoprogramDailyStub'
+        'Write-AutoProgramAtomicUtf8Text'
+        'Get-AutoProgramUtf8NoBomEncoding'
+        'Test-AutoProgramPathWithinRoot'
+    )
+    AliasesToExport   = @('Invoke-MetraAutoprogramCommand')
+    CmdletsToExport   = @()
+    VariablesToExport = @()
+    PrivateData       = @{
+        PSData = @{
+            Tags = @('Metra', 'Loom', 'AutoProgram', 'governance')
+        }
+    }
+}

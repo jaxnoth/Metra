@@ -1,0 +1,11 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "verify-request",
+  "type": "object",
+  "required": ["schemaVersion"],
+  "properties": {
+    "schemaVersion": { "type": "integer", "const": 1 },
+    "verifyCommands": { "type": "array", "items": { "type": "string" } },
+    "projectRoot": { "type": "string" }
+  }
+}
