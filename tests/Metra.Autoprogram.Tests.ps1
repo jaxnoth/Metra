@@ -191,8 +191,10 @@ Describe 'Autoprogram enqueue from plan' {
     It 'sets source.type formal-plan with path provenance' {
         InModuleScope AutoProgram {
             $root = Join-Path ([IO.Path]::GetTempPath()) ('metra-ap-' + [guid]::NewGuid().ToString('n'))
-            $planRoot = Join-Path ([IO.Path]::GetTempPath()) ('metra-ap-plan-' + [guid]::NewGuid().ToString('n'))
+            $metraRoot = Get-AutoProgramHostRoot
+            $planRoot = Join-Path $metraRoot ('docs\.ap-test-' + [guid]::NewGuid().ToString('n'))
             try {
+                New-Item -ItemType Directory -Path $planRoot -Force | Out-Null
                 $planPath = Join-Path $planRoot 'harness.plan.md'
                 $body = @"
 ---
@@ -207,7 +209,7 @@ overview: "Metra autoprogram harness state"
 Accept when Pester passes.
 "@
                 Write-AutoProgramAtomicUtf8Text -Path $planPath -Text $body
-                $item = Invoke-MetraAutoprogramEnqueueFromPlan -Root $root -Path $planPath -MetraRoot (Get-AutoProgramHostRoot)
+                $item = Invoke-MetraAutoprogramEnqueueFromPlan -Root $root -Path $planPath -MetraRoot $metraRoot
                 $item.source.type | Should -Be 'formal-plan'
                 [string]$item.source.path | Should -Be $planPath
                 $item.status | Should -Be 'queued'
@@ -219,11 +221,35 @@ Accept when Pester passes.
         }
     }
 
-    It 'rejects Pending Bing plans' {
+    It 'rejects plans outside allowed formal plan roots' {
         InModuleScope AutoProgram {
             $root = Join-Path ([IO.Path]::GetTempPath()) ('metra-ap-' + [guid]::NewGuid().ToString('n'))
             $planRoot = Join-Path ([IO.Path]::GetTempPath()) ('metra-ap-plan-' + [guid]::NewGuid().ToString('n'))
             try {
+                $planPath = Join-Path $planRoot 'harness.plan.md'
+                $body = @"
+# Harness
+
+**Status:** Approved (Bing 2026-08-31)
+"@
+                Write-AutoProgramAtomicUtf8Text -Path $planPath -Text $body
+                { Invoke-MetraAutoprogramEnqueueFromPlan -Root $root -Path $planPath -MetraRoot (Get-AutoProgramHostRoot) } |
+                    Should -Throw '*not under an allowed formal plan root*'
+            }
+            finally {
+                Remove-Item -LiteralPath $root -Recurse -Force -ErrorAction SilentlyContinue
+                Remove-Item -LiteralPath $planRoot -Recurse -Force -ErrorAction SilentlyContinue
+            }
+        }
+    }
+
+    It 'rejects Pending Bing plans' {
+        InModuleScope AutoProgram {
+            $root = Join-Path ([IO.Path]::GetTempPath()) ('metra-ap-' + [guid]::NewGuid().ToString('n'))
+            $metraRoot = Get-AutoProgramHostRoot
+            $planRoot = Join-Path $metraRoot ('docs\.ap-test-' + [guid]::NewGuid().ToString('n'))
+            try {
+                New-Item -ItemType Directory -Path $planRoot -Force | Out-Null
                 $planPath = Join-Path $planRoot 'draft.plan.md'
                 $body = @"
 # Draft
@@ -231,7 +257,7 @@ Accept when Pester passes.
 **Status:** Pending Bing Review
 "@
                 Write-AutoProgramAtomicUtf8Text -Path $planPath -Text $body
-                { Invoke-MetraAutoprogramEnqueueFromPlan -Root $root -Path $planPath -MetraRoot (Get-AutoProgramHostRoot) } |
+                { Invoke-MetraAutoprogramEnqueueFromPlan -Root $root -Path $planPath -MetraRoot $metraRoot } |
                     Should -Throw '*not Approved*'
             }
             finally {

@@ -45,17 +45,32 @@ function Get-AutoProgramInspectPlanRoots {
     return @($roots)
 }
 
+function Test-AutoProgramRoutingAdapterAvailable {
+    [CmdletBinding()]
+    param()
+    return $null -ne (Get-Command Get-MetraRoutingAmbiguity -ErrorAction SilentlyContinue)
+}
+
+function Test-AutoProgramCaptureAdapterAvailable {
+    [CmdletBinding()]
+    param()
+    return $null -ne (Get-Command Get-MetraCaptureLedger -ErrorAction SilentlyContinue)
+}
+
 function Get-AutoProgramRoutingAmbiguity {
     [CmdletBinding()]
     param(
         [Parameter(Mandatory)][string]$Query,
         [switch]$SkipTelemetry
     )
-    $cmd = Get-Command Get-MetraRoutingAmbiguity -ErrorAction SilentlyContinue
-    if (-not $cmd) {
-        return [PSCustomObject]@{ Primary = $null; Ambiguous = $true; Mode = 'adapter-unavailable' }
+    if (-not (Test-AutoProgramRoutingAdapterAvailable)) {
+        return [PSCustomObject]@{
+            Primary   = $null
+            Ambiguous = $true
+            Mode      = 'adapter-unavailable'
+        }
     }
-    return & $cmd -Query $Query -SkipTelemetry:$SkipTelemetry
+    return & (Get-Command Get-MetraRoutingAmbiguity) -Query $Query -SkipTelemetry:$SkipTelemetry
 }
 
 function Get-AutoProgramCaptureLedger {
@@ -68,11 +83,10 @@ function Get-AutoProgramCaptureLedger {
     if ([string]::IsNullOrWhiteSpace($MetraRoot)) {
         $MetraRoot = Get-AutoProgramHostRoot
     }
-    $cmd = Get-Command Get-MetraCaptureLedger -ErrorAction SilentlyContinue
-    if (-not $cmd) {
+    if (-not (Test-AutoProgramCaptureAdapterAvailable)) {
         return @()
     }
-    return @(& $cmd -MetraRoot $MetraRoot -Limit $Limit -Status $Status)
+    return @(& (Get-Command Get-MetraCaptureLedger) -MetraRoot $MetraRoot -Limit $Limit -Status $Status)
 }
 
 function Get-AutoProgramRoutingContext {
@@ -90,7 +104,7 @@ function Get-AutoProgramRoutingContext {
     if (-not [string]::IsNullOrWhiteSpace($planPath) -and (Test-Path -LiteralPath $planPath)) {
         $hostRoot = Get-AutoProgramHostRoot
         if (Test-AutoProgramPathWithinRoot -Path $planPath -Root $hostRoot) {
-            return [PSCustomObject]@{
+            $fromPlan = [PSCustomObject]@{
                 schemaVersion       = 1
                 registryName        = 'Metra'
                 root                = $hostRoot
@@ -99,13 +113,28 @@ function Get-AutoProgramRoutingContext {
                 minimumConfidence   = $min
                 eligible            = $true
             }
+            Test-AutoProgramContract -Schema 'routing-context.result' -Object $fromPlan | Out-Null
+            return $fromPlan
         }
     }
     $amb = Get-AutoProgramRoutingAmbiguity -Query $(if ($query) { $query } else { $planPath }) -SkipTelemetry
+    if ($amb.Mode -eq 'adapter-unavailable') {
+        $invalid = [PSCustomObject]@{
+            schemaVersion     = 1
+            registryName      = ''
+            root              = ''
+            routingConfidence = 0.0
+            routingEvidence   = 'adapter-unavailable'
+            minimumConfidence = $min
+            eligible          = $false
+        }
+        Test-AutoProgramContract -Schema 'routing-context.result' -Object $invalid | Out-Null
+        return $invalid
+    }
     if ($amb.Primary) {
         $score = [int]$amb.Primary.Score
         $conf = if ($score -ge 2) { 0.90 } elseif ($score -eq 1) { 0.75 } else { 0.50 }
-        return [PSCustomObject]@{
+        $resolved = [PSCustomObject]@{
             schemaVersion     = 1
             registryName      = [string]$amb.Primary.Name
             root              = [string]$amb.Primary.Root
@@ -114,8 +143,10 @@ function Get-AutoProgramRoutingContext {
             minimumConfidence = $min
             eligible          = ($conf -ge $min)
         }
+        Test-AutoProgramContract -Schema 'routing-context.result' -Object $resolved | Out-Null
+        return $resolved
     }
-    return [PSCustomObject]@{
+    $unresolved = [PSCustomObject]@{
         schemaVersion     = 1
         registryName      = ''
         root              = ''
@@ -124,6 +155,8 @@ function Get-AutoProgramRoutingContext {
         minimumConfidence = $min
         eligible          = $false
     }
+    Test-AutoProgramContract -Schema 'routing-context.result' -Object $unresolved | Out-Null
+    return $unresolved
 }
 
 function Invoke-AutoProgramInspectAdapter {

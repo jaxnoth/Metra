@@ -14,9 +14,17 @@ function Write-AutoProgramAtomicUtf8Text {
     if ($dir -and -not (Test-Path -LiteralPath $dir)) {
         [void][System.IO.Directory]::CreateDirectory($dir)
     }
+    $enc = Get-AutoProgramUtf8NoBomEncoding
     $tmp = "$Path.tmp"
-    [System.IO.File]::WriteAllText($tmp, $Text, (Get-AutoProgramUtf8NoBomEncoding))
-    Move-Item -LiteralPath $tmp -Destination $Path -Force
+    [System.IO.File]::WriteAllText($tmp, $Text, $enc)
+    if (Test-Path -LiteralPath $Path) {
+        $bak = "$Path.bak"
+        [System.IO.File]::Replace($tmp, $Path, $bak)
+        Remove-Item -LiteralPath $bak -Force -ErrorAction SilentlyContinue
+    }
+    else {
+        [System.IO.File]::Move($tmp, $Path)
+    }
 }
 
 function Invoke-AutoProgramWithNamedMutex {
@@ -26,7 +34,7 @@ function Invoke-AutoProgramWithNamedMutex {
         [Parameter(Mandatory)][scriptblock]$Script,
         [int]$TimeoutMs = 15000
     )
-    $mutexName = "Local\AutoProgram_$Name"
+    $mutexName = "Local\Metra_$Name"
     $mutex = New-Object System.Threading.Mutex($false, $mutexName)
     $acquired = $false
     try {

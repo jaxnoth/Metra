@@ -6,6 +6,7 @@ $script:AutoProgramModuleRoot = $PSScriptRoot
 $script:AutoProgramHostRootOverride = $null
 
 . (Join-Path $PSScriptRoot 'Private\Storage\Storage.ps1')
+. (Join-Path $PSScriptRoot 'Private\Contracts\Contracts.ps1')
 . (Join-Path $PSScriptRoot 'Adapters\Metra.Adapters.ps1')
 . (Join-Path $PSScriptRoot 'Private\Domain.ps1')
 
@@ -17,6 +18,9 @@ $export = @(
     'Get-AutoProgramStatusCatalog'
     'Get-AutoProgramActiveTransitions'
     'Get-AutoProgramRoutingContext'
+    'Test-AutoProgramRoutingAdapterAvailable'
+    'Test-AutoProgramCaptureAdapterAvailable'
+    'Test-AutoProgramContract'
     'Invoke-AutoProgramInspectAdapter'
     'Invoke-AutoProgramVerifyAdapter'
     'Get-AutoProgramHostRoot'

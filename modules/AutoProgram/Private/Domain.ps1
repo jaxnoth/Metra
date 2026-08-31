@@ -142,8 +142,23 @@ function Add-MetraAutoprogramJournalEntry {
         [Parameter(Mandatory)][hashtable]$Entry
     )
 
+    $normalized = @{}
+    foreach ($key in $Entry.Keys) {
+        $normalized[[string]$key] = $Entry[$key]
+    }
+    if (-not $normalized.ContainsKey('timestamp') -or [string]::IsNullOrWhiteSpace([string]$normalized['timestamp'])) {
+        $normalized['timestamp'] = (Get-Date).ToString('o')
+    }
+    if (-not $normalized.ContainsKey('from')) {
+        $normalized['from'] = ''
+    }
+    if (-not $normalized.ContainsKey('actor') -or [string]::IsNullOrWhiteSpace([string]$normalized['actor'])) {
+        $normalized['actor'] = 'operator'
+    }
+    Test-AutoProgramContract -Schema 'journal-entry' -Object $normalized | Out-Null
+
     $path = Get-MetraAutoprogramJournalPath -Root $Root
-    $line = ($Entry | ConvertTo-Json -Compress -Depth 8)
+    $line = ($normalized | ConvertTo-Json -Compress -Depth 8)
     $enc = Get-AutoProgramUtf8NoBomEncoding
     if (-not (Test-Path -LiteralPath $path)) {
         Write-AutoProgramAtomicUtf8Text -Path $path -Text ($line + "`n")
@@ -294,6 +309,7 @@ function Save-MetraAutoprogramQueueItem {
         [Parameter(Mandatory)][object]$Item
     )
 
+    Test-MetraAutoprogramQueueItemSchema -Item $Item | Out-Null
     $path = Get-MetraAutoprogramQueueItemPath -Root $Root -Id ([string]$Item.id)
     Write-AutoProgramAtomicUtf8Text -Path $path -Text (($Item | ConvertTo-Json -Depth 12) + "`n")
 }
@@ -304,14 +320,7 @@ function Test-MetraAutoprogramQueueItemSchema {
         [Parameter(Mandatory)][object]$Item
     )
 
-    foreach ($prop in @('schemaVersion', 'id', 'summary', 'status', 'createdAt', 'updatedAt')) {
-        if (-not ($Item.PSObject.Properties.Name -contains $prop)) {
-            throw "Queue item missing required property: $prop"
-        }
-    }
-    if ([int]$Item.schemaVersion -ne (Get-MetraAutoprogramSchemaVersion)) {
-        throw "Unsupported queue item schemaVersion: $($Item.schemaVersion)"
-    }
+    Test-AutoProgramContract -Schema 'queue-item' -Object $Item | Out-Null
     return $true
 }
 
@@ -420,6 +429,26 @@ function Get-MetraAutoprogramPlanRoots {
         [void]$roots.Add([System.IO.Path]::GetFullPath($docs))
     }
     return @($roots | Select-Object -Unique)
+}
+
+function Test-MetraAutoprogramFormalPlanPathAllowed {
+    <#
+    .SYNOPSIS
+        True when Path is under an allowed formal plan root (inspect plan roots + Metra docs).
+    #>
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory)][string]$Path,
+        [string]$MetraRoot = (Get-AutoProgramHostRoot)
+    )
+
+    $full = [System.IO.Path]::GetFullPath($Path)
+    foreach ($root in @(Get-MetraAutoprogramPlanRoots -MetraRoot $MetraRoot)) {
+        if (Test-AutoProgramPathWithinRoot -Path $full -Root $root) {
+            return $true
+        }
+    }
+    return $false
 }
 
 function Get-MetraAutoprogramFormalPlans {
@@ -552,32 +581,34 @@ function Resolve-MetraAutoprogramPlanProject {
         }
     }
 
-    if ($Title -match '(?i)\bmetra\b' -or $Overview -match '(?i)\bmetra\b') {
-        return [PSCustomObject]@{
-            registryName      = 'Metra'
-            root              = $metraFull
-            routingConfidence = 0.92
-            routingEvidence   = 'plan-title-mentions-metra'
-        }
-    }
-
-    $query = ("$Title $Overview").Trim()
-    if ([string]::IsNullOrWhiteSpace($query)) { $query = $Title }
-    try {
-        $amb = Get-AutoProgramRoutingAmbiguity -Query $query -SkipTelemetry
-        if ($amb.Primary) {
-            $route = $amb.Primary
-            $score = [int]$route.Score
-            $conf = if ($score -ge 2) { 0.90 } elseif ($score -eq 1) { 0.75 } else { 0.50 }
+    if (Test-AutoProgramRoutingAdapterAvailable) {
+        if ($Title -match '(?i)\bmetra\b' -or $Overview -match '(?i)\bmetra\b') {
             return [PSCustomObject]@{
-                registryName      = [string]$route.Name
-                root              = [string]$route.Root
-                routingConfidence = $conf
-                routingEvidence   = 'routing-ambiguity-primary'
+                registryName      = 'Metra'
+                root              = $metraFull
+                routingConfidence = 0.92
+                routingEvidence   = 'plan-title-mentions-metra'
             }
         }
+
+        $query = ("$Title $Overview").Trim()
+        if ([string]::IsNullOrWhiteSpace($query)) { $query = $Title }
+        try {
+            $amb = Get-AutoProgramRoutingAmbiguity -Query $query -SkipTelemetry
+            if ($amb.Mode -ne 'adapter-unavailable' -and $amb.Primary) {
+                $route = $amb.Primary
+                $score = [int]$route.Score
+                $conf = if ($score -ge 2) { 0.90 } elseif ($score -eq 1) { 0.75 } else { 0.50 }
+                return [PSCustomObject]@{
+                    registryName      = [string]$route.Name
+                    root              = [string]$route.Root
+                    routingConfidence = $conf
+                    routingEvidence   = 'routing-ambiguity-primary'
+                }
+            }
+        }
+        catch { }
     }
-    catch { }
 
     return [PSCustomObject]@{
         registryName      = ''
@@ -671,6 +702,7 @@ function Save-MetraAutoprogramCandidate {
         [Parameter(Mandatory)][object]$Candidate
     )
 
+    Test-AutoProgramContract -Schema 'triage-candidate' -Object $Candidate | Out-Null
     $path = Resolve-MetraAutoprogramItemPath -Root $Root -Id ([string]$Candidate.id) -Subfolder 'candidates'
     Write-AutoProgramAtomicUtf8Text -Path $path -Text (($Candidate | ConvertTo-Json -Depth 12) + "`n")
     return $Candidate
@@ -886,6 +918,7 @@ function Invoke-MetraAutoprogramTriage {
         candidates = @($results | Sort-Object { [int]$_.scores.total } -Descending)
         planCount  = @($plans).Count
         captureCount = @($captures).Count
+        captureAdapterAvailable = (Test-AutoProgramCaptureAdapterAvailable)
     }
 }
 
@@ -900,6 +933,9 @@ function Invoke-MetraAutoprogramEnqueueFromPlan {
     )
 
     $full = $ExecutionContext.SessionState.Path.GetUnresolvedProviderPathFromPSPath($Path)
+    if (-not (Test-MetraAutoprogramFormalPlanPathAllowed -Path $full -MetraRoot $MetraRoot)) {
+        throw "Plan path is not under an allowed formal plan root: $full"
+    }
     $plan = Read-MetraAutoprogramPlanFile -Path $full -MetraRoot $MetraRoot
     if (-not $plan) { throw "Plan not found: $full" }
     if (-not $plan.approved) {
