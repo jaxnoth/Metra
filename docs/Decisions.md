@@ -20,7 +20,32 @@ Entry shape:
 
 ---
 
+## 2026-08-29 - iOS Vision Ask contract scars
+
+Three product scars locked with the Vision Ask contract bite. Server proof: `scripts/private/VisionAsk.ps1`, `POST /api/vision/ask`, `docs/ios-vision-ask-contract.md`, tests `tests/Metra.VisionAsk.Contract.Tests.ps1`.
+
+### Vision must not share AskLane
+
+- Decision: iOS Vision / relational turns never call `Resolve-MetraAskLane`, `Get-MetraDeskAskResult`, Desk Capture objectives, or TicketTracker assess drafts. Desk social→Capture may stay valid on Desk; it is wrong on Vision. Do not “fix” Vision by adding companion templates inside AskLane.
+- Why: Phone → Ops Ask → Desk AskLane → Capture templates looked like companion success under HTTP 200. That hid a routing defect.
+- See: `docs/ios-vision-ask-contract.md`; `engines/vision-ask/system.md`
+
+### TicketTracker must leave AskLane
+
+- Decision: TicketTracker assess / ticket-ops leave AskLane for a TicketTracker-owned graph later (intake / similarity / solutions / evidence-next / assess). Not portfolio routing Phase 4; not Vision; not AskLane companion templates.
+- Why: TT helpers in AskLane couple ticket assessment to Desk chat heuristics and block honest Vision isolation.
+- See: `scripts/private/AskLane.ps1` (`New-MetraTicketAssessDraft`); Future TT graph (deferred)
+
+### Successful HTTP is not successful Vision
+
+- Decision: Vision success requires a validated Vision request, a registered Vision handler, a real engine invoke, Vision provenance (`source=ops-vision`, `askLaneUsed=false`), and AskLane not having run. HTTP 200 from Desk Ask, Capture, LocalAssist, or PowerShell companion fallback must not be treated as Vision success.
+- Why: Silent Desk fallback recreates the original defect under a green status code.
+- See: `Get-MetraVisionAskHttpStatusCode`; `metra.ask.routed` telemetry under `%LOCALAPPDATA%\Metra\ask\`
+
+---
+
 ## 2026-08-29 - Tailscale identity for client auth; no pasteable shared Ask/sync secret
+
 
 - Decision: Metra clients (Satellite CLI, future iOS companion, remote Ask) authenticate to the Ops host by **Tailscale peer identity** (WhoIs: login, node name, and/or tags) plus a host **allowlist**. Do **not** invent a second shared secret “derived from Tailscale,” and do **not** keep long-lived pasteable tokens as the primary pairing model. Optional **device capability tokens** (Keychain / local store) may be **minted by the host after** a Tailscale-proven first pairing so a single phone can be revoked without removing the whole node from the tailnet. Profile sync token paste (`X-Metra-Profile-Sync` / `profile issue-sync-token`) remains transitional until this path ships. Tailscale remains **reach + identity**, never local authority by itself (Serve must not collapse to loopback authority - existing scar).
 - Why: Copied sync/Ask keys get lost, drift across machines, and train operators to treat a bearer string as the product. Tailscale already proves which node is calling; Metra should authorize that identity. A derived PSK duplicates identity poorly. Device tokens keep revoke granularity for phones without public-internet auth complexity.
@@ -40,7 +65,7 @@ Entry shape:
 
 - Decision: Portfolio expanded plans/docs live in sibling project **Atlas** (`C:\Projects\Atlas`, `.\Atlas.ps1`, `.\metra.ps1 atlas`) with Stub + Notion providers. Notion Plans is long-term store for the shared bus; local `data/sync` is mirror + three-way ledger. `put` is local-only unless `-Publish`; sync conflicts fail closed. OCC, Decision Registry, and Decisions.md stay authoritative and are not two-way synced (References pointers only). Deletion is not propagated in v1. Vectors are a future retrieval accelerator over StableIds, not authority. Institutional KB remains Codex. Concept language may say "portfolio memory"; product name is Atlas.
 - Why: Other products need a typed place to publish plans for Metra pickup without collapsing typed Metra homes into a Universal Memory Engine or putting Notion secrets in portfolio-synced metra.config.json.
-- See: `C:\Projects\Atlas\README.md`; [docs/playbooks/portfolio-memory-governance.md](playbooks/portfolio-memory-governance.md); Notion design page plan:metra-vector-store-seam
+- See: [docs/portfolio-memory-path.md](portfolio-memory-path.md) (operator path map); `C:\Projects\Atlas\README.md`; [docs/playbooks/portfolio-memory-governance.md](playbooks/portfolio-memory-governance.md); Notion design page `plan:metra-vector-store-seam`
 
 ---
 
