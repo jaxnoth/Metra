@@ -3,8 +3,8 @@
 **One place to reopen when memory work feels scattered.**  
 This is the roadmap map. Authority and promotion rules stay in their homes (below). Update this file when the path changes - do not invent a second map.
 
-**Last oriented:** 2026-08-30 (Metra 0.1.15 desk Ask sidecar ops)  
-**Stable idea:** Metra routes. Atlas stores. Notion persists. Vectors accelerate retrieval later - they never become truth.
+**Last oriented:** 2026-08-31 (Loom boundary M1; Metra 0.1.15 desk Ask sidecar ops)  
+**Stable idea:** Metra routes. Atlas stores. Notion persists. **Loom** executes governed delivery (working name AutoProgram through M2). Vectors accelerate retrieval later - they never become truth.
 
 ---
 
@@ -41,6 +41,7 @@ LATER (when search gets noisy)
 | **Atlas** | Portfolio knowledge bus | `C:\Projects\Atlas` |
 | Notion Portfolio Memory | Cloud persist for Atlas | [Metra Portfolio Memory](https://www.notion.so/Metra-Portfolio-Memory-3c937328878a8104a1f0e1adad3658cb) |
 | Codex | Institutional KB | Codex (not Atlas) |
+| **Loom** (AutoProgram through M2) | Governed plan execution (queue, journal, review, operator acceptance) | Metra-hosted module; `%LOCALAPPDATA%\Metra\autoprogram\`; [autoprogram-product-boundary.plan.md](autoprogram-product-boundary.plan.md) |
 | TicketTracker | Tickets | TicketTracker (not memory bus) |
 | iOS Vision Ask | Relational companion surface | Ops `/api/vision/ask` - not Desk AskLane |
 | **Vectors (future)** | Semantic find over StableIds | Not built - see Phase C |
