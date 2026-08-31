@@ -2,10 +2,10 @@
 # pwsh -NoProfile -Command "Invoke-Pester -Path .\tests\AutoProgram"
 
 BeforeAll {
-    $repoRoot = (Resolve-Path (Join-Path $PSScriptRoot '..\..')).Path
+    $script:RepoRoot = (Resolve-Path (Join-Path $PSScriptRoot '..\..')).Path
     # Prove Metra is not required
     Get-Module Metra -ErrorAction SilentlyContinue | Remove-Module -Force -ErrorAction SilentlyContinue
-    Import-Module (Join-Path $repoRoot 'modules\AutoProgram\AutoProgram.psd1') -Force
+    Import-Module (Join-Path $script:RepoRoot 'modules\AutoProgram\AutoProgram.psd1') -Force
 }
 
 Describe 'AutoProgram isolation gate' {
@@ -56,5 +56,12 @@ Describe 'AutoProgram isolation gate' {
     It 'inspect/verify adapters return not-implemented stubs' {
         (Invoke-AutoProgramInspectAdapter -Request @{ schemaVersion = 1 }).status | Should -Be 'not-implemented'
         (Invoke-AutoProgramVerifyAdapter -Request @{ schemaVersion = 1 }).status | Should -Be 'not-implemented'
+    }
+
+    It 'uses Metra mutex prefix for Phase A serialization compatibility' {
+        $storage = Join-Path $script:RepoRoot 'modules\AutoProgram\Private\Storage\Storage.ps1'
+        $text = Get-Content -LiteralPath $storage -Raw
+        $text | Should -Match 'Local\\Metra_\$Name'
+        $text | Should -Not -Match 'Local\\AutoProgram_'
     }
 }
