@@ -9,16 +9,18 @@ Product name: **Loom** (chosen 2026-08-31). Working name through M2: **AutoProgr
 
 ## Canonical status (operator + Bing)
 
-**Phase A committed (`7d90ebe`); Slice 3 not started; boundary M0–M1 complete.**
+**Phase A committed (`7d90ebe`); M2 partial (`464dd28`) + hardening (`7b015df`); Slice 3 complete (2026-08-31).**
 
 | Label | State |
 |-------|--------|
-| Slice 1–2 (Phase A) | **Committed** `7d90ebe`, 13/13 Pester |
-| Slice 3 (branch runner) | **Not started** — frozen until M2 partial + operator gate |
-| Slices 4–8 | Not started — frozen |
-| Boundary M0 | **Complete** (this doc + focused packs) |
-| Boundary M0.5 | **Complete** — commit `7d90ebe`, tag `boundary-correction-start` |
-| Boundary M1 | **Complete** — ADRs, boundary plan, tracks doc, portfolio-memory-path |
+| Slice 1–2 (Phase A) | **Committed** `7d90ebe`, tag `boundary-correction-start` |
+| M2 partial + hardening | **Committed** `464dd28`, `7b015df` |
+| Slice 3 (branch runner) | **Complete** — `run` CLI, Runner.ps1, 47/47 Pester |
+| Slices 4–8 | Not started — frozen until Slice 4 gate |
+| Boundary M0 | **Complete** |
+| Boundary M0.5 | **Complete** — `7d90ebe` |
+| Boundary M1 | **Complete** |
+| Boundary M2 partial | **Complete** — isolation gate green |
 
 ---
 
@@ -31,7 +33,9 @@ Product name: **Loom** (chosen 2026-08-31). Working name through M2: **AutoProgr
 | Path | Role |
 |------|------|
 | `scripts/private/Autoprogram.ps1` | Phase A implementation |
-| `tests/Metra.Autoprogram.Tests.ps1` | Phase A Pester (13 tests) |
+| `modules/AutoProgram/Private/Runner.ps1` | Slice 3 branch runner |
+| `modules/AutoProgram/Contracts/v1/implementation-result.schema.json` | Slice 3 implementer result contract |
+| `tests/AutoProgram/*.Tests.ps1` | Isolation + hardening + runner (47 total with façade) |
 | `metra.ps1` | `autoprogram` dispatch only — **⚠ mixed hunks today** (also routing edges, ops `-Foreground`; see below) |
 | `scripts/Metra.psd1` | Export wiring for autoprogram |
 | `scripts/Metra.psm1` | `Invoke-MetraAutoprogramCommand` delegate |
@@ -95,17 +99,12 @@ As of M0 (2026-08-31), `metra.ps1` combines **Track A** (`autoprogram` verb + ha
 |----------|------|
 | Roadmap plan pack | `%LOCALAPPDATA%\Metra\inspect\pack-plan.md` |
 | Track A focused pack | `%LOCALAPPDATA%\Metra\inspect\autoprogram-phase-a-pack.md` |
-| Pester proof | `Invoke-Pester tests/Metra.Autoprogram.Tests.ps1` → 13/13 |
+| Pester proof | `Invoke-Pester tests/AutoProgram,tests/Metra.Autoprogram.Tests.ps1` → 47/47 |
 
 ---
 
-## Freeze (until operator gate after M2 partial)
+## Freeze (Slice 4+)
 
-No implementation work on Slices 3–8, plan synthesize, or unattended loop until:
-
-1. M0.5 — Phase A committed + tagged  
-2. M1 — ADRs linked  
-3. M2 partial — module + adapters + isolation gate green  
-4. Explicit operator **go** for Slice 3  
+Slice 3 branch runner is **complete**. No Slice 4+ (review/completion, daily gate, unattended) until operator gate for Slice 4.
 
 See [autoprogram-product-boundary.plan.md](autoprogram-product-boundary.plan.md).

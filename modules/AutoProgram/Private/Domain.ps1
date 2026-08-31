@@ -51,11 +51,17 @@ function Get-AutoProgramStatusCatalog {
 function Get-AutoProgramActiveTransitions {
     <#
     .SYNOPSIS
-        Active transition map for the current phase (Phase A = enqueue + block only).
+        Active transition map for the current phase (Slice 3 enables run lifecycle).
     #>
     [CmdletBinding()]
     param([string]$From)
-    return Get-MetraAutoprogramPhaseATransitions -From $From
+    $map = Get-AutoProgramActiveTransitionMap
+    if ($From) {
+        $key = [string]$From
+        if (-not $map.ContainsKey($key)) { return @() }
+        return @($map[$key])
+    }
+    return $map
 }
 function Test-MetraAutoprogramTransition {
     [CmdletBinding()]
@@ -65,7 +71,7 @@ function Test-MetraAutoprogramTransition {
     )
 
     $fromKey = if ([string]::IsNullOrWhiteSpace($From)) { '@new' } else { [string]$From }
-    $allowed = @(Get-MetraAutoprogramPhaseATransitions -From $fromKey)
+    $allowed = @(Get-AutoProgramActiveTransitions -From $fromKey)
     return ($allowed -contains $To)
 }
 
@@ -1069,10 +1075,26 @@ function Invoke-AutoProgramCommand {
             }
             return [PSCustomObject]@{
                 root       = $Root
-                phase      = 'A'
+                phase      = '3'
                 totalItems = @($items).Count
                 byStatus   = $byStatus
             }
+        }
+        'run' {
+            $id = $null
+            $dry = $false
+            for ($i = 0; $i -lt $ArgsRest.Count; $i++) {
+                if ($ArgsRest[$i] -eq '-Id' -and ($i + 1) -lt $ArgsRest.Count) { $id = [string]$ArgsRest[$i + 1]; $i++ }
+                elseif ($ArgsRest[$i] -eq '-DryRun') { $dry = $true }
+            }
+            if ([string]::IsNullOrWhiteSpace($id)) { throw 'autoprogram run -Id <AP-...> [-DryRun] [-Confirm]' }
+            if ($dry) {
+                return Invoke-MetraAutoprogramRun -Root $Root -ItemId $id -MetraRoot $MetraRoot -DryRun
+            }
+            if ($ArgsRest -notcontains '-Confirm') {
+                throw 'autoprogram run requires -Confirm for live execution (git branch + implementer).'
+            }
+            return Invoke-MetraAutoprogramRun -Root $Root -ItemId $id -MetraRoot $MetraRoot -Confirm
         }
         'show' {
             $id = $null
@@ -1157,7 +1179,7 @@ function Invoke-AutoProgramCommand {
             return Invoke-MetraAutoprogramDailyStub -Root $Root -MetraRoot $MetraRoot
         }
         default {
-            throw "Unknown autoprogram subcommand: $Subcommand. Use triage|enqueue|plans|status|show|block|daily."
+            throw "Unknown autoprogram subcommand: $Subcommand. Use triage|enqueue|plans|status|show|block|run|daily."
         }
     }
 }

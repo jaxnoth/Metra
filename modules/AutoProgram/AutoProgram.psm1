@@ -8,6 +8,7 @@ $script:AutoProgramHostRootOverride = $null
 . (Join-Path $PSScriptRoot 'Private\Storage\Storage.ps1')
 . (Join-Path $PSScriptRoot 'Private\Contracts\Contracts.ps1')
 . (Join-Path $PSScriptRoot 'Adapters\Metra.Adapters.ps1')
+. (Join-Path $PSScriptRoot 'Private\Runner.ps1')
 . (Join-Path $PSScriptRoot 'Private\Domain.ps1')
 
 # Compatibility alias for Metra façade / existing exports
@@ -58,6 +59,8 @@ $export = @(
     'Invoke-MetraAutoprogramTriage'
     'Invoke-MetraAutoprogramEnqueueFromPlan'
     'Invoke-MetraAutoprogramDailyStub'
+    'Invoke-MetraAutoprogramRun'
+    'Get-AutoProgramActiveTransitionMap'
     'Write-AutoProgramAtomicUtf8Text'
     'Get-AutoProgramUtf8NoBomEncoding'
     'Test-AutoProgramPathWithinRoot'

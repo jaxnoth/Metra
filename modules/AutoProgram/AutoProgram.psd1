@@ -52,6 +52,8 @@
         'Invoke-MetraAutoprogramTriage'
         'Invoke-MetraAutoprogramEnqueueFromPlan'
         'Invoke-MetraAutoprogramDailyStub'
+        'Invoke-MetraAutoprogramRun'
+        'Get-AutoProgramActiveTransitionMap'
         'Write-AutoProgramAtomicUtf8Text'
         'Get-AutoProgramUtf8NoBomEncoding'
         'Test-AutoProgramPathWithinRoot'
