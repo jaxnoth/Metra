@@ -20,6 +20,16 @@ Entry shape:
 
 ---
 
+---
+
+## 2026-08-30 - Cursor Ask sidecar recovery and agent lifecycle
+
+- Decision: Cursor Ask `GET /health` `ok` means operational usability, not TCP/HTTP availability alone. The sidecar keeps a process-local count of consecutive SDK run errors and reports unhealthy after two consecutive failures without paid health probes. Ensure may adopt an owned listener only when `/health` returns Boolean `ok -eq $true`; otherwise it recycles the owned Metra listener (identity-checked stop, then cold spawn). An opaque Cursor SDK run failure (`retryClass: opaque_sdk_failure` or empty `errorDetail`) may trigger one single-flight restart and one retry per Ask turn, with no retry loop. Cached Cursor agents use retire-then-dispose (never dispose while `activeRuns > 0`), with the session map capped at eight LRU entries. Cursor Ask pins `@cursor/sdk` to version **1.0.26** (exact; lockfile committed) on Windows - smoke showed **1.0.27+** (through 1.0.30) access-violates (`0xC0000005`) during local `Agent` runs on this host. Do not raise the pin past 1.0.26 without a live Windows complete smoke. Do not lower the consecutive-error threshold to 1 without a new Decision (churn risk).
+- Why: Operator scar - wedged sidecar kept `/health` green while runs returned `status: error` with empty SDK detail; Ensure adopted the listener; agents leaked without dispose after `{ agent, modelKey }` wrappers; parallel Ask turns could restart under each other. Separate scar: bumping to 1.0.30 per review crashed the sidecar process on first complete.
+- See: `engines/cursor/server.mjs`, `engines/cursor/session-cache.mjs`, `scripts/private/AskEngine.ps1` (`Invoke-MetraAskCursorSidecarEnsure`, `Invoke-MetraAskCursorOpaqueRecovery`), `scripts/private/Snapshot.ps1`, `engines/cursor/package.json`
+
+---
+
 ## 2026-08-29 - iOS Vision Ask contract scars
 
 Three product scars locked with the Vision Ask contract bite. Server proof: `scripts/private/VisionAsk.ps1`, `POST /api/vision/ask`, `docs/ios-vision-ask-contract.md`, tests `tests/Metra.VisionAsk.Contract.Tests.ps1`.
