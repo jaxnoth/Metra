@@ -98,7 +98,12 @@ param(
     [switch]$AcceptAsk,
     [switch]$Quiet,
     [switch]$WhatIf,
-    [int]$Last = 0
+    [int]$Last = 0,
+    [string]$Stem,
+    [string]$CueClass,
+    [string]$Target,
+    [string]$Note,
+    [string]$Id
 )
 
 $ErrorActionPreference = 'Stop'
@@ -136,6 +141,12 @@ Usage:
       With neither: full registry table (no Why Here dump).
   .\metra.ps1 routing events [-Last 20]
       Read-only tail of machine-local routing Observe events (never creates the sink).
+  .\metra.ps1 routing edges
+      List operator-accepted durable routing edges (machine-local graph.json).
+  .\metra.ps1 routing edges candidates [-Last 200]
+      Aggregate ambiguous telemetry into stem/cue/primary/runner-up counts (Observe-only).
+  .\metra.ps1 routing edges accept -Stem IWUDATA -CueClass ops -Target IWUDATA-Automation [-Note '…']
+  .\metra.ps1 routing edges remove -Id e_IWUDATA_ops_iwudata_automation
   .\metra.ps1 export-profile -Path <dir-or-zip> [-Force]
   .\metra.ps1 import-profile -Path <dir-or-zip> [-Preview] [-Force]
   .\metra.ps1 ctx [-Query 'terms'] [-Path <file|->] [-Format markdown|json] [-Limit 25]
@@ -285,6 +296,11 @@ switch ($Command) {
         if ($Rest -and $Rest.Count -gt 0 -and [string]$Rest[0] -eq 'events') {
             $n = if ($Last -ge 1) { $Last } else { 20 }
             Show-MetraRoutingEventsCli -Last $n
+        }
+        elseif ($Rest -and $Rest.Count -gt 0 -and [string]$Rest[0] -eq 'edges') {
+            $edgeRest = if ($Rest.Count -gt 1) { @($Rest[1..($Rest.Count - 1)]) } else { @() }
+            $n = if ($Last -ge 1) { $Last } else { 200 }
+            Show-MetraRoutingEdgesCli -SubCommand $edgeRest -Last $n -Stem $Stem -CueClass $CueClass -Target $Target -Note $Note -Id $Id
         }
         else {
             Show-MetraRoutingCli -Query $Query -Name $Name -SharedOnly:$SharedOnly -MissingOnly:$MissingOnly
