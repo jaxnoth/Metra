@@ -170,6 +170,36 @@ function Invoke-AutoProgramInspectAdapter {
     }
 }
 
+function Invoke-AutoProgramImplementerAdapter {
+    <#
+    .SYNOPSIS
+        Slice 3 implementer — Metra host delegate or test scriptblock. No direct scripts/private imports.
+    #>
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory)]$Request,
+        [Parameter(Mandatory)][string]$ProjectRoot,
+        [Parameter(Mandatory)][string]$RunDir,
+        [scriptblock]$ImplementerScript
+    )
+
+    if ($ImplementerScript) {
+        return & $ImplementerScript $Request $ProjectRoot $RunDir
+    }
+
+    $cmd = Get-Command Invoke-MetraAutoprogramImplementer -ErrorAction SilentlyContinue
+    if ($cmd) {
+        return & $cmd -Request $Request -ProjectRoot $ProjectRoot -RunDir $RunDir
+    }
+
+    return [PSCustomObject]@{
+        schemaVersion = 1
+        status        = 'adapter-unavailable'
+        message       = 'Implementer adapter unavailable (Invoke-MetraAutoprogramImplementer not loaded).'
+        exitCode      = 127
+    }
+}
+
 function Invoke-AutoProgramVerifyAdapter {
     [CmdletBinding()]
     param($Request)

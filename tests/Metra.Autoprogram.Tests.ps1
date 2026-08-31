@@ -8,11 +8,12 @@ BeforeAll {
     Import-Module (Join-Path $metraRoot 'scripts\Metra.psd1') -Force
 }
 
-Describe 'Autoprogram transitions (Phase A)' {
-    It 'allows @new -> queued and queued -> blocked only' {
+Describe 'Autoprogram transitions (Phase A + Slice 3)' {
+    It 'allows Phase A and Slice 3 run transitions' {
         InModuleScope AutoProgram {
             Test-MetraAutoprogramTransition -From '@new' -To 'queued' | Should -BeTrue
             Test-MetraAutoprogramTransition -From 'queued' -To 'blocked' | Should -BeTrue
+            Test-MetraAutoprogramTransition -From 'queued' -To 'claimed' | Should -BeTrue
             Test-MetraAutoprogramTransition -From 'queued' -To 'accepted' | Should -BeFalse
             Test-MetraAutoprogramTransition -From 'blocked' -To 'queued' | Should -BeFalse
         }

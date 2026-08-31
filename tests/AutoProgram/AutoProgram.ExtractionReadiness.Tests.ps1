@@ -21,6 +21,7 @@ Describe 'AutoProgram isolation gate' {
         $catalog | Should -Contain 'completed'
         @(Get-AutoProgramActiveTransitions -From '@new') | Should -Contain 'queued'
         @(Get-AutoProgramActiveTransitions -From 'queued') | Should -Contain 'blocked'
+        @(Get-AutoProgramActiveTransitions -From 'queued') | Should -Contain 'claimed'
         @(Get-AutoProgramActiveTransitions -From 'queued') | Should -Not -Contain 'accepted'
     }
 

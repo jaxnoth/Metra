@@ -7,6 +7,7 @@ bingReviewed: true
 m0Completed: 2026-08-31
 m1Completed: 2026-08-31
 m2PartialCompleted: 2026-08-31
+slice3Completed: 2026-08-31
 todos:
   - id: m0-baseline
     content: "M0 — Baseline reconcile, freeze, git track separation, canonical status matrix, focused pack"
@@ -22,7 +23,10 @@ todos:
     status: completed
   - id: gate-resume
     content: "Gate — M0 + M0.5 + M1 + M2 partial (isolation tests green) before Slice 3 branch runner"
-    status: pending
+    status: completed
+  - id: slice-3-runner
+    content: "Slice 3 — Branch runner (clean-tree check, isolated run dir, one implementer invocation, path enforcement, no commit)"
+    status: completed
   - id: m2-naming-review
     content: "Post-M2 — Execute Loom rename track (decision recorded 2026-08-31); separate from module extraction"
     status: pending
@@ -109,7 +113,7 @@ Evidence gathered 2026-08-31 from repository inspection (not plan text alone).
 
 | Capability | Evidence |
 |------------|----------|
-| Branch runner (Slice 3) | No `runs/` orchestration, no clean-tree check, no implementer invocation |
+| Branch runner (Slice 3) | `run` CLI, clean-tree check, `runs/<itemId>/`, implementer adapter, path enforcement; **no commit** |
 | Review / inspect adapter (Slice 4) | No `completed` transition, no inspect loop wiring |
 | Daily approve / pack-diff gate (Slice 5) | Stub intake only; no `daily approve` |
 | Unattended `-UntilDailyGate` (Slice 6) | Not present |
@@ -153,10 +157,10 @@ Reconciles **conversational “Phase 3”**, **formal plan slices**, **git**, an
 
 | Interpretation | Verdict |
 |----------------|---------|
-| Formal plan **Slice 3** (branch runner) | **Not implemented** — plan correctly shows `pending` |
+| Formal plan **Slice 3** (branch runner) | **Implemented** — `Invoke-MetraAutoprogramRun`, transitions `queued→claimed→implementing→reviewing` |
 | Formal plan **Phase A** (Slices 1–2) | **Implemented locally**, **not committed**, **13 tests pass** |
 | Bing **“Phase 3 diff”** review | Refers to a **mixed working-tree changeset** (AutoProgram + Routing + Ask + Cursor + Ops), **not** completion of branch runner |
-| Recommended canonical language | **“Phase A baseline complete (Slices 1–2, uncommitted); Slice 3 not started; boundary correction required before resume.”** |
+| Recommended canonical language | **“Slice 3 branch runner complete (2026-08-31); Slice 4 not started.”** |
 
 This plan **supersedes** ambiguous “Phase 3 complete” wording until operator explicitly redefines phase numbers in the roadmap plan frontmatter.
 
@@ -679,12 +683,13 @@ Until then: **Metra-hosted module**, not separate repo.
 
 ---
 
-## Next steps (post-M2 partial)
+## Next steps (post-Slice 3)
 
 1. ~~**M0–M1**~~ — Complete.
 2. ~~**M2 partial**~~ — Complete 2026-08-31 (module + adapters + isolation gate).
-3. Optional: inspect loop + focused pack on M2 touch set; commit Track A M2.
-4. **Operator gate** → resume **Slice 3** (branch runner).
-5. Later: M2 complete (Private/ split by concern) before Slice 4+; Loom rename track.
+3. ~~**Slice 3**~~ — Branch runner complete 2026-08-31 (`run -DryRun` / `-Confirm`).
+4. Optional: inspect loop + focused pack on Slice 3 touch set; commit Track A.
+5. **Operator gate** → resume **Slice 4** (review/completion, inspect adapter).
+6. Later: M2 complete (Private/ split by concern); Loom rename track.
 
-**Recommended next:** Operator **go** for Slice 3, or inspect/pack then commit.
+**CLI:** `.\metra.ps1 autoprogram run -Id <AP-...> [-DryRun] [-Confirm]`

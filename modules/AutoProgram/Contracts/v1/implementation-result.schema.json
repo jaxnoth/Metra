@@ -1,0 +1,16 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "implementation-result",
+  "type": "object",
+  "required": ["schemaVersion", "status"],
+  "properties": {
+    "schemaVersion": { "type": "integer", "const": 1 },
+    "status": { "type": "string" },
+    "failureClass": { "type": "string" },
+    "tier": { "type": "string", "enum": ["stop", "auto-recover", "daily-gate"] },
+    "message": { "type": "string" },
+    "stdoutPath": { "type": "string" },
+    "stderrPath": { "type": "string" },
+    "exitCode": { "type": "integer" }
+  }
+}

@@ -21,6 +21,7 @@ Describe 'AutoProgram contracts v1' {
             'verify-result.schema.json',
             'acceptance-record.schema.json',
             'blocker-report.schema.json'
+            'implementation-result.schema.json'
         )
         foreach ($name in $required) {
             $path = Join-Path $script:Contracts $name
