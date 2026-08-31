@@ -1274,6 +1274,35 @@ function Invoke-MetraOpsApi {
             return
         }
 
+        if ($method -eq 'POST' -and $path -eq '/api/vision/ask') {
+            if (-not (Test-MetraOpsRequestHasLocalAuthority -Request $Request)) {
+                if (-not (Test-MetraOpsRemoteAskIdentityAllowed -Request $Request -MetraRoot $MetraRoot)) {
+                    Write-MetraOpsJsonResponse -Response $Response -StatusCode 403 -Object ([PSCustomObject]@{
+                            error      = 'Remote Ask requires an allowlisted Tailscale identity.'
+                            reasonCode = 'clientIdentityRequired'
+                        })
+                    return
+                }
+            }
+            $visionBody = Read-MetraOpsRequestBody -Request $Request
+            $visionParsed = $null
+            if ($visionBody) {
+                try { $visionParsed = $visionBody | ConvertFrom-Json } catch {
+                    Write-MetraOpsBadRequest -Response $Response -Message 'invalid JSON body'
+                    return
+                }
+            }
+            if ($null -eq $visionParsed) {
+                Write-MetraOpsBadRequest -Response $Response -Message 'JSON body required'
+                return
+            }
+            $visionReq = ConvertTo-MetraVisionAskRequest -Body $visionParsed
+            $visionResult = Invoke-MetraVisionAskHandler -Request $visionReq -MetraRoot $MetraRoot
+            $visionStatus = Get-MetraVisionAskHttpStatusCode -Envelope $visionResult
+            Write-MetraOpsJsonResponse -Response $Response -StatusCode $visionStatus -Object $visionResult -Depth 12
+            return
+        }
+
         if ($method -eq 'POST' -and $path -eq '/api/ask') {
             if (-not (Test-MetraOpsRequestHasLocalAuthority -Request $Request)) {
                 if (-not (Test-MetraOpsRemoteAskIdentityAllowed -Request $Request -MetraRoot $MetraRoot)) {
@@ -1286,7 +1315,66 @@ function Invoke-MetraOpsApi {
             }
             $body = Read-MetraOpsRequestBody -Request $Request
             $parsed = $null
-            if ($body) { $parsed = $body | ConvertFrom-Json }
+            if ($body) {
+                try { $parsed = $body | ConvertFrom-Json } catch {
+                    Write-MetraOpsBadRequest -Response $Response -Message 'invalid JSON body'
+                    return
+                }
+            }
+
+            # SCAR: Vision routing must occur before any Desk Ask processing.
+            # Reordering recreates the 2026-08 Vision fallback defect (Desk/Capture
+            # answers looking like Vision success). Contract dispatch first.
+            # Vision must never enter Get-MetraDeskAskResult / AskLane.
+            if ($null -ne $parsed) {
+                $dispatch = Resolve-MetraAskHttpDispatch -Body $parsed
+                if ($dispatch.path -eq 'reject') {
+                    $rejectEnv = New-MetraVisionAskErrorResponse `
+                        -Reason $(if ($dispatch.error) { [string]$dispatch.error } else { 'invalid_contract' }) `
+                        -Source 'client' `
+                        -Mode ([string](Get-MetraProp -Object $parsed -Name 'mode' -Default '')) `
+                        -Intent ([string](Get-MetraProp -Object $parsed -Name 'intent' -Default '')) `
+                        -Handler 'ask-dispatch' `
+                        -Detail ([string]$dispatch.detail)
+                    Write-MetraOpsJsonResponse -Response $Response -StatusCode (Get-MetraVisionAskHttpStatusCode -Envelope $rejectEnv) -Object $rejectEnv -Depth 12
+                    return
+                }
+                if ($dispatch.path -eq 'vision') {
+                    $visionResult = Invoke-MetraVisionAskHandler -Request $dispatch.request -MetraRoot $MetraRoot
+                    Write-MetraOpsJsonResponse -Response $Response -StatusCode (Get-MetraVisionAskHttpStatusCode -Envelope $visionResult) -Object $visionResult -Depth 12
+                    return
+                }
+                if ($dispatch.path -eq 'capture') {
+                    Write-MetraOpsJsonResponse -Response $Response -StatusCode 400 -Object ([PSCustomObject]@{
+                            contractVersion = (Get-MetraVisionAskContractVersion)
+                            status          = 'unavailable'
+                            source          = 'client'
+                            mode            = 'bounded'
+                            intent          = 'capture'
+                            reason          = 'invalid_contract'
+                            detail          = 'Explicit capture uses POST /api/capture - not /api/ask'
+                            response        = $null
+                        }) -Depth 8
+                    return
+                }
+                # path desk / desk-legacy: continue into Desk Ask below.
+                if ($dispatch.path -eq 'desk' -and $null -ne $dispatch.request) {
+                    # Prefer contract message as prompt when present.
+                    $contractMessage = [string]$dispatch.request.message
+                    if (-not [string]::IsNullOrWhiteSpace($contractMessage)) {
+                        if ($null -eq $parsed) {
+                            $parsed = [PSCustomObject]@{ prompt = $contractMessage }
+                        }
+                        elseif ($parsed.PSObject.Properties['prompt']) {
+                            $parsed.prompt = $contractMessage
+                        }
+                        else {
+                            $parsed | Add-Member -NotePropertyName prompt -NotePropertyValue $contractMessage
+                        }
+                    }
+                }
+            }
+
             $prompt = [string](Get-MetraProp -Object $parsed -Name 'prompt' -Default '')
             $sessionId = [string](Get-MetraProp -Object $parsed -Name 'sessionId' -Default '')
             $recallSessionId = [string](Get-MetraProp -Object $parsed -Name 'recallSessionId' -Default '')

@@ -38,6 +38,8 @@ For operational why-we-chose scars, use `.\metra.ps1 decisions search` / `ctx -Q
 
 ## Atlas (portfolio knowledge bus)
 
+**Path map (where we are / next / later):** [docs/portfolio-memory-path.md](../portfolio-memory-path.md) - reopen that file when memory work feels scattered. This playbook stays promotion rules only.
+
 Sibling project `C:\Projects\Atlas` (`.\Atlas.ps1` / `.\metra.ps1 atlas`). **Metra routes. Atlas stores. Notion persists.**
 
 | Content | Authority | Atlas / Notion |
