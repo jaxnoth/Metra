@@ -2924,6 +2924,178 @@ Describe 'Metra routing telemetry' {
     }
 }
 
+Describe 'Metra routing persistence' {
+    BeforeEach {
+        $script:originalLocalAppData = $env:LOCALAPPDATA
+        $env:LOCALAPPDATA = Join-Path $TestDrive ([guid]::NewGuid().ToString('N'))
+    }
+
+    AfterEach {
+        $env:LOCALAPPDATA = $script:originalLocalAppData
+    }
+
+    It 'returns empty v1 graph when graph.json is missing or corrupt' {
+        InModuleScope Metra {
+            $g = Get-MetraRoutingDurableGraph
+            $g.version | Should -Be 1
+            @($g.edges).Count | Should -Be 0
+
+            $root = Get-MetraRoutingTelemetryRoot
+            $null = New-Item -ItemType Directory -Path $root -Force
+            '{bad json' | Set-Content -LiteralPath (Get-MetraRoutingDurableGraphPath) -Encoding utf8
+            $g2 = Get-MetraRoutingDurableGraph
+            @($g2.edges).Count | Should -Be 0
+        }
+    }
+
+    It 'save creates directory and writes valid JSON atomically' {
+        InModuleScope Metra {
+            $edge = [PSCustomObject]@{
+                id            = 'e_test_ops_target'
+                stem          = 'TEST'
+                cueClass      = 'ops'
+                target        = 'Metra'
+                acceptedAtUtc = '2026-08-30T00:00:00Z'
+                source        = 'operator'
+                note          = ''
+            }
+            Save-MetraRoutingDurableGraph -Graph ([PSCustomObject]@{ version = 1; edges = @($edge) })
+            $path = Get-MetraRoutingDurableGraphPath
+            Test-Path -LiteralPath $path | Should -BeTrue
+            Test-Path -LiteralPath "$path.tmp" | Should -BeFalse
+            $reload = Get-MetraRoutingDurableGraph
+            @($reload.edges).Count | Should -Be 1
+            $reload.edges[0].id | Should -Be 'e_test_ops_target'
+        }
+    }
+
+    It 'accept normalizes stem/cue and replaces duplicate stem+cueClass' {
+        InModuleScope Metra {
+            $first = Add-MetraRoutingAcceptedEdge -Stem 'iwudata' -CueClass ops -Target 'Metra' -Note 'a'
+            $first.stem | Should -Be 'IWUDATA'
+            $first.cueClass | Should -Be 'ops'
+            $first.source | Should -Be 'operator'
+            $first.replaced | Should -BeFalse
+
+            $second = Add-MetraRoutingAcceptedEdge -Stem 'IWUDATA' -CueClass ops -Target 'TicketTracker' -Note 'b'
+            $second.replaced | Should -BeTrue
+            $second.target | Should -Be 'TicketTracker'
+
+            $graph = Get-MetraRoutingDurableGraph
+            @($graph.edges).Count | Should -Be 1
+            $graph.edges[0].target | Should -Be 'TicketTracker'
+            $graph.edges[0].note | Should -Be 'b'
+        }
+    }
+
+    It 'remove exact id saves only when removed; missing id does not rewrite' {
+        InModuleScope Metra {
+            $edge = Add-MetraRoutingAcceptedEdge -Stem 'IWUDATA' -CueClass sql -Target 'Metra'
+            $path = Get-MetraRoutingDurableGraphPath
+            $beforeHash = (Get-FileHash -LiteralPath $path -Algorithm SHA256).Hash
+
+            $miss = Remove-MetraRoutingAcceptedEdge -Id 'missing-id'
+            $miss.removed | Should -BeFalse
+            (Get-FileHash -LiteralPath $path -Algorithm SHA256).Hash | Should -Be $beforeHash
+
+            $hit = Remove-MetraRoutingAcceptedEdge -Id $edge.id
+            $hit.removed | Should -BeTrue
+            @((Get-MetraRoutingDurableGraph).edges).Count | Should -Be 0
+        }
+    }
+
+    It 'applies accepted edges with +4 and edge:id idempotency' {
+        InModuleScope Metra {
+            $null = Add-MetraRoutingAcceptedEdge -Stem 'IWUDATA' -CueClass ops -Target 'Metra'
+
+            $sql = [PSCustomObject]@{
+                Name = 'IWUDATA-SQL'; Root = 'work'; Path = 'x'; Purpose = 'sql'
+                Triggers = @('iwudata'); Serves = @(); Score = 4
+                MatchedTokens = @('iwudata'); HayLower = 'iwudata-sql iwudata sql'
+            }
+            $once = @(Update-MetraScoredRoutingWithAcceptedEdges -Query 'How did IWUDATA run today?' -Scored @($sql))
+            $row = $once | Where-Object Name -eq 'Metra' | Select-Object -First 1
+            $row | Should -Not -BeNullOrEmpty
+            [int]$row.Score | Should -Be 4
+            @($row.MatchedTokens | Where-Object { $_ -like 'edge:*' }).Count | Should -Be 1
+
+            $twice = @(Update-MetraScoredRoutingWithAcceptedEdges -Query 'How did IWUDATA run today?' -Scored $once)
+            $row2 = $twice | Where-Object Name -eq 'Metra' | Select-Object -First 1
+            [int]$row2.Score | Should -Be 4
+            @($row2.MatchedTokens | Where-Object { $_ -like 'edge:*' }).Count | Should -Be 1
+        }
+    }
+
+    It 'preserves compound evidence when accepted edges apply' {
+        InModuleScope Metra {
+            $null = Add-MetraRoutingAcceptedEdge -Stem 'IWUDATA' -CueClass ops -Target 'Metra'
+            $auto = [PSCustomObject]@{
+                Name = 'IWUDATA-Automation'; Root = 'work'; Path = 'y'; Purpose = 'auto'
+                Triggers = @('iwudata'); Serves = @(); Score = 6
+                MatchedTokens = @('iwudata', 'compound:ops'); HayLower = 'iwudata-automation'
+            }
+            $out = @(Update-MetraScoredRoutingWithAcceptedEdges -Query 'How did IWUDATA run today?' -Scored @($auto))
+            $metra = $out | Where-Object Name -eq 'Metra' | Select-Object -First 1
+            $autoOut = $out | Where-Object Name -eq 'IWUDATA-Automation' | Select-Object -First 1
+            $autoOut.MatchedTokens | Should -Contain 'compound:ops'
+            @($metra.MatchedTokens) | Should -Not -Contain 'compound:ops'
+            @($metra.MatchedTokens | Where-Object { $_ -like 'edge:*' }).Count | Should -Be 1
+        }
+    }
+
+    It 'candidates aggregates only ambiguous telemetry and never writes graph.json' {
+        InModuleScope Metra {
+            $root = Get-MetraRoutingTelemetryRoot
+            $null = New-Item -ItemType Directory -Path $root -Force
+            $eventsPath = Get-MetraRoutingTelemetryEventsPath
+            @(
+                '{"tsUtc":"2026-08-30T00:00:00Z","source":"routing","query":"iwudata status","outcome":"ambiguous","primary":"IWUDATA-Automation","primaryScore":4,"runnerUp":"IWUDATA-SQL","runnerUpScore":3,"isAmbiguous":true,"matchedTokens":["iwudata","compound:ops"],"favoredTokens":["compound:ops"]}',
+                '{"tsUtc":"2026-08-30T00:00:01Z","source":"routing","query":"confident only","outcome":"confident","primary":"Metra","primaryScore":3,"runnerUp":null,"runnerUpScore":null,"isAmbiguous":false,"matchedTokens":[],"favoredTokens":[]}'
+            ) | Set-Content -LiteralPath $eventsPath -Encoding utf8
+
+            $graphPath = Get-MetraRoutingDurableGraphPath
+            Test-Path -LiteralPath $graphPath | Should -BeFalse
+            $candidates = @(Get-MetraRoutingEdgeCandidates -Last 10)
+            Test-Path -LiteralPath $graphPath | Should -BeFalse
+            $candidates.Count | Should -Be 1
+            $candidates[0].Stem | Should -Be 'IWUDATA'
+            $candidates[0].CueClass | Should -Be 'ops'
+            $candidates[0].Count | Should -Be 1
+        }
+    }
+
+    It 'telemetry reader uses physical -Tail lines' {
+        InModuleScope Metra {
+            $root = Get-MetraRoutingTelemetryRoot
+            $null = New-Item -ItemType Directory -Path $root -Force
+            $path = Get-MetraRoutingTelemetryEventsPath
+            1..5 | ForEach-Object {
+                $i = $_
+                "{`"tsUtc`":`"2026-08-30T00:00:0$i`Z`",`"source`":`"other`",`"query`":`"q$i`",`"outcome`":`"home`",`"primary`":`"Metra`",`"primaryScore`":0,`"runnerUp`":null,`"runnerUpScore`":null,`"isAmbiguous`":false,`"matchedTokens`":[],`"favoredTokens`":[]}" |
+                    Add-Content -LiteralPath $path -Encoding utf8
+            }
+            $tail = @(Get-MetraRoutingTelemetryEvents -Last 2)
+            $tail.Count | Should -Be 2
+            $tail[0].query | Should -Be 'q4'
+            $tail[1].query | Should -Be 'q5'
+        }
+    }
+
+    It 'accept rejects unknown registry target' {
+        InModuleScope Metra {
+            { Add-MetraRoutingAcceptedEdge -Stem 'IWUDATA' -CueClass ops -Target 'NotARealProject-ZZQX' } |
+                Should -Throw '*Unknown registry target*'
+        }
+    }
+
+    It 'list CLI shows empty graph without error' {
+        InModuleScope Metra {
+            $out = Show-MetraRoutingEdgesCli *>&1 | Out-String
+            $out | Should -Match 'No accepted routing edges'
+        }
+    }
+}
+
 Describe 'Attention visible count normalization' {
     It 'normalizes Attention visible count to 1..10' {
         InModuleScope Metra {

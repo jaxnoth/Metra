@@ -902,6 +902,401 @@ function Update-MetraScoredRoutingWithCompoundCues {
     return @($list.ToArray())
 }
 
+function Get-MetraRoutingDurableGraphPath {
+    <#
+    .SYNOPSIS
+        Path to machine-local routing graph.json (does not create file or directory).
+    #>
+    [CmdletBinding()]
+    param()
+
+    Join-Path (Get-MetraRoutingTelemetryRoot) 'graph.json'
+}
+
+function Get-MetraRoutingAcceptedEdgeId {
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory)][string]$Stem,
+        [Parameter(Mandatory)][string]$CueClass,
+        [Parameter(Mandatory)][string]$Target
+    )
+
+    $stemNorm = ([string]$Stem).Trim().ToUpperInvariant()
+    $cueNorm = ([string]$CueClass).Trim().ToLowerInvariant()
+    $targetSlug = ([string]$Target).Trim().ToLowerInvariant() -replace '[^a-z0-9]+', '_'
+    $targetSlug = $targetSlug.Trim('_')
+    if ([string]::IsNullOrWhiteSpace($targetSlug)) { $targetSlug = 'unknown' }
+    return "e_${stemNorm}_${cueNorm}_${targetSlug}"
+}
+
+function Test-MetraRoutingAcceptedEdgeRecord {
+    <#
+    .SYNOPSIS
+        True when a parsed edge object meets schema v1 minimum requirements.
+    #>
+    [CmdletBinding()]
+    param([Parameter(Mandatory)]$Edge)
+
+    if ($null -eq $Edge) { return $false }
+
+    $id = [string](Get-MetraProp -Object $Edge -Name 'id' -Default '')
+    $stem = [string](Get-MetraProp -Object $Edge -Name 'stem' -Default '')
+    $target = [string](Get-MetraProp -Object $Edge -Name 'target' -Default '')
+    $cueClass = [string](Get-MetraProp -Object $Edge -Name 'cueClass' -Default '').Trim().ToLowerInvariant()
+    $source = [string](Get-MetraProp -Object $Edge -Name 'source' -Default '')
+    $acceptedRaw = [string](Get-MetraProp -Object $Edge -Name 'acceptedAtUtc' -Default '')
+    $noteRaw = Get-MetraProp -Object $Edge -Name 'note' -Default $null
+
+    if ([string]::IsNullOrWhiteSpace($id)) { return $false }
+    if ([string]::IsNullOrWhiteSpace($stem)) { return $false }
+    if ([string]::IsNullOrWhiteSpace($target)) { return $false }
+    if ($cueClass -notin @('ops', 'sql')) { return $false }
+    if ($source -ne 'operator') { return $false }
+    if ($null -eq $noteRaw) { return $false }
+
+    try {
+        $null = [datetime]::Parse($acceptedRaw, [System.Globalization.CultureInfo]::InvariantCulture, [System.Globalization.DateTimeStyles]::AssumeUniversal)
+    }
+    catch {
+        return $false
+    }
+
+    return $true
+}
+
+function Get-MetraRoutingDurableGraph {
+    <#
+    .SYNOPSIS
+        Loads operator-accepted routing edges (fail-soft empty v1; never rewrites on read).
+    #>
+    [CmdletBinding()]
+    param()
+
+    $empty = [PSCustomObject]@{ version = 1; edges = @() }
+    $path = Get-MetraRoutingDurableGraphPath
+    if (-not (Test-Path -LiteralPath $path -PathType Leaf)) {
+        return $empty
+    }
+
+    try {
+        $raw = [System.IO.File]::ReadAllText($path)
+    }
+    catch {
+        return $empty
+    }
+
+    if ([string]::IsNullOrWhiteSpace($raw)) { return $empty }
+
+    try {
+        $doc = $raw | ConvertFrom-Json -ErrorAction Stop
+    }
+    catch {
+        return $empty
+    }
+
+    $version = [int](Get-MetraProp -Object $doc -Name 'version' -Default 0)
+    if ($version -ne 1) { return $empty }
+
+    $edgeRaw = Get-MetraProp -Object $doc -Name 'edges' -Default $null
+    if ($null -eq $edgeRaw) { return $empty }
+
+    $valid = New-Object System.Collections.Generic.List[object]
+    foreach ($edge in @($edgeRaw)) {
+        if (Test-MetraRoutingAcceptedEdgeRecord -Edge $edge) {
+            [void]$valid.Add($edge)
+        }
+    }
+
+    return [PSCustomObject]@{
+        version = 1
+        edges   = @($valid.ToArray())
+    }
+}
+
+function Save-MetraRoutingDurableGraph {
+    <#
+    .SYNOPSIS
+        Validates and atomically writes routing graph.json (fail-loud).
+    #>
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory)]$Graph
+    )
+
+    $version = [int](Get-MetraProp -Object $Graph -Name 'version' -Default 0)
+    if ($version -ne 1) {
+        throw 'unsupported graph version'
+    }
+
+    $edgeRaw = Get-MetraProp -Object $Graph -Name 'edges' -Default @()
+    $edges = @($edgeRaw)
+    foreach ($edge in $edges) {
+        if (-not (Test-MetraRoutingAcceptedEdgeRecord -Edge $edge)) {
+            throw 'invalid edge record'
+        }
+    }
+
+    $payload = [ordered]@{
+        version = 1
+        edges   = @(
+            foreach ($edge in $edges) {
+                [ordered]@{
+                    id            = [string]$edge.id
+                    stem          = ([string]$edge.stem).Trim().ToUpperInvariant()
+                    cueClass      = ([string]$edge.cueClass).Trim().ToLowerInvariant()
+                    target        = [string]$edge.target
+                    acceptedAtUtc = [string]$edge.acceptedAtUtc
+                    source        = 'operator'
+                    note          = [string](Get-MetraProp -Object $edge -Name 'note' -Default '')
+                }
+            }
+        )
+    }
+
+    $path = Get-MetraRoutingDurableGraphPath
+    $dir = Split-Path -Parent $path
+    if ($dir -and -not (Test-Path -LiteralPath $dir -PathType Container)) {
+        $null = New-Item -ItemType Directory -Path $dir -Force
+    }
+
+    $json = ($payload | ConvertTo-Json -Depth 6 -Compress)
+    $tmp = "$path.tmp"
+    [System.IO.File]::WriteAllText($tmp, ($json + "`r`n"))
+    Move-Item -LiteralPath $tmp -Destination $path -Force
+}
+
+function Add-MetraRoutingAcceptedEdge {
+    <#
+    .SYNOPSIS
+        Operator accept: replace same stem+cueClass; save once; return resulting edge.
+    #>
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory)][string]$Stem,
+        [Parameter(Mandatory)]
+        [ValidateSet('ops', 'sql')]
+        [string]$CueClass,
+        [Parameter(Mandatory)][string]$Target,
+        [string]$Note = ''
+    )
+
+    $stemNorm = ([string]$Stem).Trim().ToUpperInvariant()
+    $cueNorm = ([string]$CueClass).Trim().ToLowerInvariant()
+    $targetName = ([string]$Target).Trim()
+    if ([string]::IsNullOrWhiteSpace($stemNorm)) { throw 'Stem required' }
+    if ([string]::IsNullOrWhiteSpace($targetName)) { throw 'Target required' }
+
+    $reg = Get-MetraRegistryProject -Registry (Get-MetraProjectRegistry) -Name $targetName
+    if (-not $reg) { throw "Unknown registry target: $targetName" }
+
+    $canonicalTarget = [string]$reg.name
+    $graph = Get-MetraRoutingDurableGraph
+    $remaining = New-Object System.Collections.Generic.List[object]
+    $replaced = $false
+    foreach ($edge in @($graph.edges)) {
+        $eStem = ([string]$edge.stem).Trim().ToUpperInvariant()
+        $eCue = ([string]$edge.cueClass).Trim().ToLowerInvariant()
+        if ($eStem -eq $stemNorm -and $eCue -eq $cueNorm) {
+            $replaced = $true
+            continue
+        }
+        [void]$remaining.Add($edge)
+    }
+
+    $newEdge = [PSCustomObject]@{
+        id            = (Get-MetraRoutingAcceptedEdgeId -Stem $stemNorm -CueClass $cueNorm -Target $canonicalTarget)
+        stem          = $stemNorm
+        cueClass      = $cueNorm
+        target        = $canonicalTarget
+        acceptedAtUtc = [datetime]::UtcNow.ToString('o')
+        source        = 'operator'
+        note          = [string]$Note
+        replaced      = $replaced
+    }
+
+    [void]$remaining.Add($newEdge)
+    Save-MetraRoutingDurableGraph -Graph ([PSCustomObject]@{ version = 1; edges = @($remaining.ToArray()) })
+    return $newEdge
+}
+
+function Remove-MetraRoutingAcceptedEdge {
+    <#
+    .SYNOPSIS
+        Removes one edge by exact id. No rewrite when id is missing.
+    #>
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory)][string]$Id
+    )
+
+    $want = ([string]$Id).Trim()
+    if ([string]::IsNullOrWhiteSpace($want)) { throw 'Id required' }
+
+    $graph = Get-MetraRoutingDurableGraph
+    $removed = $null
+    $kept = New-Object System.Collections.Generic.List[object]
+    foreach ($edge in @($graph.edges)) {
+        if ([string]$edge.id -eq $want) {
+            $removed = $edge
+            continue
+        }
+        [void]$kept.Add($edge)
+    }
+
+    if (-not $removed) {
+        return [PSCustomObject]@{ removed = $false; edge = $null }
+    }
+
+    Save-MetraRoutingDurableGraph -Graph ([PSCustomObject]@{ version = 1; edges = @($kept.ToArray()) })
+    return [PSCustomObject]@{ removed = $true; edge = $removed }
+}
+
+function Update-MetraScoredRoutingWithAcceptedEdges {
+    <#
+    .SYNOPSIS
+        Applies operator-accepted durable edges after compound cues (+4 once via edge:id token).
+    #>
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory)]
+        [AllowEmptyString()]
+        [string]$Query,
+        [Parameter(Mandatory)][AllowEmptyCollection()][object[]]$Scored,
+        [object]$Registry,
+        [hashtable]$DiskByName
+    )
+
+    $graph = Get-MetraRoutingDurableGraph
+    if (@($graph.edges).Count -eq 0) {
+        return @($Scored)
+    }
+
+    if (-not $Registry) {
+        $Registry = Get-MetraProjectRegistry
+    }
+    if (-not $DiskByName) {
+        $DiskByName = @{}
+        foreach ($p in @(Get-MetraProjects)) {
+            $DiskByName[$p.Name.ToLowerInvariant()] = $p
+        }
+    }
+
+    $cues = Get-MetraCompoundRoutingCueHits -Query $Query
+    $hasSql = @($cues.SqlHits).Count -gt 0
+    $hasOps = @($cues.OpsHits).Count -gt 0
+
+    $regByName = @{}
+    foreach ($reg in @($Registry.projects)) {
+        $n = [string]$reg.name
+        if (-not [string]::IsNullOrWhiteSpace($n)) {
+            $regByName[$n.ToLowerInvariant()] = $reg
+        }
+    }
+
+    $list = New-Object System.Collections.Generic.List[object]
+    $byName = @{}
+    foreach ($row in @($Scored)) {
+        if (-not $row) { continue }
+        [void]$list.Add($row)
+        $byName[$row.Name.ToLowerInvariant()] = $row
+    }
+
+    foreach ($edge in @($graph.edges)) {
+        $stem = ([string]$edge.stem).Trim()
+        $cueClass = ([string]$edge.cueClass).Trim().ToLowerInvariant()
+        $targetName = [string]$edge.target
+        $edgeId = [string]$edge.id
+        $token = "edge:$edgeId"
+
+        if (-not (Test-MetraRoutingQueryHasTerm -Query $Query -Term $stem)) { continue }
+        if ($cueClass -eq 'ops' -and -not $hasOps) { continue }
+        if ($cueClass -eq 'sql' -and -not $hasSql) { continue }
+
+        $existing = $byName[$targetName.ToLowerInvariant()]
+        if ($existing) {
+            $tokens = New-Object System.Collections.Generic.List[string]
+            foreach ($t in @($existing.MatchedTokens)) { [void]$tokens.Add([string]$t) }
+            if ($tokens -contains $token) { continue }
+            [void]$tokens.Add($token)
+            $existing.Score = [int]$existing.Score + 4
+            $existing.MatchedTokens = [string[]]@($tokens.ToArray())
+            continue
+        }
+
+        $regRow = $regByName[$targetName.ToLowerInvariant()]
+        $onDisk = $DiskByName[$targetName.ToLowerInvariant()]
+        if (-not $regRow -or -not $onDisk) { continue }
+
+        $inserted = New-MetraCompoundScoredRoutingRow `
+            -Name $targetName `
+            -RegistryRow $regRow `
+            -OnDisk $onDisk `
+            -Score 4 `
+            -MatchedTokens @($token)
+        [void]$list.Add($inserted)
+        $byName[$targetName.ToLowerInvariant()] = $inserted
+    }
+
+    return @($list.ToArray())
+}
+
+function Get-MetraRoutingEdgeCandidates {
+    <#
+    .SYNOPSIS
+        Aggregates ambiguous telemetry into stem/cue/primary/runner-up counts (Observe-only).
+    #>
+    [CmdletBinding()]
+    param(
+        [ValidateRange(1, [int]::MaxValue)]
+        [int]$Last = 200
+    )
+
+    $events = @(Get-MetraRoutingTelemetryEvents -Last $Last)
+    if ($events.Count -eq 0) { return @() }
+
+    $counts = @{}
+    foreach ($evt in $events) {
+        if ([string]$evt.outcome -ne 'ambiguous') { continue }
+
+        $primaryName = [string]$evt.primary
+        $runnerName = if ($null -eq $evt.runnerUp -or [string]::IsNullOrWhiteSpace([string]$evt.runnerUp)) { '' } else { [string]$evt.runnerUp }
+        $stem = Get-MetraRoutingStemFromName -Name $primaryName
+        if (-not $stem) { $stem = Get-MetraRoutingStemFromName -Name $runnerName }
+        if (-not $stem) { continue }
+
+        $cueClass = $null
+        $favored = @($evt.favoredTokens)
+        $matched = @($evt.matchedTokens)
+        if ($favored -contains 'compound:sql') { $cueClass = 'sql' }
+        elseif ($favored -contains 'compound:ops') { $cueClass = 'ops' }
+        elseif ($matched -contains 'compound:sql') { $cueClass = 'sql' }
+        elseif ($matched -contains 'compound:ops') { $cueClass = 'ops' }
+        if (-not $cueClass) { continue }
+
+        $key = (@($stem.ToUpperInvariant(), $cueClass, $primaryName, $runnerName) -join '|')
+        if (-not $counts.ContainsKey($key)) {
+            $counts[$key] = [PSCustomObject]@{
+                Stem     = $stem.ToUpperInvariant()
+                CueClass = $cueClass
+                Primary  = $primaryName
+                RunnerUp = $runnerName
+                Count    = 0
+            }
+        }
+        $counts[$key].Count++
+    }
+
+    return @(
+        $counts.Values |
+            Sort-Object `
+                @{ Expression = 'Count'; Descending = $true },
+                Stem,
+                CueClass,
+                Primary,
+                RunnerUp
+    )
+}
+
 function Get-MetraScoredRoutingProjects {
     <#
     .SYNOPSIS
@@ -985,10 +1380,11 @@ function Get-MetraScoredRoutingProjects {
     }
 
     $withCompound = @(Update-MetraScoredRoutingWithCompoundCues -Query $Query -Scored @($scored.ToArray()) -Registry $registry -DiskByName $disk)
+    $withEdges = @(Update-MetraScoredRoutingWithAcceptedEdges -Query $Query -Scored $withCompound -Registry $registry -DiskByName $disk)
 
     # Prefer compound:sql over compound:ops on equal scores (mixed-cue SQL precedence).
     return @(
-        $withCompound |
+        $withEdges |
             Sort-Object `
                 @{ Expression = 'Score'; Descending = $true },
                 @{ Expression = {
@@ -1158,16 +1554,15 @@ function Get-MetraRoutingTelemetryEvents {
     }
 
     try {
-        $lines = @(Get-Content -LiteralPath $path -ErrorAction Stop)
+        $lines = @(Get-Content -LiteralPath $path -Tail $Last -ErrorAction Stop)
     }
     catch {
         return @()
     }
 
     if ($lines.Count -eq 0) { return @() }
-    $slice = if ($lines.Count -le $Last) { $lines } else { $lines[($lines.Count - $Last)..($lines.Count - 1)] }
     $parsed = New-Object System.Collections.Generic.List[object]
-    foreach ($line in $slice) {
+    foreach ($line in $lines) {
         if ([string]::IsNullOrWhiteSpace($line)) { continue }
         try {
             $obj = $line | ConvertFrom-Json -ErrorAction Stop
@@ -1585,6 +1980,89 @@ function Show-MetraRoutingCli {
                 Write-Host ''
                 Write-MetraWhyHere -Project $row.Name -Decisions $why
             }
+        }
+    }
+}
+
+function Show-MetraRoutingEdgesCli {
+    <#
+    .SYNOPSIS
+        Operator CLI for durable accepted routing edges (list / candidates / accept / remove).
+    .DESCRIPTION
+        Only accept and remove mutate graph.json. Candidates and list are read-only.
+    #>
+    [CmdletBinding()]
+    param(
+        [string[]]$SubCommand = @(),
+        [ValidateRange(1, [int]::MaxValue)]
+        [int]$Last = 200,
+        [string]$Stem,
+        [string]$CueClass,
+        [string]$Target,
+        [string]$Note,
+        [string]$Id
+    )
+
+    $action = if ($SubCommand.Count -gt 0) { [string]$SubCommand[0].Trim().ToLowerInvariant() } else { 'list' }
+
+    switch ($action) {
+        'list' {
+            $graph = Get-MetraRoutingDurableGraph
+            $edges = @($graph.edges)
+            if ($edges.Count -eq 0) {
+                Write-Host 'No accepted routing edges.'
+                return
+            }
+            $rows = @(
+                foreach ($e in $edges) {
+                    [PSCustomObject]@{
+                        Id            = [string]$e.id
+                        Stem          = [string]$e.stem
+                        CueClass      = [string]$e.cueClass
+                        Target        = [string]$e.target
+                        AcceptedAtUtc = [string]$e.acceptedAtUtc
+                        Note          = [string](Get-MetraProp -Object $e -Name 'note' -Default '')
+                    }
+                }
+            )
+            $rows | Format-Table -AutoSize
+        }
+        'candidates' {
+            $candidates = @(Get-MetraRoutingEdgeCandidates -Last $Last)
+            if ($candidates.Count -eq 0) {
+                Write-Host 'No ambiguous routing candidates in telemetry tail.'
+                return
+            }
+            $candidates |
+                Select-Object Stem, CueClass, Primary, RunnerUp, Count |
+                Format-Table -AutoSize
+        }
+        'accept' {
+            if ([string]::IsNullOrWhiteSpace($Stem)) { throw 'accept requires -Stem' }
+            if ([string]::IsNullOrWhiteSpace($CueClass)) { throw 'accept requires -CueClass ops|sql' }
+            if ([string]::IsNullOrWhiteSpace($Target)) { throw 'accept requires -Target' }
+            $cue = $CueClass.Trim().ToLowerInvariant()
+            if ($cue -notin @('ops', 'sql')) { throw 'CueClass must be ops or sql' }
+            $edge = Add-MetraRoutingAcceptedEdge -Stem $Stem -CueClass $cue -Target $Target -Note $Note
+            if ($edge.replaced) {
+                Write-Host ("Replaced prior {0}+{1} edge -> {2} ({3})" -f $edge.stem, $edge.cueClass, $edge.target, $edge.id) -ForegroundColor Cyan
+            }
+            else {
+                Write-Host ("Accepted edge {0}+{1} -> {2} ({3})" -f $edge.stem, $edge.cueClass, $edge.target, $edge.id) -ForegroundColor Green
+            }
+        }
+        'remove' {
+            if ([string]::IsNullOrWhiteSpace($Id)) { throw 'remove requires -Id' }
+            $result = Remove-MetraRoutingAcceptedEdge -Id $Id
+            if (-not $result.removed) {
+                Write-Host ("Edge not found: {0}" -f $Id) -ForegroundColor Yellow
+                return
+            }
+            $e = $result.edge
+            Write-Host ("Removed edge {0} ({1}+{2} -> {3})" -f $e.id, $e.stem, $e.cueClass, $e.target) -ForegroundColor Green
+        }
+        default {
+            throw "Unknown routing edges subcommand '$action'. Use list, candidates, accept, or remove."
         }
     }
 }

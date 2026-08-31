@@ -30,6 +30,14 @@ Entry shape:
 
 ---
 
+## 2026-08-30 - Durable routing edges are operator-applied only
+
+- Decision: Accepted routing edges persist machine-locally under `%LOCALAPPDATA%\Metra\routing\graph.json` and apply only via explicit `routing edges accept` / `remove`. Routing telemetry and `routing edges candidates` remain Observe-only and never write accepted edges.
+- Why: Misroutes outweigh routine confirms; silent Observe→Apply would recreate untrusted routing state.
+- See: [docs/routing-graph-phase4-persistence.plan.md](routing-graph-phase4-persistence.plan.md)
+
+---
+
 ## 2026-08-29 - iOS Vision Ask contract scars
 
 Three product scars locked with the Vision Ask contract bite. Server proof: `scripts/private/VisionAsk.ps1`, `POST /api/vision/ask`, `docs/ios-vision-ask-contract.md`, tests `tests/Metra.VisionAsk.Contract.Tests.ps1`.
