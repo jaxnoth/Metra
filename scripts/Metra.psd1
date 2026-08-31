@@ -133,6 +133,7 @@
         'Invoke-MetraMachineRoleSetup',
         'Set-MetraConfiguredOpsBaseUrl',
         'Invoke-MetraCaptureCommand',
+        'Invoke-MetraAutoprogramCommand',
         'Invoke-MetraAzdoCommand',
         'Invoke-MetraAtlasCommand',
         'Get-MetraAtlasProjectPath',
