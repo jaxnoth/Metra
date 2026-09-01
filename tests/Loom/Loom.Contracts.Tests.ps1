@@ -2,11 +2,11 @@
 BeforeAll {
     $repoRoot = (Resolve-Path (Join-Path $PSScriptRoot '..\..')).Path
     Get-Module Metra -ErrorAction SilentlyContinue | Remove-Module -Force -ErrorAction SilentlyContinue
-    Import-Module (Join-Path $repoRoot 'modules\AutoProgram\AutoProgram.psd1') -Force
-    $script:Contracts = Join-Path $repoRoot 'modules\AutoProgram\Contracts\v1'
+    Import-Module (Join-Path $repoRoot 'modules\Loom\Loom.psd1') -Force
+    $script:Contracts = Join-Path $repoRoot 'modules\Loom\Contracts\v1'
 }
 
-Describe 'AutoProgram contracts v1' {
+Describe 'Loom contracts v1' {
     It 'ships required schema files' {
         $required = @(
             'routing-context.request.schema.json',
@@ -32,7 +32,7 @@ Describe 'AutoProgram contracts v1' {
     }
 
     It 'routing context adapter returns v1 result shape' {
-        $result = Get-AutoProgramRoutingContext -Request @{
+        $result = Get-LoomRoutingContext -Request @{
             schemaVersion = 1
             query         = 'Metra'
             planPath      = ''
@@ -41,11 +41,11 @@ Describe 'AutoProgram contracts v1' {
         $result.PSObject.Properties.Name | Should -Contain 'routingConfidence'
         $result.PSObject.Properties.Name | Should -Contain 'eligible'
         $result.PSObject.Properties.Name | Should -Contain 'minimumConfidence'
-        { Test-AutoProgramContract -Schema 'routing-context.result' -Object $result } | Should -Not -Throw
+        { Test-LoomContract -Schema 'routing-context.result' -Object $result } | Should -Not -Throw
     }
 
     It 'valid queue-item sample passes contract validation' {
-        InModuleScope AutoProgram {
+        InModuleScope Loom {
             $item = [PSCustomObject]@{
                 schemaVersion = 1
                 id            = 'AP-20260831-0099'
@@ -54,12 +54,12 @@ Describe 'AutoProgram contracts v1' {
                 createdAt     = '2026-08-31T00:00:00Z'
                 updatedAt     = '2026-08-31T00:00:00Z'
             }
-            { Test-AutoProgramContract -Schema 'queue-item' -Object $item } | Should -Not -Throw
+            { Test-LoomContract -Schema 'queue-item' -Object $item } | Should -Not -Throw
         }
     }
 
     It 'frontmatter status:approved wins over body Pending' {
-        InModuleScope AutoProgram {
+        InModuleScope Loom {
             $dir = Join-Path ([IO.Path]::GetTempPath()) ('ap-ctr-' + [guid]::NewGuid().ToString('n'))
             try {
                 New-Item -ItemType Directory -Path $dir -Force | Out-Null
@@ -76,8 +76,8 @@ bingReviewed: true
 
 **Status:** Pending Bing Review
 "@
-                Write-AutoProgramAtomicUtf8Text -Path $planPath -Text $body
-                $parsed = Read-MetraAutoprogramPlanFile -Path $planPath -MetraRoot (Get-AutoProgramHostRoot)
+                Write-LoomAtomicUtf8Text -Path $planPath -Text $body
+                $parsed = Read-MetraLoomPlanFile -Path $planPath -MetraRoot (Get-LoomHostRoot)
                 $parsed.approved | Should -BeTrue
                 $parsed.planStatus | Should -Match '(?i)approved'
                 $parsed.bingReviewed | Should -BeTrue
@@ -89,13 +89,13 @@ bingReviewed: true
     }
 
     It 'rejects enqueue from paths outside allowed formal plan roots' {
-        InModuleScope AutoProgram {
-            $metraRoot = Get-AutoProgramHostRoot
+        InModuleScope Loom {
+            $metraRoot = Get-LoomHostRoot
             $outside = Join-Path ([IO.Path]::GetTempPath()) ('ap-outside-' + [guid]::NewGuid().ToString('n'))
             New-Item -ItemType Directory -Path $outside -Force | Out-Null
             $planPath = Join-Path $outside 'evil.plan.md'
-            Write-AutoProgramAtomicUtf8Text -Path $planPath -Text "# X`n**Status:** Approved`n"
-            { Invoke-MetraAutoprogramEnqueueFromPlan -Root $outside -Path $planPath -MetraRoot $metraRoot } |
+            Write-LoomAtomicUtf8Text -Path $planPath -Text "# X`n**Status:** Approved`n"
+            { Invoke-MetraLoomEnqueueFromPlan -Root $outside -Path $planPath -MetraRoot $metraRoot } |
                 Should -Throw '*not under an allowed formal plan root*'
         }
     }

@@ -1,29 +1,29 @@
 # Lightweight JSON Schema (draft-07 subset) validation for Contracts/v1 — no external engine.
 
-function Get-AutoProgramContractSchemaPath {
+function Get-LoomContractSchemaPath {
     [CmdletBinding()]
     param(
         [Parameter(Mandatory)][string]$Name
     )
 
     $file = if ($Name -match '\.schema\.json$') { $Name } else { "$Name.schema.json" }
-    return Join-Path $script:AutoProgramModuleRoot (Join-Path 'Contracts\v1' $file)
+    return Join-Path $script:LoomModuleRoot (Join-Path 'Contracts\v1' $file)
 }
 
-function Get-AutoProgramContractSchema {
+function Get-LoomContractSchema {
     [CmdletBinding()]
     param(
         [Parameter(Mandatory)][string]$Name
     )
 
-    $path = Get-AutoProgramContractSchemaPath -Name $Name
+    $path = Get-LoomContractSchemaPath -Name $Name
     if (-not (Test-Path -LiteralPath $path)) {
         throw "Contract schema not found: $Name ($path)"
     }
     return (Get-Content -LiteralPath $path -Raw | ConvertFrom-Json)
 }
 
-function Test-AutoProgramContract {
+function Test-LoomContract {
     <#
     .SYNOPSIS
         Validates an object against a Contracts/v1 JSON schema. Throws on failure.
@@ -34,16 +34,16 @@ function Test-AutoProgramContract {
         [Parameter(Mandatory)]$Object
     )
 
-    $schemaDoc = Get-AutoProgramContractSchema -Name $Schema
+    $schemaDoc = Get-LoomContractSchema -Name $Schema
     $errors = New-Object System.Collections.Generic.List[string]
-    Test-AutoProgramContractNode -Schema $schemaDoc -Value $Object -Path '$' -Errors $errors
+    Test-LoomContractNode -Schema $schemaDoc -Value $Object -Path '$' -Errors $errors
     if ($errors.Count -gt 0) {
         throw ("Contract validation failed ({0}): {1}" -f $Schema, ($errors -join '; '))
     }
     return $true
 }
 
-function Get-AutoProgramSchemaProp {
+function Get-LoomSchemaProp {
     param(
         $Schema,
         [Parameter(Mandatory)][string]$Name
@@ -53,7 +53,7 @@ function Get-AutoProgramSchemaProp {
     return $null
 }
 
-function Test-AutoProgramContractNode {
+function Test-LoomContractNode {
     param(
         $Schema,
         $Value,
@@ -63,7 +63,7 @@ function Test-AutoProgramContractNode {
 
     if ($null -eq $Schema) { return }
 
-    $type = [string](Get-AutoProgramSchemaProp -Schema $Schema -Name 'type')
+    $type = [string](Get-LoomSchemaProp -Schema $Schema -Name 'type')
     if ($type -eq 'object') {
         if ($null -eq $Value) {
             [void]$Errors.Add("$Path must be an object")
@@ -83,7 +83,7 @@ function Test-AutoProgramContractNode {
             }
         }
 
-        $schemaProps = Get-AutoProgramSchemaProp -Schema $Schema -Name 'properties'
+        $schemaProps = Get-LoomSchemaProp -Schema $Schema -Name 'properties'
         if ($schemaProps) {
             foreach ($name in $props.Keys) {
                 $propSchema = $null
@@ -92,12 +92,12 @@ function Test-AutoProgramContractNode {
                     $propSchema = $propDef.Value
                 }
                 if ($null -eq $propSchema) {
-                    if ((Get-AutoProgramSchemaProp -Schema $Schema -Name 'additionalProperties') -eq $false) {
+                    if ((Get-LoomSchemaProp -Schema $Schema -Name 'additionalProperties') -eq $false) {
                         [void]$Errors.Add("$Path has disallowed property '$name'")
                     }
                     continue
                 }
-                Test-AutoProgramContractNode -Schema $propSchema -Value $props[$name] -Path "$Path.$name" -Errors $Errors
+                Test-LoomContractNode -Schema $propSchema -Value $props[$name] -Path "$Path.$name" -Errors $Errors
             }
         }
         return
@@ -109,10 +109,10 @@ function Test-AutoProgramContractNode {
             return
         }
         $items = @($Value)
-        $itemsSchema = Get-AutoProgramSchemaProp -Schema $Schema -Name 'items'
+        $itemsSchema = Get-LoomSchemaProp -Schema $Schema -Name 'items'
         if ($itemsSchema) {
             for ($i = 0; $i -lt $items.Count; $i++) {
-                Test-AutoProgramContractNode -Schema $itemsSchema -Value $items[$i] -Path "$Path[$i]" -Errors $Errors
+                Test-LoomContractNode -Schema $itemsSchema -Value $items[$i] -Path "$Path[$i]" -Errors $Errors
             }
         }
         return
@@ -124,7 +124,7 @@ function Test-AutoProgramContractNode {
     }
 
     if ($Schema.PSObject.Properties.Name -contains 'const') {
-        $expected = Get-AutoProgramSchemaProp -Schema $Schema -Name 'const'
+        $expected = Get-LoomSchemaProp -Schema $Schema -Name 'const'
         $actual = $Value
         if ($expected -is [int] -or $expected -is [long]) {
             try { $actual = [int]$Value } catch { }
@@ -143,7 +143,7 @@ function Test-AutoProgramContractNode {
                 [void]$Errors.Add("$Path must be a string")
                 return
             }
-            $pattern = Get-AutoProgramSchemaProp -Schema $Schema -Name 'pattern'
+            $pattern = Get-LoomSchemaProp -Schema $Schema -Name 'pattern'
             if ($pattern -and ($Value -notmatch [string]$pattern)) {
                 [void]$Errors.Add("$Path must match pattern $pattern")
             }
@@ -156,8 +156,8 @@ function Test-AutoProgramContractNode {
                 [void]$Errors.Add("$Path must be an integer")
                 return
             }
-            $min = Get-AutoProgramSchemaProp -Schema $Schema -Name 'minimum'
-            $max = Get-AutoProgramSchemaProp -Schema $Schema -Name 'maximum'
+            $min = Get-LoomSchemaProp -Schema $Schema -Name 'minimum'
+            $max = Get-LoomSchemaProp -Schema $Schema -Name 'maximum'
             if ($null -ne $min -and $n -lt [int64]$min) {
                 [void]$Errors.Add("$Path below minimum $min")
             }
@@ -173,8 +173,8 @@ function Test-AutoProgramContractNode {
                 [void]$Errors.Add("$Path must be a number")
                 return
             }
-            $min = Get-AutoProgramSchemaProp -Schema $Schema -Name 'minimum'
-            $max = Get-AutoProgramSchemaProp -Schema $Schema -Name 'maximum'
+            $min = Get-LoomSchemaProp -Schema $Schema -Name 'minimum'
+            $max = Get-LoomSchemaProp -Schema $Schema -Name 'maximum'
             if ($null -ne $min -and $n -lt [double]$min) {
                 [void]$Errors.Add("$Path below minimum $min")
             }

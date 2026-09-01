@@ -155,7 +155,7 @@ $script:MetraCompatibilityFunctions = @(
     'Invoke-MetraMachineRoleSetup',
     'Set-MetraConfiguredOpsBaseUrl',
     'Invoke-MetraCaptureCommand',
-    'Invoke-MetraAutoprogramCommand',
+    'Invoke-MetraLoomCommand',
     'Invoke-MetraAzdoCommand',
     'Invoke-MetraAtlasCommand',
     'Get-MetraAtlasProjectPath',

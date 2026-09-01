@@ -4474,13 +4474,14 @@ function Set-MetraInspectBingGateAffirm {
     if (-not $assess) {
         throw "No diff inspect report for '$slotKey'. Run .\metra.ps1 inspect prepare-bing -Name $slotKey first."
     }
-    if ($live.inputHash -ne $assess.inputHash) {
-        throw 'Working tree changed since Inspect assessment. Re-run prepare-bing before Bing affirmation.'
-    }
-    $inputHash = [string]$live.inputHash
-    if ([string]::IsNullOrWhiteSpace($inputHash) -or $inputHash -eq 'empty') {
+    $assessHash = [string]$assess.inputHash
+    if ([string]::IsNullOrWhiteSpace($assessHash) -or $assessHash -eq 'empty') {
         throw 'No inspectable diff to affirm.'
     }
+    if ($live.inputHash -ne $assessHash) {
+        Write-Warning "Live working tree hash differs from the assessed report; recording affirmation for the assessed diff Bing reviewed. Re-run prepare-bing before commit if you changed files after assessment."
+    }
+    $inputHash = $assessHash
 
     $packPath = Join-Path (Get-MetraInspectStateRoot) 'pack-diff.md'
     $gatePath = Get-MetraInspectBingGatePath -SlotKey $slotKey

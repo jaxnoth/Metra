@@ -24,11 +24,19 @@ Entry shape:
 
 ---
 
+## 2026-08-31 - Loom rename landed (Track G)
+
+- Decision: **Loom rename shipped** in Metra checkout: module path `modules/Loom/`, primary CLI `metra.ps1 loom`, storage default `%LOCALAPPDATA%\Metra\loom\`, migration via `loom migrate -Apply -Confirm`. **Hard rename** of PowerShell exports (`Get-MetraLoom*` only). Temporary compat: `metra.ps1 autoprogram` CLI alias (deprecation warning); legacy storage read-only until migration. **AP-\*** / **CAND-\*** IDs unchanged; persisted `autoprogram/` branch names not rewritten.
+- Why: Operator-amended Phase D rename after M2 isolation gate; pre-Slice 4 clean naming.
+- See: [docs/loom-product-boundary.plan.md](loom-product-boundary.plan.md), [docs/playbooks/loom.md](playbooks/loom.md)
+
+---
+
 ## 2026-08-31 - Loom is the governed-execution product name
 
-- Decision: The fourth portfolio product (governed plan execution: queue, journal, branches, review, operator acceptance) is named **Loom**. Portfolio line: **Atlas** remembers; **Metra** coordinates; **Forge** generates; **Loom** executes. **AutoProgram** remains the working name for module path, CLI (`metra.ps1 autoprogram`), and queue IDs (`AP-*`, `CAND-*`) through M2 boundary work; rename executes on a separate track after the M2 isolation gate, not in the same release as module extraction.
+- Decision: The fourth portfolio product (governed plan execution: queue, journal, branches, review, operator acceptance) is named **Loom**. Portfolio line: **Atlas** remembers; **Metra** coordinates; **Forge** generates; **Loom** executes. Module: `modules/Loom/`. CLI: `metra.ps1 loom` (legacy `autoprogram` alias temporary).
 - Why: Operator naming decision 2026-08-31 after Bing review (Loom over Assembly). Describes role (weaving approved work through stages) rather than implementation technique (auto coding).
-- See: [docs/autoprogram-product-boundary.plan.md](autoprogram-product-boundary.plan.md) Section 17
+- See: [docs/loom-product-boundary.plan.md](loom-product-boundary.plan.md) Section 17
 
 ---
 

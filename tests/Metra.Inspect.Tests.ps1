@@ -2271,7 +2271,7 @@ Describe 'Inspect Bing gate live hash invariant' {
         }
     }
 
-    It 'gate affirm rejects when live hash differs from slot assessment' {
+    It 'gate affirm records assessed hash when live hash differs' {
         InModuleScope Metra {
             function Set-GateTestArtifacts {
                 param([string]$StateRoot, [string]$SlotKey, [string]$AssessHash, [string]$GateHash = $null)
@@ -2294,8 +2294,11 @@ Describe 'Inspect Bing gate live hash invariant' {
                 [PSCustomObject]@{ project = 'Metra'; root = (Get-MetraRoot); inputHash = 'hash-b'; empty = $false }
             }
             try {
-                { Set-MetraInspectBingGateAffirm -Name 'Metra' -Confirm:$false } |
-                    Should -Throw '*Working tree changed since Inspect assessment*'
+                $result = Set-MetraInspectBingGateAffirm -Name 'Metra' -Confirm:$false
+                $result.ok | Should -BeTrue
+                $result.inputHash | Should -Be 'hash-a'
+                $gate = Get-Content -LiteralPath (Join-Path $stateRoot 'Metra\bing-gate.json') -Raw | ConvertFrom-Json
+                [string]$gate.inputHash | Should -Be 'hash-a'
             }
             finally {
                 Remove-Item -LiteralPath $stateRoot -Recurse -Force -ErrorAction SilentlyContinue

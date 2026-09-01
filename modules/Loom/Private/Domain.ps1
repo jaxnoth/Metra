@@ -1,27 +1,106 @@
-# Autoprogram harness — Phase A (Slices 1–2): state foundation + triage preview.
-# Queue authority: %LOCALAPPDATA%\Metra\autoprogram\ (mutable item files + append-only journal).
+# Loom harness — queue, journal, triage, runner.
+# Queue authority: %LOCALAPPDATA%\Metra\loom\ (mutable item files + append-only journal).
 
-function Get-MetraAutoprogramSchemaVersion {
+function Get-MetraLoomSchemaVersion {
     return 1
 }
 
-function Get-MetraAutoprogramRoot {
+function Resolve-MetraLoomRoot {
     [CmdletBinding()]
     param(
         [string]$OverrideRoot
     )
 
     if (-not [string]::IsNullOrWhiteSpace($OverrideRoot)) {
-        return [System.IO.Path]::GetFullPath($OverrideRoot)
+        return [PSCustomObject]@{
+            Path       = [System.IO.Path]::GetFullPath($OverrideRoot)
+            Source     = 'Explicit'
+            IsReadOnly = $false
+            IsLegacy   = $false
+        }
     }
-    return Join-Path $env:LOCALAPPDATA 'Metra\autoprogram'
+
+    $envRoot = [Environment]::GetEnvironmentVariable('METRA_LOOM_ROOT')
+    if (-not [string]::IsNullOrWhiteSpace($envRoot)) {
+        if (-not [System.IO.Path]::IsPathRooted($envRoot)) {
+            throw 'METRA_LOOM_ROOT must be an absolute path.'
+        }
+        return [PSCustomObject]@{
+            Path       = [System.IO.Path]::GetFullPath($envRoot)
+            Source     = 'Environment'
+            IsReadOnly = $false
+            IsLegacy   = $false
+        }
+    }
+
+    $loomRoot = Get-LoomDefaultStorageRoot
+    $marker = Get-LoomMigrationMarker -LoomRoot $loomRoot
+    if ($marker -and [string]$marker.status -eq 'completed') {
+        return [PSCustomObject]@{
+            Path       = $loomRoot
+            Source     = 'Loom'
+            IsReadOnly = $false
+            IsLegacy   = $false
+        }
+    }
+
+    if (Test-LoomDirectoryHasData -Path $loomRoot) {
+        return [PSCustomObject]@{
+            Path       = $loomRoot
+            Source     = 'Loom'
+            IsReadOnly = $false
+            IsLegacy   = $false
+        }
+    }
+
+    $legacyRoot = Get-LoomLegacyStorageRoot
+    if (Test-Path -LiteralPath $legacyRoot) {
+        return [PSCustomObject]@{
+            Path       = $legacyRoot
+            Source     = 'Legacy'
+            IsReadOnly = $true
+            IsLegacy   = $true
+        }
+    }
+
+    if (-not (Test-Path -LiteralPath $loomRoot)) {
+        [void][System.IO.Directory]::CreateDirectory($loomRoot)
+    }
+    return [PSCustomObject]@{
+        Path       = $loomRoot
+        Source     = 'Loom'
+        IsReadOnly = $false
+        IsLegacy   = $false
+    }
 }
 
-function Get-MetraAutoprogramMinimumRoutingConfidence {
+function Get-MetraLoomRoot {
+    [CmdletBinding()]
+    param(
+        [string]$OverrideRoot
+    )
+
+    return (Resolve-MetraLoomRoot -OverrideRoot $OverrideRoot).Path
+}
+
+function Assert-LoomRootWritable {
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory)][string]$Root,
+        [string]$OverrideRoot
+    )
+
+    $resolved = Resolve-MetraLoomRoot -OverrideRoot $OverrideRoot
+    if ($resolved.IsReadOnly -and [string]::Equals($resolved.Path, $Root, [System.StringComparison]::OrdinalIgnoreCase)) {
+        throw "Loom storage at '$Root' is legacy read-only. Run: .\metra.ps1 loom migrate -Apply -Confirm"
+    }
+}
+
+function Get-MetraLoomMinimumRoutingConfidence {
     return 0.85
 }
 
-function Get-MetraAutoprogramPhaseATransitions {
+function Get-MetraLoomPhaseATransitions {
     [CmdletBinding()]
     param(
         [string]$From
@@ -38,7 +117,7 @@ function Get-MetraAutoprogramPhaseATransitions {
 }
 
 
-function Get-AutoProgramStatusCatalog {
+function Get-LoomStatusCatalog {
     <#
     .SYNOPSIS
         Full lifecycle status enum (authority catalog). Phase A activates a subset.
@@ -48,14 +127,14 @@ function Get-AutoProgramStatusCatalog {
     )
 }
 
-function Get-AutoProgramActiveTransitions {
+function Get-LoomActiveTransitions {
     <#
     .SYNOPSIS
         Active transition map for the current phase (Slice 3 enables run lifecycle).
     #>
     [CmdletBinding()]
     param([string]$From)
-    $map = Get-AutoProgramActiveTransitionMap
+    $map = Get-LoomActiveTransitionMap
     if ($From) {
         $key = [string]$From
         if (-not $map.ContainsKey($key)) { return @() }
@@ -63,7 +142,7 @@ function Get-AutoProgramActiveTransitions {
     }
     return $map
 }
-function Test-MetraAutoprogramTransition {
+function Test-MetraLoomTransition {
     [CmdletBinding()]
     param(
         [AllowNull()][string]$From,
@@ -71,11 +150,11 @@ function Test-MetraAutoprogramTransition {
     )
 
     $fromKey = if ([string]::IsNullOrWhiteSpace($From)) { '@new' } else { [string]$From }
-    $allowed = @(Get-AutoProgramActiveTransitions -From $fromKey)
+    $allowed = @(Get-LoomActiveTransitions -From $fromKey)
     return ($allowed -contains $To)
 }
 
-function Initialize-MetraAutoprogramLayout {
+function Initialize-MetraLoomLayout {
     [CmdletBinding()]
     param(
         [Parameter(Mandatory)][string]$Root
@@ -91,7 +170,7 @@ function Initialize-MetraAutoprogramLayout {
     $statePath = Join-Path $Root 'state.json'
     if (-not (Test-Path -LiteralPath $statePath)) {
         $state = [ordered]@{
-            schemaVersion = Get-MetraAutoprogramSchemaVersion
+            schemaVersion = Get-MetraLoomSchemaVersion
             nextQueueSeq  = 1
             nextCandidateSeq = 1
             rubricVersion = 'triage-v1'
@@ -99,28 +178,28 @@ function Initialize-MetraAutoprogramLayout {
             createdAt     = (Get-Date).ToString('o')
             updatedAt     = (Get-Date).ToString('o')
         }
-        Write-AutoProgramAtomicUtf8Text -Path $statePath -Text (($state | ConvertTo-Json -Depth 6) + "`n")
+        Write-LoomAtomicUtf8Text -Path $statePath -Text (($state | ConvertTo-Json -Depth 6) + "`n")
     }
 }
 
-function Get-MetraAutoprogramState {
+function Get-MetraLoomState {
     [CmdletBinding()]
     param(
         [Parameter(Mandatory)][string]$Root
     )
 
-    Initialize-MetraAutoprogramLayout -Root $Root
+    Initialize-MetraLoomLayout -Root $Root
     $path = Join-Path $Root 'state.json'
     try {
         $raw = Get-Content -LiteralPath $path -Raw -ErrorAction Stop | ConvertFrom-Json -ErrorAction Stop
         return $raw
     }
     catch {
-        throw "Autoprogram state unreadable: $path"
+        throw "Loom state unreadable: $path"
     }
 }
 
-function Save-MetraAutoprogramState {
+function Save-MetraLoomState {
     [CmdletBinding()]
     param(
         [Parameter(Mandatory)][string]$Root,
@@ -129,10 +208,10 @@ function Save-MetraAutoprogramState {
 
     $path = Join-Path $Root 'state.json'
     $State.updatedAt = (Get-Date).ToString('o')
-    Write-AutoProgramAtomicUtf8Text -Path $path -Text (($State | ConvertTo-Json -Depth 6) + "`n")
+    Write-LoomAtomicUtf8Text -Path $path -Text (($State | ConvertTo-Json -Depth 6) + "`n")
 }
 
-function Get-MetraAutoprogramJournalPath {
+function Get-MetraLoomJournalPath {
     param(
         [Parameter(Mandatory)][string]$Root,
         [datetime]$On = (Get-Date)
@@ -141,7 +220,7 @@ function Get-MetraAutoprogramJournalPath {
     return Join-Path (Join-Path $Root 'journal') ("$day.jsonl")
 }
 
-function Add-MetraAutoprogramJournalEntry {
+function Add-MetraLoomJournalEntry {
     [CmdletBinding()]
     param(
         [Parameter(Mandatory)][string]$Root,
@@ -161,20 +240,20 @@ function Add-MetraAutoprogramJournalEntry {
     if (-not $normalized.ContainsKey('actor') -or [string]::IsNullOrWhiteSpace([string]$normalized['actor'])) {
         $normalized['actor'] = 'operator'
     }
-    Test-AutoProgramContract -Schema 'journal-entry' -Object $normalized | Out-Null
+    Test-LoomContract -Schema 'journal-entry' -Object $normalized | Out-Null
 
-    $path = Get-MetraAutoprogramJournalPath -Root $Root
+    $path = Get-MetraLoomJournalPath -Root $Root
     $line = ($normalized | ConvertTo-Json -Compress -Depth 8)
-    $enc = Get-AutoProgramUtf8NoBomEncoding
+    $enc = Get-LoomUtf8NoBomEncoding
     if (-not (Test-Path -LiteralPath $path)) {
-        Write-AutoProgramAtomicUtf8Text -Path $path -Text ($line + "`n")
+        Write-LoomAtomicUtf8Text -Path $path -Text ($line + "`n")
     }
     else {
         [System.IO.File]::AppendAllText($path, $line + "`n", $enc)
     }
 }
 
-function Get-MetraAutoprogramJournalEntries {
+function Get-MetraLoomJournalEntries {
     [CmdletBinding()]
     param(
         [Parameter(Mandatory)][string]$Root,
@@ -182,18 +261,18 @@ function Get-MetraAutoprogramJournalEntries {
         [datetime]$On
     )
 
-    $path = Get-MetraAutoprogramJournalPath -Root $Root -On $On
+    $path = Get-MetraLoomJournalPath -Root $Root -On $On
     if (-not (Test-Path -LiteralPath $path)) {
         return @()
     }
-    $enc = Get-AutoProgramUtf8NoBomEncoding
+    $enc = Get-LoomUtf8NoBomEncoding
     $lines = [System.IO.File]::ReadAllLines($path, $enc)
     $entries = @()
     foreach ($line in @($lines)) {
         if ([string]::IsNullOrWhiteSpace($line)) { continue }
         try {
             $obj = $line | ConvertFrom-Json
-            if ($ItemId -and [string](Get-AutoProgramProp -Object $obj -Name 'itemId' -Default '') -ne $ItemId) {
+            if ($ItemId -and [string](Get-LoomProp -Object $obj -Name 'itemId' -Default '') -ne $ItemId) {
                 continue
             }
             $entries += $obj
@@ -205,7 +284,7 @@ function Get-MetraAutoprogramJournalEntries {
     return @($entries)
 }
 
-function Test-MetraAutoprogramItemId {
+function Test-MetraLoomItemId {
     <#
     .SYNOPSIS
         True when Id matches the autoprogram queue (AP-*) or candidate (CAND-*) id shape.
@@ -226,7 +305,7 @@ function Test-MetraAutoprogramItemId {
     }
 }
 
-function Resolve-MetraAutoprogramItemPath {
+function Resolve-MetraLoomItemPath {
     <#
     .SYNOPSIS
         Build a queue/candidate JSON path under Root after id + containment checks.
@@ -239,8 +318,8 @@ function Resolve-MetraAutoprogramItemPath {
     )
 
     $kind = if ($Subfolder -eq 'queue') { 'queue' } else { 'candidate' }
-    if (-not (Test-MetraAutoprogramItemId -Id $Id -Kind $kind)) {
-        throw ("Invalid autoprogram {0} id '{1}'." -f $kind, $Id)
+    if (-not (Test-MetraLoomItemId -Id $Id -Kind $kind)) {
+        throw ("Invalid Loom {0} id '{1}'." -f $kind, $Id)
     }
 
     $dir = Join-Path $Root $Subfolder
@@ -252,31 +331,33 @@ function Resolve-MetraAutoprogramItemPath {
         $rootFull = [System.IO.Path]::GetFullPath($Root)
     }
     catch {
-        throw ("Invalid autoprogram path for id '{0}'." -f $Id)
+        throw ("Invalid Loom path for id '{0}'." -f $Id)
     }
-    if (-not (Test-AutoProgramPathWithinRoot -Path $full -Root $rootFull)) {
-        throw ("Autoprogram path escapes root for id '{0}'." -f $Id)
+    if (-not (Test-LoomPathWithinRoot -Path $full -Root $rootFull)) {
+        throw ("Loom path escapes root for id '{0}'." -f $Id)
     }
     return $full
 }
 
-function Get-MetraAutoprogramQueueItemPath {
+function Get-MetraLoomQueueItemPath {
     param(
         [Parameter(Mandatory)][string]$Root,
         [Parameter(Mandatory)][string]$Id
     )
-    return Resolve-MetraAutoprogramItemPath -Root $Root -Id $Id -Subfolder 'queue'
+    return Resolve-MetraLoomItemPath -Root $Root -Id $Id -Subfolder 'queue'
 }
 
-function Get-MetraAutoprogramQueueItems {
+function Get-MetraLoomQueueItems {
     [CmdletBinding()]
     param(
         [Parameter(Mandatory)][string]$Root,
         [string]$Status
     )
 
-    Initialize-MetraAutoprogramLayout -Root $Root
     $dir = Join-Path $Root 'queue'
+    if (-not (Test-Path -LiteralPath $dir)) {
+        return @()
+    }
     $files = @(Get-ChildItem -LiteralPath $dir -Filter 'AP-*.json' -File -ErrorAction SilentlyContinue)
     $items = @()
     foreach ($f in $files) {
@@ -294,79 +375,79 @@ function Get-MetraAutoprogramQueueItems {
     )
 }
 
-function Get-MetraAutoprogramQueueItem {
+function Get-MetraLoomQueueItem {
     [CmdletBinding()]
     param(
         [Parameter(Mandatory)][string]$Root,
         [Parameter(Mandatory)][string]$Id
     )
 
-    $path = Get-MetraAutoprogramQueueItemPath -Root $Root -Id $Id
+    $path = Get-MetraLoomQueueItemPath -Root $Root -Id $Id
     if (-not (Test-Path -LiteralPath $path)) {
         return $null
     }
     return Get-Content -LiteralPath $path -Raw | ConvertFrom-Json
 }
 
-function Save-MetraAutoprogramQueueItem {
+function Save-MetraLoomQueueItem {
     [CmdletBinding()]
     param(
         [Parameter(Mandatory)][string]$Root,
         [Parameter(Mandatory)][object]$Item
     )
 
-    Test-MetraAutoprogramQueueItemSchema -Item $Item | Out-Null
-    $path = Get-MetraAutoprogramQueueItemPath -Root $Root -Id ([string]$Item.id)
-    Write-AutoProgramAtomicUtf8Text -Path $path -Text (($Item | ConvertTo-Json -Depth 12) + "`n")
+    Test-MetraLoomQueueItemSchema -Item $Item | Out-Null
+    $path = Get-MetraLoomQueueItemPath -Root $Root -Id ([string]$Item.id)
+    Write-LoomAtomicUtf8Text -Path $path -Text (($Item | ConvertTo-Json -Depth 12) + "`n")
 }
 
-function Test-MetraAutoprogramQueueItemSchema {
+function Test-MetraLoomQueueItemSchema {
     [CmdletBinding()]
     param(
         [Parameter(Mandatory)][object]$Item
     )
 
-    Test-AutoProgramContract -Schema 'queue-item' -Object $Item | Out-Null
+    Test-LoomContract -Schema 'queue-item' -Object $Item | Out-Null
     return $true
 }
 
-function New-MetraAutoprogramQueueId {
+function New-MetraLoomQueueId {
     [CmdletBinding()]
     param(
         [Parameter(Mandatory)][string]$Root
     )
 
-    return Invoke-AutoProgramWithNamedMutex -Name 'autoprogram_state' -Script {
-        $state = Get-MetraAutoprogramState -Root $Root
+    return Invoke-LoomWithNamedMutex -Name 'loom_state' -Script {
+        $state = Get-MetraLoomState -Root $Root
         $day = (Get-Date).ToString('yyyyMMdd')
         $seq = [int]$state.nextQueueSeq
         if ($seq -lt 1) { $seq = 1 }
         $id = 'AP-{0}-{1:D4}' -f $day, $seq
         $state.nextQueueSeq = $seq + 1
-        Save-MetraAutoprogramState -Root $Root -State $state
+        Save-MetraLoomState -Root $Root -State $state
         return $id
     }
 }
 
-function New-MetraAutoprogramCandidateId {
+function New-MetraLoomCandidateId {
     [CmdletBinding()]
     param(
         [Parameter(Mandatory)][string]$Root
     )
 
-    return Invoke-AutoProgramWithNamedMutex -Name 'autoprogram_state' -Script {
-        $state = Get-MetraAutoprogramState -Root $Root
+    return Invoke-LoomWithNamedMutex -Name 'loom_state' -Script {
+        $state = Get-MetraLoomState -Root $Root
         $day = (Get-Date).ToString('yyyyMMdd')
         $seq = [int]$state.nextCandidateSeq
         if ($seq -lt 1) { $seq = 1 }
         $id = 'CAND-{0}-{1:D4}' -f $day, $seq
         $state.nextCandidateSeq = $seq + 1
-        Save-MetraAutoprogramState -Root $Root -State $state
+        Save-MetraLoomState -Root $Root -State $state
         return $id
     }
 }
 
-function Invoke-MetraAutoprogramStateChange {
+function Invoke-MetraLoomStateChange {
     [CmdletBinding()]
     param(
         [Parameter(Mandatory)][string]$Root,
@@ -378,22 +459,34 @@ function Invoke-MetraAutoprogramStateChange {
         [scriptblock]$Mutator
     )
 
-    if (-not (Test-MetraAutoprogramTransition -From $From -To $To)) {
-        throw "Illegal autoprogram transition: '$From' -> '$To' (Phase A)"
+    $itemPreview = Get-MetraLoomQueueItem -Root $Root -Id $ItemId
+    $transitionFrom = if ($From) {
+        $From
+    }
+    elseif ($itemPreview) {
+        [string]$itemPreview.status
+    }
+    else {
+        '@new'
+    }
+    if (-not (Test-MetraLoomTransition -From $transitionFrom -To $To)) {
+        throw "Illegal Loom transition: '$transitionFrom' -> '$To' (Phase A)"
     }
 
-    return Invoke-AutoProgramWithNamedMutex -Name 'autoprogram_queue' -Script {
-        $item = Get-MetraAutoprogramQueueItem -Root $Root -Id $ItemId
+    return Invoke-LoomWithNamedMutex -Name 'loom_queue' -Script {
+        $item = Get-MetraLoomQueueItem -Root $Root -Id $ItemId
+        $priorStatus = '@new'
         if (-not $item -and $From -ne '@new' -and -not [string]::IsNullOrWhiteSpace($From)) {
             throw "Queue item not found: $ItemId"
         }
         if ($item) {
             $current = [string]$item.status
+            $priorStatus = $current
             if ($From -and $From -ne '@new' -and $current -ne $From) {
                 throw "Queue item $ItemId status is '$current', expected '$From'"
             }
-            if (-not (Test-MetraAutoprogramTransition -From $current -To $To)) {
-                throw "Illegal autoprogram transition: '$current' -> '$To' (Phase A)"
+            if (-not (Test-MetraLoomTransition -From $current -To $To)) {
+                throw "Illegal Loom transition: '$current' -> '$To' (Phase A)"
             }
         }
 
@@ -403,14 +496,24 @@ function Invoke-MetraAutoprogramStateChange {
         if ($item) {
             $item.status = $To
             $item.updatedAt = (Get-Date).ToString('o')
-            Test-MetraAutoprogramQueueItemSchema -Item $item | Out-Null
-            Save-MetraAutoprogramQueueItem -Root $Root -Item $item
+            Test-MetraLoomQueueItemSchema -Item $item | Out-Null
+            Save-MetraLoomQueueItem -Root $Root -Item $item
         }
 
-        Add-MetraAutoprogramJournalEntry -Root $Root -Entry @{
+        $journalFrom = if ($From) {
+            $From
+        }
+        elseif ($priorStatus -and $priorStatus -ne '@new') {
+            $priorStatus
+        }
+        else {
+            '@new'
+        }
+
+        Add-MetraLoomJournalEntry -Root $Root -Entry @{
             timestamp = (Get-Date).ToString('o')
             itemId    = $ItemId
-            from      = $(if ($From) { $From } elseif ($item) { '@new' } else { '@new' })
+            from      = $journalFrom
             to        = $To
             actor     = $Actor
             reason    = [string]$Reason
@@ -420,14 +523,14 @@ function Invoke-MetraAutoprogramStateChange {
     }
 }
 
-function Get-MetraAutoprogramPlanRoots {
+function Get-MetraLoomPlanRoots {
     [CmdletBinding()]
     param(
-        [string]$MetraRoot = (Get-AutoProgramHostRoot)
+        [string]$MetraRoot = (Get-LoomHostRoot)
     )
 
     $roots = New-Object System.Collections.Generic.List[string]
-    foreach ($r in @(Get-AutoProgramInspectPlanRoots -MetraRoot $MetraRoot)) {
+    foreach ($r in @(Get-LoomInspectPlanRoots -MetraRoot $MetraRoot)) {
         [void]$roots.Add([System.IO.Path]::GetFullPath($r))
     }
     $docs = Join-Path $MetraRoot 'docs'
@@ -437,7 +540,7 @@ function Get-MetraAutoprogramPlanRoots {
     return @($roots | Select-Object -Unique)
 }
 
-function Test-MetraAutoprogramFormalPlanPathAllowed {
+function Test-MetraLoomFormalPlanPathAllowed {
     <#
     .SYNOPSIS
         True when Path is under an allowed formal plan root (inspect plan roots + Metra docs).
@@ -445,26 +548,26 @@ function Test-MetraAutoprogramFormalPlanPathAllowed {
     [CmdletBinding()]
     param(
         [Parameter(Mandatory)][string]$Path,
-        [string]$MetraRoot = (Get-AutoProgramHostRoot)
+        [string]$MetraRoot = (Get-LoomHostRoot)
     )
 
     $full = [System.IO.Path]::GetFullPath($Path)
-    foreach ($root in @(Get-MetraAutoprogramPlanRoots -MetraRoot $MetraRoot)) {
-        if (Test-AutoProgramPathWithinRoot -Path $full -Root $root) {
+    foreach ($root in @(Get-MetraLoomPlanRoots -MetraRoot $MetraRoot)) {
+        if (Test-LoomPathWithinRoot -Path $full -Root $root) {
             return $true
         }
     }
     return $false
 }
 
-function Get-MetraAutoprogramFormalPlans {
+function Get-MetraLoomFormalPlans {
     [CmdletBinding()]
     param(
-        [string]$MetraRoot = (Get-AutoProgramHostRoot)
+        [string]$MetraRoot = (Get-LoomHostRoot)
     )
 
     $files = @()
-    foreach ($root in @(Get-MetraAutoprogramPlanRoots -MetraRoot $MetraRoot)) {
+    foreach ($root in @(Get-MetraLoomPlanRoots -MetraRoot $MetraRoot)) {
         $files += @(Get-ChildItem -LiteralPath $root -Filter '*.plan.md' -File -Recurse -ErrorAction SilentlyContinue)
     }
     $seen = @{}
@@ -473,21 +576,21 @@ function Get-MetraAutoprogramFormalPlans {
         $full = [System.IO.Path]::GetFullPath($f.FullName)
         if ($seen.ContainsKey($full)) { continue }
         $seen[$full] = $true
-        $parsed = Read-MetraAutoprogramPlanFile -Path $full -MetraRoot $MetraRoot
+        $parsed = Read-MetraLoomPlanFile -Path $full -MetraRoot $MetraRoot
         if ($parsed) { $plans += $parsed }
     }
     return @($plans)
 }
 
-function Read-MetraAutoprogramPlanFile {
+function Read-MetraLoomPlanFile {
     [CmdletBinding()]
     param(
         [Parameter(Mandatory)][string]$Path,
-        [string]$MetraRoot = (Get-AutoProgramHostRoot)
+        [string]$MetraRoot = (Get-LoomHostRoot)
     )
 
     if (-not (Test-Path -LiteralPath $Path)) { return $null }
-    $text = [System.IO.File]::ReadAllText($Path, (Get-AutoProgramUtf8NoBomEncoding))
+    $text = [System.IO.File]::ReadAllText($Path, (Get-LoomUtf8NoBomEncoding))
     $name = [System.IO.Path]::GetFileNameWithoutExtension($Path)
     $overview = ''
     $todos = @()
@@ -532,7 +635,7 @@ function Read-MetraAutoprogramPlanFile {
         $approved = $true
     }
 
-    $project = Resolve-MetraAutoprogramPlanProject -Path $Path -MetraRoot $MetraRoot -Title $name -Overview $overview
+    $project = Resolve-MetraLoomPlanProject -Path $Path -MetraRoot $MetraRoot -Title $name -Overview $overview
 
     $verifyCommands = @()
     foreach ($m in [regex]::Matches($text, '(?m)^[\s]*[\\]?\.\\metra\.ps1\s+verify')) {
@@ -567,18 +670,18 @@ function Read-MetraAutoprogramPlanFile {
     }
 }
 
-function Resolve-MetraAutoprogramPlanProject {
+function Resolve-MetraLoomPlanProject {
     [CmdletBinding()]
     param(
         [Parameter(Mandatory)][string]$Path,
-        [string]$MetraRoot = (Get-AutoProgramHostRoot),
+        [string]$MetraRoot = (Get-LoomHostRoot),
         [string]$Title,
         [string]$Overview
     )
 
     $full = [System.IO.Path]::GetFullPath($Path)
     $metraFull = [System.IO.Path]::GetFullPath($MetraRoot)
-    if (Test-AutoProgramPathWithinRoot -Path $full -Root $metraFull) {
+    if (Test-LoomPathWithinRoot -Path $full -Root $metraFull) {
         return [PSCustomObject]@{
             registryName      = 'Metra'
             root              = $metraFull
@@ -587,7 +690,7 @@ function Resolve-MetraAutoprogramPlanProject {
         }
     }
 
-    if (Test-AutoProgramRoutingAdapterAvailable) {
+    if (Test-LoomRoutingAdapterAvailable) {
         if ($Title -match '(?i)\bmetra\b' -or $Overview -match '(?i)\bmetra\b') {
             return [PSCustomObject]@{
                 registryName      = 'Metra'
@@ -600,7 +703,7 @@ function Resolve-MetraAutoprogramPlanProject {
         $query = ("$Title $Overview").Trim()
         if ([string]::IsNullOrWhiteSpace($query)) { $query = $Title }
         try {
-            $amb = Get-AutoProgramRoutingAmbiguity -Query $query -SkipTelemetry
+            $amb = Get-LoomRoutingAmbiguity -Query $query -SkipTelemetry
             if ($amb.Mode -ne 'adapter-unavailable' -and $amb.Primary) {
                 $route = $amb.Primary
                 $score = [int]$route.Score
@@ -624,7 +727,7 @@ function Resolve-MetraAutoprogramPlanProject {
     }
 }
 
-function Get-MetraAutoprogramReversibilityPenalty {
+function Get-MetraLoomReversibilityPenalty {
     param([string]$Reversibility)
     switch ([string]$Reversibility) {
         'code' { return 0 }
@@ -634,14 +737,14 @@ function Get-MetraAutoprogramReversibilityPenalty {
     }
 }
 
-function Get-MetraAutoprogramRoutingAmbiguityPenalty {
+function Get-MetraLoomRoutingAmbiguityPenalty {
     param([double]$RoutingConfidence)
     if ($RoutingConfidence -ge 0.95) { return 0 }
     if ($RoutingConfidence -ge 0.85) { return 2 }
     return 8
 }
 
-function Measure-MetraAutoprogramTriageScore {
+function Measure-MetraLoomTriageScore {
     [CmdletBinding()]
     param(
         [Parameter(Mandatory)][hashtable]$Classification,
@@ -654,12 +757,12 @@ function Measure-MetraAutoprogramTriageScore {
     $userTestBurden = [int]$Scores.userTestBurden
     $autoVerifiable = [int]$Scores.autoVerifiable
     $dependencyValue = [int]$Scores.dependencyValue
-    $routingConfidence = [double](Get-AutoProgramProp -Object $Project -Name 'routingConfidence' -Default 0)
+    $routingConfidence = [double](Get-LoomProp -Object $Project -Name 'routingConfidence' -Default 0)
 
     $priority = ($impact * 3) + ($confidence * 2) + ($autoVerifiable * 3) + $dependencyValue `
         - ($userTestBurden * 2) `
-        - (Get-MetraAutoprogramReversibilityPenalty -Reversibility ([string]$Classification.reversibility)) `
-        - (Get-MetraAutoprogramRoutingAmbiguityPenalty -RoutingConfidence $routingConfidence)
+        - (Get-MetraLoomReversibilityPenalty -Reversibility ([string]$Classification.reversibility)) `
+        - (Get-MetraLoomRoutingAmbiguityPenalty -RoutingConfidence $routingConfidence)
 
     return [PSCustomObject]@{
         impact            = $impact
@@ -672,7 +775,7 @@ function Measure-MetraAutoprogramTriageScore {
     }
 }
 
-function Test-MetraAutoprogramEligibility {
+function Test-MetraLoomEligibility {
     [CmdletBinding()]
     param(
         [Parameter(Mandatory)][object]$Classification,
@@ -688,7 +791,7 @@ function Test-MetraAutoprogramEligibility {
     if ([bool]$Classification.crossRoot) { [void]$reasons.Add('cross-root') }
     if ([bool]$Classification.productionTouch) { [void]$reasons.Add('production-touch') }
     if ([bool]$Classification.externalSideEffect) { [void]$reasons.Add('external-side-effect') }
-    if ([double]$Project.routingConfidence -lt (Get-MetraAutoprogramMinimumRoutingConfidence)) {
+    if ([double]$Project.routingConfidence -lt (Get-MetraLoomMinimumRoutingConfidence)) {
         [void]$reasons.Add('routing-confidence-low')
     }
     if (@($Contract.verifyCommands).Count -eq 0) { [void]$reasons.Add('missing-verify-commands') }
@@ -701,34 +804,34 @@ function Test-MetraAutoprogramEligibility {
     }
 }
 
-function Save-MetraAutoprogramCandidate {
+function Save-MetraLoomCandidate {
     [CmdletBinding()]
     param(
         [Parameter(Mandatory)][string]$Root,
         [Parameter(Mandatory)][object]$Candidate
     )
 
-    Test-AutoProgramContract -Schema 'triage-candidate' -Object $Candidate | Out-Null
-    $path = Resolve-MetraAutoprogramItemPath -Root $Root -Id ([string]$Candidate.id) -Subfolder 'candidates'
-    Write-AutoProgramAtomicUtf8Text -Path $path -Text (($Candidate | ConvertTo-Json -Depth 12) + "`n")
+    Test-LoomContract -Schema 'triage-candidate' -Object $Candidate | Out-Null
+    $path = Resolve-MetraLoomItemPath -Root $Root -Id ([string]$Candidate.id) -Subfolder 'candidates'
+    Write-LoomAtomicUtf8Text -Path $path -Text (($Candidate | ConvertTo-Json -Depth 12) + "`n")
     return $Candidate
 }
 
-function Get-MetraAutoprogramCandidate {
+function Get-MetraLoomCandidate {
     [CmdletBinding()]
     param(
         [Parameter(Mandatory)][string]$Root,
         [Parameter(Mandatory)][string]$Id
     )
 
-    $path = Resolve-MetraAutoprogramItemPath -Root $Root -Id $Id -Subfolder 'candidates'
+    $path = Resolve-MetraLoomItemPath -Root $Root -Id $Id -Subfolder 'candidates'
     if (-not (Test-Path -LiteralPath $path)) {
         throw "Candidate not found: $Id"
     }
     return Get-Content -LiteralPath $path -Raw | ConvertFrom-Json
 }
 
-function Add-MetraAutoprogramQueueItem {
+function Add-MetraLoomQueueItem {
     [CmdletBinding()]
     param(
         [Parameter(Mandatory)][string]$Root,
@@ -736,16 +839,16 @@ function Add-MetraAutoprogramQueueItem {
         [string]$Reason = 'enqueue'
     )
 
-    if (-not (Test-MetraAutoprogramTransition -From '@new' -To 'queued')) {
-        throw "Illegal autoprogram transition: '@new' -> 'queued' (Phase A)"
+    if (-not (Test-MetraLoomTransition -From '@new' -To 'queued')) {
+        throw "Illegal Loom transition: '@new' -> 'queued' (Phase A)"
     }
 
-    return Invoke-AutoProgramWithNamedMutex -Name 'autoprogram_queue' -Script {
+    return Invoke-LoomWithNamedMutex -Name 'loom_queue' -Script {
         $Item.status = 'queued'
         $Item.updatedAt = (Get-Date).ToString('o')
-        Test-MetraAutoprogramQueueItemSchema -Item $Item | Out-Null
-        Save-MetraAutoprogramQueueItem -Root $Root -Item $Item
-        Add-MetraAutoprogramJournalEntry -Root $Root -Entry @{
+        Test-MetraLoomQueueItemSchema -Item $Item | Out-Null
+        Save-MetraLoomQueueItem -Root $Root -Item $Item
+        Add-MetraLoomJournalEntry -Root $Root -Entry @{
             timestamp = (Get-Date).ToString('o')
             itemId    = [string]$Item.id
             from      = '@new'
@@ -757,7 +860,7 @@ function Add-MetraAutoprogramQueueItem {
     }
 }
 
-function New-MetraAutoprogramQueueItemFromCandidate {
+function New-MetraLoomQueueItemFromCandidate {
     [CmdletBinding()]
     param(
         [Parameter(Mandatory)][string]$Root,
@@ -768,15 +871,15 @@ function New-MetraAutoprogramQueueItemFromCandidate {
         throw ("Candidate {0} is ineligible: {1}" -f $Candidate.id, (($Candidate.ineligibleReasons) -join ', '))
     }
 
-    $id = New-MetraAutoprogramQueueId -Root $Root
+    $id = New-MetraLoomQueueId -Root $Root
     $now = (Get-Date).ToString('o')
     $branchDay = (Get-Date).ToString('yyyy-MM-dd')
     $projSlug = [string]$Candidate.project.registryName
     if ([string]::IsNullOrWhiteSpace($projSlug)) { $projSlug = 'unknown' }
-    $branch = ('autoprogram/{0}/{1}/{2}' -f $projSlug.ToLowerInvariant(), $branchDay, $id).Replace('\', '/')
+    $branch = ('loom/{0}/{1}/{2}' -f $projSlug.ToLowerInvariant(), $branchDay, $id).Replace('\', '/')
 
     $item = [PSCustomObject]@{
-        schemaVersion = Get-MetraAutoprogramSchemaVersion
+        schemaVersion = Get-MetraLoomSchemaVersion
         id            = $id
         summary       = [string]$Candidate.summary
         source        = $Candidate.source
@@ -797,24 +900,24 @@ function New-MetraAutoprogramQueueItemFromCandidate {
         updatedAt = $now
     }
 
-    return Add-MetraAutoprogramQueueItem -Root $Root -Item $item -Reason 'enqueue-from-candidate'
+    return Add-MetraLoomQueueItem -Root $Root -Item $item -Reason 'enqueue-from-candidate'
 }
 
-function Invoke-MetraAutoprogramTriage {
+function Invoke-MetraLoomTriage {
     [CmdletBinding()]
     param(
         [Parameter(Mandatory)][string]$Root,
-        [string]$MetraRoot = (Get-AutoProgramHostRoot),
+        [string]$MetraRoot = (Get-LoomHostRoot),
         [switch]$DryRun
     )
 
-    Initialize-MetraAutoprogramLayout -Root $Root
+    Initialize-MetraLoomLayout -Root $Root
     $dry = $true
     if ($PSBoundParameters.ContainsKey('DryRun') -and -not $DryRun) { $dry = $false }
     # Phase A: triage is always dry-run (no auto-enqueue).
 
     $results = New-Object System.Collections.Generic.List[object]
-    $plans = @(Get-MetraAutoprogramFormalPlans -MetraRoot $MetraRoot)
+    $plans = @(Get-MetraLoomFormalPlans -MetraRoot $MetraRoot)
 
     foreach ($plan in $plans) {
         $classification = @{
@@ -845,11 +948,11 @@ function Invoke-MetraAutoprogramTriage {
             $contract.verifyCommands = @('.\metra.ps1 verify')
         }
 
-        $score = Measure-MetraAutoprogramTriageScore -Classification $classification -Scores $scoresIn -Project $plan.project
-        $elig = Test-MetraAutoprogramEligibility -Classification $classification -Project $plan.project -Contract $contract `
+        $score = Measure-MetraLoomTriageScore -Classification $classification -Scores $scoresIn -Project $plan.project
+        $elig = Test-MetraLoomEligibility -Classification $classification -Project $plan.project -Contract $contract `
             -RequireApprovedPlan:(-not $plan.approved)
 
-        $candId = New-MetraAutoprogramCandidateId -Root $Root
+        $candId = New-MetraLoomCandidateId -Root $Root
         $candidate = [PSCustomObject]@{
             id                = $candId
             summary           = [string]$plan.name
@@ -868,11 +971,11 @@ function Invoke-MetraAutoprogramTriage {
             dryRun            = $true
             triagedAt         = (Get-Date).ToString('o')
         }
-        Save-MetraAutoprogramCandidate -Root $Root -Candidate $candidate | Out-Null
+        Save-MetraLoomCandidate -Root $Root -Candidate $candidate | Out-Null
         $results.Add($candidate)
     }
 
-    $captures = @(Get-AutoProgramCaptureLedger -MetraRoot $MetraRoot -Limit 40 -Status candidate)
+    $captures = @(Get-LoomCaptureLedger -MetraRoot $MetraRoot -Limit 40 -Status candidate)
     foreach ($cap in $captures) {
         $classification = @{
             reversibility        = 'code'
@@ -888,15 +991,15 @@ function Invoke-MetraAutoprogramTriage {
             objective = [string]$cap.summary
             allowedPaths = @(); forbiddenPaths = @(); doneWhen = @(); verifyCommands = @()
         }
-        $score = Measure-MetraAutoprogramTriageScore -Classification $classification -Scores $scoresIn -Project ([PSCustomObject]@{
+        $score = Measure-MetraLoomTriageScore -Classification $classification -Scores $scoresIn -Project ([PSCustomObject]@{
             routingConfidence = 0.0
         })
-        $elig = Test-MetraAutoprogramEligibility -Classification $classification -Project ([PSCustomObject]@{
+        $elig = Test-MetraLoomEligibility -Classification $classification -Project ([PSCustomObject]@{
             routingConfidence = 0.0
         }) -Contract $contract
         $ineligibleReasons = @($elig.reasons) + @('needs-formal-plan')
 
-        $candId = New-MetraAutoprogramCandidateId -Root $Root
+        $candId = New-MetraLoomCandidateId -Root $Root
         $candidate = [PSCustomObject]@{
             id                = $candId
             summary           = [string]$cap.summary
@@ -915,7 +1018,7 @@ function Invoke-MetraAutoprogramTriage {
             dryRun            = $true
             triagedAt         = (Get-Date).ToString('o')
         }
-        Save-MetraAutoprogramCandidate -Root $Root -Candidate $candidate | Out-Null
+        Save-MetraLoomCandidate -Root $Root -Candidate $candidate | Out-Null
         $results.Add($candidate)
     }
 
@@ -924,25 +1027,25 @@ function Invoke-MetraAutoprogramTriage {
         candidates = @($results | Sort-Object { [int]$_.scores.total } -Descending)
         planCount  = @($plans).Count
         captureCount = @($captures).Count
-        captureAdapterAvailable = (Test-AutoProgramCaptureAdapterAvailable)
+        captureAdapterAvailable = (Test-LoomCaptureAdapterAvailable)
     }
 }
 
-function Invoke-MetraAutoprogramEnqueueFromPlan {
+function Invoke-MetraLoomEnqueueFromPlan {
     [CmdletBinding()]
     param(
         [Parameter(Mandatory)][string]$Root,
         [Parameter(Mandatory)][string]$Path,
         [string]$TodoId,
         [string]$Slice,
-        [string]$MetraRoot = (Get-AutoProgramHostRoot)
+        [string]$MetraRoot = (Get-LoomHostRoot)
     )
 
     $full = $ExecutionContext.SessionState.Path.GetUnresolvedProviderPathFromPSPath($Path)
-    if (-not (Test-MetraAutoprogramFormalPlanPathAllowed -Path $full -MetraRoot $MetraRoot)) {
+    if (-not (Test-MetraLoomFormalPlanPathAllowed -Path $full -MetraRoot $MetraRoot)) {
         throw "Plan path is not under an allowed formal plan root: $full"
     }
-    $plan = Read-MetraAutoprogramPlanFile -Path $full -MetraRoot $MetraRoot
+    $plan = Read-MetraLoomPlanFile -Path $full -MetraRoot $MetraRoot
     if (-not $plan) { throw "Plan not found: $full" }
     if (-not $plan.approved) {
         throw "Plan is not Approved (status: $($plan.planStatus)). Daily Bing review required before enqueue."
@@ -970,8 +1073,8 @@ function Invoke-MetraAutoprogramEnqueueFromPlan {
         doneWhen       = @($(if (@($plan.doneWhen).Count -gt 0) { $plan.doneWhen } else { 'Plan slice acceptance criteria met.' }))
         verifyCommands = @($(if (@($plan.verifyCommands).Count -gt 0) { $plan.verifyCommands } else { '.\metra.ps1 verify' }))
     }
-    $score = Measure-MetraAutoprogramTriageScore -Classification $classification -Scores $scoresIn -Project $plan.project
-    $elig = Test-MetraAutoprogramEligibility -Classification $classification -Project $plan.project -Contract $contract
+    $score = Measure-MetraLoomTriageScore -Classification $classification -Scores $scoresIn -Project $plan.project
+    $elig = Test-MetraLoomEligibility -Classification $classification -Project $plan.project -Contract $contract
     if (-not $elig.eligible) {
         throw ("Plan ineligible for enqueue: {0}" -f (($elig.reasons) -join ', '))
     }
@@ -995,23 +1098,23 @@ function Invoke-MetraAutoprogramEnqueueFromPlan {
         eligible       = $true
         ineligibleReasons = @()
     }
-    return New-MetraAutoprogramQueueItemFromCandidate -Root $Root -Candidate $cand
+    return New-MetraLoomQueueItemFromCandidate -Root $Root -Candidate $cand
 }
 
-function Invoke-MetraAutoprogramDailyStub {
+function Invoke-MetraLoomDailyStub {
     [CmdletBinding()]
     param(
         [Parameter(Mandatory)][string]$Root,
-        [string]$MetraRoot = (Get-AutoProgramHostRoot),
+        [string]$MetraRoot = (Get-LoomHostRoot),
         [datetime]$Date = (Get-Date)
     )
 
-    Initialize-MetraAutoprogramLayout -Root $Root
+    Initialize-MetraLoomLayout -Root $Root
     $day = $Date.ToString('yyyy-MM-dd')
     $path = Join-Path (Join-Path $Root 'daily') ("$day-intake.md")
 
     $pending = @(
-        Get-MetraAutoprogramFormalPlans -MetraRoot $MetraRoot |
+        Get-MetraLoomFormalPlans -MetraRoot $MetraRoot |
             Where-Object { -not $_.approved }
     )
 
@@ -1042,31 +1145,46 @@ function Invoke-MetraAutoprogramDailyStub {
     [void]$sb.AppendLine('## Archive candidates (knowledge score ≥ 5)')
     [void]$sb.AppendLine('(none — Slice 8 deferred)')
 
-    Write-AutoProgramAtomicUtf8Text -Path $path -Text $sb.ToString()
+    Write-LoomAtomicUtf8Text -Path $path -Text $sb.ToString()
     return [PSCustomObject]@{ path = $path; phase = 'A-stub'; pendingPlans = @($pending).Count }
 }
 
-function Invoke-AutoProgramCommand {
+function Invoke-LoomCommand {
     <#
     .SYNOPSIS
-        CLI: Loom/AutoProgram autoprogram triage|enqueue|plans|status|show|block|daily
+        CLI: loom triage|enqueue|plans|status|show|block|run|daily|migrate
     #>
     [CmdletBinding()]
     param(
         [Parameter(Mandatory)][string]$Subcommand,
         [string[]]$ArgsRest = @(),
-        [string]$MetraRoot = (Get-AutoProgramHostRoot),
+        [string]$MetraRoot = (Get-LoomHostRoot),
         [string]$Root
     )
 
-    if ([string]::IsNullOrWhiteSpace($Root)) {
-        $Root = Get-MetraAutoprogramRoot
+    $explicitRoot = -not [string]::IsNullOrWhiteSpace($Root)
+    if (-not $explicitRoot) {
+        $Root = (Resolve-MetraLoomRoot).Path
     }
-    Initialize-MetraAutoprogramLayout -Root $Root
+    else {
+        $Root = (Resolve-MetraLoomRoot -OverrideRoot $Root).Path
+    }
+
+    $mutating = @('run', 'block', 'enqueue', 'migrate')
+    if ($mutating -contains $Subcommand.ToLowerInvariant()) {
+        Assert-LoomRootWritable -Root $Root -OverrideRoot $(if ($explicitRoot) { $Root } else { $null })
+    }
+
+    if ($Subcommand.ToLowerInvariant() -ne 'migrate') {
+        $resolved = Resolve-MetraLoomRoot -OverrideRoot $(if ($explicitRoot) { $Root } else { $null })
+        if (-not $resolved.IsReadOnly) {
+            Initialize-MetraLoomLayout -Root $Root
+        }
+    }
 
     switch ($Subcommand.ToLowerInvariant()) {
         'status' {
-            $items = @(Get-MetraAutoprogramQueueItems -Root $Root)
+            $items = @(Get-MetraLoomQueueItems -Root $Root)
             $byStatus = @{}
             foreach ($i in $items) {
                 $s = [string]$i.status
@@ -1089,12 +1207,12 @@ function Invoke-AutoProgramCommand {
             }
             if ([string]::IsNullOrWhiteSpace($id)) { throw 'autoprogram run -Id <AP-...> [-DryRun] [-Confirm]' }
             if ($dry) {
-                return Invoke-MetraAutoprogramRun -Root $Root -ItemId $id -MetraRoot $MetraRoot -DryRun
+                return Invoke-MetraLoomRun -Root $Root -ItemId $id -MetraRoot $MetraRoot -DryRun
             }
             if ($ArgsRest -notcontains '-Confirm') {
                 throw 'autoprogram run requires -Confirm for live execution (git branch + implementer).'
             }
-            return Invoke-MetraAutoprogramRun -Root $Root -ItemId $id -MetraRoot $MetraRoot -Confirm
+            return Invoke-MetraLoomRun -Root $Root -ItemId $id -MetraRoot $MetraRoot -Confirm
         }
         'show' {
             $id = $null
@@ -1104,7 +1222,7 @@ function Invoke-AutoProgramCommand {
                 }
             }
             if ([string]::IsNullOrWhiteSpace($id)) { throw 'autoprogram show -Id <AP-...>' }
-            $item = Get-MetraAutoprogramQueueItem -Root $Root -Id $id
+            $item = Get-MetraLoomQueueItem -Root $Root -Id $id
             if (-not $item) { throw "Queue item not found: $id" }
             return $item
         }
@@ -1116,7 +1234,7 @@ function Invoke-AutoProgramCommand {
                 elseif ($ArgsRest[$i] -eq '-Reason' -and ($i + 1) -lt $ArgsRest.Count) { $reason = [string]$ArgsRest[$i + 1]; $i++ }
             }
             if ([string]::IsNullOrWhiteSpace($id)) { throw 'autoprogram block -Id <AP-...> [-Reason "..."]' }
-            return Invoke-MetraAutoprogramStateChange -Root $Root -ItemId $id -From 'queued' -To 'blocked' -Reason $reason
+            return Invoke-MetraLoomStateChange -Root $Root -ItemId $id -From 'queued' -To 'blocked' -Reason $reason
         }
         'enqueue' {
             $candidateId = $null
@@ -1133,29 +1251,29 @@ function Invoke-AutoProgramCommand {
             }
             if ($fromPlan) {
                 if ([string]::IsNullOrWhiteSpace($planPath)) { throw 'autoprogram enqueue -FromPlan -Path <plan.md> [-TodoId id] [-Slice name]' }
-                return Invoke-MetraAutoprogramEnqueueFromPlan -Root $Root -Path $planPath -TodoId $todoId -Slice $slice -MetraRoot $MetraRoot
+                return Invoke-MetraLoomEnqueueFromPlan -Root $Root -Path $planPath -TodoId $todoId -Slice $slice -MetraRoot $MetraRoot
             }
             if ([string]::IsNullOrWhiteSpace($candidateId)) {
                 throw 'autoprogram enqueue requires -CandidateId <id> or -FromPlan -Path <plan.md>'
             }
-            $candidate = Get-MetraAutoprogramCandidate -Root $Root -Id $candidateId
-            return New-MetraAutoprogramQueueItemFromCandidate -Root $Root -Candidate $candidate
+            $candidate = Get-MetraLoomCandidate -Root $Root -Id $candidateId
+            return New-MetraLoomQueueItemFromCandidate -Root $Root -Candidate $candidate
         }
         'triage' {
             $explicitDry = $true
             if ($ArgsRest -contains '-DryRun') { $explicitDry = $true }
-            return Invoke-MetraAutoprogramTriage -Root $Root -MetraRoot $MetraRoot -DryRun:$explicitDry
+            return Invoke-MetraLoomTriage -Root $Root -MetraRoot $MetraRoot -DryRun:$explicitDry
         }
         'plans' {
             if ($ArgsRest.Count -eq 0) { throw 'autoprogram plans requires list|show|pending' }
             $plansSub = [string]$ArgsRest[0]
             switch ($plansSub.ToLowerInvariant()) {
                 'list' {
-                    return ,@(Get-MetraAutoprogramFormalPlans -MetraRoot $MetraRoot)
+                    return ,@(Get-MetraLoomFormalPlans -MetraRoot $MetraRoot)
                 }
                 'pending' {
                     return ,@(
-                        Get-MetraAutoprogramFormalPlans -MetraRoot $MetraRoot |
+                        Get-MetraLoomFormalPlans -MetraRoot $MetraRoot |
                             Where-Object { -not $_.approved }
                     )
                 }
@@ -1168,7 +1286,7 @@ function Invoke-AutoProgramCommand {
                     }
                     if ([string]::IsNullOrWhiteSpace($planPath)) { throw 'autoprogram plans show -Path <plan.md>' }
                     $full = $ExecutionContext.SessionState.Path.GetUnresolvedProviderPathFromPSPath($planPath)
-                    $plan = Read-MetraAutoprogramPlanFile -Path $full -MetraRoot $MetraRoot
+                    $plan = Read-MetraLoomPlanFile -Path $full -MetraRoot $MetraRoot
                     if (-not $plan) { throw "Plan not found: $full" }
                     return $plan
                 }
@@ -1176,10 +1294,19 @@ function Invoke-AutoProgramCommand {
             }
         }
         'daily' {
-            return Invoke-MetraAutoprogramDailyStub -Root $Root -MetraRoot $MetraRoot
+            return Invoke-MetraLoomDailyStub -Root $Root -MetraRoot $MetraRoot
+        }
+        'migrate' {
+            $apply = ($ArgsRest -contains '-Apply')
+            $force = ($ArgsRest -contains '-Force')
+            $params = @{}
+            if ($apply) { $params['Apply'] = $true }
+            if ($force) { $params['Force'] = $true }
+            if ($ArgsRest -contains '-Confirm') { $params['Confirm'] = $true }
+            return Invoke-MetraLoomMigrate @params
         }
         default {
-            throw "Unknown autoprogram subcommand: $Subcommand. Use triage|enqueue|plans|status|show|block|run|daily."
+            throw "Unknown loom subcommand: $Subcommand. Use triage|enqueue|plans|status|show|block|run|daily|migrate."
         }
     }
 }
