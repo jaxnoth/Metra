@@ -46,6 +46,68 @@ function Resolve-MetraInspectReviewSlotRoot {
     }
 }
 
+function Get-MetraInspectPackPath {
+    <#
+    .SYNOPSIS
+        Per-project inspect pack path under the review slot (Track I).
+    #>
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory)][AllowEmptyString()][string]$SlotKey,
+        [Parameter(Mandatory)][ValidateSet('diff', 'plan', 'agents')][string]$Mode
+    )
+
+    if ([string]::IsNullOrWhiteSpace($SlotKey)) { $SlotKey = 'default' }
+    $slot = Resolve-MetraInspectReviewSlotRoot -SlotKey $SlotKey
+    return (Join-Path $slot.SlotRoot ("pack-{0}.md" -f $Mode))
+}
+
+function Get-MetraInspectLastPointerPath {
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory)][AllowEmptyString()][string]$SlotKey,
+        [Parameter(Mandatory)][ValidateSet('diff', 'plan')][string]$Mode
+    )
+
+    if ([string]::IsNullOrWhiteSpace($SlotKey)) { $SlotKey = 'default' }
+    $slot = Resolve-MetraInspectReviewSlotRoot -SlotKey $SlotKey
+    $name = if ($Mode -eq 'plan') { 'last-plan.json' } else { 'last-diff.json' }
+    return (Join-Path $slot.SlotRoot $name)
+}
+
+function Resolve-MetraInspectPackPathForRead {
+    <#
+    .SYNOPSIS
+        Read path for pack files: slot first, legacy inspect root fallback with warning.
+    #>
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory)][AllowEmptyString()][string]$SlotKey,
+        [Parameter(Mandatory)][ValidateSet('diff', 'plan', 'agents')][string]$Mode
+    )
+
+    $slotPath = Get-MetraInspectPackPath -SlotKey $SlotKey -Mode $Mode
+    if (Test-Path -LiteralPath $slotPath) { return $slotPath }
+    $legacy = Join-Path (Get-MetraInspectStateRoot) ("pack-{0}.md" -f $Mode)
+    if (Test-Path -LiteralPath $legacy) {
+        Write-Host ("WARNING: Using legacy inspect pack path (per-slot packs preferred): {0}" -f $legacy) -ForegroundColor Yellow
+        return $legacy
+    }
+    return $slotPath
+}
+
+function Ensure-MetraInspectSlotDirectory {
+    [CmdletBinding()]
+    param([Parameter(Mandatory)][string]$SlotKey)
+
+    if ([string]::IsNullOrWhiteSpace($SlotKey)) { $SlotKey = 'default' }
+    $slot = Resolve-MetraInspectReviewSlotRoot -SlotKey $SlotKey
+    if (-not (Test-Path -LiteralPath $slot.SlotRoot)) {
+        New-Item -ItemType Directory -Path $slot.SlotRoot -Force | Out-Null
+    }
+    return $slot.SlotRoot
+}
+
 function Get-MetraInspectReviewFixQueuePath {
     [CmdletBinding()]
     param([Parameter(Mandatory)][string]$SlotKey)

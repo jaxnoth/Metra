@@ -88,6 +88,7 @@ Safety net = inspect + verify + regression revert + operator judgment, not any s
 - Auto-fix Critical/High/actionable Medium during prepare-for-Bing; do not wait for per-finding operator confirmation.
 - If verify reports **regression reverted**, do not treat the fix batch as landed; try a smaller fix or defer.
 - Same finding twice after a fix: convergence stop or ask operator; do not blind-loop forever.
-- Persisted assess report: `%LOCALAPPDATA%\Metra\inspect\<Project>\latest.json`; fix queue: `fix-queue.json`; cite severity/file in chat briefly. **`packPath` is for the operator/Bing lane only -- not Agent context.**
+- Persisted assess report: `%LOCALAPPDATA%\Metra\inspect\<Project>\latest.json`; fix queue: `fix-queue.json`; cite severity/file in chat briefly. **`packPath` is for the operator/Bing lane only -- not Agent context.** Per-slot packs: `inspect/<Project>/pack-diff.md` and `pack-plan.md`.
+- **Plan revisions:** after editing a `.plan.md` or plan artifact the operator will ship, run `.\metra.ps1 inspect pack-only plan -Name <Project>` and report the per-slot `pack-plan.md` path (do not load pack body in Agent context).
 
 See Metra `AGENTS.md` Inspect section and `docs/Decisions.md` (Inspect coding loop; Inspect goal-based review loop; Inspect engine independence).
