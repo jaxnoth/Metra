@@ -22,7 +22,8 @@ function Resolve-MetraPreCommitScript {
     if (-not [string]::IsNullOrWhiteSpace([string]$env:METRA_ROOT)) {
         Add-Candidate (Join-Path ([string]$env:METRA_ROOT).Trim() 'metra.ps1')
     }
-    $cfgRoot = [string](@(& git -C $RepoRoot config --get-all metra.root 2>$null) | Select-Object -First 1).Trim()
+    $cfgRaw = @(& git -C $RepoRoot config --get-all metra.root 2>$null) | Select-Object -First 1
+    $cfgRoot = if ($null -eq $cfgRaw) { '' } else { [string]$cfgRaw.Trim() }
     if (-not [string]::IsNullOrWhiteSpace($cfgRoot)) {
         Add-Candidate (Join-Path $cfgRoot 'metra.ps1')
     }

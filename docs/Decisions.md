@@ -24,6 +24,25 @@ Entry shape:
 
 ---
 
+## 2026-09-01 - Local-model prompt roles (subject, rule, example)
+
+- Decision: When Metra packs a prompt for a local model (Ollama Ask, ticket recommendation drafts, other single-shot local completions), include three items selected in code: (1) the subject under discussion, (2) the one rule applicable to the current job, (3) one example output for the same job. The model does not choose the rule or the example. This decision defines prompt roles; evidence-cap limits remain governed by the Ask evidence contract. The example must live with the workflow that owns the output shape (eval row, fixture, skill, or equivalent workflow-local asset). Examples are not stored in a centralized prompt/example repository. This does not replace `.\metra.ps1 routing`, Attention eligibility, or Host apply. Skip the three-item pack for greetings and other honesty short-circuits that never call the engine. Cursor Agent coding sessions are out of scope; they already load desk rules and can read files. Inspect workflows remain governed by their own review-pack contracts.
+- Why: Local models imitate an example more reliably than they obey a pile of similar snippets or a long rule dump. Retrieve-N-chunks is a retrieval strategy; subject + rule + example is a reasoning strategy. Ask already caps evidence (6 items / 400 chars / 2400 total) but does not require typed prompt roles. Keeping memory in existing Metra homes and using the local model only to reason is already policy; this specifies how that reasoner is packed.
+- See: Ask evidence contract (2026-08-08); Ollama / SLM system-bottleneck scar (2026-08-06); Ask engine (2026-08-01); TicketWatch Affirm A/B (2026-08-10); Inspect context economy (2026-09-01); `scripts/private/AskEvidence.ps1`
+- Explicit non-goals: no prompt change in this bite; no embedding store; no LLM router; no Attention scoring loop; no thin event bus; no centralized example repository; no change to evidence caps unless a later bite measures need
+
+## 2026-09-01 - Inspect context economy (Agent vs Bing)
+
+- Decision: **Pack is for Bing review; queue and latest are for Agent action.** Cursor Agent must not read `pack-diff.md` / `pack-plan.md` bodies while implementing or verifying fixes. Use `fix-queue.json` and `latest.json` under `%LOCALAPPDATA%\Metra\inspect\<Project>\`. Pack metadata (path, size) is allowed for pack diagnostics only.
+- **Rename collapse** precedes file caps: `git diff -M` plus deterministic `suffix-pair` pairing (unique best match; ambiguity fails open). Detection kinds are labeled separately (`git-rename` vs `suffix-pair`).
+- **Verify prompts** are touch-set scoped (bodies for touched paths only; outside-touch-set is names-only). Empty or failed touch-set falls back to the full reduced prompt. Names-only paths may request re-assessment; they do not confirm Critical code findings without an attached body.
+- **`inspect budget`** reports estimated prompt payload chars (GREEN &lt; 30k, WARN 30k–60k, PRUNE &gt; 60k total). Advisory only; exit 0 for all bands. No Ask engine call.
+- Inspect engine pin unchanged: Cursor `gemini-3.7-flash`.
+- Why: Cursor token spend was driven by pack re-feed and rename double-ingest, not implementation size. One artifact for machine action, another for human review.
+- See: `scripts/private/Inspect.ps1`; `.cursor/rules/metra-inspect-loop.mdc`; `docs/playbooks/token-rules.md`; `docs/playbooks/inspect-loop.md`
+
+---
+
 ## 2026-08-31 - Loom rename landed (Track G)
 
 - Decision: **Loom rename shipped** in Metra checkout: module path `modules/Loom/`, primary CLI `metra.ps1 loom`, storage default `%LOCALAPPDATA%\Metra\loom\`, migration via `loom migrate -Apply -Confirm`. **Hard rename** of PowerShell exports (`Get-MetraLoom*` only). Temporary compat: `metra.ps1 autoprogram` CLI alias (deprecation warning); legacy storage read-only until migration. **AP-\*** / **CAND-\*** IDs unchanged; persisted `autoprogram/` branch names not rewritten.

@@ -483,6 +483,405 @@ function Resolve-MetraInspectPlanPath {
     }
 }
 
+function Get-MetraInspectNormalizedRepoPath {
+    [CmdletBinding()]
+    param([string]$Path)
+
+    if ([string]::IsNullOrWhiteSpace($Path)) { return '' }
+    $p = ([string]$Path).Replace('\', '/').Trim()
+    while ($p.StartsWith('./', [System.StringComparison]::Ordinal)) {
+        $p = $p.Substring(2)
+    }
+    return $p.TrimStart('/')
+}
+
+function Get-MetraInspectCommonSuffixSegmentCount {
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory)][string]$PathA,
+        [Parameter(Mandatory)][string]$PathB
+    )
+
+    $a = @(Get-MetraInspectNormalizedRepoPath -Path $PathA).Split('/') | Where-Object { -not [string]::IsNullOrWhiteSpace($_) }
+    $b = @(Get-MetraInspectNormalizedRepoPath -Path $PathB).Split('/') | Where-Object { -not [string]::IsNullOrWhiteSpace($_) }
+    $count = 0
+    $max = [Math]::Min($a.Count, $b.Count)
+    for ($i = 1; $i -le $max; $i++) {
+        $segA = $a[$a.Count - $i]
+        $segB = $b[$b.Count - $i]
+        if (-not [string]::Equals($segA, $segB, [StringComparison]::OrdinalIgnoreCase)) { break }
+        $count++
+    }
+    return $count
+}
+
+function Test-MetraInspectDiffFileIsDelete {
+    [CmdletBinding()]
+    param([Parameter(Mandatory)][object]$File)
+
+    $content = [string](Get-MetraProp -Object $File -Name 'content' -Default '')
+    if ($content -match '(?m)^UNTRACKED FILE:') { return $false }
+    if ($content -match '(?m)^deleted file mode ') { return $true }
+    if ($content -match '(?m)^--- a/.+\r?\n\+\+\+ /dev/null') { return $true }
+    return $false
+}
+
+function Test-MetraInspectDiffFileIsAdd {
+    [CmdletBinding()]
+    param([Parameter(Mandatory)][object]$File)
+
+    $content = [string](Get-MetraProp -Object $File -Name 'content' -Default '')
+    if ($content -match '(?m)^UNTRACKED FILE:') { return $true }
+    if ($content -match '(?m)^new file mode ') { return $true }
+    if ($content -match '(?m)^--- /dev/null\r?\n\+\+\+ b/') { return $true }
+    return $false
+}
+
+function Merge-MetraInspectRenamePairs {
+    <#
+    .SYNOPSIS
+        Collapses git-rename and deterministic suffix-pair delete+add before file caps.
+    #>
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory)][object[]]$Files
+    )
+
+    $result = New-Object System.Collections.Generic.List[object]
+    $collapsedPairs = New-Object System.Collections.Generic.List[object]
+    $consumed = New-Object 'System.Collections.Generic.HashSet[string]' ([StringComparer]::OrdinalIgnoreCase)
+
+    foreach ($f in @($Files)) {
+        $path = Get-MetraInspectNormalizedRepoPath -Path ([string](Get-MetraProp -Object $f -Name 'path' -Default ''))
+        $pathFromRaw = [string](Get-MetraProp -Object $f -Name 'pathFrom' -Default '')
+        $pathFrom = Get-MetraInspectNormalizedRepoPath -Path $pathFromRaw
+        if ([string]::IsNullOrWhiteSpace($path)) { continue }
+        if (-not [string]::IsNullOrWhiteSpace($pathFrom) -and
+            -not [string]::Equals($pathFrom, $path, [StringComparison]::OrdinalIgnoreCase)) {
+            $content = [string](Get-MetraProp -Object $f -Name 'content' -Default '')
+            if ($content -notmatch '(?m)^DETECTION: git-rename') {
+                $content = "RENAMED FROM: $pathFrom`nDETECTION: git-rename`n$content"
+            }
+            [void]$result.Add([PSCustomObject]@{
+                    path         = $path
+                    pathFrom     = $pathFrom
+                    content      = $content
+                    collapseKind = 'git-rename'
+                    similarity   = (Get-MetraProp -Object $f -Name 'similarity' -Default $null)
+                })
+            [void]$consumed.Add($path)
+            [void]$collapsedPairs.Add([PSCustomObject]@{ from = $pathFrom; to = $path; kind = 'git-rename' })
+        }
+    }
+
+    $remaining = @(
+        $Files |
+            Where-Object {
+                $p = Get-MetraInspectNormalizedRepoPath -Path ([string](Get-MetraProp -Object $_ -Name 'path' -Default ''))
+                -not [string]::IsNullOrWhiteSpace($p) -and -not $consumed.Contains($p)
+            }
+    )
+
+    $deletes = @($remaining | Where-Object { Test-MetraInspectDiffFileIsDelete -File $_ })
+    $adds = @($remaining | Where-Object { Test-MetraInspectDiffFileIsAdd -File $_ })
+    $others = @($remaining | Where-Object {
+            -not (Test-MetraInspectDiffFileIsDelete -File $_) -and -not (Test-MetraInspectDiffFileIsAdd -File $_)
+        })
+
+    $pairCandidates = @{}
+    foreach ($del in @($deletes)) {
+        $delPath = Get-MetraInspectNormalizedRepoPath -Path ([string](Get-MetraProp -Object $del -Name 'path' -Default ''))
+        $delLeaf = [System.IO.Path]::GetFileName($delPath)
+        foreach ($add in @($adds)) {
+            $addPath = Get-MetraInspectNormalizedRepoPath -Path ([string](Get-MetraProp -Object $add -Name 'path' -Default ''))
+            $addLeaf = [System.IO.Path]::GetFileName($addPath)
+            if (-not [string]::Equals($delLeaf, $addLeaf, [StringComparison]::OrdinalIgnoreCase)) { continue }
+            if ([string]::Equals($delPath, $addPath, [StringComparison]::OrdinalIgnoreCase)) { continue }
+            $suffixCount = Get-MetraInspectCommonSuffixSegmentCount -PathA $delPath -PathB $addPath
+            if ($suffixCount -lt 2) { continue }
+            if (-not $pairCandidates.ContainsKey($delPath)) {
+                $pairCandidates[$delPath] = @()
+            }
+            $pairCandidates[$delPath] = @($pairCandidates[$delPath]) + @([PSCustomObject]@{
+                    delete  = $del
+                    add     = $add
+                    score   = $suffixCount
+                    addPath = $addPath
+                })
+        }
+    }
+
+    $pairedDeletes = New-Object 'System.Collections.Generic.HashSet[string]' ([StringComparer]::OrdinalIgnoreCase)
+    $pairedAdds = New-Object 'System.Collections.Generic.HashSet[string]' ([StringComparer]::OrdinalIgnoreCase)
+    $ambiguousPaths = New-Object 'System.Collections.Generic.HashSet[string]' ([StringComparer]::OrdinalIgnoreCase)
+    $uniquePairByDelete = @{}
+
+    foreach ($delPath in @($pairCandidates.Keys | Sort-Object)) {
+        $cands = @($pairCandidates[$delPath])
+        if ($cands.Count -eq 0) { continue }
+        $maxScore = ($cands | Measure-Object -Property score -Maximum).Maximum
+        $best = @($cands | Where-Object { $_.score -eq $maxScore })
+        if ($best.Count -ne 1) {
+            [void]$ambiguousPaths.Add($delPath)
+            foreach ($b in @($best)) {
+                [void]$ambiguousPaths.Add([string]$b.addPath)
+            }
+            continue
+        }
+        $uniquePairByDelete[$delPath] = [string]$best[0].addPath
+    }
+
+    $addToDeletes = @{}
+    foreach ($delPath in @($uniquePairByDelete.Keys | Sort-Object)) {
+        $addPath = [string]$uniquePairByDelete[$delPath]
+        if (-not $addToDeletes.ContainsKey($addPath)) {
+            $addToDeletes[$addPath] = New-Object System.Collections.Generic.List[string]
+        }
+        [void]$addToDeletes[$addPath].Add($delPath)
+    }
+    foreach ($addPath in @($addToDeletes.Keys | Sort-Object)) {
+        if ($addToDeletes[$addPath].Count -gt 1) {
+            [void]$ambiguousPaths.Add($addPath)
+            foreach ($delPath in @($addToDeletes[$addPath])) {
+                [void]$ambiguousPaths.Add($delPath)
+                [void]$uniquePairByDelete.Remove($delPath)
+            }
+        }
+    }
+
+    foreach ($delPath in @($uniquePairByDelete.Keys | Sort-Object)) {
+        $addPath = [string]$uniquePairByDelete[$delPath]
+        if ($ambiguousPaths.Contains($delPath) -or $ambiguousPaths.Contains($addPath)) { continue }
+        if ($pairedDeletes.Contains($delPath) -or $pairedAdds.Contains($addPath)) { continue }
+
+        $match = @($pairCandidates[$delPath] | Where-Object { [string]$_.addPath -eq $addPath } | Select-Object -First 1)
+        if ($match.Count -eq 0) { continue }
+        $match = $match[0]
+
+        $destContent = [string](Get-MetraProp -Object $match.add -Name 'content' -Default '')
+        if ($destContent -match '(?m)^UNTRACKED FILE: [^\r\n]+\r?\n(?:[^\r\n]*\r?\n)?') {
+            $destContent = ($destContent -replace '(?ms)^UNTRACKED FILE: [^\r\n]+\r?\n(?:[^\r\n]*\r?\n)?', '')
+        }
+        if ($destContent -notmatch '(?m)^DETECTION: suffix-pair') {
+            $destContent = "PAIRED FROM: $delPath`nDETECTION: suffix-pair`n$destContent"
+        }
+
+        [void]$result.Add([PSCustomObject]@{
+                path         = $addPath
+                pathFrom     = $delPath
+                content      = $destContent
+                collapseKind = 'suffix-pair'
+            })
+        [void]$pairedDeletes.Add($delPath)
+        [void]$pairedAdds.Add($addPath)
+        [void]$collapsedPairs.Add([PSCustomObject]@{ from = $delPath; to = $addPath; kind = 'suffix-pair' })
+    }
+
+    foreach ($f in @($remaining)) {
+        $p = Get-MetraInspectNormalizedRepoPath -Path ([string](Get-MetraProp -Object $f -Name 'path' -Default ''))
+        if ($pairedDeletes.Contains($p) -or $pairedAdds.Contains($p)) { continue }
+        $pathFromRaw = [string](Get-MetraProp -Object $f -Name 'pathFrom' -Default '')
+        $pathFromNorm = if ([string]::IsNullOrWhiteSpace($pathFromRaw)) { $null } else { Get-MetraInspectNormalizedRepoPath -Path $pathFromRaw }
+        [void]$result.Add([PSCustomObject]@{
+                path         = $p
+                pathFrom     = $pathFromNorm
+                content      = [string](Get-MetraProp -Object $f -Name 'content' -Default '')
+                collapseKind = (Get-MetraProp -Object $f -Name 'collapseKind' -Default $null)
+            })
+    }
+
+    return [PSCustomObject]@{
+        Files              = @($result.ToArray())
+        CollapsedPairCount = $collapsedPairs.Count
+        CollapsedPairs     = @($collapsedPairs.ToArray())
+    }
+}
+
+function Get-MetraInspectPayloadBand {
+    [CmdletBinding()]
+    param([Parameter(Mandatory)][int]$EstimatedTotalChars)
+
+    if ($EstimatedTotalChars -lt 30000) { return 'GREEN' }
+    if ($EstimatedTotalChars -le 60000) { return 'WARN' }
+    return 'PRUNE'
+}
+
+function Test-MetraInspectPathInKeepSet {
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory)][object]$File,
+        [AllowEmptyCollection()][string[]]$KeepPaths
+    )
+
+    if (@($KeepPaths).Count -eq 0) { return $true }
+    $keep = New-Object 'System.Collections.Generic.HashSet[string]' ([StringComparer]::OrdinalIgnoreCase)
+    foreach ($k in @($KeepPaths)) {
+        $nk = Get-MetraInspectNormalizedRepoPath -Path ([string]$k)
+        if (-not [string]::IsNullOrWhiteSpace($nk)) { [void]$keep.Add($nk) }
+    }
+    $path = Get-MetraInspectNormalizedRepoPath -Path ([string](Get-MetraProp -Object $File -Name 'path' -Default ''))
+    $pathFrom = Get-MetraInspectNormalizedRepoPath -Path ([string](Get-MetraProp -Object $File -Name 'pathFrom' -Default ''))
+    if ($keep.Contains($path)) { return $true }
+    if (-not [string]::IsNullOrWhiteSpace($pathFrom) -and $keep.Contains($pathFrom)) { return $true }
+    return $false
+}
+
+function Measure-MetraInspectDiffPayloadParts {
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory)][object]$Reduced,
+        [int]$AgentsChars = 0,
+        [int]$RubricChars = 2200
+    )
+
+    $bodyChars = 0
+    $sidecarChars = 0
+    $withBodies = 0
+    foreach ($rf in @($(Get-MetraProp -Object $Reduced -Name 'Files' -Default @()))) {
+        $path = [string]$rf.path
+        $content = [string]$rf.content
+        if ($path -match '^\(') {
+            $sidecarChars += $content.Length
+            continue
+        }
+        $withBodies++
+        $bodyChars += ("### $path [$($rf.class)]`n$content").Length + 2
+    }
+
+    $manifestChars = $RubricChars + [int]$AgentsChars
+    $estimatedPayloadChars = $bodyChars + $sidecarChars
+    $estimatedTotalChars = $manifestChars + $estimatedPayloadChars
+
+    return [PSCustomObject]@{
+        bodyChars             = $bodyChars
+        manifestChars         = $manifestChars
+        sidecarChars          = $sidecarChars
+        estimatedPayloadChars = $estimatedPayloadChars
+        estimatedTotalChars   = $estimatedTotalChars
+        reducedFilesWithBodies = $withBodies
+        band                  = (Get-MetraInspectPayloadBand -EstimatedTotalChars $estimatedTotalChars)
+    }
+}
+
+function Measure-MetraInspectDiffPayload {
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory)][string]$Root,
+        [string]$Base,
+        [AllowEmptyCollection()][string[]]$KeepPaths = @(),
+        [int]$MaxFiles = 24,
+        [int]$MaxBytesPerFile = 24000,
+        [switch]$IncludeAgentsEstimate
+    )
+
+    $diff = Get-MetraInspectGitDiffFiles -Root $Root -Base $Base
+    if ($diff.Empty) {
+        throw 'Nothing to inspect (no tracked diffs and no includable untracked files).'
+    }
+
+    $rawCount = @($diff.Files).Count
+    $merged = Merge-MetraInspectRenamePairs -Files @($diff.Files)
+    $afterCollapse = @($merged.Files).Count
+
+    $uncollapsedParams = @{
+        Files           = @($diff.Files)
+        MaxFiles        = $MaxFiles
+        MaxBytesPerFile = $MaxBytesPerFile
+        SkipCollapse    = $true
+    }
+    if (@($KeepPaths).Count -gt 0) { $uncollapsedParams.KeepPaths = @($KeepPaths) }
+    $uncollapsedReduced = Reduce-MetraInspectDiffFiles @uncollapsedParams
+    $uncollapsedParts = Measure-MetraInspectDiffPayloadParts -Reduced $uncollapsedReduced
+
+    $reduceParams = @{
+        Files            = @($merged.Files)
+        MaxFiles         = $MaxFiles
+        MaxBytesPerFile  = $MaxBytesPerFile
+        SkipCollapse     = $true
+    }
+    if (@($KeepPaths).Count -gt 0) { $reduceParams.KeepPaths = @($KeepPaths) }
+    $reduced = Reduce-MetraInspectDiffFiles @reduceParams
+
+    $agentsChars = 0
+    if ($IncludeAgentsEstimate) {
+        try {
+            $agents = Get-MetraInspectAgentsText -Root $Root
+            if ($agents) { $agentsChars = $agents.Length }
+        }
+        catch { $agentsChars = 0 }
+    }
+
+    $parts = Measure-MetraInspectDiffPayloadParts -Reduced $reduced -AgentsChars $agentsChars
+
+    $priorPackBytes = $null
+    $packPath = Join-Path (Get-MetraInspectStateRoot) 'pack-diff.md'
+    if (Test-Path -LiteralPath $packPath) {
+        try { $priorPackBytes = (Get-Item -LiteralPath $packPath).Length } catch { $priorPackBytes = $null }
+    }
+
+    return [PSCustomObject]@{
+        rawFileCount           = $rawCount
+        collapsedPairCount     = [int]$merged.CollapsedPairCount
+        filesAfterCollapse     = $afterCollapse
+        reducedFilesWithBodies = [int]$parts.reducedFilesWithBodies
+        bodyChars              = [int]$parts.bodyChars
+        manifestChars          = [int]$parts.manifestChars
+        sidecarChars           = [int]$parts.sidecarChars
+        estimatedTotalChars    = [int]$parts.estimatedTotalChars
+        uncollapsedPayloadChars = [int]$uncollapsedParts.estimatedPayloadChars
+        estimatedPayloadChars  = [int]$parts.estimatedPayloadChars
+        collapseSavingsChars   = [int]$uncollapsedParts.estimatedPayloadChars - [int]$parts.estimatedPayloadChars
+        band                   = [string]$parts.band
+        priorPackBytes         = $priorPackBytes
+        priorPackPath          = $(if ($priorPackBytes) { $packPath } else { $null })
+        reduced                = $reduced
+        merged                 = $merged
+        diff                   = $diff
+    }
+}
+
+function Show-MetraInspectBudgetConsole {
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory)][object]$Budget
+    )
+
+    Write-Host ("Raw files:                 {0}" -f [int]$Budget.rawFileCount)
+    Write-Host ("Collapsed pairs:           {0}" -f [int]$Budget.collapsedPairCount)
+    Write-Host ("Files after collapse:      {0}" -f [int]$Budget.filesAfterCollapse)
+    Write-Host ("Reduced files with bodies: {0}" -f [int]$Budget.reducedFilesWithBodies)
+    Write-Host ("Uncollapsed payload:       {0} chars" -f [int]$Budget.uncollapsedPayloadChars)
+    Write-Host ("Estimated payload:         {0} chars" -f [int]$Budget.estimatedPayloadChars)
+    Write-Host ("Body / manifest / sidecar: {0} / {1} / {2} chars" -f [int]$Budget.bodyChars, [int]$Budget.manifestChars, [int]$Budget.sidecarChars)
+    Write-Host ("Estimated total:           {0} chars" -f [int]$Budget.estimatedTotalChars)
+    Write-Host ("Savings from collapse:     {0} chars" -f [int]$Budget.collapseSavingsChars)
+    Write-Host ("Band:                      {0}" -f [string]$Budget.band)
+    if ($null -ne $Budget.priorPackBytes) {
+        $kb = [math]::Round([double]$Budget.priorPackBytes / 1024, 1)
+        Write-Host ("Prior pack:                {0} KB (artifact size, not this prompt)" -f $kb)
+    }
+    else {
+        Write-Host 'Prior pack:                (none)'
+    }
+}
+
+function Invoke-MetraInspectBudget {
+    [CmdletBinding()]
+    param(
+        [string]$Name,
+        [string]$Base
+    )
+
+    $ctx = Resolve-MetraInspectProjectContext -Name $Name -Mode diff
+    if (-not $ctx.Ok) { throw $ctx.Error }
+
+    $budget = Measure-MetraInspectDiffPayload -Root $ctx.Root -Base $Base -IncludeAgentsEstimate
+    Show-MetraInspectBudgetConsole -Budget $budget
+    $budget | Add-Member -NotePropertyName project -NotePropertyValue ([string]$ctx.Project) -Force
+    $budget | Add-Member -NotePropertyName root -NotePropertyValue ([string]$ctx.Root) -Force
+    return $budget
+}
+
 function Reduce-MetraInspectDiffFiles {
     <#
     .SYNOPSIS
@@ -493,19 +892,43 @@ function Reduce-MetraInspectDiffFiles {
         [Parameter(Mandatory)][object[]]$Files,
         [int]$MaxFiles = 24,
         [int]$MaxBytesPerFile = 24000,
-        [switch]$IncludeDocs
+        [switch]$IncludeDocs,
+        [switch]$SkipCollapse,
+        [AllowEmptyCollection()][string[]]$KeepPaths = @()
     )
 
+    $sourceFiles = @($Files)
+    $collapsedPairCount = 0
+    if (-not $SkipCollapse) {
+        $merge = Merge-MetraInspectRenamePairs -Files @($Files)
+        $sourceFiles = @($merge.Files)
+        $collapsedPairCount = [int]$merge.CollapsedPairCount
+    }
+
+    $useKeepFilter = @($KeepPaths).Count -gt 0
+    $outsideTouch = New-Object System.Collections.Generic.List[string]
+
     $ordered = @(
-        $Files |
+        $sourceFiles |
             ForEach-Object {
-                $cls = Get-MetraInspectFileClass -RelativePath ([string]$_.path)
-                [PSCustomObject]@{
-                    path    = [string]$_.path
-                    content = [string]$_.content
-                    class   = $cls
+                $cls = Get-MetraInspectFileClass -RelativePath ([string](Get-MetraProp -Object $_ -Name 'path' -Default ''))
+                $normPath = Get-MetraInspectNormalizedRepoPath -Path ([string](Get-MetraProp -Object $_ -Name 'path' -Default ''))
+                $normFrom = Get-MetraInspectNormalizedRepoPath -Path ([string](Get-MetraProp -Object $_ -Name 'pathFrom' -Default ''))
+                if ($useKeepFilter -and -not (Test-MetraInspectPathInKeepSet -File $_ -KeepPaths $KeepPaths)) {
+                    $line = $normPath
+                    if (-not [string]::IsNullOrWhiteSpace($normFrom)) { $line = "$line (from $normFrom)" }
+                    [void]$outsideTouch.Add($line)
+                    return $null
                 }
-            }
+                [PSCustomObject]@{
+                    path         = $normPath
+                    pathFrom     = $(if ($normFrom) { $normFrom } else { $null })
+                    content      = [string](Get-MetraProp -Object $_ -Name 'content' -Default '')
+                    class        = $cls
+                    collapseKind = (Get-MetraProp -Object $_ -Name 'collapseKind' -Default $null)
+                }
+            } |
+            Where-Object { $null -ne $_ }
     )
 
     $skipped = @($ordered | Where-Object { $_.class -eq 'skip' })
@@ -541,9 +964,10 @@ function Reduce-MetraInspectDiffFiles {
             $content = $content.Substring(0, $MaxBytesPerFile) + "`n...[truncated]..."
         }
         [void]$reduced.Add([PSCustomObject]@{
-                path    = [string]$f.path
-                content = $content
-                class   = [string]$f.class
+                path     = [string]$f.path
+                pathFrom = $(if ($f.pathFrom) { [string]$f.pathFrom } else { $null })
+                content  = $content
+                class    = [string]$f.class
             })
     }
 
@@ -564,20 +988,29 @@ function Reduce-MetraInspectDiffFiles {
             })
     }
 
+    if ($outsideTouch.Count -gt 0) {
+        [void]$reduced.Add([PSCustomObject]@{
+                path    = '(outside-touch-set)'
+                content = ("Outside touch set (names only; no bodies attached):`n- " + ($outsideTouch -join "`n- "))
+                class   = 'docs'
+            })
+    }
+
     $truncatedAny = $false
     foreach ($rf in $reduced) {
         if ([string]$rf.content -match '\[truncated\]') { $truncatedAny = $true; break }
     }
 
     return [PSCustomObject]@{
-        Files            = @($reduced.ToArray())
-        FileCount        = @($Files).Count
-        ReducedFileCount = $reduced.Count
-        SkippedFileCount = @($skipped).Count
-        SkippedPaths     = @(@($skipped) | ForEach-Object { [string]$_.path })
-        DocsCollapsed    = @($docsCollapsed.ToArray())
-        Truncated        = $truncatedAny
-        OmittedByFileCap = @($omittedByFileCap.ToArray())
+        Files              = @($reduced.ToArray())
+        FileCount          = @($Files).Count
+        ReducedFileCount   = $reduced.Count
+        SkippedFileCount   = @($skipped).Count
+        SkippedPaths       = @(@($skipped) | ForEach-Object { [string]$_.path })
+        DocsCollapsed      = @($docsCollapsed.ToArray())
+        Truncated          = $truncatedAny
+        OmittedByFileCap   = @($omittedByFileCap.ToArray())
+        CollapsedPairCount = $collapsedPairCount
     }
 }
 
@@ -615,16 +1048,16 @@ function Get-MetraInspectGitDiffFiles {
             if ($workingTreeDirty) {
                 $warning = '-Base inspects committed range Base...HEAD only; local staged/unstaged/untracked edits are excluded.'
             }
-            $rawDiff = & git --no-pager diff "$resolvedBase...HEAD" -- 2>&1
+            $rawDiff = & git --no-pager diff -M "$resolvedBase...HEAD" -- 2>&1
             if ($LASTEXITCODE -ne 0) {
                 throw "git diff failed: $($rawDiff | Out-String)"
             }
             $diffText = (@($rawDiff) | ForEach-Object { [string]$_ }) -join "`n"
         }
         else {
-            $unstaged = & git --no-pager diff -- 2>&1
+            $unstaged = & git --no-pager diff -M -- 2>&1
             if ($LASTEXITCODE -ne 0) { throw "git diff failed: $($unstaged | Out-String)" }
-            $staged = & git --no-pager diff --cached -- 2>&1
+            $staged = & git --no-pager diff --cached -M -- 2>&1
             if ($LASTEXITCODE -ne 0) { throw "git diff --cached failed: $($staged | Out-String)" }
             $parts = New-Object System.Collections.Generic.List[string]
             foreach ($x in @($unstaged)) { [void]$parts.Add([string]$x) }
@@ -834,9 +1267,10 @@ function ConvertTo-MetraInspectScrubbedDiffParts {
             throw ("Diff content refused by secrets scrub ($path): {0}" -f $scrub.Reason)
         }
         [void]$scrubbed.Add([PSCustomObject]@{
-                path    = $path
-                content = [string]$scrub.Text
-                class   = [string](Get-MetraProp -Object $rf -Name 'class' -Default '')
+                path     = $path
+                pathFrom = [string](Get-MetraProp -Object $rf -Name 'pathFrom' -Default '')
+                content  = [string]$scrub.Text
+                class    = [string](Get-MetraProp -Object $rf -Name 'class' -Default '')
             })
     }
     return @($scrubbed.ToArray())
@@ -1163,7 +1597,8 @@ function Build-MetraInspectPrompt {
         [Parameter(Mandatory)][ValidateSet('diff', 'plan')][string]$Mode,
         [string]$AgentsText,
         [string]$Payload,
-        [switch]$ContextLimited
+        [switch]$ContextLimited,
+        [switch]$VerifyPass
     )
 
     if ($Mode -eq 'plan') {
@@ -1201,6 +1636,10 @@ Review loop regression revert (Inspect.ps1 loop/baseline code):
 - Do report missing path containment, untrusted baselinePath, or resume root mismatch.
 - Save-MetraInspectReviewGitBaseline may omit non-leaf or missing-on-disk diff paths; it warns with captured/total counts and stores baselineCoverage on pendingBaseline. Warn-not-fail is intentional; do not flag loud omission warnings as High/Medium.
 - Verify regression is fingerprint- and touch-set-based (not whole-tree High/Medium count increases). Count-only global High/Medium regression is retired by design.
+
+Outside-touch-set paths (when present) are context indicators only.
+- Do not issue a High or Medium finding without an attached body.
+- A suspicious names-only path may produce a Critical review-block request for a focused re-assessment, not a confirmed code finding.
 
 Return ONLY a JSON object: {"findings":[...]}. Each finding object must include:
 severity (Critical|High|Medium|Low|Info), confidence (High|Medium|Low), category (Security|Reliability|Performance|Maintainability|Standards|Scope),
@@ -1579,7 +2018,9 @@ function Invoke-MetraInspectDiff {
     [CmdletBinding(SupportsShouldProcess)]
     param(
         [string]$Name,
-        [string]$Base
+        [string]$Base,
+        [AllowEmptyCollection()][string[]]$KeepPaths = @(),
+        [switch]$VerifyPass
     )
 
     $ctx = Resolve-MetraInspectProjectContext -Name $Name -Mode diff
@@ -1594,9 +2035,18 @@ function Invoke-MetraInspectDiff {
         Write-Host ("WARNING: {0}" -f $diff.Warning) -ForegroundColor Yellow
     }
 
-    $reduced = Reduce-MetraInspectDiffFiles -Files $diff.Files
+    $reduceParams = @{ Files = @($diff.Files) }
+    if (@($KeepPaths).Count -gt 0) { $reduceParams.KeepPaths = @($KeepPaths) }
+    $reduced = Reduce-MetraInspectDiffFiles @reduceParams
+
+    $agentsPreview = $null
+    try { $agentsPreview = Get-MetraInspectAgentsText -Root $ctx.Root } catch { $agentsPreview = $null }
+    $agentsLen = if ($agentsPreview) { $agentsPreview.Length } else { 0 }
+    $budgetParts = Measure-MetraInspectDiffPayloadParts -Reduced $reduced -AgentsChars $agentsLen
     if ($WhatIfPreference) {
-        Write-Host ("WhatIf: would inspect diff project={0} root={1} files={2} reduced={3} skipped={4}" -f $ctx.Project, $ctx.Root, $reduced.FileCount, $reduced.ReducedFileCount, $reduced.SkippedFileCount)
+        Write-Host ("WhatIf: would inspect diff project={0} root={1} files={2} reduced={3} skipped={4} collapsedPairs={5} band={6} estPayload={7} chars" -f `
+                $ctx.Project, $ctx.Root, $reduced.FileCount, $reduced.ReducedFileCount, $reduced.SkippedFileCount, `
+                (Get-MetraProp -Object $reduced -Name 'CollapsedPairCount' -Default 0), $budgetParts.band, $budgetParts.estimatedPayloadChars)
         return [PSCustomObject]@{
             WhatIf           = $true
             Mode             = 'diff'
@@ -1605,6 +2055,7 @@ function Invoke-MetraInspectDiff {
             FileCount        = [int]$reduced.FileCount
             ReducedFileCount = [int]$reduced.ReducedFileCount
             SkippedFileCount = [int]$reduced.SkippedFileCount
+            Band             = [string]$budgetParts.band
         }
     }
 
@@ -1625,7 +2076,7 @@ function Invoke-MetraInspectDiff {
         }
     ) -join "`n`n"
 
-    $prompt = Build-MetraInspectPrompt -Mode diff -AgentsText $agents -Payload $payload
+    $prompt = Build-MetraInspectPrompt -Mode diff -AgentsText $agents -Payload $payload -VerifyPass:$VerifyPass
     $engine = Invoke-MetraInspectEngine -Prompt $prompt -Cwd $ctx.Root
     if (-not $engine.Ok) {
         if ($engine.Excerpt) {
@@ -1670,7 +2121,9 @@ function Invoke-MetraInspectDiff {
     $report = New-MetraInspectReport -Mode diff -Provenance $provenance -Findings $parsed.Findings
     $null = Save-MetraInspectReport -Report $report -SlotKey $ctx.Project
 
-    Write-Host ("Scope: files={0} reduced={1} skipped={2} untracked={3}" -f $reduced.FileCount, $reduced.ReducedFileCount, $reduced.SkippedFileCount, $provenance.untrackedFileCount)
+    Write-Host ("Scope: files={0} reduced={1} skipped={2} untracked={3} collapsedPairs={4} band={5} estPayload={6} chars" -f `
+            $reduced.FileCount, $reduced.ReducedFileCount, $reduced.SkippedFileCount, $provenance.untrackedFileCount, `
+            (Get-MetraProp -Object $reduced -Name 'CollapsedPairCount' -Default 0), $budgetParts.band, $budgetParts.estimatedPayloadChars)
     Show-MetraInspectFindingsConsole -Report $report
     return $report
 }
@@ -3946,20 +4399,11 @@ function Invoke-MetraInspectReviewLoop {
         Write-Host 'Assess pass: baseline inspect before fixes.' -ForegroundColor Cyan
     }
 
-    $report = Invoke-MetraInspectDiff -Name $Name -Base $Base
-    $reportSkipped = [bool](Get-MetraProp -Object $report -Name 'Skipped' -Default $false)
-    if ($null -eq $report) {
-        Write-Warning 'Inspect review loop stopped: inspect diff returned no report.'
-        return $state
+    $touchSet = @()
+    $inspectParams = @{
+        Name = $Name
+        Base = $Base
     }
-    if ($reportSkipped) {
-        Write-Host 'Inspect review loop stopped: inspect diff was skipped (confirm denied or dry-run).' -ForegroundColor Yellow
-        return $state
-    }
-
-    $counts = Get-MetraInspectReviewSeverityCounts -Findings @($report.findings)
-    $verifyLoggedOutsideTouchHighRise = $false
-
     if ($isVerify) {
         if (-not (Test-MetraInspectReviewBaselineFingerprintsCompatible -PendingBaseline $pending)) {
             Write-Host ''
@@ -3973,13 +4417,11 @@ function Invoke-MetraInspectReviewLoop {
             return $state
         }
 
-        $pkgFindings = @()
         $pkgTargets = @()
         $lastPkgId = [string](Get-MetraProp -Object $state -Name 'lastFixPackageId' -Default '')
         if (-not [string]::IsNullOrWhiteSpace($lastPkgId)) {
             try {
                 $pkg = Read-MetraInspectReviewFixPackage -SlotKey $slotKey -PackageId $lastPkgId
-                $pkgFindings = @((Get-MetraProp -Object $pkg -Name 'findings' -Default @()))
                 $pkgTargets = @((Get-MetraProp -Object $pkg -Name 'targetFiles' -Default @()) | ForEach-Object { [string]$_ })
             }
             catch {
@@ -4002,13 +4444,92 @@ function Invoke-MetraInspectReviewLoop {
         }
 
         $currentDiff = Get-MetraInspectGitDiffFiles -Root $ctx.Root -Base $Base
-        $touchSet = Get-MetraInspectReviewTouchSet `
-            -ProjectRoot ([string]$ctx.Root) `
-            -BaselinePath $baselinePath `
-            -PackageTargetFiles $pkgTargets `
-            -BaselineManifest $baselineManifest `
-            -CurrentDiffFiles @($currentDiff.Files) `
-            -BaselineFindingFingerprints @((Get-MetraProp -Object $pending -Name 'findingFingerprints' -Default @()))
+        $touchSet = @(Get-MetraInspectReviewTouchSet `
+                -ProjectRoot ([string]$ctx.Root) `
+                -BaselinePath $baselinePath `
+                -PackageTargetFiles $pkgTargets `
+                -BaselineManifest $baselineManifest `
+                -CurrentDiffFiles @($currentDiff.Files) `
+                -BaselineFindingFingerprints @((Get-MetraProp -Object $pending -Name 'findingFingerprints' -Default @())))
+
+        $fixQueuePath = Join-Path (Resolve-MetraInspectReviewSlotRoot -SlotKey $slotKey).SlotRoot 'fix-queue.json'
+        if (Test-Path -LiteralPath $fixQueuePath) {
+            try {
+                $fq = Get-Content -LiteralPath $fixQueuePath -Raw | ConvertFrom-Json
+                foreach ($ff in @((Get-MetraProp -Object $fq -Name 'findings' -Default @()))) {
+                    $fp = [string](Get-MetraProp -Object $ff -Name 'file' -Default '')
+                    if (-not [string]::IsNullOrWhiteSpace($fp)) {
+                        $touchSet += @($fp)
+                    }
+                }
+            }
+            catch {
+                Write-Warning ("Inspect verify could not read fix queue: {0}" -f $_.Exception.Message)
+            }
+        }
+
+        $touchSet = @($touchSet | Where-Object { -not [string]::IsNullOrWhiteSpace([string]$_) } | Select-Object -Unique)
+        if (@($touchSet).Count -gt 0) {
+            $inspectParams.KeepPaths = @($touchSet)
+            $inspectParams.VerifyPass = $true
+            Write-Host ("Verify touch-set: {0} path(s) with bodies; remainder names-only." -f @($touchSet).Count) -ForegroundColor DarkGray
+        }
+        else {
+            Write-Host 'Verify touch-set empty — falling back to full reduced prompt.' -ForegroundColor Yellow
+            $inspectParams.VerifyPass = $true
+        }
+    }
+
+    $report = Invoke-MetraInspectDiff @inspectParams
+    $reportSkipped = [bool](Get-MetraProp -Object $report -Name 'Skipped' -Default $false)
+    if ($null -eq $report) {
+        Write-Warning 'Inspect review loop stopped: inspect diff returned no report.'
+        return $state
+    }
+    if ($reportSkipped) {
+        Write-Host 'Inspect review loop stopped: inspect diff was skipped (confirm denied or dry-run).' -ForegroundColor Yellow
+        return $state
+    }
+
+    $counts = Get-MetraInspectReviewSeverityCounts -Findings @($report.findings)
+    $verifyLoggedOutsideTouchHighRise = $false
+
+    if ($isVerify) {
+        $pkgFindings = @()
+        $pkgTargets = @()
+        $lastPkgId = [string](Get-MetraProp -Object $state -Name 'lastFixPackageId' -Default '')
+        if (-not [string]::IsNullOrWhiteSpace($lastPkgId)) {
+            try {
+                $pkg = Read-MetraInspectReviewFixPackage -SlotKey $slotKey -PackageId $lastPkgId
+                $pkgFindings = @((Get-MetraProp -Object $pkg -Name 'findings' -Default @()))
+                $pkgTargets = @((Get-MetraProp -Object $pkg -Name 'targetFiles' -Default @()) | ForEach-Object { [string]$_ })
+            }
+            catch {
+                Write-Warning ("Inspect verify could not load last fix package '{0}': {1}" -f $lastPkgId, $_.Exception.Message)
+            }
+        }
+
+        $baselinePath = [string](Get-MetraProp -Object $pending -Name 'baselinePath' -Default '')
+        if (@($touchSet).Count -eq 0) {
+            $baselineManifest = @()
+            if (-not [string]::IsNullOrWhiteSpace($baselinePath)) {
+                $manifestPath = Join-Path $baselinePath 'manifest.json'
+                if (Test-Path -LiteralPath $manifestPath) {
+                    try {
+                        $baselineManifest = @((Get-Content -LiteralPath $manifestPath -Raw | ConvertFrom-Json) | ForEach-Object { [string]$_ })
+                    }
+                    catch { }
+                }
+            }
+            $currentDiff = Get-MetraInspectGitDiffFiles -Root $ctx.Root -Base $Base
+            $touchSet = @(Get-MetraInspectReviewTouchSet `
+                    -ProjectRoot ([string]$ctx.Root) `
+                    -BaselinePath $baselinePath `
+                    -PackageTargetFiles $pkgTargets `
+                    -BaselineManifest $baselineManifest `
+                    -CurrentDiffFiles @($currentDiff.Files) `
+                    -BaselineFindingFingerprints @((Get-MetraProp -Object $pending -Name 'findingFingerprints' -Default @())))
+        }
 
         $regress = Test-MetraInspectReviewRegressed `
             -PendingBaseline $pending `
@@ -4665,6 +5186,8 @@ function Invoke-MetraInspectPrepareForBing {
     }
 
     if (-not $active) {
+        Write-Host ("Prepare-for-Bing: ready. Bing pack: {0}" -f $packPath) -ForegroundColor Green
+        Write-Host ("  Agent queue (not pack body): {0}" -f $fixQueuePath) -ForegroundColor DarkGray
         return [PSCustomObject]@{
             readyForBing       = $true
             project            = $slotKey
@@ -4738,7 +5261,8 @@ function Invoke-MetraInspectPreCommitHook {
             }
             default {
                 Write-Host 'COMMIT BLOCKED — Bing review required (manual gate).' -ForegroundColor Red
-                Write-Host ("  Auto-built pack: {0}" -f $packPath)
+                Write-Host ("  Bing pack (review only): {0}" -f $packPath)
+                Write-Host ("  Agent action queue: {0}" -f (Join-Path (Resolve-MetraInspectReviewSlotRoot -SlotKey $slotKey).SlotRoot 'fix-queue.json'))
                 Write-Host ("  After Bing review: .\metra.ps1 inspect gate affirm -Name {0}" -f $ctx.Project)
                 Write-Host '  Emergency skip: METRA_SKIP_BING_GATE=1'
             }
@@ -4795,7 +5319,11 @@ function Show-MetraInspectCli {
     $gateSub = $null
 
     $i = 0
-    if ($argsRest.Count -gt 0 -and $argsRest[0] -ieq 'prepare-bing') {
+    if ($argsRest.Count -gt 0 -and $argsRest[0] -ieq 'budget') {
+        $mode = 'budget'
+        $i = 1
+    }
+    elseif ($argsRest.Count -gt 0 -and $argsRest[0] -ieq 'prepare-bing') {
         $mode = 'prepare-bing'
         $i = 1
     }
@@ -5002,6 +5530,9 @@ function Show-MetraInspectCli {
         }
         'prepare-bing' {
             return Invoke-MetraInspectPrepareForBing -Name $projectName -Reset:$reset
+        }
+        'budget' {
+            return Invoke-MetraInspectBudget -Name $projectName -Base $baseRev @common
         }
         'pre-commit' {
             return Invoke-MetraInspectPreCommitHook -Name $projectName

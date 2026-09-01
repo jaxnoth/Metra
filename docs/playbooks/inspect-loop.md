@@ -77,3 +77,14 @@ Independence of review matters more than the specific model. The safety net is i
 - Pack rebuilds scrubbed appendix bodies from current disk; findings stay from the assessed report (stale warning when inputHash differs).
 - During calibration, Bing remains the required comparison lane for **Metra executable** changes.
 - A2 `pack-only agents` packs `AGENTS.md` + `docs/playbooks/*.md` only for external desk-split review.
+
+## Token economy (Agent vs Bing)
+
+| Artifact | Consumer | Path |
+|----------|----------|------|
+| Fix queue + latest report | Cursor Agent (implement/verify) | `%LOCALAPPDATA%\Metra\inspect\<Project>\fix-queue.json`, `latest.json` |
+| Pack | Bing / operator review only | `%LOCALAPPDATA%\Metra\inspect\pack-diff.md` |
+
+- `.\metra.ps1 inspect budget -Name <Project>` — no engine call; estimates prompt payload chars and band before inspect.
+- Round 1 assess: full collapsed reduced diff. Verify rounds: touch-set bodies only; outside paths are names-only indicators.
+- Rename collapse (`git-rename`, `suffix-pair`) runs before the file cap; ambiguous pairs stay uncollapsed.

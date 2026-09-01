@@ -51,6 +51,7 @@ Entry: `.\metra.ps1`. Inspect detail: [inspect-loop.md](inspect-loop.md).
 .\metra.ps1 coverage
 .\metra.ps1 inspect
 .\metra.ps1 inspect -Name Metra
+.\metra.ps1 inspect budget -Name Metra
 .\metra.ps1 inspect plan
 .\metra.ps1 inspect plan -Latest -Name Metra
 .\metra.ps1 inspect plan <filename-fragment> -Name Metra

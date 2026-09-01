@@ -63,13 +63,91 @@ function Get-LoomGitCurrentBranch {
     return ($r.Stdout.Trim())
 }
 
+function Get-LoomGitUntrackedPaths {
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory)][string]$ProjectRoot
+    )
+
+    $r = Invoke-LoomGit -ProjectRoot $ProjectRoot -GitArgs @('ls-files', '--others', '--exclude-standard')
+    if ($r.ExitCode -ne 0) {
+        throw "git ls-files --others failed in ${ProjectRoot}: $(Get-LoomGitErrorDetail $r)"
+    }
+    return @(
+        @($r.Stdout -split "`r?`n") |
+            ForEach-Object { ([string]$_).Trim().Replace('\', '/') } |
+            Where-Object { -not [string]::IsNullOrWhiteSpace($_) }
+    )
+}
+
+function Remove-LoomRunCreatedUntracked {
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory)][string]$ProjectRoot,
+        [AllowEmptyCollection()][string[]]$BeforeUntracked = @(),
+        [string]$RunDir = ''
+    )
+
+    $afterUntracked = @(Get-LoomGitUntrackedPaths -ProjectRoot $ProjectRoot)
+    $beforeSet = New-Object 'System.Collections.Generic.HashSet[string]' ([StringComparer]::OrdinalIgnoreCase)
+    foreach ($b in @($BeforeUntracked)) {
+        $norm = ([string]$b).Replace('\', '/').Trim()
+        if (-not [string]::IsNullOrWhiteSpace($norm)) { [void]$beforeSet.Add($norm) }
+    }
+    $createdByRun = @($afterUntracked | Where-Object { -not $beforeSet.Contains($_) })
+
+    if (-not [string]::IsNullOrWhiteSpace($RunDir)) {
+        try {
+            New-Item -ItemType Directory -Path $RunDir -Force | Out-Null
+            $evidence = [PSCustomObject]@{
+                schemaVersion  = 1
+                beforeUntracked = @($BeforeUntracked)
+                afterUntracked  = @($afterUntracked)
+                createdByRun    = @($createdByRun)
+                recordedAtUtc   = (Get-Date).ToUniversalTime().ToString('o')
+            }
+            Write-LoomAtomicUtf8Text -Path (Join-Path $RunDir 'untracked-cleanup.json') -Text (($evidence | ConvertTo-Json -Depth 6) + "`n")
+        }
+        catch {
+            Write-Warning ("Could not write untracked cleanup evidence: $($_.Exception.Message)")
+        }
+    }
+
+    foreach ($rel in @($createdByRun)) {
+        $full = Join-Path $ProjectRoot ($rel -replace '/', [System.IO.Path]::DirectorySeparatorChar)
+        try {
+            $rootFull = [System.IO.Path]::GetFullPath($ProjectRoot)
+            $targetFull = [System.IO.Path]::GetFullPath($full)
+            $rootPrefix = $rootFull.TrimEnd([System.IO.Path]::DirectorySeparatorChar, [System.IO.Path]::AltDirectorySeparatorChar) + [System.IO.Path]::DirectorySeparatorChar
+            if (-not $targetFull.StartsWith($rootPrefix, [StringComparison]::OrdinalIgnoreCase)) {
+                Write-Warning ("Skipping untracked cleanup outside project root: $rel")
+                continue
+            }
+        }
+        catch {
+            Write-Warning ("Skipping untracked cleanup; path resolution failed for '$rel': $($_.Exception.Message)")
+            continue
+        }
+        if (Test-Path -LiteralPath $full) {
+            try {
+                Remove-Item -LiteralPath $full -Recurse -Force -ErrorAction Stop
+            }
+            catch {
+                Write-Warning ("Failed to remove run-created untracked path '$rel': $($_.Exception.Message)")
+            }
+        }
+    }
+}
+
 function Restore-LoomGitAfterFailedRun {
     [CmdletBinding()]
     param(
         [Parameter(Mandatory)][string]$ProjectRoot,
         [Parameter(Mandatory)][string]$BaselineSha,
         [string]$OriginalBranch,
-        [string]$ItemBranch
+        [string]$ItemBranch,
+        [string[]]$BeforeUntracked = @(),
+        [string]$RunDir = ''
     )
 
     if ([string]::IsNullOrWhiteSpace($BaselineSha)) { return }
@@ -79,10 +157,7 @@ function Restore-LoomGitAfterFailedRun {
             Write-Warning "git reset --hard failed during run cleanup: $(Get-LoomGitErrorDetail $reset)"
         }
         else {
-            $clean = Invoke-LoomGit -ProjectRoot $ProjectRoot -GitArgs @('clean', '-fd')
-            if ($clean.ExitCode -ne 0) {
-                Write-Warning "git clean -fd failed during run cleanup: $(Get-LoomGitErrorDetail $clean)"
-            }
+            Remove-LoomRunCreatedUntracked -ProjectRoot $ProjectRoot -BeforeUntracked @($BeforeUntracked) -RunDir $RunDir
         }
         if (-not [string]::IsNullOrWhiteSpace($OriginalBranch)) {
             $co = Invoke-LoomGit -ProjectRoot $ProjectRoot -GitArgs @('checkout', $OriginalBranch)
@@ -448,6 +523,7 @@ function Invoke-MetraLoomRun {
 
     $baselineSha = Get-LoomGitHeadCommit -ProjectRoot $projectRoot
     $originalBranch = Get-LoomGitCurrentBranch -ProjectRoot $projectRoot
+    $beforeUntracked = @(Get-LoomGitUntrackedPaths -ProjectRoot $projectRoot)
     $gitRunActive = $false
     $claimed = Invoke-MetraLoomStateChange -Root $Root -ItemId $ItemId -From 'queued' -To 'claimed' -Reason 'run-start' -Mutator {
         param($i)
@@ -566,7 +642,8 @@ function Invoke-MetraLoomRun {
     catch {
         if ($gitRunActive) {
             Restore-LoomGitAfterFailedRun -ProjectRoot $projectRoot -BaselineSha $baselineSha `
-                -OriginalBranch $originalBranch -ItemBranch $branch
+                -OriginalBranch $originalBranch -ItemBranch $branch `
+                -BeforeUntracked @($beforeUntracked) -RunDir $runDir
         }
         if ($_.Exception.Message -notmatch '^(Git working tree|Implementer|Changed paths)') {
             try {
