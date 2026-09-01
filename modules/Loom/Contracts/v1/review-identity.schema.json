@@ -1,0 +1,17 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "review-identity",
+  "type": "object",
+  "required": ["queueItemId", "implementationRunId", "reviewRunId", "itemBranch", "contractDigest"],
+  "properties": {
+    "schemaVersion": { "type": "integer", "const": 1 },
+    "queueItemId": { "type": "string" },
+    "implementationRunId": { "type": "string" },
+    "reviewRunId": { "type": "string" },
+    "sourceCommit": { "type": "string" },
+    "itemBranch": { "type": "string" },
+    "contractDigest": { "type": "string" },
+    "runDir": { "type": "string" },
+    "registryName": { "type": "string" }
+  }
+}

@@ -8,6 +8,7 @@ m0Completed: 2026-08-31
 m1Completed: 2026-08-31
 m2PartialCompleted: 2026-08-31
 slice3Completed: 2026-08-31
+slice4Completed: 2026-09-01
 todos:
   - id: m0-baseline
     content: "M0 ΓÇö Baseline reconcile, freeze, git track separation, canonical status matrix, focused pack"
@@ -26,6 +27,9 @@ todos:
     status: completed
   - id: slice-3-runner
     content: "Slice 3 ΓÇö Branch runner (clean-tree check, isolated run dir, one implementer invocation, path enforcement, no commit)"
+    status: completed
+  - id: slice-4-review
+    content: "Slice 4 — Review and completion (inspect + verify adapters, orchestrator, auto-chain, branch commit)"
     status: completed
   - id: m2-naming-review
     content: "Post-M2 ΓÇö Execute Loom rename track (decision recorded 2026-08-31); separate from module extraction"

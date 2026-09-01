@@ -2,11 +2,28 @@
   "$schema": "http://json-schema.org/draft-07/schema#",
   "title": "verify-result",
   "type": "object",
-  "required": ["schemaVersion", "status"],
+  "required": ["schemaVersion", "outcome"],
   "properties": {
     "schemaVersion": { "type": "integer", "const": 1 },
+    "outcome": {
+      "type": "string",
+      "enum": [
+        "passed",
+        "command-failed",
+        "command-timeout",
+        "adapter-unavailable",
+        "invalid-contract",
+        "launch-failed",
+        "invalid-result"
+      ]
+    },
     "status": { "type": "string" },
     "passed": { "type": "boolean" },
-    "message": { "type": "string" }
+    "message": { "type": "string" },
+    "failedCommand": { "type": "string" },
+    "exitCode": { "type": "integer" },
+    "stdoutPath": { "type": "string" },
+    "stderrPath": { "type": "string" },
+    "logPath": { "type": "string" }
   }
 }

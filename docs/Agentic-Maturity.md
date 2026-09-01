@@ -342,6 +342,7 @@ Filled **2026-08-06**. Loop-form annotations added same day (TikTok glean). Revi
 | Jitterbit stuck-ops | L3 | L5 | incomplete | L3 (Clear/PE) | safety |
 | Jitterbit agent go-live | L3 | L5 | incomplete | phase-stop | safety |
 | Colleague stuck session / in-use | L3 | L5 | incomplete | L3 (Live kill) | safety |
+| Loom governed execution (Slice 4) | L5 | L6 | incomplete | L3 (accept/push) | policy |
 
 ### Workflow: Plain chat Q&A (no repo)
 
@@ -522,6 +523,24 @@ Do not call this L4 (no specialist merge). Do not grant L5 because Snapshot or H
 | On hard stop | No killable session or unknown lock file; cite session/process output; next: ask operator which control record to clear - fail closed, do not invent a generic clear |
 | Gaps to target | 1. Prove done-when on next Live stuck-session ticket. 2. Bound retry when telnet/call stack flakes. |
 | Next bite | Next PGLT-style ticket: enforce done-when before claiming complete (G2 desk shipped 2026-08-15) |
+
+### Workflow: Loom governed execution (Slice 4)
+
+**Purpose:** Approved plan -> queue -> isolated implement -> inspect + verify -> branch commit -> machine `completed` (operator `accepted` is Slice 5).
+
+| Field | Value |
+|-------|-------|
+| Current | L5 |
+| Target | L6 |
+| Ceiling | L3 for `accepted`, push, merge, and unattended daily gate |
+| Ceiling reason | policy |
+| Completeness | incomplete |
+| Evidence quality | authoritative when inspect + verify + commit evidence persisted in run dir |
+| Loop form | goal-based (judge = inspect outcome + verify pass + commit hash); auto-chain on `loom run -Confirm` |
+| Evidence (current) | `Invoke-MetraLoomReview` sole transition owner; discriminated inspect/verify adapters; separate retry counters; commit-before-completed; `-Confirm` for live paths; recovery via `loom review -Confirm` |
+| On hard stop | Item `blocked` with journal + `review.json`; cite run dir evidence; next: operator fixes findings or runs `loom review -Confirm` after engine recovery - no silent `completed` |
+| Gaps to target | 1. Unattended `-UntilDailyGate` (Slice 6). 2. Operator `accepted` daily gate (Slice 5). 3. Prove full live inspect loop on production desk without mocks |
+| Next bite | Slice 5 acceptance gate; keep Bing affirm on Metra pack before ship commits |
 
 ---
 

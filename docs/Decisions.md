@@ -24,6 +24,14 @@ Entry shape:
 
 ---
 
+## 2026-09-01 - Loom Slice 4 review and completion
+
+- Decision: Loom `reviewing` exits only via `Invoke-MetraLoomReview` to `completed`, `implementing`, or `blocked`. Inspect and verify adapters return contract-shaped evidence only. `loom run -Confirm` auto-chains review by default (`-NoChainReview` to stop at `reviewing`). When `completionCommitPolicy` is `required`, commit on the item branch before `completed` (no push). Inspect pack artifacts are per-project slot paths (`inspect/<Project>/pack-diff.md`, `pack-plan.md`) so parallel Loom items do not overwrite packs.
+- Why: Slice 4 closes the implement->review->complete loop with a single transition owner, bounded retries, and isolated Bing packs for parallel development.
+- See: `modules/Loom/Private/Review.ps1`, `docs/playbooks/loom.md`, `docs/playbooks/inspect-loop.md`
+
+---
+
 ## 2026-09-01 - Local-model prompt roles (subject, rule, example)
 
 - Decision: When Metra packs a prompt for a local model (Ollama Ask, ticket recommendation drafts, other single-shot local completions), include three items selected in code: (1) the subject under discussion, (2) the one rule applicable to the current job, (3) one example output for the same job. The model does not choose the rule or the example. This decision defines prompt roles; evidence-cap limits remain governed by the Ask evidence contract. The example must live with the workflow that owns the output shape (eval row, fixture, skill, or equivalent workflow-local asset). Examples are not stored in a centralized prompt/example repository. This does not replace `.\metra.ps1 routing`, Attention eligibility, or Host apply. Skip the three-item pack for greetings and other honesty short-circuits that never call the engine. Cursor Agent coding sessions are out of scope; they already load desk rules and can read files. Inspect workflows remain governed by their own review-pack contracts.

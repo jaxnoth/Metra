@@ -77,7 +77,8 @@ function Test-LoomContractNode {
             foreach ($p in $Value.PSObject.Properties) { $props[$p.Name] = $p.Value }
         }
 
-        foreach ($req in @($Schema.required)) {
+        $required = Get-LoomSchemaProp -Schema $Schema -Name 'required'
+        foreach ($req in @($required)) {
             if (-not $props.ContainsKey([string]$req)) {
                 [void]$Errors.Add("$Path missing required property '$req'")
             }

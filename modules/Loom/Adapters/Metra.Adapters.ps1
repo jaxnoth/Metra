@@ -10,7 +10,6 @@ function Get-LoomHostRoot {
     if ($cmd) {
         return & $cmd
     }
-    # Standalone fallback: module lives at <metra>/modules/Loom
     $modRoot = $PSScriptRoot
     while ($modRoot -and (Split-Path -Leaf $modRoot) -ne 'Loom') {
         $modRoot = Split-Path -Parent $modRoot
@@ -36,7 +35,6 @@ function Get-LoomInspectPlanRoots {
     if ($cmd) {
         return @(& $cmd -MetraRoot $MetraRoot)
     }
-    # Isolation fallback: Cursor plans + docs
     $roots = New-Object System.Collections.Generic.List[string]
     $cursor = Join-Path $env:USERPROFILE '.cursor\plans'
     if (Test-Path -LiteralPath $cursor) { [void]$roots.Add($cursor) }
@@ -159,14 +157,113 @@ function Get-LoomRoutingContext {
     return $unresolved
 }
 
+function ConvertTo-LoomInspectOutcomeFromEngine {
+    param(
+        [object]$LoopResult,
+        [string]$Message
+    )
+    $msg = [string]$Message
+    if ($msg -match 'usage limit|quota|billing|authentication|licensing|unauthorized') {
+        return 'terminal-engine-failure'
+    }
+    if ($msg -match 'timeout|unavailable|sidecar|connection|transient') {
+        return 'transient-engine-failure'
+    }
+    if ($LoopResult) {
+        $critical = [int](Get-LoomProp -Object $LoopResult -Name 'CriticalCount' -Default 0)
+        $high = [int](Get-LoomProp -Object $LoopResult -Name 'HighCount' -Default 0)
+        $medium = [int](Get-LoomProp -Object $LoopResult -Name 'MediumCount' -Default 0)
+        $term = [string](Get-LoomProp -Object $LoopResult -Name 'TerminationReason' -Default '')
+        if ($term -match 'regression') {
+            return 'regression-reverted'
+        }
+        if ($critical -eq 0 -and $high -eq 0 -and $medium -le 2) {
+            return 'passed'
+        }
+        return 'code-findings'
+    }
+    return 'invalid-result'
+}
+
 function Invoke-LoomInspectAdapter {
+    <#
+    .SYNOPSIS
+        Slice 4 inspect adapter — evidence only; returns discriminated outcome.
+    #>
     [CmdletBinding()]
-    param($Request)
-    return [PSCustomObject]@{
-        schemaVersion = 1
-        status        = 'not-implemented'
-        goalMet       = $false
-        message       = 'Inspect adapter stubs until Slice 4.'
+    param(
+        $Request,
+        [string]$ProjectRoot,
+        [string]$RunDir,
+        [scriptblock]$InspectScript
+    )
+
+    if ($InspectScript) {
+        $raw = & $InspectScript $Request $ProjectRoot $RunDir
+        if ($raw.outcome) { return $raw }
+        return [PSCustomObject]@{
+            schemaVersion = 1
+            outcome       = [string](Get-LoomProp -Object $raw -Name 'outcome' -Default 'invalid-result')
+            status        = [string](Get-LoomProp -Object $raw -Name 'status' -Default '')
+            goalMet       = [bool](Get-LoomProp -Object $raw -Name 'goalMet' -Default $false)
+            message       = [string](Get-LoomProp -Object $raw -Name 'message' -Default '')
+        }
+    }
+
+    $registry = [string](Get-LoomProp -Object $Request -Name 'registryName' -Default '')
+    if ([string]::IsNullOrWhiteSpace($registry)) {
+        $registry = [string](Get-LoomProp -Object $Request -Name 'projectName' -Default '')
+    }
+    $cmd = Get-Command Invoke-MetraInspectReviewLoop -ErrorAction SilentlyContinue
+    if (-not $cmd) {
+        $result = [PSCustomObject]@{
+            schemaVersion = 1
+            outcome       = 'adapter-unavailable'
+            status        = 'adapter-unavailable'
+            goalMet       = $false
+            message       = 'Inspect adapter unavailable (Invoke-MetraInspectReviewLoop not loaded).'
+        }
+        Test-LoomContract -Schema 'inspect-result' -Object $result | Out-Null
+        return $result
+    }
+
+    try {
+        $loop = & $cmd -Name $registry -RunAll -MaxLoops 5
+        $outcome = ConvertTo-LoomInspectOutcomeFromEngine -LoopResult $loop -Message ''
+        $critical = [int](Get-LoomProp -Object $loop -Name 'CriticalCount' -Default 0)
+        $high = [int](Get-LoomProp -Object $loop -Name 'HighCount' -Default 0)
+        $medium = [int](Get-LoomProp -Object $loop -Name 'MediumCount' -Default 0)
+        $result = [PSCustomObject]@{
+            schemaVersion = 1
+            outcome       = $outcome
+            status        = $outcome
+            goalMet       = ($outcome -eq 'passed')
+            message       = "inspect loop: C=$critical H=$high M=$medium"
+            criticalCount = $critical
+            highCount     = $high
+            mediumCount   = $medium
+        }
+        if ($outcome -eq 'regression-reverted') {
+            $result | Add-Member -NotePropertyName workspaceMutation -NotePropertyValue 'reverted' -Force
+            if ($ProjectRoot) {
+                $result | Add-Member -NotePropertyName afterCommit -NotePropertyValue (Get-LoomGitHeadCommit -ProjectRoot $ProjectRoot) -Force
+            }
+        }
+        Test-LoomContract -Schema 'inspect-result' -Object $result | Out-Null
+        return $result
+    }
+    catch {
+        $msg = $_.Exception.Message
+        $outcome = ConvertTo-LoomInspectOutcomeFromEngine -LoopResult $null -Message $msg
+        $result = [PSCustomObject]@{
+            schemaVersion = 1
+            outcome       = $outcome
+            status        = $outcome
+            goalMet       = $false
+            message       = $msg
+        }
+        Test-LoomContract -Schema 'inspect-result' -Object $result | Out-Null
+        return $result
     }
 }
 
@@ -200,13 +297,154 @@ function Invoke-LoomImplementerAdapter {
     }
 }
 
-function Invoke-LoomVerifyAdapter {
+function Stop-LoomVerifyProcess {
     [CmdletBinding()]
-    param($Request)
-    return [PSCustomObject]@{
-        schemaVersion = 1
-        status        = 'not-implemented'
-        passed        = $false
-        message       = 'Verify adapter stubs until Slice 4.'
+    param([System.Diagnostics.Process]$Process)
+    if (-not $Process) { return }
+    try {
+        if (-not $Process.HasExited) { $Process.Kill($true) }
+    }
+    catch {
+        try {
+            if (-not $Process.HasExited) { $Process.Kill() }
+        }
+        catch { }
+    }
+}
+
+function Invoke-LoomVerifyAdapter {
+    <#
+    .SYNOPSIS
+        Slice 4 verify adapter — structured contract commands from project root.
+    #>
+    [CmdletBinding()]
+    param(
+        $Request,
+        [Parameter(Mandatory)][string]$ProjectRoot,
+        [Parameter(Mandatory)][string]$RunDir,
+        [scriptblock]$VerifyScript
+    )
+
+    if ($VerifyScript) {
+        $raw = & $VerifyScript $Request $ProjectRoot $RunDir
+        if ($raw.outcome) { return $raw }
+        $passed = [bool](Get-LoomProp -Object $raw -Name 'passed' -Default $false)
+        return [PSCustomObject]@{
+            schemaVersion = 1
+            outcome       = $(if ($passed) { 'passed' } else { 'command-failed' })
+            passed        = $passed
+            message       = [string](Get-LoomProp -Object $raw -Name 'message' -Default '')
+        }
+    }
+
+    $rawCommands = @($(Get-LoomProp -Object $Request -Name 'verifyCommands' -Default @()))
+    if ($rawCommands.Count -eq 0) {
+        $contract = Get-LoomProp -Object $Request -Name 'contract' -Default $null
+        if ($contract) {
+            $rawCommands = @($(Get-LoomProp -Object $contract -Name 'verifyCommands' -Default @()))
+        }
+    }
+    if ($rawCommands.Count -eq 0) {
+        $result = [PSCustomObject]@{
+            schemaVersion = 1
+            outcome       = 'invalid-contract'
+            passed        = $false
+            message       = 'No verifyCommands in request.'
+        }
+        Test-LoomContract -Schema 'verify-result' -Object $result | Out-Null
+        return $result
+    }
+
+    $structured = @()
+    foreach ($c in $rawCommands) {
+        $s = ConvertTo-LoomStructuredVerifyCommand -Command $c
+        if (-not $s -or [string]::IsNullOrWhiteSpace($s.executable)) {
+            $result = [PSCustomObject]@{
+                schemaVersion = 1
+                outcome       = 'invalid-contract'
+                passed        = $false
+                message       = 'Malformed verify command entry.'
+            }
+            Test-LoomContract -Schema 'verify-result' -Object $result | Out-Null
+            return $result
+        }
+        $structured += $s
+    }
+
+    $cwdBefore = Get-Location
+    $cmdIndex = 0
+    try {
+        foreach ($cmd in $structured) {
+            $cmdIndex++
+            $workDir = Resolve-LoomVerifyWorkingDirectory -ProjectRoot $ProjectRoot -WorkingDirectory ([string]$cmd.workingDirectory)
+            $timeout = [int]$cmd.timeoutSeconds
+            if ($timeout -le 0) { $timeout = 900 }
+
+            $stdoutPath = Join-Path $RunDir ("verify-{0}-stdout.log" -f $cmdIndex)
+            $stderrPath = Join-Path $RunDir ("verify-{0}-stderr.log" -f $cmdIndex)
+
+            try {
+                $proc = Start-Process -FilePath ([string]$cmd.executable) `
+                    -ArgumentList @($cmd.arguments) `
+                    -WorkingDirectory $workDir `
+                    -RedirectStandardOutput $stdoutPath `
+                    -RedirectStandardError $stderrPath `
+                    -PassThru -NoNewWindow
+            }
+            catch {
+                $result = [PSCustomObject]@{
+                    schemaVersion = 1
+                    outcome       = 'launch-failed'
+                    passed        = $false
+                    message       = $_.Exception.Message
+                    failedCommand = [string]$cmd.executable
+                }
+                Test-LoomContract -Schema 'verify-result' -Object $result | Out-Null
+                return $result
+            }
+
+            if (-not $proc.WaitForExit($timeout * 1000)) {
+                Stop-LoomVerifyProcess -Process $proc
+                $result = [PSCustomObject]@{
+                    schemaVersion = 1
+                    outcome       = 'command-timeout'
+                    passed        = $false
+                    message       = "Verify command timed out after ${timeout}s"
+                    failedCommand = [string]$cmd.executable
+                    stdoutPath    = $stdoutPath
+                    stderrPath    = $stderrPath
+                }
+                Test-LoomContract -Schema 'verify-result' -Object $result | Out-Null
+                return $result
+            }
+
+            if ($proc.ExitCode -ne 0) {
+                $result = [PSCustomObject]@{
+                    schemaVersion = 1
+                    outcome       = 'command-failed'
+                    passed        = $false
+                    message       = "Verify command failed with exit $($proc.ExitCode)"
+                    failedCommand = [string]$cmd.executable
+                    exitCode      = $proc.ExitCode
+                    stdoutPath    = $stdoutPath
+                    stderrPath    = $stderrPath
+                    logPath       = $stderrPath
+                }
+                Test-LoomContract -Schema 'verify-result' -Object $result | Out-Null
+                return $result
+            }
+        }
+
+        $ok = [PSCustomObject]@{
+            schemaVersion = 1
+            outcome       = 'passed'
+            passed        = $true
+            message       = 'All verify commands passed.'
+        }
+        Test-LoomContract -Schema 'verify-result' -Object $ok | Out-Null
+        return $ok
+    }
+    finally {
+        Set-Location -LiteralPath $cwdBefore.Path
     }
 }
