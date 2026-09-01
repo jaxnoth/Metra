@@ -2,11 +2,31 @@
   "$schema": "http://json-schema.org/draft-07/schema#",
   "title": "inspect-result",
   "type": "object",
-  "required": ["schemaVersion", "status"],
+  "required": ["schemaVersion", "outcome"],
   "properties": {
     "schemaVersion": { "type": "integer", "const": 1 },
+    "outcome": {
+      "type": "string",
+      "enum": [
+        "passed",
+        "code-findings",
+        "transient-engine-failure",
+        "terminal-engine-failure",
+        "stale-result",
+        "adapter-unavailable",
+        "invalid-result",
+        "regression-reverted"
+      ]
+    },
     "status": { "type": "string" },
     "goalMet": { "type": "boolean" },
-    "message": { "type": "string" }
+    "message": { "type": "string" },
+    "criticalCount": { "type": "integer" },
+    "highCount": { "type": "integer" },
+    "mediumCount": { "type": "integer" },
+    "reportPath": { "type": "string" },
+    "workspaceMutation": { "type": "string" },
+    "beforeCommit": { "type": "string" },
+    "afterCommit": { "type": "string" }
   }
 }

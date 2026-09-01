@@ -1,0 +1,16 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "review-result",
+  "type": "object",
+  "required": ["schemaVersion", "outcome"],
+  "properties": {
+    "schemaVersion": { "type": "integer", "const": 1 },
+    "outcome": { "type": "string" },
+    "dryRun": { "type": "boolean" },
+    "message": { "type": "string" },
+    "reviewRunId": { "type": "string" },
+    "completedCommit": { "type": ["string", "null"] },
+    "inspectOutcome": { "type": "string" },
+    "verifyOutcome": { "type": "string" }
+  }
+}

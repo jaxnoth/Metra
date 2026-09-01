@@ -1152,7 +1152,7 @@ function Invoke-MetraLoomDailyStub {
 function Invoke-LoomCommand {
     <#
     .SYNOPSIS
-        CLI: loom triage|enqueue|plans|status|show|block|run|daily|migrate
+        CLI: loom triage|enqueue|plans|status|show|block|run|review|daily|migrate
     #>
     [CmdletBinding()]
     param(
@@ -1170,7 +1170,7 @@ function Invoke-LoomCommand {
         $Root = (Resolve-MetraLoomRoot -OverrideRoot $Root).Path
     }
 
-    $mutating = @('run', 'block', 'enqueue', 'migrate')
+    $mutating = @('run', 'block', 'enqueue', 'migrate', 'review')
     if ($mutating -contains $Subcommand.ToLowerInvariant()) {
         Assert-LoomRootWritable -Root $Root -OverrideRoot $(if ($explicitRoot) { $Root } else { $null })
     }
@@ -1212,7 +1212,19 @@ function Invoke-LoomCommand {
             if ($ArgsRest -notcontains '-Confirm') {
                 throw 'autoprogram run requires -Confirm for live execution (git branch + implementer).'
             }
-            return Invoke-MetraLoomRun -Root $Root -ItemId $id -MetraRoot $MetraRoot -Confirm
+            return Invoke-MetraLoomRun -Root $Root -ItemId $id -MetraRoot $MetraRoot -Confirm -ChainReview:$(-not ($ArgsRest -contains '-NoChainReview'))
+        }
+        'review' {
+            $id = $null
+            for ($i = 0; $i -lt $ArgsRest.Count; $i++) {
+                if ($ArgsRest[$i] -eq '-Id' -and ($i + 1) -lt $ArgsRest.Count) { $id = [string]$ArgsRest[$i + 1]; $i++ }
+            }
+            if ([string]::IsNullOrWhiteSpace($id)) { throw 'loom review -Id <AP-...> [-Confirm]' }
+            $live = $ArgsRest -contains '-Confirm'
+            if ($live) {
+                return Invoke-MetraLoomReview -Root $Root -ItemId $id -MetraRoot $MetraRoot -Confirm
+            }
+            return Invoke-MetraLoomReview -Root $Root -ItemId $id -MetraRoot $MetraRoot -DryRun
         }
         'show' {
             $id = $null
@@ -1306,7 +1318,7 @@ function Invoke-LoomCommand {
             return Invoke-MetraLoomMigrate @params
         }
         default {
-            throw "Unknown loom subcommand: $Subcommand. Use triage|enqueue|plans|status|show|block|run|daily|migrate."
+            throw "Unknown loom subcommand: $Subcommand. Use triage|enqueue|plans|status|show|block|run|review|daily|migrate."
         }
     }
 }

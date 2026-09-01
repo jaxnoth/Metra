@@ -61,6 +61,13 @@ Describe 'Loom Slice 3 transitions' {
         Test-MetraLoomTransition -From 'implementing' -To 'claimed' | Should -BeTrue
         Test-MetraLoomTransition -From 'queued' -To 'reviewing' | Should -BeFalse
     }
+    It 'allows Slice 4 reviewing exits' {
+        Test-MetraLoomTransition -From 'reviewing' -To 'completed' | Should -BeTrue
+        Test-MetraLoomTransition -From 'reviewing' -To 'implementing' | Should -BeTrue
+        Test-MetraLoomTransition -From 'reviewing' -To 'blocked' | Should -BeTrue
+        Test-MetraLoomTransition -From 'reviewing' -To 'failed' | Should -BeFalse
+        Test-MetraLoomTransition -From 'completed' -To 'accepted' | Should -BeFalse
+    }
 }
 
 Describe 'Loom run dry-run' {
@@ -93,7 +100,7 @@ Describe 'Loom run live (git + implementer override)' {
             Set-Content -Path (Join-Path $proj 'dirty.txt') -Value 'x'
             Initialize-MetraLoomLayout -Root $root
             $item = New-LoomTestQueueItem -Root $root -ProjectRoot $proj
-            { Invoke-MetraLoomRun -Root $root -ItemId $item.id -Confirm } |
+            { Invoke-MetraLoomRun -Root $root -ItemId $item.id -Confirm -ChainReview:$false } |
                 Should -Throw '*not clean*'
             (Get-MetraLoomQueueItem -Root $root -Id $item.id).status | Should -Be 'blocked'
         }
@@ -120,7 +127,7 @@ Describe 'Loom run live (git + implementer override)' {
                 git -C $ProjectRoot add tests/runner-ok.txt 2>$null | Out-Null
                 return [PSCustomObject]@{ schemaVersion = 1; status = 'ok'; message = 'test ok'; exitCode = 0 }
             }
-            $result = Invoke-MetraLoomRun -Root $root -ItemId $item.id -Confirm -ImplementerScript $impl
+            $result = Invoke-MetraLoomRun -Root $root -ItemId $item.id -Confirm -ChainReview:$false -ImplementerScript $impl
             $result.status | Should -Be 'reviewing'
             Test-Path -LiteralPath (Join-Path $result.runDir 'implementation.json') | Should -BeTrue
         }
@@ -147,7 +154,7 @@ Describe 'Loom run live (git + implementer override)' {
                 git -C $ProjectRoot add evil-outside.txt 2>$null | Out-Null
                 return [PSCustomObject]@{ schemaVersion = 1; status = 'ok'; message = 'test ok'; exitCode = 0 }
             }
-            { Invoke-MetraLoomRun -Root $root -ItemId $item.id -Confirm -ImplementerScript $impl } |
+            { Invoke-MetraLoomRun -Root $root -ItemId $item.id -Confirm -ChainReview:$false -ImplementerScript $impl } |
                 Should -Throw '*violate contract*'
             (Get-MetraLoomQueueItem -Root $root -Id $item.id).status | Should -Be 'blocked'
         }
@@ -171,7 +178,7 @@ Describe 'Loom run live (git + implementer override)' {
                     exitCode = 1
                 }
             }
-            { Invoke-MetraLoomRun -Root $root -ItemId $item.id -Confirm -ImplementerScript $impl } |
+            { Invoke-MetraLoomRun -Root $root -ItemId $item.id -Confirm -ChainReview:$false -ImplementerScript $impl } |
                 Should -Throw '*licensing_error*'
             (Get-MetraLoomQueueItem -Root $root -Id $item.id).status | Should -Be 'blocked'
         }

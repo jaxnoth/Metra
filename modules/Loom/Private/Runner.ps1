@@ -10,7 +10,7 @@ function Get-LoomActiveTransitionMap {
         'claimed'      = @('implementing', 'blocked', 'failed')
         'implementing' = @('reviewing', 'blocked', 'failed', 'claimed')
         'blocked'      = @()
-        'reviewing'    = @()
+        'reviewing'    = @('completed', 'implementing', 'blocked')
         'completed'    = @()
         'accepted'     = @()
         'failed'       = @()
@@ -18,6 +18,10 @@ function Get-LoomActiveTransitionMap {
         'needsManualTest' = @()
         'superseded'   = @()
     }
+}
+
+function Get-LoomSlice4Transitions {
+    return Get-LoomActiveTransitionMap
 }
 
 function Get-LoomSlice3Transitions {
@@ -467,7 +471,10 @@ function Invoke-MetraLoomRun {
         [string]$MetraRoot = (Get-LoomHostRoot),
         [switch]$DryRun,
         [switch]$Confirm,
-        [scriptblock]$ImplementerScript
+        [switch]$ChainReview,
+        [scriptblock]$ImplementerScript,
+        [scriptblock]$InspectScript,
+        [scriptblock]$VerifyScript
     )
 
     $item = Get-MetraLoomQueueItem -Root $Root -Id $ItemId
@@ -513,6 +520,10 @@ function Invoke-MetraLoomRun {
 
     if (-not $Confirm) {
         throw 'autoprogram run requires -Confirm for live execution (git branch + implementer).'
+    }
+
+    if (-not $PSBoundParameters.ContainsKey('ChainReview')) {
+        $ChainReview = $true
     }
 
     if (-not (Test-LoomGitWorkingTreeClean -ProjectRoot $projectRoot)) {
@@ -625,7 +636,27 @@ function Invoke-MetraLoomRun {
                 runDir  = $runDir
                 at      = (Get-Date).ToString('o')
             })
+            if (-not $i.execution) { $i | Add-Member -NotePropertyName execution -NotePropertyValue ([PSCustomObject]@{}) -Force }
+            $i.execution | Add-Member -NotePropertyName postImplementationCommit -NotePropertyValue (Get-LoomGitHeadCommit -ProjectRoot $projectRoot) -Force
             return $i
+        }
+
+        $finalStatus = [string]$reviewing.status
+        if ($ChainReview) {
+            try {
+                $review = Invoke-MetraLoomReview -Root $Root -ItemId $ItemId -MetraRoot $MetraRoot -Confirm `
+                    -ImplementerScript $ImplementerScript -InspectScript $InspectScript -VerifyScript $VerifyScript
+                $finalStatus = [string](Get-LoomProp -Object $review -Name 'status' -Default $finalStatus)
+                if (-not $finalStatus -or $finalStatus -eq 'reviewing') {
+                    $cur = Get-MetraLoomQueueItem -Root $Root -Id $ItemId
+                    if ($cur) { $finalStatus = [string]$cur.status }
+                }
+            }
+            catch {
+                $cur = Get-MetraLoomQueueItem -Root $Root -Id $ItemId
+                if ($cur) { $finalStatus = [string]$cur.status }
+                if ($finalStatus -eq 'reviewing') { throw }
+            }
         }
 
         return [PSCustomObject]@{
@@ -636,7 +667,7 @@ function Invoke-MetraLoomRun {
             baselineSha  = $baselineSha
             changedPaths = @($changed)
             result       = $record
-            status       = [string]$reviewing.status
+            status       = $finalStatus
         }
     }
     catch {

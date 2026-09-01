@@ -54,9 +54,18 @@ Describe 'Loom isolation gate' {
         }
     }
 
-    It 'inspect/verify adapters return not-implemented stubs' {
-        (Invoke-LoomInspectAdapter -Request @{ schemaVersion = 1 }).status | Should -Be 'not-implemented'
-        (Invoke-LoomVerifyAdapter -Request @{ schemaVersion = 1 }).status | Should -Be 'not-implemented'
+    It 'inspect/verify adapters fail closed without full request context' {
+        InModuleScope Loom {
+            $tmp = Join-Path ([IO.Path]::GetTempPath()) ('ap-adapt-' + [guid]::NewGuid().ToString('n'))
+            New-Item -ItemType Directory -Path $tmp -Force | Out-Null
+            try {
+                (Invoke-LoomInspectAdapter -Request @{ schemaVersion = 1 }).outcome | Should -Be 'adapter-unavailable'
+                (Invoke-LoomVerifyAdapter -Request @{ schemaVersion = 1; verifyCommands = @() } -ProjectRoot $tmp -RunDir $tmp).outcome | Should -Be 'invalid-contract'
+            }
+            finally {
+                Remove-Item -LiteralPath $tmp -Recurse -Force -ErrorAction SilentlyContinue
+            }
+        }
     }
 
     It 'uses Metra mutex prefix for Phase A serialization compatibility' {

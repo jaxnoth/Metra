@@ -1,6 +1,6 @@
 @{
     RootModule        = 'Loom.psm1'
-    ModuleVersion     = '0.2.0'
+    ModuleVersion     = '0.3.0'
     GUID              = 'a8c0e2f4-7b91-4d3e-9f06-2c1a5b8d4e70'
     Author            = 'Metra'
     CompanyName       = 'IWU'
@@ -54,6 +54,7 @@
         'Invoke-MetraLoomEnqueueFromPlan'
         'Invoke-MetraLoomDailyStub'
         'Invoke-MetraLoomRun'
+        'Invoke-MetraLoomReview'
         'Invoke-MetraLoomMigrate'
         'Get-LoomActiveTransitionMap'
         'Write-LoomAtomicUtf8Text'
