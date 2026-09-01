@@ -278,7 +278,7 @@ Describe 'Loom git cleanup after failed run' {
         }
     }
 
-    It 'removes untracked files left by a failed implementer run' {
+    It 'removes only run-created untracked files (delta cleanup)' {
         InModuleScope Loom {
             $proj = Join-Path ([IO.Path]::GetTempPath()) ('ap-gitclean-' + [guid]::NewGuid().ToString('n'))
             try {
@@ -294,14 +294,19 @@ Describe 'Loom git cleanup after failed run' {
                 $originalBranch = (git rev-parse --abbrev-ref HEAD).Trim()
                 git checkout -b 'ap/test-item' 2>$null | Out-Null
                 $itemBranch = (git rev-parse --abbrev-ref HEAD).Trim()
+                Set-Content -Path (Join-Path $proj 'operator-kept.txt') -Value 'pre-existing'
+                $before = @(Get-LoomGitUntrackedPaths -ProjectRoot $proj)
                 Set-Content -Path (Join-Path $proj 'implementer-scratch.txt') -Value 'left behind'
                 Test-LoomGitWorkingTreeClean -ProjectRoot $proj | Should -BeFalse
 
+                $runDir = Join-Path $proj 'run-evidence'
                 Restore-LoomGitAfterFailedRun -ProjectRoot $proj -BaselineSha $baseline `
-                    -OriginalBranch $originalBranch -ItemBranch $itemBranch
+                    -OriginalBranch $originalBranch -ItemBranch $itemBranch `
+                    -BeforeUntracked @($before) -RunDir $runDir
 
                 Test-Path -LiteralPath (Join-Path $proj 'implementer-scratch.txt') | Should -BeFalse
-                Test-LoomGitWorkingTreeClean -ProjectRoot $proj | Should -BeTrue
+                Test-Path -LiteralPath (Join-Path $proj 'operator-kept.txt') | Should -BeTrue
+                Test-Path -LiteralPath (Join-Path $runDir 'untracked-cleanup.json') | Should -BeTrue
             }
             finally {
                 Pop-Location

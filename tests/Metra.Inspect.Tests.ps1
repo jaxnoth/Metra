@@ -3,6 +3,7 @@
 
 BeforeAll {
     $metraRoot = (Resolve-Path (Join-Path $PSScriptRoot '..')).Path
+    $script:RepoRoot = $metraRoot
     Import-Module (Join-Path $metraRoot 'scripts\Metra.psd1') -Force
 }
 
@@ -2336,5 +2337,174 @@ Describe 'Inspect git config metra.root' {
                 Remove-Item -LiteralPath $repo -Recurse -Force -ErrorAction SilentlyContinue
             }
         }
+    }
+}
+
+Describe 'Inspect payload band' {
+    It 'maps char boundaries per policy' {
+        InModuleScope Metra {
+            Get-MetraInspectPayloadBand -EstimatedTotalChars 29999 | Should -Be 'GREEN'
+            Get-MetraInspectPayloadBand -EstimatedTotalChars 30000 | Should -Be 'WARN'
+            Get-MetraInspectPayloadBand -EstimatedTotalChars 59999 | Should -Be 'WARN'
+            Get-MetraInspectPayloadBand -EstimatedTotalChars 60000 | Should -Be 'WARN'
+            Get-MetraInspectPayloadBand -EstimatedTotalChars 60001 | Should -Be 'PRUNE'
+        }
+    }
+}
+
+Describe 'Inspect rename collapse' {
+    It 'collapses unique suffix-pair delete+add and drops source body' {
+        InModuleScope Metra {
+            $files = @(
+                [PSCustomObject]@{
+                    path    = 'modules/AutoProgram/Private/Runner.ps1'
+                    content = "--- a/modules/AutoProgram/Private/Runner.ps1`n+++ /dev/null`n-deleted"
+                }
+                [PSCustomObject]@{
+                    path    = 'modules/Loom/Private/Runner.ps1'
+                    content = "UNTRACKED FILE: modules/Loom/Private/Runner.ps1`nThis entire file is new in the working tree.`nfunction x {}"
+                }
+            )
+            $m = Merge-MetraInspectRenamePairs -Files $files
+            $m.CollapsedPairCount | Should -Be 1
+            @($m.Files | Where-Object { $_.path -eq 'modules/AutoProgram/Private/Runner.ps1' }).Count | Should -Be 0
+            $dest = $m.Files | Where-Object { $_.path -eq 'modules/Loom/Private/Runner.ps1' } | Select-Object -First 1
+            $dest.collapseKind | Should -Be 'suffix-pair'
+            $dest.pathFrom | Should -Be 'modules/AutoProgram/Private/Runner.ps1'
+            [string]$dest.content | Should -Match 'DETECTION: suffix-pair'
+        }
+    }
+
+    It 'does not collapse when only leaf matches (no parent segment)' {
+        InModuleScope Metra {
+            $files = @(
+                [PSCustomObject]@{ path = 'a/Foo.ps1'; content = "--- a/a/Foo.ps1`n+++ /dev/null`n-x" }
+                [PSCustomObject]@{ path = 'b/Foo.ps1'; content = "UNTRACKED FILE: b/Foo.ps1`nx" }
+            )
+            $m = Merge-MetraInspectRenamePairs -Files $files
+            $m.CollapsedPairCount | Should -Be 0
+            $m.Files.Count | Should -Be 2
+        }
+    }
+
+    It 'fails open on equal-score ambiguous suffix pairs' {
+        InModuleScope Metra {
+            $files = @(
+                [PSCustomObject]@{ path = 'old/X/Y/Bar.ps1'; content = "--- a/old/X/Y/Bar.ps1`n+++ /dev/null" }
+                [PSCustomObject]@{ path = 'new/A/Y/Bar.ps1'; content = "UNTRACKED FILE: new/A/Y/Bar.ps1`n{}" }
+                [PSCustomObject]@{ path = 'new/B/Y/Bar.ps1'; content = "UNTRACKED FILE: new/B/Y/Bar.ps1`n{}" }
+            )
+            $m = Merge-MetraInspectRenamePairs -Files $files
+            $m.CollapsedPairCount | Should -Be 0
+            $m.Files.Count | Should -Be 3
+            @($m.Files.path) | Should -Contain 'old/X/Y/Bar.ps1'
+            @($m.Files.path) | Should -Contain 'new/A/Y/Bar.ps1'
+            @($m.Files.path) | Should -Contain 'new/B/Y/Bar.ps1'
+        }
+    }
+
+    It 'marks git-rename pairs separately from suffix-pair' {
+        InModuleScope Metra {
+            $files = @(
+                [PSCustomObject]@{
+                    path     = 'modules/Loom/Private/Domain.ps1'
+                    pathFrom = 'modules/AutoProgram/Private/Domain.ps1'
+                    content  = "diff --git`nRENAMED"
+                }
+            )
+            $m = Merge-MetraInspectRenamePairs -Files $files
+            $m.Files[0].collapseKind | Should -Be 'git-rename'
+            [string]$m.Files[0].content | Should -Match 'DETECTION: git-rename'
+        }
+    }
+}
+
+Describe 'Inspect KeepPaths reduction' {
+    It 'matches destination path and source pathFrom for bodies' {
+        InModuleScope Metra {
+            $merged = @(
+                [PSCustomObject]@{
+                    path         = 'modules/Loom/Private/Runner.ps1'
+                    pathFrom     = 'modules/AutoProgram/Private/Runner.ps1'
+                    content      = 'function Test-Loom {}'
+                    collapseKind = 'suffix-pair'
+                }
+                [PSCustomObject]@{
+                    path    = 'modules/Loom/Private/Other.ps1'
+                    content = 'other'
+                }
+            )
+            $r = Reduce-MetraInspectDiffFiles -Files $merged -KeepPaths @('modules/AutoProgram/Private/Runner.ps1')
+            @($r.Files | Where-Object { $_.path -eq 'modules/Loom/Private/Runner.ps1' }).Count | Should -Be 1
+            @($r.Files | Where-Object { $_.path -eq '(outside-touch-set)' }).Count | Should -Be 1
+            [string](($r.Files | Where-Object { $_.path -eq '(outside-touch-set)' }).content) | Should -Match 'Other.ps1'
+        }
+    }
+
+    It 'falls back to full reduce when KeepPaths is empty' {
+        InModuleScope Metra {
+            $files = @(
+                [PSCustomObject]@{ path = 'src/A.ps1'; content = 'a' }
+                [PSCustomObject]@{ path = 'src/B.ps1'; content = 'b' }
+            )
+            $r = Reduce-MetraInspectDiffFiles -Files $files
+            @($r.Files | Where-Object { $_.path -eq '(outside-touch-set)' }).Count | Should -Be 0
+            $r.ReducedFileCount | Should -BeGreaterThan 0
+        }
+    }
+}
+
+Describe 'Inspect budget estimator' {
+    It 'returns band without calling the Ask engine' {
+        InModuleScope Metra {
+            Mock Get-MetraInspectGitDiffFiles {
+                [PSCustomObject]@{
+                    Empty = $false
+                    Files = @(
+                        [PSCustomObject]@{ path = 'src/App.ps1'; content = ('x' * 65000) }
+                    )
+                }
+            }
+            Mock Invoke-MetraInspectEngine { throw 'engine should not run' }
+            $parts = Measure-MetraInspectDiffPayload -Root 'C:\fake' -IncludeAgentsEstimate -MaxBytesPerFile 80000
+            $parts.band | Should -Be 'PRUNE'
+            $parts.collapsedPairCount | Should -BeGreaterOrEqual 0
+        }
+    }
+
+    It 'shows collapse savings when pairs exist' {
+        InModuleScope Metra {
+            $files = @(
+                [PSCustomObject]@{ path = 'modules/AutoProgram/Private/X.ps1'; content = "--- a/modules/AutoProgram/Private/X.ps1`n+++ /dev/null`n" + ('-' * 5000) }
+                [PSCustomObject]@{ path = 'modules/Loom/Private/X.ps1'; content = "UNTRACKED FILE: modules/Loom/Private/X.ps1`n" + ('y' * 5000) }
+            )
+            Mock Get-MetraInspectGitDiffFiles {
+                [PSCustomObject]@{ Empty = $false; Files = $files }
+            }
+            $parts = Measure-MetraInspectDiffPayload -Root 'C:\fake'
+            $parts.collapsedPairCount | Should -Be 1
+            $parts.collapseSavingsChars | Should -BeGreaterThan 0
+        }
+    }
+}
+
+Describe 'Inspect token economy rules docs' {
+    It 'always-on inspect rule references fix-queue and forbids pack body reads during implement' {
+        $rulePath = Join-Path $script:RepoRoot '.cursor\rules\metra-inspect-loop.mdc'
+        $text = Get-Content -LiteralPath $rulePath -Raw
+        $text | Should -Match 'fix-queue\.json'
+        $text | Should -Match 'must not read `pack-diff\.md`'
+        $text | Should -Match '2026-09-04'
+    }
+
+    It 'OCC does not own the permanent pack-body rule' {
+        $occPath = Join-Path $script:RepoRoot '.cursor\rules\metra-learned.local.mdc'
+        if (-not (Test-Path -LiteralPath $occPath)) {
+            Set-ItResult -Inconclusive -Because 'local OCC overlay not present'
+            return
+        }
+        $text = Get-Content -LiteralPath $occPath -Raw
+        $text | Should -Not -Match 'must not read.*pack-diff'
+        $text | Should -Match '2026-09-04'
     }
 }

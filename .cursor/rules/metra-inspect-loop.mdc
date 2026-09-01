@@ -80,10 +80,14 @@ Safety net = inspect + verify + regression revert + operator judgment, not any s
 ## Agent rules
 
 - After meaningful code batches: run **`inspect prepare-bing`** and auto-fix until `readyForBing=true` before claiming commit-ready.
+- Until **2026-09-04** (Cursor billing reset): one `prepare-bing` per coherent ship-sized batch, not after every file touch. After that date: restore per-batch default.
+- **Cursor Agent must not read `pack-diff.md` or `pack-plan.md` while implementing or verifying fixes.** Those are Bing-facing review artifacts. Use `%LOCALAPPDATA%\Metra\inspect\<Project>\fix-queue.json` and `latest.json`. Pack metadata (path, size) is OK for pack diagnostics; do not load pack bodies as implementation context.
+- Do not load `docs/Decisions.md`, `docs/*.plan.md`, or `.cursor/plans/` while implementing unless the task is policy/plan work.
+- Optional before a rename-heavy inspect: `.\metra.ps1 inspect budget -Name <Project>`.
 - Never claim "inspect clean" or "ready for Bing" without running `prepare-bing` (or completed loop + pack) via CLI.
 - Auto-fix Critical/High/actionable Medium during prepare-for-Bing; do not wait for per-finding operator confirmation.
 - If verify reports **regression reverted**, do not treat the fix batch as landed; try a smaller fix or defer.
 - Same finding twice after a fix: convergence stop or ask operator; do not blind-loop forever.
-- Persisted assess report: `%LOCALAPPDATA%\Metra\inspect\<Project>\latest.json`; fix queue: `fix-queue.json`; cite severity/file in chat briefly.
+- Persisted assess report: `%LOCALAPPDATA%\Metra\inspect\<Project>\latest.json`; fix queue: `fix-queue.json`; cite severity/file in chat briefly. **`packPath` is for the operator/Bing lane only -- not Agent context.**
 
 See Metra `AGENTS.md` Inspect section and `docs/Decisions.md` (Inspect coding loop; Inspect goal-based review loop; Inspect engine independence).

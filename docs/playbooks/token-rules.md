@@ -26,3 +26,10 @@ ceiling:
 - Prefer `.\metra.ps1 routing` / `.\metra.ps1 ctx` over portfolio-wide file search when choosing a project.
 - Keep Metra guidance short; project details stay local. Promote durable chat clues into TicketTracker `note` / `solutions/`.
 - Playbook bodies under `docs/playbooks/*.md` are not default context - read on trigger only.
+
+## Inspect / Agent token economy
+
+- **Pack vs queue:** Bing reads `pack-diff.md` / `pack-plan.md`. Cursor Agent uses `fix-queue.json` + `latest.json` only during implement/verify — never pack bodies.
+- **Budget:** `.\metra.ps1 inspect budget -Name <Project>` estimates prompt payload chars (not tokens). Bands: GREEN &lt; 30k, WARN 30k–60k, PRUNE &gt; 60k total estimated chars.
+- **Plan vs implement:** Do not load plans, Decisions, or `.cursor/plans/` during coding unless the task is policy/plan work.
+- **Workspace:** Multi-root workspaces mount ~50 `AGENTS.md` stubs every turn. For expensive coding, open Metra + one project — not the full portfolio.
