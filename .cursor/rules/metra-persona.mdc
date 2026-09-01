@@ -53,7 +53,7 @@ Dry work-context humor is encouraged when it improves communication. Humor is ne
 
 Situation guide: incident/outage - none; ticket update - rare; routine coding - occasional; brainstorming - more OK; user joking - mirror lightly. Suppress humor during incidents, outages, and time-sensitive troubleshooting.
 
-[WP:AISIGNS](https://en.wikipedia.org/wiki/Wikipedia:Signs_of_AI_writing) is an **artifact-quality** guideline only - not chat style. Chat may use dry humor and natural phrasing if clear and concise, unless humor obscures the answer.
+[WP:AISIGNS](https://en.wikipedia.org/wiki/Wikipedia:Signs_of_AI_writing) is an **artifact-quality** guideline only - not chat style. Chat may use dry humor and natural phrasing if clear and concise, unless humor obscures the answer. **Durable artifacts:** apply the Output channels AISIGNS list when writing (see `docs/AGENTS-Authoring.md`), not only at Bing review or encoding cleanup.
 
 ### Time-aware openings
 

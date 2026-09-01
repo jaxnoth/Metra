@@ -31,6 +31,7 @@ Always-on rule: [`.cursor/rules/metra-inspect-loop.mdc`](../../.cursor/rules/met
 | After affirmed fixes | `inspect loop` again (same session) | Stop when goal met (Critical=0, High=0, Medium<=2), convergence detected, or MaxLoops=5 fence |
 | Metra executable ship (calibration) | `prepare-bing` auto-builds pack; Bing comparison lane | Re-run prepare-bing after fixes; pack is never manual |
 | A2 desk split external review | `.\metra.ps1 inspect pack-only agents -Name <Project>` | Bing-only stub + playbooks scope; no unrelated working-tree noise |
+| Durable docs in the same batch | Apply AISIGNS at write time ([AGENTS-Authoring](../AGENTS-Authoring.md)) | Not deferred to Bing; ASCII punctuation in docs, playbooks, Decisions |
 
 Skip the loop for ticket-ops-only turns, brainstorm/plan-without-implement, or when the Ask engine is unavailable (fail closed; do not invent findings). Low/Info are optional unless the operator wants them addressed.
 
@@ -87,7 +88,7 @@ Independence of review matters more than the specific model. The safety net is i
 | Diff pack | Bing / operator review only | `%LOCALAPPDATA%\Metra\inspect\<Project>\pack-diff.md` (Track I; legacy root `pack-diff.md` until migrated) |
 | Plan pack | Bing / operator review only | `%LOCALAPPDATA%\Metra\inspect\<Project>\pack-plan.md` (Track I; legacy root `pack-plan.md` until migrated) |
 
-Parallel products: each `-Name <Project>` owns its slot — serial or concurrent work does not overwrite another product's pack.
+Parallel products: each `-Name <Project>` owns its slot - serial or concurrent work does not overwrite another product's pack.
 
 - `.\metra.ps1 inspect budget -Name <Project>` — no engine call; estimates prompt payload chars and band before inspect.
 - Round 1 assess: full collapsed reduced diff. Verify rounds: touch-set bodies only; outside paths are names-only indicators.

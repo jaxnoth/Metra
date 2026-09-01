@@ -163,6 +163,18 @@ Then:
 3. Update the stub index if a playbook was added.
 4. Keep default context lean.
 
+## Artifact prose (AISIGNS)
+
+Durable writes use ordinary professional prose per [metra-persona Output channels](../.cursor/rules/metra-persona.mdc). Apply at **write time**, not only when Bing, inspect, or encoding review catches problems later.
+
+Avoid in committed artifacts:
+
+- Words: `pivotal`, `landscape`, `delve`, and the construction `not only X but also Y`
+- Punctuation: em dashes (use `-`), Unicode arrows (use `->`), decorative symbols where ASCII suffices
+- Structure: emoji as bullets or section markers
+
+Chat voice may stay conversational; docs, playbooks, decisions, commits, and ticket bodies do not.
+
 ## Hard offs
 
 - Never auto-generate `AGENTS.md` from model dumps.

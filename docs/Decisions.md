@@ -24,6 +24,14 @@ Entry shape:
 
 ---
 
+## 2026-09-01 - AISIGNS at artifact write time
+
+- Decision: Apply `metra-persona` Output channels AISIGNS patterns when **writing** durable artifacts (docs, playbooks, `Decisions.md`, commits, ADRs, ticket posts), not only at Bing review or mojibake cleanup. Chat remains exempt from AISIGNS as style policing; the professional sink is not.
+- Why: Slice 4 governance docs shipped with em dashes and Unicode arrows; Bing surfaced them as encoding noise later. Same root cause: durable prose should be ASCII-first and AISIGNS-clean at authoring time.
+- See: `.cursor/rules/metra-persona.mdc` (Output channels), `docs/AGENTS-Authoring.md` (Artifact prose), `docs/playbooks/inspect-loop.md`
+
+---
+
 ## 2026-09-01 - Loom Slice 4 review and completion
 
 - Decision: Loom `reviewing` exits only via `Invoke-MetraLoomReview` to `completed`, `implementing`, or `blocked`. Inspect and verify adapters return contract-shaped evidence only. `loom run -Confirm` auto-chains review by default (`-NoChainReview` to stop at `reviewing`). When `completionCommitPolicy` is `required`, commit on the item branch before `completed` (no push). Inspect pack artifacts are per-project slot paths (`inspect/<Project>/pack-diff.md`, `pack-plan.md`) so parallel Loom items do not overwrite packs.
