@@ -8,7 +8,7 @@ function Get-AutoProgramActiveTransitionMap {
         '@new'         = @('queued')
         'queued'       = @('claimed', 'blocked')
         'claimed'      = @('implementing', 'blocked', 'failed')
-        'implementing' = @('reviewing', 'blocked', 'failed')
+        'implementing' = @('reviewing', 'blocked', 'failed', 'claimed')
         'blocked'      = @()
         'reviewing'    = @()
         'completed'    = @()
@@ -35,13 +35,102 @@ function Invoke-AutoProgramGit {
         throw "Project root is not a git repository: $ProjectRoot"
     }
     $argList = @('-C', $ProjectRoot) + @($GitArgs)
-    $merged = & git @argList 2>&1 | ForEach-Object { "$_" }
+    $merged = @(& git @argList 2>&1 | ForEach-Object { "$_" })
     $stdout = ($merged -join "`n")
+    $stderr = if ($LASTEXITCODE -ne 0 -and -not [string]::IsNullOrWhiteSpace($stdout)) { $stdout } else { '' }
     return [PSCustomObject]@{
         ExitCode = $LASTEXITCODE
         Stdout   = $stdout
-        Stderr   = ''
+        Stderr   = $stderr
     }
+}
+
+function Get-AutoProgramGitErrorDetail {
+    param($GitResult)
+    $detail = [string](Get-AutoProgramProp -Object $GitResult -Name 'Stderr' -Default '')
+    if ([string]::IsNullOrWhiteSpace($detail)) {
+        $detail = [string](Get-AutoProgramProp -Object $GitResult -Name 'Stdout' -Default '')
+    }
+    return $detail
+}
+
+function Get-AutoProgramGitCurrentBranch {
+    param([Parameter(Mandatory)][string]$ProjectRoot)
+    $r = Invoke-AutoProgramGit -ProjectRoot $ProjectRoot -GitArgs @('rev-parse', '--abbrev-ref', 'HEAD')
+    if ($r.ExitCode -ne 0) {
+        throw "git rev-parse --abbrev-ref HEAD failed: $(Get-AutoProgramGitErrorDetail $r)"
+    }
+    return ($r.Stdout.Trim())
+}
+
+function Restore-AutoProgramGitAfterFailedRun {
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory)][string]$ProjectRoot,
+        [Parameter(Mandatory)][string]$BaselineSha,
+        [string]$OriginalBranch,
+        [string]$ItemBranch
+    )
+
+    if ([string]::IsNullOrWhiteSpace($BaselineSha)) { return }
+    try {
+        $reset = Invoke-AutoProgramGit -ProjectRoot $ProjectRoot -GitArgs @('reset', '--hard', $BaselineSha)
+        if ($reset.ExitCode -ne 0) {
+            Write-Warning "git reset --hard failed during run cleanup: $(Get-AutoProgramGitErrorDetail $reset)"
+        }
+        if (-not [string]::IsNullOrWhiteSpace($OriginalBranch)) {
+            $co = Invoke-AutoProgramGit -ProjectRoot $ProjectRoot -GitArgs @('checkout', $OriginalBranch)
+            if ($co.ExitCode -ne 0) {
+                Write-Warning "git checkout $OriginalBranch failed during run cleanup: $(Get-AutoProgramGitErrorDetail $co)"
+            }
+            elseif (-not [string]::IsNullOrWhiteSpace($ItemBranch) -and $ItemBranch -ne $OriginalBranch) {
+                $null = Invoke-AutoProgramGit -ProjectRoot $ProjectRoot -GitArgs @('branch', '-D', $ItemBranch)
+            }
+        }
+    }
+    catch {
+        Write-Warning "AutoProgram git run cleanup failed: $($_.Exception.Message)"
+    }
+}
+
+function Get-AutoProgramNormalizedRepoRelativePath {
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory)][string]$RelativePath,
+        [Parameter(Mandatory)][string]$ProjectRoot
+    )
+
+    $candidate = if ([System.IO.Path]::IsPathRooted($RelativePath)) {
+        $RelativePath
+    }
+    else {
+        Join-Path $ProjectRoot $RelativePath
+    }
+    try {
+        $full = [System.IO.Path]::GetFullPath($candidate)
+    }
+    catch {
+        return $null
+    }
+    if (-not (Test-AutoProgramPathWithinRoot -Path $full -Root $ProjectRoot)) {
+        return $null
+    }
+    $rootFull = [System.IO.Path]::GetFullPath($ProjectRoot).TrimEnd('\', '/')
+    if ($full.Length -le $rootFull.Length) {
+        return ''
+    }
+    $rel = $full.Substring($rootFull.Length).TrimStart('\', '/')
+    return (($rel -replace '\\', '/') -replace '^\./', '')
+}
+
+function Test-AutoProgramForbiddenPathMatch {
+    param(
+        [Parameter(Mandatory)][string]$NormalizedPath,
+        [Parameter(Mandatory)][string]$ForbiddenPattern
+    )
+    $fbNorm = (($ForbiddenPattern -replace '\\', '/') -replace '^\./', '').TrimEnd('/')
+    if ([string]::IsNullOrWhiteSpace($fbNorm)) { return $false }
+    return ($NormalizedPath -eq $fbNorm -or $NormalizedPath -like "$fbNorm/*")
 }
 
 function Test-AutoProgramGitWorkingTreeClean {
@@ -52,7 +141,7 @@ function Test-AutoProgramGitWorkingTreeClean {
 
     $r = Invoke-AutoProgramGit -ProjectRoot $ProjectRoot -GitArgs @('status', '--porcelain')
     if ($r.ExitCode -ne 0) {
-        throw "git status failed in ${ProjectRoot}: $($r.Stderr)"
+        throw "git status failed in ${ProjectRoot}: $(Get-AutoProgramGitErrorDetail $r)"
     }
     return [string]::IsNullOrWhiteSpace($r.Stdout)
 }
@@ -60,7 +149,7 @@ function Test-AutoProgramGitWorkingTreeClean {
 function Get-AutoProgramGitHeadCommit {
     param([Parameter(Mandatory)][string]$ProjectRoot)
     $r = Invoke-AutoProgramGit -ProjectRoot $ProjectRoot -GitArgs @('rev-parse', 'HEAD')
-    if ($r.ExitCode -ne 0) { throw "git rev-parse HEAD failed: $($r.Stderr)" }
+    if ($r.ExitCode -ne 0) { throw "git rev-parse HEAD failed: $(Get-AutoProgramGitErrorDetail $r)" }
     return ($r.Stdout.Trim())
 }
 
@@ -72,7 +161,7 @@ function Get-AutoProgramGitChangedPaths {
 
     $r = Invoke-AutoProgramGit -ProjectRoot $ProjectRoot -GitArgs @('status', '--porcelain')
     if ($r.ExitCode -ne 0) {
-        throw "git status failed: $($r.Stderr)"
+        throw "git status failed: $(Get-AutoProgramGitErrorDetail $r)"
     }
     $paths = New-Object System.Collections.Generic.List[string]
     foreach ($line in @($r.Stdout -split "`n")) {
@@ -100,17 +189,20 @@ function Test-AutoProgramChangedPathsAllowed {
 
     $violations = New-Object System.Collections.Generic.List[string]
     foreach ($rel in @($ChangedPaths)) {
-        $norm = ($rel -replace '\\', '/').TrimStart('./')
+        $norm = Get-AutoProgramNormalizedRepoRelativePath -RelativePath $rel -ProjectRoot $ProjectRoot
+        if ($null -eq $norm) {
+            [void]$violations.Add("escape:$rel")
+            continue
+        }
         foreach ($fb in @($ForbiddenPaths)) {
-            $fbNorm = ($fb -replace '\\', '/').TrimStart('./')
-            if ($norm -like "$fbNorm*" -or $norm -eq $fbNorm) {
+            if (Test-AutoProgramForbiddenPathMatch -NormalizedPath $norm -ForbiddenPattern $fb) {
                 [void]$violations.Add("forbidden:$norm")
             }
         }
         if (@($AllowedPaths).Count -eq 0) { continue }
         $ok = $false
         foreach ($ap in @($AllowedPaths)) {
-            $apNorm = ($ap -replace '\\', '/').TrimStart('./')
+            $apNorm = (($ap -replace '\\', '/') -replace '^\./', '').TrimEnd('/')
             if ($norm -eq $apNorm -or $norm -like "$apNorm/*") {
                 $ok = $true
                 break
@@ -254,7 +346,7 @@ function Invoke-AutoProgramGitCreateItemBranch {
 
     $co = Invoke-AutoProgramGit -ProjectRoot $ProjectRoot -GitArgs @('checkout', '-b', $BranchName)
     if ($co.ExitCode -ne 0) {
-        throw "git checkout -b failed: $($co.Stdout)"
+        throw "git checkout -b failed: $(Get-AutoProgramGitErrorDetail $co)"
     }
     return $BranchName
 }
@@ -341,6 +433,8 @@ function Invoke-MetraAutoprogramRun {
     }
 
     $baselineSha = Get-AutoProgramGitHeadCommit -ProjectRoot $projectRoot
+    $originalBranch = Get-AutoProgramGitCurrentBranch -ProjectRoot $projectRoot
+    $gitRunActive = $false
     $claimed = Invoke-MetraAutoprogramStateChange -Root $Root -ItemId $ItemId -From 'queued' -To 'claimed' -Reason 'run-start' -Mutator {
         param($i)
         if (-not $i.execution) { $i | Add-Member -NotePropertyName execution -NotePropertyValue ([PSCustomObject]@{}) -Force }
@@ -352,6 +446,7 @@ function Invoke-MetraAutoprogramRun {
 
     try {
         Invoke-AutoProgramGitCreateItemBranch -ProjectRoot $projectRoot -BranchName $branch
+        $gitRunActive = $true
 
         $pkg = New-AutoProgramRunRequestPackage -Item $claimed -RunDir $runDir -MetraRoot $MetraRoot
         $stdoutPath = Join-Path $runDir 'stdout.log'
@@ -455,6 +550,10 @@ function Invoke-MetraAutoprogramRun {
         }
     }
     catch {
+        if ($gitRunActive) {
+            Restore-AutoProgramGitAfterFailedRun -ProjectRoot $projectRoot -BaselineSha $baselineSha `
+                -OriginalBranch $originalBranch -ItemBranch $branch
+        }
         if ($_.Exception.Message -notmatch '^(Git working tree|Implementer|Changed paths)') {
             try {
                 $cur = Get-MetraAutoprogramQueueItem -Root $Root -Id $ItemId

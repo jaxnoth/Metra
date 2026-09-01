@@ -1458,6 +1458,11 @@ If no issues: {"findings":[]}. No markdown. No prose outside JSON.
         $engineResult = Invoke-MetraAskEngine -Prompt $currentPrompt -Cwd $Cwd -MetraRoot $MetraRoot `
             -Context @{ purpose = 'metra-inspect' } -TimeoutSec 600 `
             -Engine $selection.Engine -Model $selection.RequestedModel
+        if (-not $engineResult.ok -and $attempt -eq 0 -and (Test-MetraAskSidecarRestartableFailure -EngineResult $engineResult)) {
+            Write-Host 'Inspect: Ask engine failed — restarting sidecar and retrying once...' -ForegroundColor Yellow
+            $null = Restart-MetraAskEngine -MetraRoot $MetraRoot -Confirm:$false
+            continue
+        }
         if (-not $engineResult.ok) {
             $msg = [string](Get-MetraProp -Object $engineResult -Name 'message' -Default 'Ask engine failed.')
             $err = [string](Get-MetraProp -Object $engineResult -Name 'error' -Default 'engine_error')
@@ -3319,9 +3324,41 @@ function Get-MetraInspectReviewWorkingTreeInputHash {
 
     $diff = Get-MetraInspectGitDiffFiles -Root $Root -Base $Base
     if ($diff.Empty) { return 'empty' }
+    $reduced = Reduce-MetraInspectDiffFiles -Files $diff.Files
+    $scrubbedFiles = @(ConvertTo-MetraInspectScrubbedDiffParts -Files $reduced.Files)
     return Get-MetraInspectInputHash -Parts @(
-        @($diff.Files) | ForEach-Object { [PSCustomObject]@{ path = $_.path; content = $_.content } }
+        $scrubbedFiles | ForEach-Object { [PSCustomObject]@{ path = $_.path; content = $_.content } }
     )
+}
+
+function Get-MetraInspectCurrentDiffInput {
+    <#
+    .SYNOPSIS
+        Canonical live working-tree diff input for Bing gate and pre-commit (same path as assess).
+    #>
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory)]$ProjectContext,
+        [string]$Base
+    )
+
+    if (-not [bool](Get-MetraProp -Object $ProjectContext -Name 'Ok' -Default $false)) {
+        throw [string](Get-MetraProp -Object $ProjectContext -Name 'Error' -Default 'Project context is not resolved.')
+    }
+
+    $root = [string](Get-MetraProp -Object $ProjectContext -Name 'Root' -Default '')
+    $project = [string](Get-MetraProp -Object $ProjectContext -Name 'Project' -Default '')
+    if ([string]::IsNullOrWhiteSpace($root)) {
+        throw 'Project context has no Root for live diff input.'
+    }
+
+    $inputHash = Get-MetraInspectReviewWorkingTreeInputHash -Root $root -Base $Base
+    return [PSCustomObject]@{
+        project   = $project
+        root      = $root
+        inputHash = $inputHash
+        empty     = ($inputHash -eq 'empty')
+    }
 }
 
 function Get-MetraInspectReviewBaselineDirectory {
@@ -4148,6 +4185,577 @@ function Invoke-MetraInspectReviewLoop {
     return $state
 }
 
+function Get-MetraGitConfiguredMetraRoot {
+    <#
+    .SYNOPSIS
+        Read metra.root from git config (first value, trimmed). Used by hook install tests and docs.
+    #>
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory)][string]$RepoRoot
+    )
+
+    $raw = @(& git -C $RepoRoot config --get-all metra.root 2>$null) | Select-Object -First 1
+    $trimmed = ([string]$raw).Trim()
+    if ([string]::IsNullOrWhiteSpace($trimmed)) { return $null }
+    return $trimmed
+}
+
+function Install-MetraGitHooks {
+    <#
+    .SYNOPSIS
+        Point this repo at Metra git hooks (auto inspect loop + Bing gate).
+    #>
+    [CmdletBinding(SupportsShouldProcess)]
+    param(
+        [string]$RepoRoot,
+        [string]$MetraRoot
+    )
+
+    if ([string]::IsNullOrWhiteSpace($MetraRoot)) {
+        $MetraRoot = Get-MetraRoot
+    }
+    $MetraRoot = [System.IO.Path]::GetFullPath($MetraRoot)
+
+    if ([string]::IsNullOrWhiteSpace($RepoRoot)) {
+        $top = & git rev-parse --show-toplevel 2>$null
+        if ($LASTEXITCODE -eq 0 -and -not [string]::IsNullOrWhiteSpace($top)) {
+            $RepoRoot = [string]$top
+        }
+        else {
+            $RepoRoot = (Get-Location).Path
+        }
+    }
+    $RepoRoot = [System.IO.Path]::GetFullPath($RepoRoot)
+
+    $localHooksRel = 'scripts/githooks'
+    $localHooksDir = Join-Path $RepoRoot ($localHooksRel -replace '/', [System.IO.Path]::DirectorySeparatorChar)
+    $metraHooksDir = Join-Path $MetraRoot ($localHooksRel -replace '/', [System.IO.Path]::DirectorySeparatorChar)
+
+    if (Test-Path -LiteralPath $localHooksDir) {
+        $hooksDir = $localHooksDir
+        $hooksPathValue = $localHooksRel
+    }
+    elseif (Test-Path -LiteralPath $metraHooksDir) {
+        $hooksDir = $metraHooksDir
+        $hooksPathValue = $metraHooksDir
+    }
+    else {
+        throw "Git hooks directory not found under $RepoRoot or Metra root $MetraRoot."
+    }
+
+    $preCommit = Join-Path $hooksDir 'pre-commit'
+    $preCommitPs1 = Join-Path $hooksDir 'pre-commit.ps1'
+    if (-not (Test-Path -LiteralPath $preCommitPs1)) {
+        throw "Missing pre-commit hook: $preCommitPs1"
+    }
+    if (-not (Test-Path -LiteralPath $preCommit)) {
+        throw "Missing pre-commit shim: $preCommit"
+    }
+    $hooksPathValue = ($hooksPathValue -replace '\\', '/')
+    if (-not $PSCmdlet.ShouldProcess($RepoRoot, "Set core.hooksPath=$hooksPathValue and metra.root=$MetraRoot")) {
+        return [PSCustomObject]@{
+            ok        = $false
+            skipped   = $true
+            repoRoot  = $RepoRoot
+            hooksPath = $hooksPathValue
+            metraRoot = $MetraRoot
+        }
+    }
+    Push-Location $RepoRoot
+    try {
+        & git config core.hooksPath $hooksPathValue
+        if ($LASTEXITCODE -ne 0) {
+            throw 'git config core.hooksPath failed.'
+        }
+        & git config metra.root $MetraRoot
+        if ($LASTEXITCODE -ne 0) {
+            throw 'git config metra.root failed.'
+        }
+    }
+    finally {
+        Pop-Location
+    }
+    return [PSCustomObject]@{
+        ok        = $true
+        repoRoot  = $RepoRoot
+        hooksPath = $hooksPathValue
+        metraRoot = $MetraRoot
+        preCommit = $preCommit
+    }
+}
+
+function Get-MetraInspectBingGatePath {
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory)][string]$SlotKey
+    )
+    $slot = Resolve-MetraInspectReviewSlotRoot -SlotKey $SlotKey
+    return Join-Path $slot.SlotRoot 'bing-gate.json'
+}
+
+function Get-MetraInspectBingGateRecord {
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory)][string]$SlotKey
+    )
+    $path = Get-MetraInspectBingGatePath -SlotKey $SlotKey
+    if (-not (Test-Path -LiteralPath $path)) { return $null }
+    try {
+        return Get-Content -LiteralPath $path -Raw -ErrorAction Stop | ConvertFrom-Json -ErrorAction Stop
+    }
+    catch {
+        return $null
+    }
+}
+
+function Test-MetraInspectBingGateAffirmed {
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory)][string]$SlotKey,
+        [Parameter(Mandatory)][string]$InputHash
+    )
+    $record = Get-MetraInspectBingGateRecord -SlotKey $SlotKey
+    if (-not $record) {
+        return [PSCustomObject]@{ affirmed = $false; reason = 'no-record' }
+    }
+    $stored = [string](Get-MetraProp -Object $record -Name 'inputHash' -Default '')
+    if ([string]::IsNullOrWhiteSpace($stored) -or $stored -ne $InputHash) {
+        return [PSCustomObject]@{ affirmed = $false; reason = 'stale'; storedHash = $stored }
+    }
+    return [PSCustomObject]@{
+        affirmed      = $true
+        affirmedAtUtc = [string](Get-MetraProp -Object $record -Name 'affirmedAtUtc' -Default '')
+        packPath      = [string](Get-MetraProp -Object $record -Name 'packPath' -Default '')
+    }
+}
+
+function Get-MetraInspectSlotDiffAssess {
+    <#
+    .SYNOPSIS
+        Load diff assess metadata from the project slot latest.json (not the global last-diff pointer).
+    #>
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory)][string]$SlotKey
+    )
+
+    $slot = Resolve-MetraInspectReviewSlotRoot -SlotKey $SlotKey
+    $latestPath = Join-Path $slot.SlotRoot 'latest.json'
+    if (-not (Test-Path -LiteralPath $latestPath)) { return $null }
+
+    try {
+        $report = Get-Content -LiteralPath $latestPath -Raw -ErrorAction Stop | ConvertFrom-Json -ErrorAction Stop
+    }
+    catch {
+        return $null
+    }
+
+    if ([string]$report.mode -ne 'diff') { return $null }
+
+    $prov = $report.provenance
+    $project = [string](Get-MetraProp -Object $prov -Name 'project' -Default '')
+    if (-not [string]::IsNullOrWhiteSpace($project) -and -not $project.Equals($SlotKey, [StringComparison]::OrdinalIgnoreCase)) {
+        throw "Inspect slot report project '$project' does not match slot '$SlotKey'. Run inspect prepare-bing -Name $SlotKey -Reset."
+    }
+
+    $inputHash = [string](Get-MetraProp -Object $prov -Name 'inputHash' -Default '')
+    return [PSCustomObject]@{
+        slotKey          = $SlotKey
+        latestReportPath = $latestPath
+        inputHash        = $inputHash
+        project          = if (-not [string]::IsNullOrWhiteSpace($project)) { $project } else { $SlotKey }
+        root             = [string](Get-MetraProp -Object $prov -Name 'root' -Default '')
+        report           = $report
+    }
+}
+
+function Test-MetraInspectBingGateCommitAllowed {
+    <#
+    .SYNOPSIS
+        Three-way gate: live working-tree hash must equal slot assessment and Bing affirmation.
+    #>
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory)][string]$SlotKey,
+        [Parameter(Mandatory)][string]$LiveInputHash
+    )
+
+    $assess = Get-MetraInspectSlotDiffAssess -SlotKey $SlotKey
+    if (-not $assess) {
+        return [PSCustomObject]@{
+            allowed         = $false
+            reason          = 'no-assessment'
+            liveInputHash   = $LiveInputHash
+            assessInputHash = ''
+            gateInputHash   = ''
+        }
+    }
+
+    $assessHash = [string]$assess.inputHash
+    if ([string]::IsNullOrWhiteSpace($assessHash)) {
+        return [PSCustomObject]@{
+            allowed         = $false
+            reason          = 'assessment-missing-hash'
+            liveInputHash   = $LiveInputHash
+            assessInputHash = $assessHash
+            gateInputHash   = ''
+        }
+    }
+
+    if ($LiveInputHash -ne $assessHash) {
+        return [PSCustomObject]@{
+            allowed         = $false
+            reason          = 'live-assess-mismatch'
+            liveInputHash   = $LiveInputHash
+            assessInputHash = $assessHash
+            gateInputHash   = ''
+        }
+    }
+
+    $gateRecord = Get-MetraInspectBingGateRecord -SlotKey $SlotKey
+    if (-not $gateRecord) {
+        return [PSCustomObject]@{
+            allowed         = $false
+            reason          = 'no-gate-record'
+            liveInputHash   = $LiveInputHash
+            assessInputHash = $assessHash
+            gateInputHash   = ''
+        }
+    }
+
+    $gateHash = [string](Get-MetraProp -Object $gateRecord -Name 'inputHash' -Default '')
+    if ($LiveInputHash -ne $gateHash) {
+        return [PSCustomObject]@{
+            allowed         = $false
+            reason          = 'live-gate-mismatch'
+            liveInputHash   = $LiveInputHash
+            assessInputHash = $assessHash
+            gateInputHash   = $gateHash
+        }
+    }
+
+    if ($assessHash -ne $gateHash) {
+        return [PSCustomObject]@{
+            allowed         = $false
+            reason          = 'assess-gate-mismatch'
+            liveInputHash   = $LiveInputHash
+            assessInputHash = $assessHash
+            gateInputHash   = $gateHash
+        }
+    }
+
+    return [PSCustomObject]@{
+        allowed         = $true
+        reason          = 'ok'
+        liveInputHash   = $LiveInputHash
+        assessInputHash = $assessHash
+        gateInputHash   = $gateHash
+    }
+}
+
+function Set-MetraInspectBingGateAffirm {
+    <#
+    .SYNOPSIS
+        Operator affirms Bing review for the current inspect report inputHash.
+    #>
+    [CmdletBinding(SupportsShouldProcess)]
+    param(
+        [string]$Name
+    )
+
+    $ctx = Resolve-MetraInspectProjectContext -Name $Name -Mode diff
+    if (-not $ctx.Ok) { throw $ctx.Error }
+    $slotKey = [string]$ctx.Project
+    if ([string]::IsNullOrWhiteSpace($slotKey)) { $slotKey = 'default' }
+
+    $live = Get-MetraInspectCurrentDiffInput -ProjectContext $ctx
+    $assess = Get-MetraInspectSlotDiffAssess -SlotKey $slotKey
+    if (-not $assess) {
+        throw "No diff inspect report for '$slotKey'. Run .\metra.ps1 inspect prepare-bing -Name $slotKey first."
+    }
+    if ($live.inputHash -ne $assess.inputHash) {
+        throw 'Working tree changed since Inspect assessment. Re-run prepare-bing before Bing affirmation.'
+    }
+    $inputHash = [string]$live.inputHash
+    if ([string]::IsNullOrWhiteSpace($inputHash) -or $inputHash -eq 'empty') {
+        throw 'No inspectable diff to affirm.'
+    }
+
+    $packPath = Join-Path (Get-MetraInspectStateRoot) 'pack-diff.md'
+    $gatePath = Get-MetraInspectBingGatePath -SlotKey $slotKey
+    $record = [ordered]@{
+        schemaVersion   = 1
+        project         = $slotKey
+        inputHash       = $inputHash
+        affirmedAtUtc   = [datetime]::UtcNow.ToString('o')
+        packPath        = $packPath
+        reportPath      = [string]$assess.latestReportPath
+    }
+
+    if (-not $PSCmdlet.ShouldProcess($gatePath, 'Record Bing gate affirmation')) {
+        return [PSCustomObject]@{ ok = $false; skipped = $true; inputHash = $inputHash }
+    }
+
+    $slotDir = Split-Path -Parent $gatePath
+    if (-not (Test-Path -LiteralPath $slotDir)) {
+        New-Item -ItemType Directory -Path $slotDir -Force | Out-Null
+    }
+    Write-MetraAtomicUtf8Text -Path $gatePath -Text (($record | ConvertTo-Json -Depth 6) + "`n")
+
+    return [PSCustomObject]@{
+        ok            = $true
+        inputHash     = $inputHash
+        gatePath      = $gatePath
+        packPath      = $packPath
+        affirmedAtUtc = [string]$record.affirmedAtUtc
+    }
+}
+
+function Show-MetraInspectBingGateStatus {
+    [CmdletBinding()]
+    param(
+        [string]$Name
+    )
+
+    $ctx = Resolve-MetraInspectProjectContext -Name $Name -Mode diff
+    if (-not $ctx.Ok) { throw $ctx.Error }
+    $slotKey = [string]$ctx.Project
+    if ([string]::IsNullOrWhiteSpace($slotKey)) { $slotKey = 'default' }
+
+    $live = Get-MetraInspectCurrentDiffInput -ProjectContext $ctx
+    $assess = Get-MetraInspectSlotDiffAssess -SlotKey $slotKey
+    $assessHash = if ($assess) { [string]$assess.inputHash } else { '' }
+    $gateRecord = Get-MetraInspectBingGateRecord -SlotKey $slotKey
+    $gateHash = [string](Get-MetraProp -Object $gateRecord -Name 'inputHash' -Default '')
+    $triad = Test-MetraInspectBingGateCommitAllowed -SlotKey $slotKey -LiveInputHash $live.inputHash
+
+    return [PSCustomObject]@{
+        project          = $slotKey
+        liveInputHash    = [string]$live.inputHash
+        assessInputHash  = $assessHash
+        gateInputHash    = $gateHash
+        currentInputHash = $assessHash
+        affirmed         = [bool]$triad.allowed
+        reason           = [string]$triad.reason
+        affirmedAtUtc    = [string](Get-MetraProp -Object $gateRecord -Name 'affirmedAtUtc' -Default '')
+        storedInputHash  = $gateHash
+        packPath         = Join-Path (Get-MetraInspectStateRoot) 'pack-diff.md'
+        gatePath         = Get-MetraInspectBingGatePath -SlotKey $slotKey
+    }
+}
+
+function Invoke-MetraInspectAutoPack {
+    [CmdletBinding()]
+    param(
+        [switch]$NoClipboard
+    )
+    try {
+        $pack = Invoke-MetraInspectPack -Mode diff -NoClipboard:$NoClipboard -Confirm:$false
+        return [PSCustomObject]@{
+            ok       = $true
+            packPath = [string](Get-MetraProp -Object $pack -Name 'Path' -Default (Join-Path (Get-MetraInspectStateRoot) 'pack-diff.md'))
+            skipped  = [bool](Get-MetraProp -Object $pack -Name 'Skipped' -Default $false)
+        }
+    }
+    catch {
+        Write-Warning ("Auto pack build failed: {0}" -f $_.Exception.Message)
+        return [PSCustomObject]@{
+            ok       = $false
+            packPath = Join-Path (Get-MetraInspectStateRoot) 'pack-diff.md'
+            error    = $_.Exception.Message
+        }
+    }
+}
+
+function Invoke-MetraInspectPrepareForBing {
+    <#
+    .SYNOPSIS
+        Agent prepare-for-Bing: inspect loop (-RunAll session), always auto-build pack, agent fixes until goal.
+    #>
+    [CmdletBinding()]
+    param(
+        [string]$Name,
+        [switch]$Reset
+    )
+
+    $ctx = Resolve-MetraInspectProjectContext -Name $Name -Mode diff
+    if (-not $ctx.Ok) { throw $ctx.Error }
+    $slotKey = [string]$ctx.Project
+    if ([string]::IsNullOrWhiteSpace($slotKey)) { $slotKey = 'default' }
+
+    $fixQueuePath = Join-Path (Resolve-MetraInspectReviewSlotRoot -SlotKey $slotKey).SlotRoot 'fix-queue.json'
+
+    if (-not $Reset) {
+        $existing = Get-MetraInspectReviewLoopState -SlotKey $slotKey
+        if ($null -ne $existing -and $existing.active -eq $false -and -not [string]::IsNullOrWhiteSpace([string]$existing.TerminationReason)) {
+            $live = Get-MetraInspectCurrentDiffInput -ProjectContext $ctx
+            $assess = Get-MetraInspectSlotDiffAssess -SlotKey $slotKey
+            if ($null -ne $assess -and $live.inputHash -eq $assess.inputHash) {
+                Write-Host 'Prepare-for-Bing: reusing completed loop session — refreshing pack...' -ForegroundColor Cyan
+                $packResult = Invoke-MetraInspectAutoPack -NoClipboard
+                return [PSCustomObject]@{
+                    readyForBing      = $true
+                    project           = $slotKey
+                    phase             = 'bing'
+                    critical          = [int]$existing.CriticalCount
+                    high              = [int]$existing.HighCount
+                    medium            = [int]$existing.MediumCount
+                    low               = [int]$existing.LowCount
+                    terminationReason = [string]$existing.TerminationReason
+                    packPath          = [string]$packResult.packPath
+                    packBuilt         = [bool]$packResult.ok
+                    reusedSession     = $true
+                }
+            }
+            Write-Host 'Prepare-for-Bing: working tree changed since completed session — re-assessing...' -ForegroundColor Yellow
+            $Reset = $true
+        }
+    }
+
+    try {
+        $loopParams = @{
+            Name    = $ctx.Project
+            RunAll  = $true
+            MaxLoops = 5
+        }
+        if ($Reset) { $loopParams.Reset = $true }
+        $state = Invoke-MetraInspectReviewLoop @loopParams
+    }
+    catch {
+        if ($_.Exception.Message -match 'Nothing to inspect') {
+            return [PSCustomObject]@{
+                readyForBing = $true
+                skipped      = $true
+                reason       = 'no-diff'
+                project      = $slotKey
+            }
+        }
+        throw
+    }
+
+    $critical = [int](Get-MetraProp -Object $state -Name 'CriticalCount' -Default 0)
+    $high = [int](Get-MetraProp -Object $state -Name 'HighCount' -Default 0)
+    $medium = [int](Get-MetraProp -Object $state -Name 'MediumCount' -Default 0)
+    $low = [int](Get-MetraProp -Object $state -Name 'LowCount' -Default 0)
+    $active = [bool](Get-MetraProp -Object $state -Name 'active' -Default $true)
+    $phase = [string](Get-MetraProp -Object $state -Name 'phase' -Default '')
+    $term = [string](Get-MetraProp -Object $state -Name 'TerminationReason' -Default '')
+    $goalMet = ($critical -eq 0 -and $high -eq 0 -and $medium -le 2)
+
+    Write-Host 'Prepare-for-Bing: auto-building Bing pack...' -ForegroundColor Cyan
+    $packResult = Invoke-MetraInspectAutoPack -NoClipboard
+    $packPath = [string]$packResult.packPath
+
+    if ($active -and $phase -eq 'AwaitingFix') {
+        return [PSCustomObject]@{
+            readyForBing       = $false
+            project            = $slotKey
+            phase              = 'fix'
+            critical           = $critical
+            high               = $high
+            medium             = $medium
+            low                = $low
+            fixQueuePath       = $fixQueuePath
+            packPath           = $packPath
+            packBuilt          = [bool]$packResult.ok
+            grade              = [string](Get-MetraProp -Object $state -Name 'FinalGrade' -Default '')
+        }
+    }
+
+    if (-not $active) {
+        return [PSCustomObject]@{
+            readyForBing       = $true
+            project            = $slotKey
+            phase              = 'bing'
+            critical           = $critical
+            high               = $high
+            medium             = $medium
+            low                = $low
+            goalMet            = $goalMet
+            terminationReason  = $term
+            packPath           = $packPath
+            packBuilt          = [bool]$packResult.ok
+            fixQueuePath       = $fixQueuePath
+        }
+    }
+
+    return [PSCustomObject]@{
+        readyForBing = $false
+        project      = $slotKey
+        phase        = [string]$phase
+        critical     = $critical
+        high         = $high
+        medium       = $medium
+        low          = $low
+        fixQueuePath = $fixQueuePath
+        packPath     = $packPath
+        packBuilt    = [bool]$packResult.ok
+    }
+}
+
+function Invoke-MetraInspectPreCommitHook {
+    <#
+    .SYNOPSIS
+        Git pre-commit: enforce live == assess == gate; does not reuse prepare-bing session state.
+    #>
+    [CmdletBinding()]
+    param(
+        [string]$Name
+    )
+
+    if ($env:METRA_SKIP_BING_GATE -eq '1' -or $env:METRA_SKIP_INSPECT_HOOK -eq '1') {
+        Write-Host 'Pre-commit hook skipped (METRA_SKIP_BING_GATE or METRA_SKIP_INSPECT_HOOK=1).' -ForegroundColor Yellow
+        return [PSCustomObject]@{ ok = $true; skipped = $true; reason = 'env-skip' }
+    }
+
+    $ctx = Resolve-MetraInspectProjectContext -Name $Name -Mode diff
+    if (-not $ctx.Ok) { throw $ctx.Error }
+    $slotKey = [string]$ctx.Project
+    if ([string]::IsNullOrWhiteSpace($slotKey)) { $slotKey = 'default' }
+
+    $live = Get-MetraInspectCurrentDiffInput -ProjectContext $ctx
+    if ($live.empty) {
+        Write-Host 'Pre-commit: no inspectable diff — OK.'
+        return [PSCustomObject]@{ ok = $true; skipped = $true; reason = 'no-diff' }
+    }
+
+    $triad = Test-MetraInspectBingGateCommitAllowed -SlotKey $slotKey -LiveInputHash $live.inputHash
+    if (-not $triad.allowed) {
+        $packPath = Join-Path (Get-MetraInspectStateRoot) 'pack-diff.md'
+        Write-Host ''
+        switch ($triad.reason) {
+            'no-assessment' {
+                Write-Host 'COMMIT BLOCKED — no Inspect assessment for this diff.' -ForegroundColor Red
+                Write-Host ("  Run: .\metra.ps1 inspect prepare-bing -Name {0}" -f $ctx.Project)
+            }
+            'live-assess-mismatch' {
+                Write-Host 'COMMIT BLOCKED — working tree changed after Inspect assessment.' -ForegroundColor Red
+                Write-Host ("  Live:   {0}" -f $triad.liveInputHash)
+                Write-Host ("  Assess: {0}" -f $triad.assessInputHash)
+                Write-Host ("  Re-run: .\metra.ps1 inspect prepare-bing -Name {0} -Reset" -f $ctx.Project)
+            }
+            default {
+                Write-Host 'COMMIT BLOCKED — Bing review required (manual gate).' -ForegroundColor Red
+                Write-Host ("  Auto-built pack: {0}" -f $packPath)
+                Write-Host ("  After Bing review: .\metra.ps1 inspect gate affirm -Name {0}" -f $ctx.Project)
+                Write-Host '  Emergency skip: METRA_SKIP_BING_GATE=1'
+            }
+        }
+        throw ("Pre-commit blocked: {0}." -f $triad.reason)
+    }
+
+    $gate = Get-MetraInspectBingGateRecord -SlotKey $slotKey
+    Write-Host ("Pre-commit: Bing gate affirmed ({0}) — commit allowed." -f [string]$gate.affirmedAtUtc) -ForegroundColor Green
+    return [PSCustomObject]@{
+        ok            = $true
+        inputHash     = [string]$live.inputHash
+        liveInputHash = [string]$triad.liveInputHash
+        assessInputHash = [string]$triad.assessInputHash
+        gateInputHash = [string]$triad.gateInputHash
+    }
+}
+
 function Show-MetraInspectCli {
     <#
     .SYNOPSIS
@@ -4182,9 +4790,35 @@ function Show-MetraInspectCli {
     $reset = $false
     $runAll = $false
     $maxLoops = 0
+    $hookSub = $null
+    $gateSub = $null
 
     $i = 0
-    if ($argsRest.Count -gt 0 -and $argsRest[0] -ieq 'pack-only') {
+    if ($argsRest.Count -gt 0 -and $argsRest[0] -ieq 'prepare-bing') {
+        $mode = 'prepare-bing'
+        $i = 1
+    }
+    elseif ($argsRest.Count -gt 0 -and $argsRest[0] -ieq 'pre-commit') {
+        $mode = 'pre-commit'
+        $i = 1
+    }
+    elseif ($argsRest.Count -gt 0 -and $argsRest[0] -ieq 'gate') {
+        $mode = 'gate'
+        $i = 1
+        if ($argsRest.Count -gt 1 -and @('affirm', 'status') -contains $argsRest[1].ToLowerInvariant()) {
+            $gateSub = $argsRest[1].ToLowerInvariant()
+            $i = 2
+        }
+    }
+    elseif ($argsRest.Count -gt 0 -and $argsRest[0] -ieq 'hooks') {
+        $mode = 'hooks'
+        $i = 1
+        if ($argsRest.Count -gt 1 -and $argsRest[1] -ieq 'install') {
+            $hookSub = 'install'
+            $i = 2
+        }
+    }
+    elseif ($argsRest.Count -gt 0 -and $argsRest[0] -ieq 'pack-only') {
         $mode = 'pack-only'
         $i = 1
         if ($argsRest.Count -gt 1 -and $argsRest[1] -ieq 'plan') {
@@ -4234,6 +4868,11 @@ function Show-MetraInspectCli {
 
     while ($i -lt $argsRest.Count) {
         $tok = [string]$argsRest[$i]
+        if ($mode -eq 'prepare-bing' -and $tok -ieq '-Reset') {
+            $reset = $true
+            $i++
+            continue
+        }
         if ($mode -eq 'loop' -and $tok -ieq '-Reset') {
             $reset = $true
             $i++
@@ -4359,6 +4998,35 @@ function Show-MetraInspectCli {
             if ($null -ne $loopSummary) { $recParams.Summary = $loopSummary }
             if ($null -ne $loopPackageId) { $recParams.PackageId = $loopPackageId }
             return Invoke-MetraInspectReviewLoopRecordFix @recParams @common
+        }
+        'prepare-bing' {
+            return Invoke-MetraInspectPrepareForBing -Name $projectName -Reset:$reset
+        }
+        'pre-commit' {
+            return Invoke-MetraInspectPreCommitHook -Name $projectName
+        }
+        'gate' {
+            if ($gateSub -eq 'affirm') {
+                return Set-MetraInspectBingGateAffirm -Name $projectName @common
+            }
+            if ($gateSub -eq 'status') {
+                return Show-MetraInspectBingGateStatus -Name $projectName
+            }
+            throw 'inspect gate requires affirm or status. Example: .\metra.ps1 inspect gate affirm -Name Metra'
+        }
+        'hooks' {
+            if ($hookSub -ne 'install') {
+                throw 'inspect hooks requires install. Example: .\metra.ps1 inspect hooks install'
+            }
+            $hookParams = @{}
+            if ($common.ContainsKey('WhatIf')) { $hookParams.WhatIf = $common.WhatIf }
+            if (-not [string]::IsNullOrWhiteSpace($projectName)) {
+                $hookCtx = Resolve-MetraInspectProjectContext -Name $projectName -Mode diff
+                if (-not $hookCtx.Ok) { throw $hookCtx.Error }
+                $hookParams.RepoRoot = [string]$hookCtx.Root
+                $hookParams.MetraRoot = Get-MetraRoot
+            }
+            return Install-MetraGitHooks @hookParams
         }
         default {
             return Invoke-MetraInspectDiff -Name $projectName -Base $baseRev @common

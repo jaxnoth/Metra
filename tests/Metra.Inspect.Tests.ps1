@@ -2003,3 +2003,335 @@ Describe 'Inspect fix dispatch queue hash' {
         }
     }
 }
+
+Describe 'Inspect Bing gate slot scoping' {
+    It 'reads inputHash from slot latest.json not the global last-diff pointer' {
+        InModuleScope Metra {
+            $stateRoot = Join-Path $env:TEMP ("metra-gate-" + [guid]::NewGuid().ToString('n'))
+            Mock Get-MetraInspectStateRoot { $stateRoot }
+
+            $metraSlot = Join-Path $stateRoot 'Metra'
+            $otherSlot = Join-Path $stateRoot 'TicketTracker'
+            New-Item -ItemType Directory -Path $metraSlot -Force | Out-Null
+            New-Item -ItemType Directory -Path $otherSlot -Force | Out-Null
+
+            $metraReport = [PSCustomObject]@{
+                schemaVersion = 1
+                mode          = 'diff'
+                provenance    = [PSCustomObject]@{
+                    project   = 'Metra'
+                    inputHash = 'hash-metra-slot'
+                }
+                findings      = @()
+            }
+            $otherReport = [PSCustomObject]@{
+                schemaVersion = 1
+                mode          = 'diff'
+                provenance    = [PSCustomObject]@{
+                    project   = 'TicketTracker'
+                    inputHash = 'hash-other-slot'
+                }
+                findings      = @()
+            }
+            ($metraReport | ConvertTo-Json -Depth 6) | Set-Content -LiteralPath (Join-Path $metraSlot 'latest.json') -Encoding UTF8
+            ($otherReport | ConvertTo-Json -Depth 6) | Set-Content -LiteralPath (Join-Path $otherSlot 'latest.json') -Encoding UTF8
+
+            $globalPointer = [ordered]@{
+                mode             = 'diff'
+                project          = 'TicketTracker'
+                inputHash        = 'hash-other-slot'
+                latestReportPath = (Join-Path $otherSlot 'latest.json')
+            }
+            ($globalPointer | ConvertTo-Json -Depth 4) | Set-Content -LiteralPath (Join-Path $stateRoot 'last-diff.json') -Encoding UTF8
+
+            try {
+                $assess = Get-MetraInspectSlotDiffAssess -SlotKey 'Metra'
+                $assess.inputHash | Should -Be 'hash-metra-slot'
+                $assess.project | Should -Be 'Metra'
+            }
+            finally {
+                Remove-Item -LiteralPath $stateRoot -Recurse -Force -ErrorAction SilentlyContinue
+            }
+        }
+    }
+
+    It 'accepts case-insensitive slot project provenance' {
+        InModuleScope Metra {
+            $stateRoot = Join-Path $env:TEMP ("metra-gate-" + [guid]::NewGuid().ToString('n'))
+            Mock Get-MetraInspectStateRoot { $stateRoot }
+            $slot = Join-Path $stateRoot 'Metra'
+            New-Item -ItemType Directory -Path $slot -Force | Out-Null
+            $report = [PSCustomObject]@{
+                schemaVersion = 1
+                mode          = 'diff'
+                provenance    = [PSCustomObject]@{ project = 'metra'; inputHash = 'hash-a' }
+                findings      = @()
+            }
+            ($report | ConvertTo-Json -Depth 6) | Set-Content -LiteralPath (Join-Path $slot 'latest.json') -Encoding UTF8
+            try {
+                { Get-MetraInspectSlotDiffAssess -SlotKey 'Metra' } | Should -Not -Throw
+            }
+            finally {
+                Remove-Item -LiteralPath $stateRoot -Recurse -Force -ErrorAction SilentlyContinue
+            }
+        }
+    }
+}
+
+Describe 'Inspect Bing gate live hash invariant' {
+    It 'allows commit when live assess and gate hashes match' {
+        InModuleScope Metra {
+            function Set-GateTestArtifacts {
+                param([string]$StateRoot, [string]$SlotKey, [string]$AssessHash, [string]$GateHash = $null)
+                $slot = Join-Path $StateRoot $SlotKey
+                New-Item -ItemType Directory -Path $slot -Force | Out-Null
+                $report = [PSCustomObject]@{
+                    schemaVersion = 1; mode = 'diff'
+                    provenance = [PSCustomObject]@{ project = $SlotKey; inputHash = $AssessHash }
+                    findings = @()
+                }
+                ($report | ConvertTo-Json -Depth 6) | Set-Content -LiteralPath (Join-Path $slot 'latest.json') -Encoding UTF8
+                if ($null -ne $GateHash) {
+                    $gate = [ordered]@{ schemaVersion = 1; project = $SlotKey; inputHash = $GateHash; affirmedAtUtc = '2026-08-31T00:00:00Z' }
+                    ($gate | ConvertTo-Json -Depth 4) | Set-Content -LiteralPath (Join-Path $slot 'bing-gate.json') -Encoding UTF8
+                }
+            }
+            $stateRoot = Join-Path $env:TEMP ("metra-triad-" + [guid]::NewGuid().ToString('n'))
+            Mock Get-MetraInspectStateRoot { $stateRoot }
+            Set-GateTestArtifacts -StateRoot $stateRoot -SlotKey 'Metra' -AssessHash 'hash-a' -GateHash 'hash-a'
+            try {
+                $triad = Test-MetraInspectBingGateCommitAllowed -SlotKey 'Metra' -LiveInputHash 'hash-a'
+                $triad.allowed | Should -BeTrue
+                $triad.reason | Should -Be 'ok'
+            }
+            finally {
+                Remove-Item -LiteralPath $stateRoot -Recurse -Force -ErrorAction SilentlyContinue
+            }
+        }
+    }
+
+    It 'blocks when live hash differs from assessment' {
+        InModuleScope Metra {
+            function Set-GateTestArtifacts {
+                param([string]$StateRoot, [string]$SlotKey, [string]$AssessHash, [string]$GateHash = $null)
+                $slot = Join-Path $StateRoot $SlotKey
+                New-Item -ItemType Directory -Path $slot -Force | Out-Null
+                $report = [PSCustomObject]@{
+                    schemaVersion = 1; mode = 'diff'
+                    provenance = [PSCustomObject]@{ project = $SlotKey; inputHash = $AssessHash }
+                    findings = @()
+                }
+                ($report | ConvertTo-Json -Depth 6) | Set-Content -LiteralPath (Join-Path $slot 'latest.json') -Encoding UTF8
+                if ($null -ne $GateHash) {
+                    $gate = [ordered]@{ schemaVersion = 1; project = $SlotKey; inputHash = $GateHash; affirmedAtUtc = '2026-08-31T00:00:00Z' }
+                    ($gate | ConvertTo-Json -Depth 4) | Set-Content -LiteralPath (Join-Path $slot 'bing-gate.json') -Encoding UTF8
+                }
+            }
+            $stateRoot = Join-Path $env:TEMP ("metra-triad-" + [guid]::NewGuid().ToString('n'))
+            Mock Get-MetraInspectStateRoot { $stateRoot }
+            Set-GateTestArtifacts -StateRoot $stateRoot -SlotKey 'Metra' -AssessHash 'hash-a' -GateHash 'hash-a'
+            try {
+                $triad = Test-MetraInspectBingGateCommitAllowed -SlotKey 'Metra' -LiveInputHash 'hash-b'
+                $triad.allowed | Should -BeFalse
+                $triad.reason | Should -Be 'live-assess-mismatch'
+            }
+            finally {
+                Remove-Item -LiteralPath $stateRoot -Recurse -Force -ErrorAction SilentlyContinue
+            }
+        }
+    }
+
+    It 'blocks when live hash differs from gate affirmation' {
+        InModuleScope Metra {
+            function Set-GateTestArtifacts {
+                param([string]$StateRoot, [string]$SlotKey, [string]$AssessHash, [string]$GateHash = $null)
+                $slot = Join-Path $StateRoot $SlotKey
+                New-Item -ItemType Directory -Path $slot -Force | Out-Null
+                $report = [PSCustomObject]@{
+                    schemaVersion = 1; mode = 'diff'
+                    provenance = [PSCustomObject]@{ project = $SlotKey; inputHash = $AssessHash }
+                    findings = @()
+                }
+                ($report | ConvertTo-Json -Depth 6) | Set-Content -LiteralPath (Join-Path $slot 'latest.json') -Encoding UTF8
+                if ($null -ne $GateHash) {
+                    $gate = [ordered]@{ schemaVersion = 1; project = $SlotKey; inputHash = $GateHash; affirmedAtUtc = '2026-08-31T00:00:00Z' }
+                    ($gate | ConvertTo-Json -Depth 4) | Set-Content -LiteralPath (Join-Path $slot 'bing-gate.json') -Encoding UTF8
+                }
+            }
+            $stateRoot = Join-Path $env:TEMP ("metra-triad-" + [guid]::NewGuid().ToString('n'))
+            Mock Get-MetraInspectStateRoot { $stateRoot }
+            Set-GateTestArtifacts -StateRoot $stateRoot -SlotKey 'Metra' -AssessHash 'hash-b' -GateHash 'hash-a'
+            try {
+                $triad = Test-MetraInspectBingGateCommitAllowed -SlotKey 'Metra' -LiveInputHash 'hash-b'
+                $triad.allowed | Should -BeFalse
+                $triad.reason | Should -Be 'live-gate-mismatch'
+            }
+            finally {
+                Remove-Item -LiteralPath $stateRoot -Recurse -Force -ErrorAction SilentlyContinue
+            }
+        }
+    }
+
+    It 'blocks when assessment and gate hashes diverge' {
+        InModuleScope Metra {
+            function Set-GateTestArtifacts {
+                param([string]$StateRoot, [string]$SlotKey, [string]$AssessHash, [string]$GateHash = $null)
+                $slot = Join-Path $StateRoot $SlotKey
+                New-Item -ItemType Directory -Path $slot -Force | Out-Null
+                $report = [PSCustomObject]@{
+                    schemaVersion = 1; mode = 'diff'
+                    provenance = [PSCustomObject]@{ project = $SlotKey; inputHash = $AssessHash }
+                    findings = @()
+                }
+                ($report | ConvertTo-Json -Depth 6) | Set-Content -LiteralPath (Join-Path $slot 'latest.json') -Encoding UTF8
+                if ($null -ne $GateHash) {
+                    $gate = [ordered]@{ schemaVersion = 1; project = $SlotKey; inputHash = $GateHash; affirmedAtUtc = '2026-08-31T00:00:00Z' }
+                    ($gate | ConvertTo-Json -Depth 4) | Set-Content -LiteralPath (Join-Path $slot 'bing-gate.json') -Encoding UTF8
+                }
+            }
+            $stateRoot = Join-Path $env:TEMP ("metra-triad-" + [guid]::NewGuid().ToString('n'))
+            Mock Get-MetraInspectStateRoot { $stateRoot }
+            Set-GateTestArtifacts -StateRoot $stateRoot -SlotKey 'Metra' -AssessHash 'hash-a' -GateHash 'hash-b'
+            try {
+                $triad = Test-MetraInspectBingGateCommitAllowed -SlotKey 'Metra' -LiveInputHash 'hash-a'
+                $triad.allowed | Should -BeFalse
+                $triad.reason | Should -Be 'live-gate-mismatch'
+            }
+            finally {
+                Remove-Item -LiteralPath $stateRoot -Recurse -Force -ErrorAction SilentlyContinue
+            }
+        }
+    }
+
+    It 'pre-commit blocks after post-affirmation working-tree drift' {
+        InModuleScope Metra {
+            function Set-GateTestArtifacts {
+                param([string]$StateRoot, [string]$SlotKey, [string]$AssessHash, [string]$GateHash = $null)
+                $slot = Join-Path $StateRoot $SlotKey
+                New-Item -ItemType Directory -Path $slot -Force | Out-Null
+                $report = [PSCustomObject]@{
+                    schemaVersion = 1; mode = 'diff'
+                    provenance = [PSCustomObject]@{ project = $SlotKey; inputHash = $AssessHash }
+                    findings = @()
+                }
+                ($report | ConvertTo-Json -Depth 6) | Set-Content -LiteralPath (Join-Path $slot 'latest.json') -Encoding UTF8
+                if ($null -ne $GateHash) {
+                    $gate = [ordered]@{ schemaVersion = 1; project = $SlotKey; inputHash = $GateHash; affirmedAtUtc = '2026-08-31T00:00:00Z' }
+                    ($gate | ConvertTo-Json -Depth 4) | Set-Content -LiteralPath (Join-Path $slot 'bing-gate.json') -Encoding UTF8
+                }
+            }
+            $stateRoot = Join-Path $env:TEMP ("metra-pre-" + [guid]::NewGuid().ToString('n'))
+            Mock Get-MetraInspectStateRoot { $stateRoot }
+            Set-GateTestArtifacts -StateRoot $stateRoot -SlotKey 'Metra' -AssessHash 'hash-a' -GateHash 'hash-a'
+            Mock Resolve-MetraInspectProjectContext {
+                [PSCustomObject]@{ Ok = $true; Project = 'Metra'; Root = (Get-MetraRoot); Error = $null }
+            }
+            Mock Get-MetraInspectCurrentDiffInput {
+                [PSCustomObject]@{ project = 'Metra'; root = (Get-MetraRoot); inputHash = 'hash-b'; empty = $false }
+            }
+            try {
+                { Invoke-MetraInspectPreCommitHook -Name 'Metra' } | Should -Throw '*live-assess-mismatch*'
+            }
+            finally {
+                Remove-Item -LiteralPath $stateRoot -Recurse -Force -ErrorAction SilentlyContinue
+            }
+        }
+    }
+
+    It 'prepare-bing does not reuse completed session when live hash drifted' {
+        InModuleScope Metra {
+            Mock Resolve-MetraInspectProjectContext {
+                [PSCustomObject]@{ Ok = $true; Project = 'Metra'; Root = (Get-MetraRoot); Error = $null }
+            }
+            Mock Get-MetraInspectReviewLoopState {
+                [PSCustomObject]@{
+                    active = $false; TerminationReason = 'Goal achieved'
+                    CriticalCount = 0; HighCount = 0; MediumCount = 0; LowCount = 0
+                }
+            }
+            Mock Get-MetraInspectCurrentDiffInput {
+                [PSCustomObject]@{ project = 'Metra'; root = (Get-MetraRoot); inputHash = 'hash-b'; empty = $false }
+            }
+            Mock Get-MetraInspectSlotDiffAssess {
+                [PSCustomObject]@{ slotKey = 'Metra'; inputHash = 'hash-a'; latestReportPath = 'x' }
+            }
+            Mock Invoke-MetraInspectReviewLoop {
+                [PSCustomObject]@{
+                    active = $false; TerminationReason = 'Goal achieved'
+                    CriticalCount = 0; HighCount = 0; MediumCount = 2; LowCount = 1
+                }
+            }
+            Mock Invoke-MetraInspectAutoPack {
+                [PSCustomObject]@{ ok = $true; packPath = 'C:\pack.md' }
+            }
+
+            $result = Invoke-MetraInspectPrepareForBing -Name 'Metra'
+            [bool](Get-MetraProp -Object $result -Name 'reusedSession' -Default $false) | Should -Be $false
+            $result.project | Should -Be 'Metra'
+        }
+    }
+
+    It 'gate affirm rejects when live hash differs from slot assessment' {
+        InModuleScope Metra {
+            function Set-GateTestArtifacts {
+                param([string]$StateRoot, [string]$SlotKey, [string]$AssessHash, [string]$GateHash = $null)
+                $slot = Join-Path $StateRoot $SlotKey
+                New-Item -ItemType Directory -Path $slot -Force | Out-Null
+                $report = [PSCustomObject]@{
+                    schemaVersion = 1; mode = 'diff'
+                    provenance = [PSCustomObject]@{ project = $SlotKey; inputHash = $AssessHash }
+                    findings = @()
+                }
+                ($report | ConvertTo-Json -Depth 6) | Set-Content -LiteralPath (Join-Path $slot 'latest.json') -Encoding UTF8
+            }
+            $stateRoot = Join-Path $env:TEMP ("metra-aff-" + [guid]::NewGuid().ToString('n'))
+            Mock Get-MetraInspectStateRoot { $stateRoot }
+            Set-GateTestArtifacts -StateRoot $stateRoot -SlotKey 'Metra' -AssessHash 'hash-a'
+            Mock Resolve-MetraInspectProjectContext {
+                [PSCustomObject]@{ Ok = $true; Project = 'Metra'; Root = (Get-MetraRoot); Error = $null }
+            }
+            Mock Get-MetraInspectCurrentDiffInput {
+                [PSCustomObject]@{ project = 'Metra'; root = (Get-MetraRoot); inputHash = 'hash-b'; empty = $false }
+            }
+            try {
+                { Set-MetraInspectBingGateAffirm -Name 'Metra' -Confirm:$false } |
+                    Should -Throw '*Working tree changed since Inspect assessment*'
+            }
+            finally {
+                Remove-Item -LiteralPath $stateRoot -Recurse -Force -ErrorAction SilentlyContinue
+            }
+        }
+    }
+}
+
+Describe 'Inspect hooks install' {
+    It 'throws for an invalid named project instead of installing against cwd' {
+        InModuleScope Metra {
+            Mock Resolve-MetraInspectProjectContext {
+                [PSCustomObject]@{ Ok = $false; Project = $null; Root = $null; Error = "Unknown project 'Nope'." }
+            }
+            { Show-MetraInspectCli -Rest @('hooks', 'install') -Name @('Nope') } |
+                Should -Throw "*Unknown project 'Nope'*"
+        }
+    }
+}
+
+Describe 'Inspect git config metra.root' {
+    It 'returns the first trimmed metra.root value' {
+        InModuleScope Metra {
+            $repo = Join-Path $env:TEMP ("metra-cfg-" + [guid]::NewGuid().ToString('n'))
+            New-Item -ItemType Directory -Path $repo -Force | Out-Null
+            Push-Location $repo
+            try {
+                git init 2>$null | Out-Null
+                git config metra.root "  C:\Metra  " 2>$null | Out-Null
+                git config --add metra.root 'C:\Other' 2>$null | Out-Null
+                Get-MetraGitConfiguredMetraRoot -RepoRoot $repo | Should -Be 'C:\Metra'
+            }
+            finally {
+                Pop-Location
+                Remove-Item -LiteralPath $repo -Recurse -Force -ErrorAction SilentlyContinue
+            }
+        }
+    }
+}

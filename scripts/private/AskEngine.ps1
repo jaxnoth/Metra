@@ -1590,6 +1590,57 @@ function Test-MetraAskOpaqueSdkFailure {
     return $false
 }
 
+function Test-MetraAskCredentialFailure {
+    <#
+    .SYNOPSIS
+        True when the failure is a credential/config problem that sidecar restart will not fix.
+    #>
+    [CmdletBinding()]
+    param($EngineResult)
+
+    if ($null -eq $EngineResult) { return $false }
+    if ([bool](Get-MetraProp -Object $EngineResult -Name 'secretsRefuse' -Default $false)) { return $true }
+
+    $blob = @(
+        [string](Get-MetraProp -Object $EngineResult -Name 'message' -Default '')
+        [string](Get-MetraProp -Object $EngineResult -Name 'errorDetail' -Default '')
+        [string](Get-MetraProp -Object $EngineResult -Name 'error' -Default '')
+        [string](Get-MetraProp -Object $EngineResult -Name 'retryClass' -Default '')
+    ) -join ' '
+
+    if ($blob -match '(?i)invalid.?api.?key|api.?key.?not|missing.?api.?key|credential(s)? (invalid|missing|not configured)|forbidden.?key') {
+        return $true
+    }
+    return $false
+}
+
+function Test-MetraAskSidecarRestartableFailure {
+    <#
+    .SYNOPSIS
+        True when recycling the Cursor Ask sidecar may fix the failure (opaque SDK, transport, session auth).
+    #>
+    [CmdletBinding()]
+    param($EngineResult)
+
+    if (Test-MetraAskCredentialFailure -EngineResult $EngineResult) { return $false }
+    if (Test-MetraAskOpaqueSdkFailure -EngineResult $EngineResult) { return $true }
+    if ($null -eq $EngineResult) { return $false }
+    if ([bool](Get-MetraProp -Object $EngineResult -Name 'ok' -Default $false)) { return $false }
+    if ([bool](Get-MetraProp -Object $EngineResult -Name 'secretsRefuse' -Default $false)) { return $false }
+
+    $blob = @(
+        [string](Get-MetraProp -Object $EngineResult -Name 'message' -Default '')
+        [string](Get-MetraProp -Object $EngineResult -Name 'errorDetail' -Default '')
+        [string](Get-MetraProp -Object $EngineResult -Name 'error' -Default '')
+        [string](Get-MetraProp -Object $EngineResult -Name 'retryClass' -Default '')
+    ) -join ' '
+
+    if ($blob -match '(?i)authentication|unauthorized|\b401\b|connection reset|econnreset|engine run failed|sidecar') {
+        return $true
+    }
+    return $false
+}
+
 if (-not (Get-Variable -Name MetraAskSidecarRestartLock -Scope Script -ErrorAction SilentlyContinue)) {
     $script:MetraAskSidecarRestartLock = New-Object object
     $script:MetraAskSidecarRestartGate = @{
@@ -1749,7 +1800,7 @@ function Invoke-MetraAskCursorOpaqueRecovery {
         [int]$TimeoutSec = 180
     )
 
-    if (-not (Test-MetraAskOpaqueSdkFailure -EngineResult $EngineResult)) {
+    if (-not (Test-MetraAskSidecarRestartableFailure -EngineResult $EngineResult)) {
         return [PSCustomObject]@{
             attempted = $false
             result    = $EngineResult

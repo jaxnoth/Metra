@@ -58,6 +58,7 @@ Describe 'AutoProgram Slice 3 transitions' {
         Test-MetraAutoprogramTransition -From 'queued' -To 'claimed' | Should -BeTrue
         Test-MetraAutoprogramTransition -From 'claimed' -To 'implementing' | Should -BeTrue
         Test-MetraAutoprogramTransition -From 'implementing' -To 'reviewing' | Should -BeTrue
+        Test-MetraAutoprogramTransition -From 'implementing' -To 'claimed' | Should -BeTrue
         Test-MetraAutoprogramTransition -From 'queued' -To 'reviewing' | Should -BeFalse
     }
 }
@@ -186,6 +187,85 @@ Describe 'AutoProgram implementer failure classifier' {
         InModuleScope AutoProgram {
             (Get-AutoProgramImplementerFailureClass -Message 'usage limit reached').failureClass | Should -Be 'licensing_error'
             (Get-AutoProgramImplementerFailureClass -Message 'connection reset by peer').failureClass | Should -Be 'transient'
+        }
+    }
+}
+
+Describe 'AutoProgram changed-path scope' {
+    It 'rejects paths that escape project root' {
+        InModuleScope AutoProgram {
+            $proj = Join-Path ([IO.Path]::GetTempPath()) ('ap-scope-' + [guid]::NewGuid().ToString('n'))
+            New-Item -ItemType Directory -Path $proj -Force | Out-Null
+            try {
+                $scope = Test-AutoProgramChangedPathsAllowed -ChangedPaths @('..\outside.txt') `
+                    -ProjectRoot $proj -AllowedPaths @('tests') -ForbiddenPaths @()
+                $scope.allowed | Should -BeFalse
+                ($scope.violations -join ',') | Should -Match 'escape:'
+            }
+            finally {
+                Remove-Item -LiteralPath $proj -Recurse -Force -ErrorAction SilentlyContinue
+            }
+        }
+    }
+
+    It 'does not treat docs-archive as forbidden docs' {
+        InModuleScope AutoProgram {
+            $proj = Join-Path ([IO.Path]::GetTempPath()) ('ap-scope-' + [guid]::NewGuid().ToString('n'))
+            New-Item -ItemType Directory -Path $proj -Force | Out-Null
+            try {
+                $scope = Test-AutoProgramChangedPathsAllowed -ChangedPaths @('docs-archive/x.txt') `
+                    -ProjectRoot $proj -AllowedPaths @('docs-archive') -ForbiddenPaths @('docs')
+                $scope.allowed | Should -BeTrue
+            }
+            finally {
+                Remove-Item -LiteralPath $proj -Recurse -Force -ErrorAction SilentlyContinue
+            }
+        }
+    }
+
+    It 'preserves dotfile names when normalizing' {
+        InModuleScope AutoProgram {
+            $proj = Join-Path ([IO.Path]::GetTempPath()) ('ap-dot-' + [guid]::NewGuid().ToString('n'))
+            New-Item -ItemType Directory -Path $proj -Force | Out-Null
+            try {
+                $norm = Get-AutoProgramNormalizedRepoRelativePath -RelativePath './.env' -ProjectRoot $proj
+                $norm | Should -Be '.env'
+            }
+            finally {
+                Remove-Item -LiteralPath $proj -Recurse -Force -ErrorAction SilentlyContinue
+            }
+        }
+    }
+}
+
+Describe 'AutoProgram git cleanup after failed run' {
+    It 'does not delete the item branch when checkout back to original fails' {
+        InModuleScope AutoProgram {
+            $proj = Join-Path ([IO.Path]::GetTempPath()) ('ap-gitcl-' + [guid]::NewGuid().ToString('n'))
+            try {
+                New-Item -ItemType Directory -Path $proj -Force | Out-Null
+                Push-Location $proj
+                git init 2>$null | Out-Null
+                git config user.email 'autoprogram@test.local' 2>$null | Out-Null
+                git config user.name 'AutoProgram Test' 2>$null | Out-Null
+                Set-Content -Path (Join-Path $proj 'README.md') -Value 'init'
+                git add README.md 2>$null | Out-Null
+                git commit -m 'init' 2>$null | Out-Null
+                $baseline = (git rev-parse HEAD).Trim()
+                git checkout -b 'ap/test-item' 2>$null | Out-Null
+                $itemBranch = (git rev-parse --abbrev-ref HEAD).Trim()
+                $itemBranch | Should -Be 'ap/test-item'
+
+                Restore-AutoProgramGitAfterFailedRun -ProjectRoot $proj -BaselineSha $baseline `
+                    -OriginalBranch 'missing-original-branch' -ItemBranch $itemBranch
+
+                (git rev-parse --abbrev-ref HEAD).Trim() | Should -Be $itemBranch
+                (git branch --list $itemBranch) | Should -Match $itemBranch
+            }
+            finally {
+                Pop-Location
+                Remove-Item -LiteralPath $proj -Recurse -Force -ErrorAction SilentlyContinue
+            }
         }
     }
 }
