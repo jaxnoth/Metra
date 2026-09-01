@@ -1,18 +1,18 @@
-# Metra host adapters for AutoProgram. Domain code calls these only — never scripts/private/*.ps1.
+# Metra host adapters for Loom. Domain code calls these only — never scripts/private/*.ps1.
 
-function Get-AutoProgramHostRoot {
+function Get-LoomHostRoot {
     [CmdletBinding()]
     param()
-    if ($script:AutoProgramHostRootOverride) {
-        return [System.IO.Path]::GetFullPath([string]$script:AutoProgramHostRootOverride)
+    if ($script:LoomHostRootOverride) {
+        return [System.IO.Path]::GetFullPath([string]$script:LoomHostRootOverride)
     }
     $cmd = Get-Command Get-MetraRoot -ErrorAction SilentlyContinue
     if ($cmd) {
         return & $cmd
     }
-    # Standalone fallback: module lives at <metra>/modules/AutoProgram
+    # Standalone fallback: module lives at <metra>/modules/Loom
     $modRoot = $PSScriptRoot
-    while ($modRoot -and (Split-Path -Leaf $modRoot) -ne 'AutoProgram') {
+    while ($modRoot -and (Split-Path -Leaf $modRoot) -ne 'Loom') {
         $modRoot = Split-Path -Parent $modRoot
     }
     if ($modRoot) {
@@ -21,16 +21,16 @@ function Get-AutoProgramHostRoot {
             return $candidate
         }
     }
-    throw 'AutoProgram host root unavailable (Metra not loaded and metra.ps1 not found).'
+    throw 'Loom host root unavailable (Metra not loaded and metra.ps1 not found).'
 }
 
-function Get-AutoProgramInspectPlanRoots {
+function Get-LoomInspectPlanRoots {
     [CmdletBinding()]
     param(
         [string]$MetraRoot
     )
     if ([string]::IsNullOrWhiteSpace($MetraRoot)) {
-        $MetraRoot = Get-AutoProgramHostRoot
+        $MetraRoot = Get-LoomHostRoot
     }
     $cmd = Get-Command Get-MetraInspectPlanRoots -ErrorAction SilentlyContinue
     if ($cmd) {
@@ -45,25 +45,25 @@ function Get-AutoProgramInspectPlanRoots {
     return @($roots)
 }
 
-function Test-AutoProgramRoutingAdapterAvailable {
+function Test-LoomRoutingAdapterAvailable {
     [CmdletBinding()]
     param()
     return $null -ne (Get-Command Get-MetraRoutingAmbiguity -ErrorAction SilentlyContinue)
 }
 
-function Test-AutoProgramCaptureAdapterAvailable {
+function Test-LoomCaptureAdapterAvailable {
     [CmdletBinding()]
     param()
     return $null -ne (Get-Command Get-MetraCaptureLedger -ErrorAction SilentlyContinue)
 }
 
-function Get-AutoProgramRoutingAmbiguity {
+function Get-LoomRoutingAmbiguity {
     [CmdletBinding()]
     param(
         [Parameter(Mandatory)][string]$Query,
         [switch]$SkipTelemetry
     )
-    if (-not (Test-AutoProgramRoutingAdapterAvailable)) {
+    if (-not (Test-LoomRoutingAdapterAvailable)) {
         return [PSCustomObject]@{
             Primary   = $null
             Ambiguous = $true
@@ -73,7 +73,7 @@ function Get-AutoProgramRoutingAmbiguity {
     return & (Get-Command Get-MetraRoutingAmbiguity) -Query $Query -SkipTelemetry:$SkipTelemetry
 }
 
-function Get-AutoProgramCaptureLedger {
+function Get-LoomCaptureLedger {
     [CmdletBinding()]
     param(
         [string]$MetraRoot,
@@ -81,15 +81,15 @@ function Get-AutoProgramCaptureLedger {
         [string]$Status = 'candidate'
     )
     if ([string]::IsNullOrWhiteSpace($MetraRoot)) {
-        $MetraRoot = Get-AutoProgramHostRoot
+        $MetraRoot = Get-LoomHostRoot
     }
-    if (-not (Test-AutoProgramCaptureAdapterAvailable)) {
+    if (-not (Test-LoomCaptureAdapterAvailable)) {
         return @()
     }
     return @(& (Get-Command Get-MetraCaptureLedger) -MetraRoot $MetraRoot -Limit $Limit -Status $Status)
 }
 
-function Get-AutoProgramRoutingContext {
+function Get-LoomRoutingContext {
     <#
     .SYNOPSIS
         Adapter: routing-context.result shape (Contracts/v1).
@@ -98,12 +98,12 @@ function Get-AutoProgramRoutingContext {
     param(
         [Parameter(Mandatory)]$Request
     )
-    $query = [string](Get-AutoProgramProp -Object $Request -Name 'query' -Default '')
-    $planPath = [string](Get-AutoProgramProp -Object $Request -Name 'planPath' -Default '')
+    $query = [string](Get-LoomProp -Object $Request -Name 'query' -Default '')
+    $planPath = [string](Get-LoomProp -Object $Request -Name 'planPath' -Default '')
     $min = 0.85
     if (-not [string]::IsNullOrWhiteSpace($planPath) -and (Test-Path -LiteralPath $planPath)) {
-        $hostRoot = Get-AutoProgramHostRoot
-        if (Test-AutoProgramPathWithinRoot -Path $planPath -Root $hostRoot) {
+        $hostRoot = Get-LoomHostRoot
+        if (Test-LoomPathWithinRoot -Path $planPath -Root $hostRoot) {
             $fromPlan = [PSCustomObject]@{
                 schemaVersion       = 1
                 registryName        = 'Metra'
@@ -113,11 +113,11 @@ function Get-AutoProgramRoutingContext {
                 minimumConfidence   = $min
                 eligible            = $true
             }
-            Test-AutoProgramContract -Schema 'routing-context.result' -Object $fromPlan | Out-Null
+            Test-LoomContract -Schema 'routing-context.result' -Object $fromPlan | Out-Null
             return $fromPlan
         }
     }
-    $amb = Get-AutoProgramRoutingAmbiguity -Query $(if ($query) { $query } else { $planPath }) -SkipTelemetry
+    $amb = Get-LoomRoutingAmbiguity -Query $(if ($query) { $query } else { $planPath }) -SkipTelemetry
     if ($amb.Mode -eq 'adapter-unavailable') {
         $invalid = [PSCustomObject]@{
             schemaVersion     = 1
@@ -128,7 +128,7 @@ function Get-AutoProgramRoutingContext {
             minimumConfidence = $min
             eligible          = $false
         }
-        Test-AutoProgramContract -Schema 'routing-context.result' -Object $invalid | Out-Null
+        Test-LoomContract -Schema 'routing-context.result' -Object $invalid | Out-Null
         return $invalid
     }
     if ($amb.Primary) {
@@ -143,7 +143,7 @@ function Get-AutoProgramRoutingContext {
             minimumConfidence = $min
             eligible          = ($conf -ge $min)
         }
-        Test-AutoProgramContract -Schema 'routing-context.result' -Object $resolved | Out-Null
+        Test-LoomContract -Schema 'routing-context.result' -Object $resolved | Out-Null
         return $resolved
     }
     $unresolved = [PSCustomObject]@{
@@ -155,11 +155,11 @@ function Get-AutoProgramRoutingContext {
         minimumConfidence = $min
         eligible          = $false
     }
-    Test-AutoProgramContract -Schema 'routing-context.result' -Object $unresolved | Out-Null
+    Test-LoomContract -Schema 'routing-context.result' -Object $unresolved | Out-Null
     return $unresolved
 }
 
-function Invoke-AutoProgramInspectAdapter {
+function Invoke-LoomInspectAdapter {
     [CmdletBinding()]
     param($Request)
     return [PSCustomObject]@{
@@ -170,7 +170,7 @@ function Invoke-AutoProgramInspectAdapter {
     }
 }
 
-function Invoke-AutoProgramImplementerAdapter {
+function Invoke-LoomImplementerAdapter {
     <#
     .SYNOPSIS
         Slice 3 implementer — Metra host delegate or test scriptblock. No direct scripts/private imports.
@@ -187,7 +187,7 @@ function Invoke-AutoProgramImplementerAdapter {
         return & $ImplementerScript $Request $ProjectRoot $RunDir
     }
 
-    $cmd = Get-Command Invoke-MetraAutoprogramImplementer -ErrorAction SilentlyContinue
+    $cmd = Get-Command Invoke-MetraLoomImplementer -ErrorAction SilentlyContinue
     if ($cmd) {
         return & $cmd -Request $Request -ProjectRoot $ProjectRoot -RunDir $RunDir
     }
@@ -195,12 +195,12 @@ function Invoke-AutoProgramImplementerAdapter {
     return [PSCustomObject]@{
         schemaVersion = 1
         status        = 'adapter-unavailable'
-        message       = 'Implementer adapter unavailable (Invoke-MetraAutoprogramImplementer not loaded).'
+        message       = 'Implementer adapter unavailable (Invoke-MetraLoomImplementer not loaded).'
         exitCode      = 127
     }
 }
 
-function Invoke-AutoProgramVerifyAdapter {
+function Invoke-LoomVerifyAdapter {
     [CmdletBinding()]
     param($Request)
     return [PSCustomObject]@{

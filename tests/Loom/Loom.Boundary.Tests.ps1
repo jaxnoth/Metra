@@ -1,13 +1,13 @@
-# Boundary: AutoProgram must not import Metra private scripts.
+# Boundary: Loom must not import Metra private scripts.
 BeforeAll {
     $repoRoot = (Resolve-Path (Join-Path $PSScriptRoot '..\..')).Path
     Get-Module Metra -ErrorAction SilentlyContinue | Remove-Module -Force -ErrorAction SilentlyContinue
     $script:RepoRoot = $repoRoot
-    Import-Module (Join-Path $repoRoot 'modules\AutoProgram\AutoProgram.psd1') -Force
-    $script:ApRoot = Join-Path $repoRoot 'modules\AutoProgram'
+    Import-Module (Join-Path $repoRoot 'modules\Loom\Loom.psd1') -Force
+    $script:ApRoot = Join-Path $repoRoot 'modules\Loom'
 }
 
-Describe 'AutoProgram boundary' {
+Describe 'Loom boundary' {
     It 'domain and adapters do not reference scripts/private paths' {
         $hits = @()
         foreach ($f in @(Get-ChildItem -LiteralPath $script:ApRoot -Recurse -Include *.ps1, *.psm1 -File)) {
@@ -29,15 +29,15 @@ Describe 'AutoProgram boundary' {
         $text | Should -Not -Match 'Get-MetraCaptureLedger'
         $text | Should -Not -Match 'Get-MetraInspectPlanRoots'
         $text | Should -Not -Match 'Write-MetraAtomicUtf8Text'
-        $text | Should -Match 'Get-AutoProgramRoutingAmbiguity'
-        $text | Should -Match 'Get-AutoProgramCaptureLedger'
+        $text | Should -Match 'Get-LoomRoutingAmbiguity'
+        $text | Should -Match 'Get-LoomCaptureLedger'
     }
 
-    It 'shim Autoprogram.ps1 is thin' {
-        $shim = Join-Path $script:RepoRoot 'scripts\private\Autoprogram.ps1'
+    It 'shim Loom.ps1 is thin' {
+        $shim = Join-Path $script:RepoRoot 'scripts\private\Loom.ps1'
         $lines = @(Get-Content -LiteralPath $shim)
         $lines.Count | Should -BeLessThan 40
         ($lines -join "`n") | Should -Match 'Import-Module'
-        ($lines -join "`n") | Should -Match 'Invoke-AutoProgramCommand'
+        ($lines -join "`n") | Should -Match 'Invoke-LoomCommand'
     }
 }

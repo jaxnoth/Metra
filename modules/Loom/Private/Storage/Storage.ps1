@@ -1,10 +1,10 @@
-# AutoProgram storage helpers (self-contained; no Metra imports).
+# Loom storage helpers (self-contained; no Metra imports).
 
-function Get-AutoProgramUtf8NoBomEncoding {
+function Get-LoomUtf8NoBomEncoding {
     return [System.Text.UTF8Encoding]::new($false)
 }
 
-function Write-AutoProgramAtomicUtf8Text {
+function Write-LoomAtomicUtf8Text {
     [CmdletBinding()]
     param(
         [Parameter(Mandatory)][string]$Path,
@@ -14,7 +14,7 @@ function Write-AutoProgramAtomicUtf8Text {
     if ($dir -and -not (Test-Path -LiteralPath $dir)) {
         [void][System.IO.Directory]::CreateDirectory($dir)
     }
-    $enc = Get-AutoProgramUtf8NoBomEncoding
+    $enc = Get-LoomUtf8NoBomEncoding
     $tmp = "$Path.tmp"
     [System.IO.File]::WriteAllText($tmp, $Text, $enc)
     if (Test-Path -LiteralPath $Path) {
@@ -27,7 +27,7 @@ function Write-AutoProgramAtomicUtf8Text {
     }
 }
 
-function Invoke-AutoProgramWithNamedMutex {
+function Invoke-LoomWithNamedMutex {
     [CmdletBinding()]
     param(
         [Parameter(Mandatory)][string]$Name,
@@ -50,7 +50,7 @@ function Invoke-AutoProgramWithNamedMutex {
     }
 }
 
-function Get-AutoProgramProp {
+function Get-LoomProp {
     param(
         $Object,
         [Parameter(Mandatory)][string]$Name,
@@ -86,7 +86,7 @@ function Get-AutoProgramProp {
     return $prop.Value
 }
 
-function Test-AutoProgramPathWithinRoot {
+function Test-LoomPathWithinRoot {
     [CmdletBinding()]
     param(
         [Parameter(Mandatory)][AllowEmptyString()][string]$Path,

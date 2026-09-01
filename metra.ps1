@@ -37,7 +37,7 @@ param(
     [ValidateSet(
         'list', 'status', 'pull', 'fetch', 'run', 'new', 'apply', 'workspace',
         'audit', 'snapshot', 'selfdoc', 'ops', 'host', 'chats', 'roots', 'routing',
-        'export-profile', 'import-profile', 'ctx', 'setup', 'verify', 'unblock', 'tailscale', 'satellite', 'desk', 'profile', 'decisions', 'coverage', 'ask', 'capture', 'watch', 'inspect', 'azdo', 'atlas', 'autoprogram', 'help'
+        'export-profile', 'import-profile', 'ctx', 'setup', 'verify', 'unblock', 'tailscale', 'satellite', 'desk', 'profile', 'decisions', 'coverage', 'ask', 'capture', 'watch', 'inspect', 'azdo', 'atlas', 'loom', 'autoprogram', 'help'
     )]
     [string]$Command = 'help',
 
@@ -959,16 +959,50 @@ switch ($Command) {
         Invoke-MetraAtlasCommand -ArgsRest $Rest
     }
 
-    'autoprogram' {
+    'loom' {
         if (-not $Rest -or $Rest.Count -eq 0) {
-            throw "autoprogram requires a subcommand. Example: .\metra.ps1 autoprogram status"
+            throw "loom requires a subcommand. Example: .\metra.ps1 loom status"
         }
         $sub = $Rest[0]
         $subArgs = @()
         if ($Rest.Count -gt 1) {
             $subArgs = @($Rest[1..($Rest.Count - 1)])
         }
-        $result = Invoke-MetraAutoprogramCommand -Subcommand $sub -ArgsRest $subArgs
+        $result = Invoke-MetraLoomCommand -Subcommand $sub -ArgsRest $subArgs
+        if ($null -eq $result) { return }
+        if ($result -is [System.Array]) {
+            if (@($result).Count -eq 0) {
+                Write-Host '(none)'
+            }
+            elseif ($sub -ieq 'plans' -and $subArgs.Count -gt 0 -and $subArgs[0] -ieq 'list') {
+                $result | Select-Object name, approved, planStatus, path | Format-Table -AutoSize
+            }
+            elseif ($sub -ieq 'plans' -and $subArgs.Count -gt 0 -and $subArgs[0] -ieq 'pending') {
+                $result | Select-Object name, planStatus, path | Format-Table -AutoSize
+            }
+            elseif ($sub -ieq 'triage') {
+                $result | Format-List
+            }
+            else {
+                $result | Format-Table -AutoSize
+            }
+        }
+        else {
+            $result | Format-List
+        }
+    }
+
+    'autoprogram' {
+        Write-Warning 'autoprogram is deprecated. Use: .\metra.ps1 loom <subcommand> (example: .\metra.ps1 loom status)'
+        if (-not $Rest -or $Rest.Count -eq 0) {
+            throw 'autoprogram is deprecated. Use: .\metra.ps1 loom <subcommand>. Example: .\metra.ps1 loom status'
+        }
+        $sub = $Rest[0]
+        $subArgs = @()
+        if ($Rest.Count -gt 1) {
+            $subArgs = @($Rest[1..($Rest.Count - 1)])
+        }
+        $result = Invoke-MetraLoomCommand -Subcommand $sub -ArgsRest $subArgs
         if ($null -eq $result) { return }
         if ($result -is [System.Array]) {
             if (@($result).Count -eq 0) {

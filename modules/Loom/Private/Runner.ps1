@@ -1,6 +1,6 @@
 # Slice 3 — branch runner (clean tree, isolated run dir, implementer, path enforcement; no commit).
 
-function Get-AutoProgramActiveTransitionMap {
+function Get-LoomActiveTransitionMap {
     [CmdletBinding()]
     param()
 
@@ -20,11 +20,11 @@ function Get-AutoProgramActiveTransitionMap {
     }
 }
 
-function Get-AutoProgramSlice3Transitions {
-    return Get-AutoProgramActiveTransitionMap
+function Get-LoomSlice3Transitions {
+    return Get-LoomActiveTransitionMap
 }
 
-function Invoke-AutoProgramGit {
+function Invoke-LoomGit {
     [CmdletBinding()]
     param(
         [Parameter(Mandatory)][string]$ProjectRoot,
@@ -45,25 +45,25 @@ function Invoke-AutoProgramGit {
     }
 }
 
-function Get-AutoProgramGitErrorDetail {
+function Get-LoomGitErrorDetail {
     param($GitResult)
-    $detail = [string](Get-AutoProgramProp -Object $GitResult -Name 'Stderr' -Default '')
+    $detail = [string](Get-LoomProp -Object $GitResult -Name 'Stderr' -Default '')
     if ([string]::IsNullOrWhiteSpace($detail)) {
-        $detail = [string](Get-AutoProgramProp -Object $GitResult -Name 'Stdout' -Default '')
+        $detail = [string](Get-LoomProp -Object $GitResult -Name 'Stdout' -Default '')
     }
     return $detail
 }
 
-function Get-AutoProgramGitCurrentBranch {
+function Get-LoomGitCurrentBranch {
     param([Parameter(Mandatory)][string]$ProjectRoot)
-    $r = Invoke-AutoProgramGit -ProjectRoot $ProjectRoot -GitArgs @('rev-parse', '--abbrev-ref', 'HEAD')
+    $r = Invoke-LoomGit -ProjectRoot $ProjectRoot -GitArgs @('rev-parse', '--abbrev-ref', 'HEAD')
     if ($r.ExitCode -ne 0) {
-        throw "git rev-parse --abbrev-ref HEAD failed: $(Get-AutoProgramGitErrorDetail $r)"
+        throw "git rev-parse --abbrev-ref HEAD failed: $(Get-LoomGitErrorDetail $r)"
     }
     return ($r.Stdout.Trim())
 }
 
-function Restore-AutoProgramGitAfterFailedRun {
+function Restore-LoomGitAfterFailedRun {
     [CmdletBinding()]
     param(
         [Parameter(Mandatory)][string]$ProjectRoot,
@@ -74,26 +74,32 @@ function Restore-AutoProgramGitAfterFailedRun {
 
     if ([string]::IsNullOrWhiteSpace($BaselineSha)) { return }
     try {
-        $reset = Invoke-AutoProgramGit -ProjectRoot $ProjectRoot -GitArgs @('reset', '--hard', $BaselineSha)
+        $reset = Invoke-LoomGit -ProjectRoot $ProjectRoot -GitArgs @('reset', '--hard', $BaselineSha)
         if ($reset.ExitCode -ne 0) {
-            Write-Warning "git reset --hard failed during run cleanup: $(Get-AutoProgramGitErrorDetail $reset)"
+            Write-Warning "git reset --hard failed during run cleanup: $(Get-LoomGitErrorDetail $reset)"
+        }
+        else {
+            $clean = Invoke-LoomGit -ProjectRoot $ProjectRoot -GitArgs @('clean', '-fd')
+            if ($clean.ExitCode -ne 0) {
+                Write-Warning "git clean -fd failed during run cleanup: $(Get-LoomGitErrorDetail $clean)"
+            }
         }
         if (-not [string]::IsNullOrWhiteSpace($OriginalBranch)) {
-            $co = Invoke-AutoProgramGit -ProjectRoot $ProjectRoot -GitArgs @('checkout', $OriginalBranch)
+            $co = Invoke-LoomGit -ProjectRoot $ProjectRoot -GitArgs @('checkout', $OriginalBranch)
             if ($co.ExitCode -ne 0) {
-                Write-Warning "git checkout $OriginalBranch failed during run cleanup: $(Get-AutoProgramGitErrorDetail $co)"
+                Write-Warning "git checkout $OriginalBranch failed during run cleanup: $(Get-LoomGitErrorDetail $co)"
             }
             elseif (-not [string]::IsNullOrWhiteSpace($ItemBranch) -and $ItemBranch -ne $OriginalBranch) {
-                $null = Invoke-AutoProgramGit -ProjectRoot $ProjectRoot -GitArgs @('branch', '-D', $ItemBranch)
+                $null = Invoke-LoomGit -ProjectRoot $ProjectRoot -GitArgs @('branch', '-D', $ItemBranch)
             }
         }
     }
     catch {
-        Write-Warning "AutoProgram git run cleanup failed: $($_.Exception.Message)"
+        Write-Warning "Loom git run cleanup failed: $($_.Exception.Message)"
     }
 }
 
-function Get-AutoProgramNormalizedRepoRelativePath {
+function Get-LoomNormalizedRepoRelativePath {
     [CmdletBinding()]
     param(
         [Parameter(Mandatory)][string]$RelativePath,
@@ -112,7 +118,7 @@ function Get-AutoProgramNormalizedRepoRelativePath {
     catch {
         return $null
     }
-    if (-not (Test-AutoProgramPathWithinRoot -Path $full -Root $ProjectRoot)) {
+    if (-not (Test-LoomPathWithinRoot -Path $full -Root $ProjectRoot)) {
         return $null
     }
     $rootFull = [System.IO.Path]::GetFullPath($ProjectRoot).TrimEnd('\', '/')
@@ -123,45 +129,50 @@ function Get-AutoProgramNormalizedRepoRelativePath {
     return (($rel -replace '\\', '/') -replace '^\./', '')
 }
 
-function Test-AutoProgramForbiddenPathMatch {
+function Test-LoomForbiddenPathMatch {
     param(
         [Parameter(Mandatory)][string]$NormalizedPath,
         [Parameter(Mandatory)][string]$ForbiddenPattern
     )
     $fbNorm = (($ForbiddenPattern -replace '\\', '/') -replace '^\./', '').TrimEnd('/')
     if ([string]::IsNullOrWhiteSpace($fbNorm)) { return $false }
-    return ($NormalizedPath -eq $fbNorm -or $NormalizedPath -like "$fbNorm/*")
+    $leaf = Split-Path -Leaf $NormalizedPath
+    return (
+        $NormalizedPath -like $fbNorm -or
+        $NormalizedPath -like "$fbNorm/*" -or
+        $leaf -like $fbNorm
+    )
 }
 
-function Test-AutoProgramGitWorkingTreeClean {
+function Test-LoomGitWorkingTreeClean {
     [CmdletBinding()]
     param(
         [Parameter(Mandatory)][string]$ProjectRoot
     )
 
-    $r = Invoke-AutoProgramGit -ProjectRoot $ProjectRoot -GitArgs @('status', '--porcelain')
+    $r = Invoke-LoomGit -ProjectRoot $ProjectRoot -GitArgs @('status', '--porcelain')
     if ($r.ExitCode -ne 0) {
-        throw "git status failed in ${ProjectRoot}: $(Get-AutoProgramGitErrorDetail $r)"
+        throw "git status failed in ${ProjectRoot}: $(Get-LoomGitErrorDetail $r)"
     }
     return [string]::IsNullOrWhiteSpace($r.Stdout)
 }
 
-function Get-AutoProgramGitHeadCommit {
+function Get-LoomGitHeadCommit {
     param([Parameter(Mandatory)][string]$ProjectRoot)
-    $r = Invoke-AutoProgramGit -ProjectRoot $ProjectRoot -GitArgs @('rev-parse', 'HEAD')
-    if ($r.ExitCode -ne 0) { throw "git rev-parse HEAD failed: $(Get-AutoProgramGitErrorDetail $r)" }
+    $r = Invoke-LoomGit -ProjectRoot $ProjectRoot -GitArgs @('rev-parse', 'HEAD')
+    if ($r.ExitCode -ne 0) { throw "git rev-parse HEAD failed: $(Get-LoomGitErrorDetail $r)" }
     return ($r.Stdout.Trim())
 }
 
-function Get-AutoProgramGitChangedPaths {
+function Get-LoomGitChangedPaths {
     [CmdletBinding()]
     param(
         [Parameter(Mandatory)][string]$ProjectRoot
     )
 
-    $r = Invoke-AutoProgramGit -ProjectRoot $ProjectRoot -GitArgs @('status', '--porcelain')
+    $r = Invoke-LoomGit -ProjectRoot $ProjectRoot -GitArgs @('status', '--porcelain')
     if ($r.ExitCode -ne 0) {
-        throw "git status failed: $(Get-AutoProgramGitErrorDetail $r)"
+        throw "git status failed: $(Get-LoomGitErrorDetail $r)"
     }
     $paths = New-Object System.Collections.Generic.List[string]
     foreach ($line in @($r.Stdout -split "`n")) {
@@ -178,7 +189,7 @@ function Get-AutoProgramGitChangedPaths {
     return @($paths | Select-Object -Unique)
 }
 
-function Test-AutoProgramChangedPathsAllowed {
+function Test-LoomChangedPathsAllowed {
     [CmdletBinding()]
     param(
         [Parameter(Mandatory)][string[]]$ChangedPaths,
@@ -189,13 +200,13 @@ function Test-AutoProgramChangedPathsAllowed {
 
     $violations = New-Object System.Collections.Generic.List[string]
     foreach ($rel in @($ChangedPaths)) {
-        $norm = Get-AutoProgramNormalizedRepoRelativePath -RelativePath $rel -ProjectRoot $ProjectRoot
+        $norm = Get-LoomNormalizedRepoRelativePath -RelativePath $rel -ProjectRoot $ProjectRoot
         if ($null -eq $norm) {
             [void]$violations.Add("escape:$rel")
             continue
         }
         foreach ($fb in @($ForbiddenPaths)) {
-            if (Test-AutoProgramForbiddenPathMatch -NormalizedPath $norm -ForbiddenPattern $fb) {
+            if (Test-LoomForbiddenPathMatch -NormalizedPath $norm -ForbiddenPattern $fb) {
                 [void]$violations.Add("forbidden:$norm")
             }
         }
@@ -218,7 +229,7 @@ function Test-AutoProgramChangedPathsAllowed {
     }
 }
 
-function Get-AutoProgramImplementerFailureClass {
+function Get-LoomImplementerFailureClass {
     [CmdletBinding()]
     param(
         [string]$Message,
@@ -261,7 +272,7 @@ function Get-AutoProgramImplementerFailureClass {
     }
 }
 
-function Get-MetraAutoprogramRunDirectory {
+function Get-MetraLoomRunDirectory {
     param(
         [Parameter(Mandatory)][string]$Root,
         [Parameter(Mandatory)][string]$ItemId,
@@ -270,7 +281,7 @@ function Get-MetraAutoprogramRunDirectory {
     return Join-Path (Join-Path (Join-Path $Root 'runs') $ItemId) ('run-{0:D3}' -f $RunNumber)
 }
 
-function Get-MetraAutoprogramNextRunNumber {
+function Get-MetraLoomNextRunNumber {
     param(
         [Parameter(Mandatory)][string]$Root,
         [Parameter(Mandatory)][string]$ItemId
@@ -287,21 +298,21 @@ function Get-MetraAutoprogramNextRunNumber {
     return $max + 1
 }
 
-function New-AutoProgramRunRequestPackage {
+function New-LoomRunRequestPackage {
     [CmdletBinding()]
     param(
         [Parameter(Mandatory)][object]$Item,
         [Parameter(Mandatory)][string]$RunDir,
-        [string]$MetraRoot = (Get-AutoProgramHostRoot)
+        [string]$MetraRoot = (Get-LoomHostRoot)
     )
 
     $planBody = $null
-    $planPath = [string](Get-AutoProgramProp -Object $Item.source -Name 'path' -Default '')
+    $planPath = [string](Get-LoomProp -Object $Item.source -Name 'path' -Default '')
     if (-not [string]::IsNullOrWhiteSpace($planPath) -and (Test-Path -LiteralPath $planPath)) {
-        $planBody = [System.IO.File]::ReadAllText($planPath, (Get-AutoProgramUtf8NoBomEncoding))
+        $planBody = [System.IO.File]::ReadAllText($planPath, (Get-LoomUtf8NoBomEncoding))
     }
 
-    $projectRoot = [string](Get-AutoProgramProp -Object $Item.project -Name 'root' -Default '')
+    $projectRoot = [string](Get-LoomProp -Object $Item.project -Name 'root' -Default '')
     if ([string]::IsNullOrWhiteSpace($projectRoot)) {
         $projectRoot = $MetraRoot
     }
@@ -309,7 +320,7 @@ function New-AutoProgramRunRequestPackage {
     $allowed = @()
     $contract = $Item.contract
     if ($contract) {
-        $allowed = @($(Get-AutoProgramProp -Object $contract -Name 'allowedPaths' -Default @()))
+        $allowed = @($(Get-LoomProp -Object $contract -Name 'allowedPaths' -Default @()))
     }
 
     $pkg = [ordered]@{
@@ -317,12 +328,12 @@ function New-AutoProgramRunRequestPackage {
         itemId        = [string]$Item.id
         summary       = [string]$Item.summary
         projectRoot   = $projectRoot
-        registryName  = [string](Get-AutoProgramProp -Object $Item.project -Name 'registryName' -Default '')
-        branch        = [string](Get-AutoProgramProp -Object $Item.execution -Name 'branch' -Default '')
+        registryName  = [string](Get-LoomProp -Object $Item.project -Name 'registryName' -Default '')
+        branch        = [string](Get-LoomProp -Object $Item.execution -Name 'branch' -Default '')
         allowedPaths  = @($allowed)
-        forbiddenPaths = @($(Get-AutoProgramProp -Object $contract -Name 'forbiddenPaths' -Default @()))
-        doneWhen      = @($(Get-AutoProgramProp -Object $contract -Name 'doneWhen' -Default @()))
-        verifyCommands = @($(Get-AutoProgramProp -Object $contract -Name 'verifyCommands' -Default @()))
+        forbiddenPaths = @($(Get-LoomProp -Object $contract -Name 'forbiddenPaths' -Default @()))
+        doneWhen      = @($(Get-LoomProp -Object $contract -Name 'doneWhen' -Default @()))
+        verifyCommands = @($(Get-LoomProp -Object $contract -Name 'verifyCommands' -Default @()))
         source        = $Item.source
         planPath      = $planPath
         planBody      = $planBody
@@ -333,25 +344,25 @@ function New-AutoProgramRunRequestPackage {
         [void][System.IO.Directory]::CreateDirectory($RunDir)
     }
     $reqPath = Join-Path $RunDir 'request.json'
-    Write-AutoProgramAtomicUtf8Text -Path $reqPath -Text (($pkg | ConvertTo-Json -Depth 12) + "`n")
+    Write-LoomAtomicUtf8Text -Path $reqPath -Text (($pkg | ConvertTo-Json -Depth 12) + "`n")
     return [PSCustomObject]$pkg
 }
 
-function Invoke-AutoProgramGitCreateItemBranch {
+function Invoke-LoomGitCreateItemBranch {
     [CmdletBinding()]
     param(
         [Parameter(Mandatory)][string]$ProjectRoot,
         [Parameter(Mandatory)][string]$BranchName
     )
 
-    $co = Invoke-AutoProgramGit -ProjectRoot $ProjectRoot -GitArgs @('checkout', '-b', $BranchName)
+    $co = Invoke-LoomGit -ProjectRoot $ProjectRoot -GitArgs @('checkout', '-b', $BranchName)
     if ($co.ExitCode -ne 0) {
-        throw "git checkout -b failed: $(Get-AutoProgramGitErrorDetail $co)"
+        throw "git checkout -b failed: $(Get-LoomGitErrorDetail $co)"
     }
     return $BranchName
 }
 
-function Save-AutoProgramImplementationResult {
+function Save-LoomImplementationResult {
     param(
         [Parameter(Mandatory)][string]$RunDir,
         [Parameter(Mandatory)][object]$Result
@@ -363,13 +374,13 @@ function Save-AutoProgramImplementationResult {
         $copy[$p.Name] = $p.Value
     }
     $toValidate = [PSCustomObject]$copy
-    Test-AutoProgramContract -Schema 'implementation-result' -Object $toValidate | Out-Null
+    Test-LoomContract -Schema 'implementation-result' -Object $toValidate | Out-Null
     $path = Join-Path $RunDir 'implementation.json'
-    Write-AutoProgramAtomicUtf8Text -Path $path -Text (($Result | ConvertTo-Json -Depth 8) + "`n")
+    Write-LoomAtomicUtf8Text -Path $path -Text (($Result | ConvertTo-Json -Depth 8) + "`n")
     return $path
 }
 
-function Invoke-MetraAutoprogramRun {
+function Invoke-MetraLoomRun {
     <#
     .SYNOPSIS
         Slice 3 branch runner: clean tree, branch, run dir, one implementer pass, path enforcement (no commit).
@@ -378,13 +389,13 @@ function Invoke-MetraAutoprogramRun {
     param(
         [Parameter(Mandatory)][string]$Root,
         [Parameter(Mandatory)][string]$ItemId,
-        [string]$MetraRoot = (Get-AutoProgramHostRoot),
+        [string]$MetraRoot = (Get-LoomHostRoot),
         [switch]$DryRun,
         [switch]$Confirm,
         [scriptblock]$ImplementerScript
     )
 
-    $item = Get-MetraAutoprogramQueueItem -Root $Root -Id $ItemId
+    $item = Get-MetraLoomQueueItem -Root $Root -Id $ItemId
     if (-not $item) { throw "Queue item not found: $ItemId" }
     if ([string]$item.status -ne 'queued') {
         throw "Queue item $ItemId status is '$($item.status)'; expected 'queued' for run."
@@ -399,19 +410,22 @@ function Invoke-MetraAutoprogramRun {
     if ([string]::IsNullOrWhiteSpace($branch)) {
         throw "Queue item $ItemId missing execution.branch"
     }
+    if (-not (Test-LoomExecutionBranchPrefix -Branch $branch)) {
+        throw "Queue item $ItemId execution.branch has invalid prefix (expected loom/ or autoprogram/): $branch"
+    }
 
-    $runNum = Get-MetraAutoprogramNextRunNumber -Root $Root -ItemId $ItemId
-    $runDir = Get-MetraAutoprogramRunDirectory -Root $Root -ItemId $ItemId -RunNumber $runNum
+    $runNum = Get-MetraLoomNextRunNumber -Root $Root -ItemId $ItemId
+    $runDir = Get-MetraLoomRunDirectory -Root $Root -ItemId $ItemId -RunNumber $runNum
 
     if ($DryRun) {
-        $pkg = New-AutoProgramRunRequestPackage -Item $item -RunDir $runDir -MetraRoot $MetraRoot
+        $pkg = New-LoomRunRequestPackage -Item $item -RunDir $runDir -MetraRoot $MetraRoot
         $impl = [PSCustomObject]@{
             schemaVersion = 1
             status        = 'dry-run'
             message       = 'Dry run — no git branch or implementer invocation.'
             exitCode      = 0
         }
-        Save-AutoProgramImplementationResult -RunDir $runDir -Result $impl | Out-Null
+        Save-LoomImplementationResult -RunDir $runDir -Result $impl | Out-Null
         return [PSCustomObject]@{
             dryRun    = $true
             itemId    = $ItemId
@@ -426,16 +440,16 @@ function Invoke-MetraAutoprogramRun {
         throw 'autoprogram run requires -Confirm for live execution (git branch + implementer).'
     }
 
-    if (-not (Test-AutoProgramGitWorkingTreeClean -ProjectRoot $projectRoot)) {
-        $blocked = Invoke-MetraAutoprogramStateChange -Root $Root -ItemId $ItemId -From 'queued' -To 'blocked' `
+    if (-not (Test-LoomGitWorkingTreeClean -ProjectRoot $projectRoot)) {
+        $blocked = Invoke-MetraLoomStateChange -Root $Root -ItemId $ItemId -From 'queued' -To 'blocked' `
             -Reason 'dirty-git-baseline'
         throw "Git working tree is not clean in $projectRoot; item blocked."
     }
 
-    $baselineSha = Get-AutoProgramGitHeadCommit -ProjectRoot $projectRoot
-    $originalBranch = Get-AutoProgramGitCurrentBranch -ProjectRoot $projectRoot
+    $baselineSha = Get-LoomGitHeadCommit -ProjectRoot $projectRoot
+    $originalBranch = Get-LoomGitCurrentBranch -ProjectRoot $projectRoot
     $gitRunActive = $false
-    $claimed = Invoke-MetraAutoprogramStateChange -Root $Root -ItemId $ItemId -From 'queued' -To 'claimed' -Reason 'run-start' -Mutator {
+    $claimed = Invoke-MetraLoomStateChange -Root $Root -ItemId $ItemId -From 'queued' -To 'claimed' -Reason 'run-start' -Mutator {
         param($i)
         if (-not $i.execution) { $i | Add-Member -NotePropertyName execution -NotePropertyValue ([PSCustomObject]@{}) -Force }
         $i.execution | Add-Member -NotePropertyName baselineSha -NotePropertyValue $baselineSha -Force
@@ -445,28 +459,28 @@ function Invoke-MetraAutoprogramRun {
     }
 
     try {
-        Invoke-AutoProgramGitCreateItemBranch -ProjectRoot $projectRoot -BranchName $branch
+        Invoke-LoomGitCreateItemBranch -ProjectRoot $projectRoot -BranchName $branch
         $gitRunActive = $true
 
-        $pkg = New-AutoProgramRunRequestPackage -Item $claimed -RunDir $runDir -MetraRoot $MetraRoot
+        $pkg = New-LoomRunRequestPackage -Item $claimed -RunDir $runDir -MetraRoot $MetraRoot
         $stdoutPath = Join-Path $runDir 'stdout.log'
         $stderrPath = Join-Path $runDir 'stderr.log'
 
-        $implementing = Invoke-MetraAutoprogramStateChange -Root $Root -ItemId $ItemId -From 'claimed' -To 'implementing' -Reason 'implementer-start'
+        $implementing = Invoke-MetraLoomStateChange -Root $Root -ItemId $ItemId -From 'claimed' -To 'implementing' -Reason 'implementer-start'
 
-        $implResult = Invoke-AutoProgramImplementerAdapter -Request $pkg -ProjectRoot $projectRoot -RunDir $runDir -ImplementerScript $ImplementerScript
+        $implResult = Invoke-LoomImplementerAdapter -Request $pkg -ProjectRoot $projectRoot -RunDir $runDir -ImplementerScript $ImplementerScript
 
-        $stdoutText = [string](Get-AutoProgramProp -Object $implResult -Name 'stdout' -Default '')
-        $stderrText = [string](Get-AutoProgramProp -Object $implResult -Name 'stderr' -Default '')
+        $stdoutText = [string](Get-LoomProp -Object $implResult -Name 'stdout' -Default '')
+        $stderrText = [string](Get-LoomProp -Object $implResult -Name 'stderr' -Default '')
         if (-not [string]::IsNullOrWhiteSpace($stdoutText)) {
-            Write-AutoProgramAtomicUtf8Text -Path $stdoutPath -Text $stdoutText
+            Write-LoomAtomicUtf8Text -Path $stdoutPath -Text $stdoutText
         }
         if (-not [string]::IsNullOrWhiteSpace($stderrText)) {
-            Write-AutoProgramAtomicUtf8Text -Path $stderrPath -Text $stderrText
+            Write-LoomAtomicUtf8Text -Path $stderrPath -Text $stderrText
         }
 
-        $failureClass = Get-AutoProgramImplementerFailureClass -Message ([string](Get-AutoProgramProp -Object $implResult -Name 'message' -Default '')) -ExitCode ([int](Get-AutoProgramProp -Object $implResult -Name 'exitCode' -Default -1))
-        $status = [string](Get-AutoProgramProp -Object $implResult -Name 'status' -Default 'failed')
+        $failureClass = Get-LoomImplementerFailureClass -Message ([string](Get-LoomProp -Object $implResult -Name 'message' -Default '')) -ExitCode ([int](Get-LoomProp -Object $implResult -Name 'exitCode' -Default -1))
+        $status = [string](Get-LoomProp -Object $implResult -Name 'status' -Default 'failed')
 
         if ($status -ne 'ok' -and $status -ne 'completed') {
             $record = [PSCustomObject]@{
@@ -474,30 +488,30 @@ function Invoke-MetraAutoprogramRun {
                 status        = 'failed'
                 failureClass  = $failureClass.failureClass
                 tier          = $failureClass.tier
-                message       = [string](Get-AutoProgramProp -Object $implResult -Name 'message' -Default '')
+                message       = [string](Get-LoomProp -Object $implResult -Name 'message' -Default '')
                 stdoutPath    = $(if (Test-Path $stdoutPath) { $stdoutPath } else { $null })
                 stderrPath    = $(if (Test-Path $stderrPath) { $stderrPath } else { $null })
-                exitCode      = [int](Get-AutoProgramProp -Object $implResult -Name 'exitCode' -Default 1)
+                exitCode      = [int](Get-LoomProp -Object $implResult -Name 'exitCode' -Default 1)
             }
-            Save-AutoProgramImplementationResult -RunDir $runDir -Result $record | Out-Null
+            Save-LoomImplementationResult -RunDir $runDir -Result $record | Out-Null
 
             if ($failureClass.failureClass -eq 'licensing_error' -or $failureClass.failureClass -eq 'adapter-unavailable') {
-                Invoke-MetraAutoprogramStateChange -Root $Root -ItemId $ItemId -From 'implementing' -To 'blocked' -Reason $failureClass.failureClass | Out-Null
+                Invoke-MetraLoomStateChange -Root $Root -ItemId $ItemId -From 'implementing' -To 'blocked' -Reason $failureClass.failureClass | Out-Null
                 throw "Implementer blocked ($($failureClass.failureClass)): $($implResult.message)"
             }
             if ($failureClass.retryable) {
-                Invoke-MetraAutoprogramStateChange -Root $Root -ItemId $ItemId -From 'implementing' -To 'claimed' -Reason 'implementer-transient-retry' | Out-Null
+                Invoke-MetraLoomStateChange -Root $Root -ItemId $ItemId -From 'implementing' -To 'claimed' -Reason 'implementer-transient-retry' | Out-Null
                 throw "Implementer transient failure (retry allowed): $($implResult.message)"
             }
-            Invoke-MetraAutoprogramStateChange -Root $Root -ItemId $ItemId -From 'implementing' -To 'failed' -Reason $failureClass.failureClass | Out-Null
+            Invoke-MetraLoomStateChange -Root $Root -ItemId $ItemId -From 'implementing' -To 'failed' -Reason $failureClass.failureClass | Out-Null
             throw "Implementer failed: $($implResult.message)"
         }
 
-        $changed = @(Get-AutoProgramGitChangedPaths -ProjectRoot $projectRoot)
+        $changed = @(Get-LoomGitChangedPaths -ProjectRoot $projectRoot)
         $contract = $implementing.contract
-        $scope = Test-AutoProgramChangedPathsAllowed -ChangedPaths $changed -ProjectRoot $projectRoot `
-            -AllowedPaths @($(Get-AutoProgramProp -Object $contract -Name 'allowedPaths' -Default @())) `
-            -ForbiddenPaths @($(Get-AutoProgramProp -Object $contract -Name 'forbiddenPaths' -Default @()))
+        $scope = Test-LoomChangedPathsAllowed -ChangedPaths $changed -ProjectRoot $projectRoot `
+            -AllowedPaths @($(Get-LoomProp -Object $contract -Name 'allowedPaths' -Default @())) `
+            -ForbiddenPaths @($(Get-LoomProp -Object $contract -Name 'forbiddenPaths' -Default @()))
 
         if (-not $scope.allowed) {
             $record = [PSCustomObject]@{
@@ -510,8 +524,8 @@ function Invoke-MetraAutoprogramRun {
                 stderrPath    = $(if (Test-Path $stderrPath) { $stderrPath } else { $null })
                 exitCode      = 2
             }
-            Save-AutoProgramImplementationResult -RunDir $runDir -Result $record | Out-Null
-            Invoke-MetraAutoprogramStateChange -Root $Root -ItemId $ItemId -From 'implementing' -To 'blocked' -Reason 'scope-violation' | Out-Null
+            Save-LoomImplementationResult -RunDir $runDir -Result $record | Out-Null
+            Invoke-MetraLoomStateChange -Root $Root -ItemId $ItemId -From 'implementing' -To 'blocked' -Reason 'scope-violation' | Out-Null
             throw $record.message
         }
 
@@ -526,9 +540,9 @@ function Invoke-MetraAutoprogramRun {
             exitCode      = 0
             changedPaths  = @($changed)
         }
-        Save-AutoProgramImplementationResult -RunDir $runDir -Result $record | Out-Null
+        Save-LoomImplementationResult -RunDir $runDir -Result $record | Out-Null
 
-        $reviewing = Invoke-MetraAutoprogramStateChange -Root $Root -ItemId $ItemId -From 'implementing' -To 'reviewing' -Reason 'implementer-complete' -Mutator {
+        $reviewing = Invoke-MetraLoomStateChange -Root $Root -ItemId $ItemId -From 'implementing' -To 'reviewing' -Reason 'implementer-complete' -Mutator {
             param($i)
             $i.evidence = @($i.evidence) + @([PSCustomObject]@{
                 type    = 'implementation'
@@ -551,14 +565,14 @@ function Invoke-MetraAutoprogramRun {
     }
     catch {
         if ($gitRunActive) {
-            Restore-AutoProgramGitAfterFailedRun -ProjectRoot $projectRoot -BaselineSha $baselineSha `
+            Restore-LoomGitAfterFailedRun -ProjectRoot $projectRoot -BaselineSha $baselineSha `
                 -OriginalBranch $originalBranch -ItemBranch $branch
         }
         if ($_.Exception.Message -notmatch '^(Git working tree|Implementer|Changed paths)') {
             try {
-                $cur = Get-MetraAutoprogramQueueItem -Root $Root -Id $ItemId
+                $cur = Get-MetraLoomQueueItem -Root $Root -Id $ItemId
                 if ($cur -and @('claimed', 'implementing') -contains [string]$cur.status) {
-                    Invoke-MetraAutoprogramStateChange -Root $Root -ItemId $ItemId -From ([string]$cur.status) -To 'blocked' -Reason 'run-exception' | Out-Null
+                    Invoke-MetraLoomStateChange -Root $Root -ItemId $ItemId -From ([string]$cur.status) -To 'blocked' -Reason 'run-exception' | Out-Null
                 }
             }
             catch { }

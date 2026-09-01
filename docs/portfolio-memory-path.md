@@ -4,7 +4,7 @@
 This is the roadmap map. Authority and promotion rules stay in their homes (below). Update this file when the path changes - do not invent a second map.
 
 **Last oriented:** 2026-08-31 (Loom boundary M1; Metra 0.1.15 desk Ask sidecar ops)  
-**Stable idea:** Metra routes. Atlas stores. Notion persists. **Loom** executes governed delivery (working name AutoProgram through M2). Vectors accelerate retrieval later - they never become truth.
+**Stable idea:** Metra routes. Atlas stores. Notion persists. **Loom** executes governed delivery. Vectors accelerate retrieval later - they never become truth.
 
 ---
 

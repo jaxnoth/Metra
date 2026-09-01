@@ -37,6 +37,7 @@
       "optional": false,
       "triggers": [
         "metra",
+        "loom",
         "ops desk",
         "html ops",
         "metra ops",
@@ -84,6 +85,45 @@
         "TicketTracker",
         "Trivia",
         "Solarwinds"
+      ]
+    },
+    {
+      "name": "Loom",
+      "purpose": "Governed plan execution — queue, journal, triage, branch runner (Metra-hosted module).",
+      "share": true,
+      "featured": false,
+      "optional": false,
+      "triggers": [
+        "loom",
+        "autoprogram",
+        "governed execution",
+        "AP-",
+        "queue item",
+        "branch runner"
+      ],
+      "entry": "modules/Loom/README.md",
+      "capabilities": [
+        "governed-execution",
+        "triage",
+        "runner"
+      ],
+      "serves": [
+        "Portfolio operators"
+      ],
+      "whenPresent": "Use .\\metra.ps1 loom for queue and run commands. Storage under %LOCALAPPDATA%\\Metra\\loom\\. Migrate from autoprogram with loom migrate -Apply -Confirm.",
+      "whenMissing": "Loom ships inside the Metra checkout at modules/Loom/.",
+      "preferredPaths": [
+        "modules/Loom/README.md",
+        "docs/playbooks/loom.md",
+        "docs/loom-product-boundary.plan.md"
+      ],
+      "excludePaths": [
+        "modules/Loom/Contracts"
+      ],
+      "related": [
+        "Metra",
+        "Atlas",
+        "Forge"
       ]
     },
     {
