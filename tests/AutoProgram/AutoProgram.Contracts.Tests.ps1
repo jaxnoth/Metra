@@ -20,7 +20,7 @@ Describe 'AutoProgram contracts v1' {
             'verify-request.schema.json',
             'verify-result.schema.json',
             'acceptance-record.schema.json',
-            'blocker-report.schema.json'
+            'blocker-report.schema.json',
             'implementation-result.schema.json'
         )
         foreach ($name in $required) {

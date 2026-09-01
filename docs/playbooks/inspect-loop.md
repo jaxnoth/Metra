@@ -8,8 +8,8 @@ loadWhen:
   - Bing comparison
   - ship calibration
 ceiling:
-  - Inspect is advisory; never auto-fix without operator affirmation
   - Fail closed when Ask engine unavailable
+  - Bing affirm is the operator manual gate before commit; agent auto-fixes during prepare-bing
 ---
 
 > Moved from `AGENTS.md` during A2 desk split. Preserve A1 done-when / On hard stop content unless intentionally revised.
@@ -25,9 +25,10 @@ Always-on rule: [`.cursor/rules/metra-inspect-loop.mdc`](../../.cursor/rules/met
 | Phase | Command | Gate |
 |-------|---------|------|
 | Before implement (plan-driven work) | `.\metra.ps1 inspect plan -Latest -Name <Project>` (or fragment / `-Path`) | Summarize findings in chat; operator picks fix / defer / reject before coding |
-| After each coherent code batch | `.\metra.ps1 inspect loop -Name <Project>` (or single `inspect -Name`) | Per-round Critical/High/Medium/Low summary; fix affirmed items between loop invocations |
+| After each coherent code batch | `.\metra.ps1 inspect prepare-bing -Name <Project> -Reset` then fix and re-run until `readyForBing=true` | Agent auto-fixes Critical/High/Medium; pack built when loop completes |
+| Before `git commit` | Operator Bing review + `inspect gate affirm` | **Only manual gate**; hook blocks without affirm |
 | After affirmed fixes | `inspect loop` again (same session) | Stop when goal met (Critical=0, High=0, Medium<=2), convergence detected, or MaxLoops=5 fence |
-| Metra executable ship (calibration) | `.\metra.ps1 inspect pack` (+ Bing comparison lane) | Required during calibration; re-inspect after High fixes before pack |
+| Metra executable ship (calibration) | `prepare-bing` auto-builds pack; Bing comparison lane | Re-run prepare-bing after fixes; pack is never manual |
 | A2 desk split external review | `.\metra.ps1 inspect pack-only agents -Name <Project>` | Bing-only stub + playbooks scope; no unrelated working-tree noise |
 
 Skip the loop for ticket-ops-only turns, brainstorm/plan-without-implement, or when the Ask engine is unavailable (fail closed; do not invent findings). Low/Info are optional unless the operator wants them addressed.
@@ -36,7 +37,7 @@ Skip the loop for ticket-ops-only turns, brainstorm/plan-without-implement, or w
 
 Verify regression is fingerprint- and touch-set-based: revert when Critical rises globally, High rises among files touched by the affirmed package (or changed since baseline), Medium population rises in the touch set after ignoring brand-new Medium findings (LLM churn), or an affirmed High/Critical issue remains. Whole-tree High/Medium count increases alone do not revert. Manifest-only restore is unchanged. Incompatible legacy baselines (missing/unsupported fingerprint version) invalidate the cycle without restore - re-assess to continue.
 
-Stop conditions: goal achieved; convergence (unchanged counts two rounds); MaxLoops reached (not success); operator ship / good enough. The CLI does not auto-fix - the **agent + chat** loop does.
+Stop conditions: goal achieved; convergence (unchanged counts two rounds); MaxLoops reached (not success); operator ship / good enough. The CLI assesses; the **agent auto-fixes** during `prepare-bing`; **`inspect pack`** runs when the loop session completes.
 
 ## Engine independence
 
@@ -55,8 +56,9 @@ Independence of review matters more than the specific model. The safety net is i
 ```powershell
 .\metra.ps1 inspect
 .\metra.ps1 inspect -Name Metra
-.\metra.ps1 inspect loop -Name Metra
-.\metra.ps1 inspect loop -Name Metra -Reset
+.\metra.ps1 inspect prepare-bing -Name Metra
+.\metra.ps1 inspect prepare-bing -Name Metra -Reset
+.\metra.ps1 inspect gate affirm -Name Metra
 .\metra.ps1 inspect -Name Metra -WhatIf
 .\metra.ps1 inspect -Name Metra -Base HEAD~1
 .\metra.ps1 inspect plan

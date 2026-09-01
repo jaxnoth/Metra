@@ -199,6 +199,10 @@ Usage:
       Knowledge coverage visibility (AGENTS / serves / decisions / uncovered) - counts and gap lists, not a score.
   .\metra.ps1 inspect [-Name Metra] [-Base <rev>] [-WhatIf]
   .\metra.ps1 inspect loop [-Name Metra] [-Base <rev>] [-Reset] [-RunAll] [-MaxLoops <n>] [-WhatIf]
+  .\metra.ps1 inspect prepare-bing [-Name Metra] [-Reset]
+  .\metra.ps1 inspect pre-commit [-Name Metra]
+  .\metra.ps1 inspect gate affirm|status [-Name Metra]
+  .\metra.ps1 inspect hooks install
   .\metra.ps1 inspect plan [-Latest] [-Path <file>] [<filename-fragment>] -Name <Project> [-WhatIf]
   .\metra.ps1 inspect pack [plan] [-WhatIf]
   .\metra.ps1 inspect pack-only [-Name <Project>] [-Base <rev>] [-WhatIf]
@@ -207,6 +211,8 @@ Usage:
       pack-only: Bing comparison lane without Ask engine (scrubbed diff/plan + preamble).
       inspect pack: requires a prior inspect run; includes assessed findings.
       inspect loop: goal-based review session (Critical/High/Medium/Low counts; stops at goal, convergence, or MaxLoops=5).
+      inspect prepare-bing: agent loop (-RunAll) + auto pack when session completes; re-run after fixes.
+      inspect pre-commit: git hook — refresh prepare-bing/pack; blocks only on missing Bing gate affirm.
       Local AI-assisted inspection of git diffs or Cursor plans (Ask/Ollama). Recommend-only.
   .\metra.ps1 azdo status|repos|get|gaps|tree|search|ideas
       Read-only Azure DevOps remote evidence (PAT: METRA_AZDO_PAT or docs/azdo.local.json). gaps maps AzDO vs registry/disk.

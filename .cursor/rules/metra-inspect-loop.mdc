@@ -16,18 +16,36 @@ Skip when:
 - Ticket-ops only (`post` / `recommend` / `resolve`, status, drafts) with no code edits
 - Ask/plan/brainstorm with no implementation yet
 - Trivial one-line typo with no behavioral change (operator may still ask for inspect)
-- Ask engine unavailable - report failure; do not skip inspect silently or invent findings
+- Ask engine unavailable: inspect/prepare-bing **auto-restarts** the sidecar once on auth/opaque failures, then retries. If still failing, run `.\metra.ps1 ask engine restart` manually.
 
-## Loop rhythm
+## Prepare for Bing (agent — mandatory before commit-ready)
 
-1. **Assess:** `.\metra.ps1 inspect loop -Name <Project>` (or `-Reset` for a new session). Saves a git/working-tree baseline, severity counts, and versioned finding fingerprints.
-2. **Summarize:** Post Critical and High first, then actionable Medium. Fix queue: `%LOCALAPPDATA%\Metra\inspect\<Project>\fix-queue.json`.
-3. **Fix:** Agent applies **affirmed** fixes only (operator may allow auto-fix on a full `-RunAll` session).
-4. **Verify:** Run `inspect loop` again (same session). Detects tree changes, re-assesses, and **reverts the working tree** only when Critical rises globally, High rises in the fix touch set, Medium rises in the touch set after ignoring brand-new Medium findings, or an affirmed High/Critical issue remains - not because whole-tree High/Medium counts rose.
-5. **Repeat** until goal, convergence, or MaxLoops fence.
-6. **External review:** `.\metra.ps1 inspect pack` (Bing lane) **after** the loop - not between rounds.
+After meaningful code changes, the **agent** runs the full inspect loop with **auto-fix** (no per-finding operator confirm). The **operator** manual gate is **Bing review only** (`inspect gate affirm`).
 
-`-RunAll` marks a **full-loop session** (`runUntilGoal`): re-invoke `inspect loop -RunAll` after each fix batch until the session completes. It does **not** re-assess the same tree without fixes (that only burned Ask spend).
+**Agent rhythm:**
+
+1. `.\metra.ps1 inspect prepare-bing -Name <Project> -Reset` — assess (starts or continues `-RunAll` session).
+2. While `readyForBing=false`: read fix queue, **apply fixes in code**, then `prepare-bing` again (same session; do not `-Reset` unless starting over).
+3. When `readyForBing=true`: pack already built at `packPath`. Operator only reviews in Bing and runs `inspect gate affirm`.
+4. Operator commits (git hook refreshes pack if needed; **blocks only on missing Bing affirm**).
+
+Fix priority: Critical and High first, then actionable Medium until goal (Critical=0, High=0, Medium<=2), convergence, or MaxLoops fence.
+
+## Loop rhythm (detail)
+
+1. **Assess:** `inspect loop` or `prepare-bing` (wraps loop + pack when done).
+2. **Fix:** Agent applies fixes for Critical/High/actionable Medium **without** waiting for per-finding chat affirmation during prepare-for-Bing.
+3. **Verify:** `prepare-bing` again (same session) — regression revert applies per existing rules.
+4. **Pack:** Always built automatically by `prepare-bing` (never run `inspect pack` manually).
+5. **Bing:** Operator reviews the auto-built pack; `inspect gate affirm` is the only manual step before commit.
+
+## Pre-commit hook (git)
+
+Install once: `.\metra.ps1 inspect hooks install`.
+
+On `git commit` the hook runs `inspect pre-commit`: refreshes assess + pack when needed; **blocks only** when Bing gate is not affirmed for the current diff. Inspect severity does **not** block commit (agent should have fixed during prepare-bing).
+
+Emergency skip: `METRA_SKIP_BING_GATE=1`.
 
 ## Stop conditions
 
@@ -61,11 +79,11 @@ Safety net = inspect + verify + regression revert + operator judgment, not any s
 
 ## Agent rules
 
-- Never claim "inspect clean" without running the CLI when this loop applies.
-- Never mutate source from inspect findings without operator confirmation in chat (except when operator explicitly requests a full `-RunAll` fix pass).
+- After meaningful code batches: run **`inspect prepare-bing`** and auto-fix until `readyForBing=true` before claiming commit-ready.
+- Never claim "inspect clean" or "ready for Bing" without running `prepare-bing` (or completed loop + pack) via CLI.
+- Auto-fix Critical/High/actionable Medium during prepare-for-Bing; do not wait for per-finding operator confirmation.
 - If verify reports **regression reverted**, do not treat the fix batch as landed; try a smaller fix or defer.
 - Same finding twice after a fix: convergence stop or ask operator; do not blind-loop forever.
-- Use `-WhatIf` only when operator asks for a dry-run; normal loop runs the engine.
-- Persisted assess report: `%LOCALAPPDATA%\Metra\inspect\<Project>\latest.json`; review session: `%LOCALAPPDATA%\Metra\inspect\<Project>\review-loop.json`; cite severity/file in chat, not full JSON dumps.
+- Persisted assess report: `%LOCALAPPDATA%\Metra\inspect\<Project>\latest.json`; fix queue: `fix-queue.json`; cite severity/file in chat briefly.
 
 See Metra `AGENTS.md` Inspect section and `docs/Decisions.md` (Inspect coding loop; Inspect goal-based review loop; Inspect engine independence).
