@@ -24,7 +24,8 @@ Always-on rule: [`.cursor/rules/metra-inspect-loop.mdc`](../../.cursor/rules/met
 
 | Phase | Command | Gate |
 |-------|---------|------|
-| Before implement (plan-driven work) | `.\metra.ps1 inspect plan -Latest -Name <Project>` (or fragment / `-Path`) | Summarize findings in chat; operator picks fix / defer / reject before coding |
+| After every plan revision | `.\metra.ps1 inspect pack-only plan <fragment-or-Path> -Name <Project>` | Agent runs automatically; report pack path + clipboard. Skip only on explicit operator opt-out |
+| Before implement (plan-driven work) | `.\metra.ps1 inspect plan -Latest -Name <Project>` (or fragment / `-Path`) | Optional Ask assess; summarize findings in chat; operator picks fix / defer / reject before coding |
 | After each coherent code batch | `.\metra.ps1 inspect prepare-bing -Name <Project> -Reset` then fix and re-run until `readyForBing=true` | Agent auto-fixes Critical/High/Medium; pack built when loop completes |
 | Before `git commit` | Operator Bing review + `inspect gate affirm` | **Only manual gate**; hook blocks without affirm |
 | After affirmed fixes | `inspect loop` again (same session) | Stop when goal met (Critical=0, High=0, Medium<=2), convergence detected, or MaxLoops=5 fence |
@@ -83,7 +84,10 @@ Independence of review matters more than the specific model. The safety net is i
 | Artifact | Consumer | Path |
 |----------|----------|------|
 | Fix queue + latest report | Cursor Agent (implement/verify) | `%LOCALAPPDATA%\Metra\inspect\<Project>\fix-queue.json`, `latest.json` |
-| Pack | Bing / operator review only | `%LOCALAPPDATA%\Metra\inspect\pack-diff.md` |
+| Diff pack | Bing / operator review only | `%LOCALAPPDATA%\Metra\inspect\<Project>\pack-diff.md` (Track I; legacy root `pack-diff.md` until migrated) |
+| Plan pack | Bing / operator review only | `%LOCALAPPDATA%\Metra\inspect\<Project>\pack-plan.md` (Track I; legacy root `pack-plan.md` until migrated) |
+
+Parallel products: each `-Name <Project>` owns its slot — serial or concurrent work does not overwrite another product's pack.
 
 - `.\metra.ps1 inspect budget -Name <Project>` — no engine call; estimates prompt payload chars and band before inspect.
 - Round 1 assess: full collapsed reduced diff. Verify rounds: touch-set bodies only; outside paths are names-only indicators.

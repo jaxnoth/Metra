@@ -771,7 +771,8 @@ function Measure-MetraInspectDiffPayload {
         [AllowEmptyCollection()][string[]]$KeepPaths = @(),
         [int]$MaxFiles = 24,
         [int]$MaxBytesPerFile = 24000,
-        [switch]$IncludeAgentsEstimate
+        [switch]$IncludeAgentsEstimate,
+        [string]$SlotKey
     )
 
     $diff = Get-MetraInspectGitDiffFiles -Root $Root -Base $Base
@@ -814,7 +815,8 @@ function Measure-MetraInspectDiffPayload {
     $parts = Measure-MetraInspectDiffPayloadParts -Reduced $reduced -AgentsChars $agentsChars
 
     $priorPackBytes = $null
-    $packPath = Join-Path (Get-MetraInspectStateRoot) 'pack-diff.md'
+    $sk = if ([string]::IsNullOrWhiteSpace($SlotKey)) { 'default' } else { $SlotKey }
+    $packPath = Resolve-MetraInspectPackPathForRead -SlotKey $sk -Mode 'diff'
     if (Test-Path -LiteralPath $packPath) {
         try { $priorPackBytes = (Get-Item -LiteralPath $packPath).Length } catch { $priorPackBytes = $null }
     }
@@ -875,7 +877,7 @@ function Invoke-MetraInspectBudget {
     $ctx = Resolve-MetraInspectProjectContext -Name $Name -Mode diff
     if (-not $ctx.Ok) { throw $ctx.Error }
 
-    $budget = Measure-MetraInspectDiffPayload -Root $ctx.Root -Base $Base -IncludeAgentsEstimate
+    $budget = Measure-MetraInspectDiffPayload -Root $ctx.Root -Base $Base -IncludeAgentsEstimate -SlotKey ([string]$ctx.Project)
     Show-MetraInspectBudgetConsole -Budget $budget
     $budget | Add-Member -NotePropertyName project -NotePropertyValue ([string]$ctx.Project) -Force
     $budget | Add-Member -NotePropertyName root -NotePropertyValue ([string]$ctx.Root) -Force
@@ -1539,7 +1541,7 @@ function Save-MetraInspectReport {
     $dir = $slot.SlotRoot
     $latestPath = Join-Path $dir 'latest.json'
     $pointerName = if ($Report.mode -eq 'plan') { 'last-plan.json' } else { 'last-diff.json' }
-    $pointerPath = Join-Path $stateRoot $pointerName
+    $pointerPath = Join-Path $dir $pointerName
 
     if (-not $PSCmdlet.ShouldProcess($latestPath, 'Persist inspect report and last pointer')) {
         return [PSCustomObject]@{
@@ -1578,17 +1580,65 @@ function Save-MetraInspectReport {
 function Get-MetraInspectLastPointer {
     [CmdletBinding()]
     param(
-        [Parameter(Mandatory)][ValidateSet('diff', 'plan')][string]$Mode
+        [Parameter(Mandatory)][ValidateSet('diff', 'plan')][string]$Mode,
+        [string]$SlotKey
     )
-    $name = if ($Mode -eq 'plan') { 'last-plan.json' } else { 'last-diff.json' }
-    $path = Join-Path (Get-MetraInspectStateRoot) $name
-    if (-not (Test-Path -LiteralPath $path)) { return $null }
-    try {
-        return Get-Content -LiteralPath $path -Raw -ErrorAction Stop | ConvertFrom-Json -ErrorAction Stop
+
+    $readPointer = {
+        param($Path)
+        if (-not (Test-Path -LiteralPath $Path)) { return $null }
+        try {
+            return Get-Content -LiteralPath $Path -Raw -ErrorAction Stop | ConvertFrom-Json -ErrorAction Stop
+        }
+        catch {
+            return $null
+        }
     }
-    catch {
+
+    if (-not [string]::IsNullOrWhiteSpace($SlotKey)) {
+        $slotPath = Get-MetraInspectLastPointerPath -SlotKey $SlotKey -Mode $Mode
+        $ptr = & $readPointer $slotPath
+        if ($ptr) { return $ptr }
         return $null
     }
+
+    $legacyName = if ($Mode -eq 'plan') { 'last-plan.json' } else { 'last-diff.json' }
+    $stateRoot = Get-MetraInspectStateRoot
+    $newestAt = [datetime]::MinValue
+    $newestPtr = $null
+    if (Test-Path -LiteralPath $stateRoot) {
+        foreach ($dir in @(Get-ChildItem -LiteralPath $stateRoot -Directory -ErrorAction SilentlyContinue)) {
+            $slotPath = Join-Path $dir.FullName $legacyName
+            $ptr = & $readPointer $slotPath
+            if (-not $ptr) { continue }
+            $at = [datetime]::MinValue
+            $atRaw = [string](Get-MetraProp -Object $ptr -Name 'createdAtUtc' -Default '')
+            if (-not [string]::IsNullOrWhiteSpace($atRaw)) {
+                try { $at = [datetime]::Parse($atRaw) } catch { $at = [datetime]::MinValue }
+            }
+            if ($null -eq $newestPtr -or $at -ge $newestAt) {
+                $newestAt = $at
+                $newestPtr = $ptr
+            }
+        }
+    }
+    if ($newestPtr) { return $newestPtr }
+
+    $legacyName = if ($Mode -eq 'plan') { 'last-plan.json' } else { 'last-diff.json' }
+    $legacyPath = Join-Path (Get-MetraInspectStateRoot) $legacyName
+    $legacyPtr = & $readPointer $legacyPath
+    if ($legacyPtr) {
+        $proj = [string](Get-MetraProp -Object $legacyPtr -Name 'project' -Default '')
+        if (-not [string]::IsNullOrWhiteSpace($proj)) {
+            $slotPath = Get-MetraInspectLastPointerPath -SlotKey $proj -Mode $Mode
+            $slotPtr = & $readPointer $slotPath
+            if ($slotPtr) { return $slotPtr }
+        }
+        Write-Host ("WARNING: Using legacy inspect pointer (per-slot pointers preferred): {0}" -f $legacyPath) -ForegroundColor Yellow
+        return $legacyPtr
+    }
+
+    return $null
 }
 
 function Build-MetraInspectPrompt {
@@ -2655,12 +2705,15 @@ function Write-MetraInspectPackArtifact {
     [CmdletBinding(SupportsShouldProcess)]
     param(
         [Parameter(Mandatory)][string]$PackText,
+        [Parameter(Mandatory)][string]$SlotKey,
         [ValidateSet('diff', 'plan', 'agents')][string]$Mode,
         [switch]$Stale,
         [switch]$NoClipboard
     )
 
-    $packPath = Join-Path (Get-MetraInspectStateRoot) ("pack-{0}.md" -f $Mode)
+    if ([string]::IsNullOrWhiteSpace($SlotKey)) { $SlotKey = 'default' }
+    [void](Ensure-MetraInspectSlotDirectory -SlotKey $SlotKey)
+    $packPath = Get-MetraInspectPackPath -SlotKey $SlotKey -Mode $Mode
     $shouldMsg = if ($NoClipboard) { 'Write inspect pack' } else { 'Write inspect pack and copy to clipboard' }
     if (-not $PSCmdlet.ShouldProcess($packPath, $shouldMsg)) {
         return [PSCustomObject]@{
@@ -2851,7 +2904,7 @@ function Invoke-MetraInspectPackOnly {
         -TestCatalog $(if (($Mode -eq 'diff' -or $Mode -eq 'agents') -and $appendix) { [string]$appendix.TestCatalog } else { $null }) `
         -AgentsAuditSummary $agentsAuditSummary
 
-    return Write-MetraInspectPackArtifact -PackText $packText -Mode $Mode -Stale:$false
+    return Write-MetraInspectPackArtifact -PackText $packText -Mode $Mode -SlotKey $project -Stale:$false
 }
 
 function Invoke-MetraInspectPack {
@@ -2865,6 +2918,9 @@ function Invoke-MetraInspectPack {
     if (-not $pointer -or [string]::IsNullOrWhiteSpace([string]$pointer.latestReportPath)) {
         throw "No last $Mode inspect report. Run .\metra.ps1 inspect$(if ($Mode -eq 'plan') { ' plan' }) first."
     }
+
+    $slotKey = [string](Get-MetraProp -Object $pointer -Name 'project' -Default '')
+    if ([string]::IsNullOrWhiteSpace($slotKey)) { $slotKey = 'default' }
 
     $stateRoot = Get-MetraInspectStateRoot
     $reportPathRaw = [string]$pointer.latestReportPath
@@ -3004,7 +3060,7 @@ function Invoke-MetraInspectPack {
         -Root ([string](Get-MetraProp -Object $report.provenance -Name 'root' -Default '')) `
         -AssessedFilesFallback $assessedFilesFallback -PackManifest $packManifest -TestCatalog $testCatalog
 
-    return Write-MetraInspectPackArtifact -PackText $packText -Mode $Mode -Stale:$stale -NoClipboard:$NoClipboard
+    return Write-MetraInspectPackArtifact -PackText $packText -Mode $Mode -SlotKey $slotKey -Stale:$stale -NoClipboard:$NoClipboard
 }
 
 function Get-MetraInspectReviewLoopMaxLoops {
@@ -5004,7 +5060,7 @@ function Set-MetraInspectBingGateAffirm {
     }
     $inputHash = $assessHash
 
-    $packPath = Join-Path (Get-MetraInspectStateRoot) 'pack-diff.md'
+    $packPath = Get-MetraInspectPackPath -SlotKey $slotKey -Mode 'diff'
     $gatePath = Get-MetraInspectBingGatePath -SlotKey $slotKey
     $record = [ordered]@{
         schemaVersion   = 1
@@ -5062,7 +5118,7 @@ function Show-MetraInspectBingGateStatus {
         reason           = [string]$triad.reason
         affirmedAtUtc    = [string](Get-MetraProp -Object $gateRecord -Name 'affirmedAtUtc' -Default '')
         storedInputHash  = $gateHash
-        packPath         = Join-Path (Get-MetraInspectStateRoot) 'pack-diff.md'
+        packPath         = Get-MetraInspectPackPath -SlotKey $slotKey -Mode 'diff'
         gatePath         = Get-MetraInspectBingGatePath -SlotKey $slotKey
     }
 }
@@ -5076,7 +5132,7 @@ function Invoke-MetraInspectAutoPack {
         $pack = Invoke-MetraInspectPack -Mode diff -NoClipboard:$NoClipboard -Confirm:$false
         return [PSCustomObject]@{
             ok       = $true
-            packPath = [string](Get-MetraProp -Object $pack -Name 'Path' -Default (Join-Path (Get-MetraInspectStateRoot) 'pack-diff.md'))
+            packPath = [string](Get-MetraProp -Object $pack -Name 'Path' -Default (Get-MetraInspectPackPath -SlotKey 'default' -Mode 'diff'))
             skipped  = [bool](Get-MetraProp -Object $pack -Name 'Skipped' -Default $false)
         }
     }
@@ -5084,7 +5140,7 @@ function Invoke-MetraInspectAutoPack {
         Write-Warning ("Auto pack build failed: {0}" -f $_.Exception.Message)
         return [PSCustomObject]@{
             ok       = $false
-            packPath = Join-Path (Get-MetraInspectStateRoot) 'pack-diff.md'
+            packPath = Get-MetraInspectPackPath -SlotKey 'default' -Mode 'diff'
             error    = $_.Exception.Message
         }
     }
@@ -5246,7 +5302,7 @@ function Invoke-MetraInspectPreCommitHook {
 
     $triad = Test-MetraInspectBingGateCommitAllowed -SlotKey $slotKey -LiveInputHash $live.inputHash
     if (-not $triad.allowed) {
-        $packPath = Join-Path (Get-MetraInspectStateRoot) 'pack-diff.md'
+        $packPath = Get-MetraInspectPackPath -SlotKey $slotKey -Mode 'diff'
         Write-Host ''
         switch ($triad.reason) {
             'no-assessment' {
