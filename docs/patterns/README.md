@@ -2,7 +2,7 @@
 
 Architectural method docs for how **Metra · Yarn · Loom · Atlas** are designed to work. Peer-programmer teaching surface. Not operator command checklists (those stay in [playbooks](../playbooks/)).
 
-**Status:** P0 cabinet + schema landed. **P1 active seeds:** five Loom/Guild Patterns in [index.yaml](index.yaml). Yarn Pattern bodies and Yarn/Loom Pattern loaders remain unauthorized / stubbed.
+**Status:** P0 cabinet + P1 active seeds + **P2/P3 runtime** (`scripts/private/Patterns.ps1`: Loom package attach, Yarn synthesize match + gap checklist). Slice 8 promote still deferred.
 
 ## Purpose
 
@@ -26,8 +26,8 @@ Patterns explain designed behavior (ceilings, actors, flows). Playbooks tell an 
 ## Load behavior
 
 - Not always-on. Stub indexes triggers only ([AGENTS.md](../../AGENTS.md)).
-- When runtime is authorized: explicit plan `patterns: [patternId]` cites and deterministic loadWhen / owner / cabinet filters (Guild is not special-cased).
-- Until then: humans and agents **Read** Pattern files on trigger the same way as playbooks.
+- Runtime: plan `patterns: [patternId]` cites (Loom request package) and deterministic Yarn match (citations / loadWhen / owner / cabinet). Guild is not special-cased (invariant 15).
+- Humans and agents still **Read** Pattern files on trigger the same way as playbooks.
 
 ## Directory taxonomy
 

@@ -101,20 +101,37 @@ function Test-LoomProjectAcceptanceGate {
     [CmdletBinding()]
     param(
         [Parameter(Mandatory)][string]$Root,
-        [Parameter(Mandatory)][string]$RegistryName,
+        [string]$RegistryName,
+        [string]$ProjectKey,
         [string]$ExcludeItemId
     )
 
+    $want = if (-not [string]::IsNullOrWhiteSpace($ProjectKey)) {
+        $ProjectKey.Trim()
+    }
+    else {
+        [string]$RegistryName
+    }
+    if ([string]::IsNullOrWhiteSpace($want)) {
+        return [PSCustomObject]@{
+            blocked        = $false
+            blockingItemId = $null
+            reason         = $null
+            message        = $null
+        }
+    }
+
     foreach ($item in @(Get-MetraLoomQueueItems -Root $Root)) {
-        if ([string]$item.status -ne 'completed') { continue }
-        $reg = [string](Get-LoomProp -Object $item.project -Name 'registryName' -Default '')
-        if ($reg -ne $RegistryName) { continue }
         if ($ExcludeItemId -and [string]$item.id -eq $ExcludeItemId) { continue }
+        if (-not (Test-MetraLoomStatusHoldsLane -Status ([string]$item.status) -Item $item)) { continue }
+        $key = Get-MetraLoomQueueItemProjectKey -Item $item
+        if ([string]::IsNullOrWhiteSpace($key)) { continue }
+        if (-not [string]::Equals($key.Trim(), $want, [StringComparison]::OrdinalIgnoreCase)) { continue }
         return [PSCustomObject]@{
             blocked         = $true
             blockingItemId  = [string]$item.id
-            reason          = 'pending-acceptance'
-            message         = "pending-acceptance:$($item.id)"
+            reason          = 'lane-held'
+            message         = ("lane-held:{0}:{1}" -f $item.id, $item.status)
         }
     }
     return [PSCustomObject]@{
@@ -670,13 +687,13 @@ function Invoke-MetraLoomDailyBuild {
 
     $packResult = Invoke-MetraLoomDailyPackDiff -Root $Root -MetraRoot $MetraRoot -ReviewDate $ReviewDate -PackScript $PackScript
 
-    $pending = @(
-        Get-MetraLoomFormalPlans -MetraRoot $MetraRoot |
-            Where-Object { -not $_.approved }
-    )
-
-    $completedItems = @(Get-MetraLoomQueueItems -Root $Root | Where-Object { [string]$_.status -eq 'completed' })
-    $manualItems = @($completedItems | Where-Object { Test-LoomItemNeedsManualTest -Item $_ })
+    $completedItems = @(Get-MetraLoomQueueItems -Root $Root | Where-Object {
+            $st = [string]$_.status
+            $st -eq 'completed' -or $st -eq 'accepted-pending-commit'
+        })
+    $manualItems = @($completedItems | Where-Object {
+            [string]$_.status -eq 'completed' -and (Test-LoomItemNeedsManualTest -Item $_)
+        })
 
     $sb = New-Object System.Text.StringBuilder
     [void]$sb.AppendLine('# Metra Daily Intake')
@@ -694,7 +711,9 @@ function Invoke-MetraLoomDailyBuild {
     else {
         foreach ($ci in ($completedItems | Sort-Object { [string]$_.id })) {
             $reg = [string](Get-LoomProp -Object $ci.project -Name 'registryName' -Default '')
-            [void]$sb.AppendLine("- $($ci.id) ($reg): $($ci.summary)")
+            $st = [string]$ci.status
+            $suffix = if ($st -eq 'accepted-pending-commit') { ' [accepted-pending-commit]' } else { '' }
+            [void]$sb.AppendLine("- $($ci.id) ($reg): $($ci.summary)$suffix")
         }
         [void]$sb.AppendLine('')
         [void]$sb.AppendLine("See: daily/$ReviewDate-pack-diff/README.md")
@@ -710,18 +729,9 @@ function Invoke-MetraLoomDailyBuild {
         }
     }
     [void]$sb.AppendLine('')
-    [void]$sb.AppendLine('## 3. Next plan(s) for review')
-    if (@($pending).Count -eq 0) {
-        [void]$sb.AppendLine('(none pending)')
-    }
-    else {
-        [void]$sb.AppendLine('')
-        [void]$sb.AppendLine('| Plan | Path | Status |')
-        [void]$sb.AppendLine('|------|------|--------|')
-        foreach ($p in ($pending | Sort-Object { [string]$_.name })) {
-            [void]$sb.AppendLine("| $($p.name) | $($p.path) | $($p.planStatus) |")
-        }
-    }
+    [void]$sb.AppendLine('## 3. Plan review (Yarn)')
+    [void]$sb.AppendLine('Plan review and Pending Bing approval live in Yarn (`.\metra.ps1 yarn pending` / `yarn plan approve`).')
+    [void]$sb.AppendLine('Loom daily no longer lists formal plans for review here. Manual `loom enqueue -FromPlan` remains break-glass for Approved plans only.')
     [void]$sb.AppendLine('')
     [void]$sb.AppendLine('## Archive candidates (knowledge score >= 5)')
     [void]$sb.AppendLine('(none - Slice 8 deferred)')
@@ -733,7 +743,7 @@ function Invoke-MetraLoomDailyBuild {
         path         = $intakePath
         reviewDate   = $ReviewDate
         packResult   = $packResult
-        pendingPlans = @($pending).Count
+        pendingPlans = 0
     }
 }
 
@@ -808,8 +818,21 @@ function Get-LoomDailyApprovePlan {
                 })
                 continue
             }
+            if ([string]$item.status -eq 'accepted-pending-commit') {
+                $existing = Get-LoomAcceptanceRecord -Root $Root -ItemId $id
+                $actions.Add([PSCustomObject]@{
+                    itemId     = $id
+                    action     = 'ACCEPT'
+                    item       = $item
+                    verifyOnly = $true
+                    evidence   = $null
+                    manualDone = $true
+                    existing   = $existing
+                })
+                continue
+            }
             if ([string]$item.status -ne 'completed') {
-                [void]$errors.Add("$id ACCEPT requires status completed (got $($item.status))")
+                [void]$errors.Add("$id ACCEPT requires status completed or accepted-pending-commit (got $($item.status))")
                 continue
             }
             $evidence = Test-LoomManifestEvidenceForAccept -Root $Root -Item $item -ReviewDate $ReviewDate
@@ -828,11 +851,12 @@ function Get-LoomDailyApprovePlan {
                 continue
             }
             $actions.Add([PSCustomObject]@{
-                itemId    = $id
-                action    = 'ACCEPT'
-                item      = $item
-                evidence  = $evidence
+                itemId     = $id
+                action     = 'ACCEPT'
+                item       = $item
+                evidence   = $evidence
                 manualDone = $manualDone
+                verifyOnly = $false
             })
         }
     }
@@ -1072,7 +1096,9 @@ function Invoke-MetraLoomDailyApprove {
     }
 
     $records = New-Object System.Collections.Generic.List[object]
-    $acceptActions = @($plan.actions | Where-Object { $_.action -eq 'ACCEPT' -and -not $_.alreadyAccepted })
+    $acceptActions = @($plan.actions | Where-Object {
+            $_.action -eq 'ACCEPT' -and -not $_.alreadyAccepted -and -not $_.verifyOnly
+        })
 
     foreach ($act in $acceptActions) {
         $draft = New-LoomAcceptanceRecordDraft -Item $act.item -Root $Root -ReviewDate $plan.reviewDate `
@@ -1102,23 +1128,38 @@ function Invoke-MetraLoomDailyApprove {
                     $results.Add([PSCustomObject]@{ itemId = $act.itemId; action = 'ACCEPT'; outcome = 'already-accepted' })
                     continue
                 }
-                $final = Invoke-LoomDailyStateChange -Root $Root -ItemId $act.itemId -From 'completed' -To 'accepted' -Reason 'daily-accept'
-                $results.Add([PSCustomObject]@{ itemId = $act.itemId; action = 'ACCEPT'; outcome = 'accepted'; status = $final.status })
+                $acceptance = Get-LoomAcceptanceRecord -Root $Root -ItemId $act.itemId
+                if (-not $acceptance -and -not $act.verifyOnly) {
+                    $acceptance = New-LoomAcceptanceRecordDraft -Item $act.item -Root $Root -ReviewDate $plan.reviewDate `
+                        -Evidence $act.evidence -ManualDone $act.manualDone `
+                        -OverrideManualTest:$OverrideManualTest -OverrideReason $OverrideReason `
+                        -Operator $Operator -MergeRequested:$Merge
+                }
+                $acceptResult = Invoke-MetraLoomAcceptWithLocalCommitVerify -Root $Root -ItemId $act.itemId `
+                    -Acceptance $acceptance -Actor $Operator -VerifyOnly:([bool]$act.verifyOnly)
+                $results.Add([PSCustomObject]@{
+                        itemId  = $act.itemId
+                        action  = 'ACCEPT'
+                        outcome = [string]$acceptResult.outcome
+                        status  = [string]$acceptResult.status
+                    })
 
-                if ($Merge) {
+                if ($Merge -and [string]$acceptResult.status -eq 'accepted') {
                     $rec = Get-LoomAcceptanceRecord -Root $Root -ItemId $act.itemId
                     $projectRoot = [System.IO.Path]::GetFullPath([string]$act.item.project.root)
                     $branch = [string](Get-LoomProp -Object $act.item.execution -Name 'branch' -Default '')
                     $completed = [string](Get-LoomProp -Object $act.item.execution -Name 'completedCommit' -Default '')
                     $mergeResult = Invoke-LoomDailyMerge -ProjectRoot $projectRoot -Branch $branch -CompletedCommit $completed
-                    $rec.merge = [PSCustomObject]@{
-                        requested   = $true
-                        attempted   = $mergeResult.attempted
-                        succeeded   = $mergeResult.succeeded
-                        mergeCommit = $mergeResult.mergeCommit
-                        error       = $mergeResult.error
+                    if ($rec) {
+                        $rec.merge = [PSCustomObject]@{
+                            requested   = $true
+                            attempted   = $mergeResult.attempted
+                            succeeded   = $mergeResult.succeeded
+                            mergeCommit = $mergeResult.mergeCommit
+                            error       = $mergeResult.error
+                        }
+                        Write-LoomAcceptanceRecord -Root $Root -Record $rec
                     }
-                    Write-LoomAcceptanceRecord -Root $Root -Record $rec
                     $results.Add([PSCustomObject]@{ itemId = $act.itemId; action = 'MERGE'; outcome = $(if ($mergeResult.succeeded) { 'merged' } else { 'merge-failed' }) })
                 }
             }

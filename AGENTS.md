@@ -58,7 +58,7 @@ Triggers: Metra home, routing, ctx, registry, inspect, profile, decisions, works
 
 ## On-demand patterns
 
-Architectural methods (how Metra / Yarn / Loom / Atlas are designed). Bodies under [docs/patterns/](docs/patterns/README.md). Not always-on. Runtime Pattern loaders not authorized yet.
+Architectural methods (how Metra / Yarn / Loom / Atlas are designed). Bodies under [docs/patterns/](docs/patterns/README.md). Not always-on. Loom attaches cited Patterns to the implementer package; Yarn emits `patterns:` + gap checklist on synthesize.
 
 | Trigger | Read |
 | --- | --- |

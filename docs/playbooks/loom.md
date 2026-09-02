@@ -34,16 +34,27 @@ Governed execution harness (queue, journal, triage, branch runner). Metra hosts 
 .\metra.ps1 loom loop -UntilDailyGate -Confirm                      # one item overnight to completed (not accepted)
 ```
 
+## A4 per-project lane and acceptance
+
+| Rule | Detail |
+|------|--------|
+| Canonical identity | Queue items persist top-level `projectKey`. Legacy resolves once from `yarnHandoff.projectKey` then `project.registryName` under the claim/migration lock. |
+| Lane-holding | At most one active item per `projectKey`: `claimed`, `implementing`, `reviewing`, `completed`, `accepted-pending-commit`, or `blocked` with `blockedFrom` from an active state |
+| Atomic claim | `run` and `loop` share claim helpers under the `loom_queue` namespace lock: reload → busy lanes → select → `queued`→`claimed` → persist and journal → unlock |
+| Selection | Among free lanes: `scores.total` desc → `effectiveImpact` desc → `createdAt` asc → `id` asc |
+| Acceptance | `completed` → `accepted-pending-commit` (human ACCEPT; lane busy) → `accepted` after observe-only local commit verification. No commit/push/merge in verify. |
+| Ritual split | Triage no longer promotes Capture→candidate. Daily §3 points plan review at Yarn. Manual `loom enqueue -FromPlan` remains break-glass for Approved plans only. |
+
 ## Slice 6 loop (unattended to daily gate)
 
 | Rule | Detail |
 |------|--------|
 | Scope | **One** eligible `queued` item per invocation; stops at `completed` |
-| Selection | Score desc, then `createdAt` asc, then id asc |
+| Selection | Atomic claim among free `projectKey` lanes (see A4) |
 | Policy | Fail closed: missing `classification` rejects; code-only; routing >= 0.85; verify commands present |
 | Pause | Tier 1 engine faults set `loopPaused`, `pausedAtUtc`, `pauseReason` in `state.json` |
 | Pause enforcement | Subsequent `loom loop` emits reason + age; **no dequeue** while paused |
-| Supervised path | `loom run -Id <AP-...> -Confirm` unchanged |
+| Supervised path | `loom run -Id <AP-...> -Confirm` (same claim authority) |
 | Forbidden | No push, merge, `daily approve`, auto-enqueue, multi-item dequeue |
 
 Clear pause (v1): edit `%LOCALAPPDATA%\Metra\loom\state.json` (`loopPaused: false`). Slice 6b may add `loom loop resume`.
@@ -66,13 +77,13 @@ Verify commands in contracts use structured entries (`executable`, `arguments`, 
 
 | Rule | Detail |
 |------|--------|
-| Transition owner | `Invoke-MetraLoomDailyApprove` only may exit `completed` |
+| Transition owner | `Invoke-MetraLoomDailyApprove` / accept+verify helpers only may exit `completed` |
 | Preview | Without `-Confirm`: validate + preview; no queue, journal, acceptance-record, or git writes |
 | Batch atomicity | Any invalid directive or gate failure blocks the entire batch (zero mutations) |
-| Per-project gate | No new `run` or `enqueue` for project `P` while any item for `P` is `completed` |
+| Per-project gate | No new `run` or `enqueue` for project `P` while any lane-holding item for `P` exists (through `accepted-pending-commit`) |
 | Evidence binding | ACCEPT requires pack-diff manifest entry matching `completedCommit` and `completionCycleId` |
 | Manual test | `MANUAL-TEST-DONE` directive required when `manualTestClass` is not `none`; override via `-OverrideManualTest -OverrideReason` |
-| Merge | Optional `-Merge` after accept merges **newly accepted** items only (local `git merge`, no push). Re-running approve on already-accepted items does not replay merge; use a future `loom daily merge` if replay is needed |
+| Merge | Optional `-Merge` after **verified** `accepted` only (local `git merge`, no push). Verify failures stay `accepted-pending-commit`. |
 
 Directive grammar (full line, checked checkbox):
 

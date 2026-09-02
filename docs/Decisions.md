@@ -28,6 +28,14 @@ Entry shape:
 
 ---
 
+---
+
+## 2026-09-02 - Yarn Slice 7 A4 lane ship vs Pattern runtime
+
+- Decision: Yarn Slice 7 **A4** is the Loom lane model only: canonical queue `projectKey`, atomic claim under the queue-namespace lock, lane-holding FSM through `accepted-pending-commit`, observe-only local commit verification, and Capture/daily ritual split. Pattern **runtime** context (loader, required catalog, plan `patternId` cite, Loom request-package attachment) is **P2/P3** and remains guidance/context, not queue or approval authority. Shipping both in one Metra commit is allowed when Bing affirms the combined diff; the conceptual scopes stay distinct in ADRs and plans.
+- Why: Bing AFFIRM of the A4 implementation (2026-09-02) noted Pattern runtime landed cleanly in parallel and should not be conflated with the A4 lane contract; next Bing gate is Phase B Atlas, not another A4 pass unless live defects appear.
+- See: [docs/playbooks/loom.md](playbooks/loom.md); [docs/patterns/README.md](patterns/README.md); `modules/Loom/Private/Lane.ps1`; plan `yarn_slice_7_intake_e3f36476.plan.md`
+
 ## 2026-09-02 - Patterns taxonomy (Products, Concepts, Cabinets, Artifacts)
 
 - Decision: Metra Pattern architecture taxonomy is closed. **Products** are only Metra, Yarn, Loom, Atlas. **Concepts** are Evidence and Fabric (no modules or folders). **Cabinets** include Guild (`docs/patterns/guild/`) as an on-brand filing category, not a product. **Artifacts** are Plans, Patterns, Playbooks, and Decisions. Pattern front matter uses `owner` (runtime product) and optional `cabinet` (organizational only). Canonical plan links use `patternId`; paths live in `docs/patterns/index.yaml`. Tracked Pattern files remain authoritative; Atlas/Notion holds discoverability copies only. Cabinet values must not affect plan authorization, queue routing, or promotion authority. P0 cabinet/schema and P1 active Pattern seeds are documentation only; Pattern runtime loaders (Yarn/Loom cite) stay unauthorized until a later gate.

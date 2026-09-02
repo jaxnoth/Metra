@@ -5,18 +5,19 @@ function Get-LoomActiveTransitionMap {
     param()
 
     return @{
-        '@new'         = @('queued')
-        'queued'       = @('claimed', 'blocked')
-        'claimed'      = @('implementing', 'blocked', 'failed')
-        'implementing' = @('reviewing', 'blocked', 'failed', 'claimed')
-        'blocked'      = @()
-        'reviewing'    = @('completed', 'implementing', 'blocked')
-        'completed'    = @('accepted', 'blocked', 'implementing')
-        'accepted'     = @()
-        'failed'       = @()
-        'rejected'     = @()
-        'needsManualTest' = @()
-        'superseded'   = @()
+        '@new'                    = @('queued')
+        'queued'                  = @('claimed', 'blocked')
+        'claimed'                 = @('implementing', 'blocked', 'failed')
+        'implementing'            = @('reviewing', 'blocked', 'failed', 'claimed')
+        'blocked'                 = @()
+        'reviewing'               = @('completed', 'implementing', 'blocked')
+        'completed'               = @('accepted-pending-commit', 'blocked', 'implementing')
+        'accepted-pending-commit' = @('accepted', 'blocked')
+        'accepted'                = @()
+        'failed'                  = @()
+        'rejected'                = @()
+        'needsManualTest'         = @()
+        'superseded'              = @()
     }
 }
 
@@ -406,6 +407,20 @@ function New-LoomRunRequestPackage {
         $allowed = @($(Get-LoomProp -Object $contract -Name 'allowedPaths' -Default @()))
     }
 
+    $patternIds = @()
+    if (-not [string]::IsNullOrWhiteSpace($planPath) -and (Test-Path -LiteralPath $planPath)) {
+        $patternIds = @(Get-MetraPlanPatternIds -PlanPath $planPath)
+    }
+    elseif ($Item.source) {
+        $fromSource = Get-LoomProp -Object $Item.source -Name 'patterns' -Default @()
+        if ($fromSource) { $patternIds = @($fromSource) }
+    }
+    $patternPkg = Get-MetraPatternsForPackage -MetraRoot $MetraRoot -PatternIds $patternIds
+    if (-not $patternPkg.ok) {
+        $detail = (@($patternPkg.errors) -join '; ')
+        throw "Pattern package rejected: $detail"
+    }
+
     $pkg = [ordered]@{
         schemaVersion = 1
         itemId        = [string]$Item.id
@@ -420,6 +435,8 @@ function New-LoomRunRequestPackage {
         source        = $Item.source
         planPath      = $planPath
         planBody      = $planBody
+        patterns      = @($patternPkg.patterns)
+        patternWarnings = @($patternPkg.warnings)
         createdAt     = (Get-Date).ToString('o')
     }
 
@@ -476,6 +493,7 @@ function Invoke-MetraLoomRun {
         [switch]$DryRun,
         [switch]$Confirm,
         [switch]$ChainReview,
+        [switch]$AlreadyClaimed,
         [scriptblock]$ImplementerScript,
         [scriptblock]$InspectScript,
         [scriptblock]$VerifyScript
@@ -483,13 +501,19 @@ function Invoke-MetraLoomRun {
 
     $item = Get-MetraLoomQueueItem -Root $Root -Id $ItemId
     if (-not $item) { throw "Queue item not found: $ItemId" }
-    if ([string]$item.status -ne 'queued') {
+    if ($AlreadyClaimed) {
+        if ([string]$item.status -ne 'claimed') {
+            throw "Queue item $ItemId status is '$($item.status)'; expected 'claimed' when -AlreadyClaimed."
+        }
+    }
+    elseif ([string]$item.status -ne 'queued') {
         throw "Queue item $ItemId status is '$($item.status)'; expected 'queued' for run."
     }
 
     $registry = [string](Get-LoomProp -Object $item.project -Name 'registryName' -Default '')
-    if (-not [string]::IsNullOrWhiteSpace($registry)) {
-        $gate = Test-LoomProjectAcceptanceGate -Root $Root -RegistryName $registry
+    $projectKey = Get-MetraLoomQueueItemProjectKey -Item $item
+    if (-not [string]::IsNullOrWhiteSpace($projectKey) -or -not [string]::IsNullOrWhiteSpace($registry)) {
+        $gate = Test-LoomProjectAcceptanceGate -Root $Root -RegistryName $registry -ProjectKey $projectKey -ExcludeItemId $ItemId
         if ($gate.blocked) {
             if ($DryRun) {
                 return [PSCustomObject]@{
@@ -548,7 +572,8 @@ function Invoke-MetraLoomRun {
     }
 
     if (-not (Test-LoomGitWorkingTreeClean -ProjectRoot $projectRoot)) {
-        $blocked = Invoke-MetraLoomStateChange -Root $Root -ItemId $ItemId -From 'queued' -To 'blocked' `
+        $fromStatus = if ($AlreadyClaimed) { 'claimed' } else { 'queued' }
+        $blocked = Invoke-MetraLoomStateChange -Root $Root -ItemId $ItemId -From $fromStatus -To 'blocked' `
             -Reason 'dirty-git-baseline'
         throw "Git working tree is not clean in $projectRoot; item blocked."
     }
@@ -557,13 +582,29 @@ function Invoke-MetraLoomRun {
     $originalBranch = Get-LoomGitCurrentBranch -ProjectRoot $projectRoot
     $beforeUntracked = @(Get-LoomGitUntrackedPaths -ProjectRoot $projectRoot)
     $gitRunActive = $false
-    $claimed = Invoke-MetraLoomStateChange -Root $Root -ItemId $ItemId -From 'queued' -To 'claimed' -Reason 'run-start' -Mutator {
+    $execMutator = {
         param($i)
         if (-not $i.execution) { $i | Add-Member -NotePropertyName execution -NotePropertyValue ([PSCustomObject]@{}) -Force }
         $i.execution | Add-Member -NotePropertyName baselineSha -NotePropertyValue $baselineSha -Force
         $i.execution | Add-Member -NotePropertyName runNumber -NotePropertyValue $runNum -Force
         $i.execution | Add-Member -NotePropertyName runDir -NotePropertyValue $runDir -Force
         return $i
+    }
+    if ($AlreadyClaimed) {
+        $claimed = Invoke-LoomWithNamedMutex -Name 'loom_queue' -Script {
+            $i = Get-MetraLoomQueueItem -Root $Root -Id $ItemId
+            if (-not $i -or [string]$i.status -ne 'claimed') {
+                throw "Queue item $ItemId expected claimed for AlreadyClaimed path."
+            }
+            $i = & $execMutator $i
+            $i.updatedAt = (Get-Date).ToString('o')
+            Test-MetraLoomQueueItemSchema -Item $i | Out-Null
+            Save-MetraLoomQueueItem -Root $Root -Item $i
+            return $i
+        }
+    }
+    else {
+        $claimed = Invoke-MetraLoomClaimItem -Root $Root -ItemId $ItemId -Actor 'operator' -Reason 'run-start' -Mutator $execMutator
     }
 
     try {

@@ -1,6 +1,6 @@
 # Pattern schema (v1)
 
-Convention for Pattern markdown under `docs/patterns/`. Not a runtime loader yet.
+Convention for Pattern markdown under `docs/patterns/`. Runtime loader: `scripts/private/Patterns.ps1` (Loom context package + Yarn synthesize matcher).
 
 ## Front matter
 
@@ -33,7 +33,7 @@ supersedes: null
 | `cabinet` | no | Organizational filing only (invariant: no runtime branches on cabinet) |
 | `status` | yes | `stub` until behavior ships |
 | `implemented` | yes | `true` only when Evidence shows shipped behavior |
-| `loadWhen` | no | Exact phrases / aliases for future deterministic match |
+| `loadWhen` | no | Exact phrases / aliases for deterministic Yarn match |
 | `defaultContext` | yes | Always `false` |
 
 Rejected legacy fields: `product`, `domain` (use `owner` and `cabinet`).
@@ -50,6 +50,10 @@ Intent · Actors · Inputs/outputs · Rules/ceilings · State/contract refs · F
 4. Plans cite IDs only: `patterns: [loom-review]` - never absolute paths.
 5. Atlas StableId form when promoted: `pattern:<patternId>`.
 
-## Path containment (future loader)
+## Path containment (loader)
 
-Normalize repository root and candidate path before containment. Fail closed on absolute paths, `..` escapes, and symlink targets outside the repo. Missing optional cites warn; malformed front matter rejects that Pattern from context.
+Normalize patterns root and candidate path before containment. Fail closed on absolute index paths, `..` escapes, and targets outside `docs/patterns/`. Missing optional cites warn and continue; malformed front matter rejects that Pattern from context; duplicate IDs in `index.yaml` fail the package.
+
+## Required catalog
+
+[`required.yaml`](required.yaml) lists Pattern IDs expected per owner for Yarn gap checklists. Gaps are candidates only - never auto-authored Pattern bodies.

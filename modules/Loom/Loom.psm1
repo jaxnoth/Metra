@@ -5,6 +5,9 @@ Set-StrictMode -Version Latest
 $script:LoomModuleRoot = $PSScriptRoot
 $script:LoomHostRootOverride = $null
 
+# Shared Patterns loader (P2) - host checkout scripts/private; no Metra.psm1 import.
+. ([System.IO.Path]::GetFullPath((Join-Path $PSScriptRoot '..\..\scripts\private\Patterns.ps1')))
+
 . (Join-Path $PSScriptRoot 'Private\Storage\Storage.ps1')
 . (Join-Path $PSScriptRoot 'Private\Contracts\Contracts.ps1')
 . (Join-Path $PSScriptRoot 'Adapters\Metra.Adapters.ps1')
@@ -14,6 +17,7 @@ $script:LoomHostRootOverride = $null
 . (Join-Path $PSScriptRoot 'Private\Runner.ps1')
 . (Join-Path $PSScriptRoot 'Private\Domain.ps1')
 . (Join-Path $PSScriptRoot 'Private\Loop.ps1')
+. (Join-Path $PSScriptRoot 'Private\Lane.ps1')
 
 $export = @(
     'Invoke-LoomCommand'
@@ -87,6 +91,17 @@ $export = @(
     'Get-LoomUtf8NoBomEncoding'
     'Test-LoomPathWithinRoot'
     'Test-LoomExecutionBranchPrefix'
+    'Get-MetraLoomLaneHoldingStatuses'
+    'Test-MetraLoomStatusHoldsLane'
+    'Get-MetraLoomQueueItemProjectKey'
+    'Get-MetraLoomBusyProjectKeys'
+    'Test-MetraLoomProjectLaneBusy'
+    'Sort-MetraLoomEligibleQueuedItems'
+    'Get-MetraLoomEligibleQueuedForClaim'
+    'Invoke-MetraLoomClaimNextEligible'
+    'Invoke-MetraLoomClaimItem'
+    'Test-MetraLoomLocalCommitVerification'
+    'Invoke-MetraLoomAcceptWithLocalCommitVerify'
 )
 
 Export-ModuleMember -Function $export
