@@ -31,8 +31,8 @@ function New-YarnFormalPlanText {
     $matched = @(Find-MetraPatternsMatching -MetraRoot $MetraRoot -Owner $ownerHint -MatchText $matchText -MaxCount 8)
     $gaps = @(Get-MetraPatternGaps -MetraRoot $MetraRoot -Owner $ownerHint)
 
-    $atlasId = ''
-    if ($sourceKey -like 'atlas:*') { $atlasId = $sourceKey.Substring(6) }
+    $atlasId = [string](Get-YarnProp -Object $BacklogItem -Name 'atlasStableId' -Default '')
+    if (-not $atlasId -and $sourceKey -like 'atlas:*') { $atlasId = $sourceKey.Substring(6) }
     $now = (Get-Date).ToUniversalTime().ToString('o')
     $todoId = 'draft-1'
     $sb = New-Object System.Text.StringBuilder
@@ -140,6 +140,7 @@ function Invoke-MetraYarnSynthesize {
         [string]$BacklogId,
         [string]$FromCapture,
         [string]$FromFutureDev,
+        [string]$FromMemory,
         [switch]$DryRun,
         [switch]$Confirm,
         [switch]$Force,
@@ -165,6 +166,54 @@ function Invoke-MetraYarnSynthesize {
     elseif ($FromFutureDev) {
         $key = "future-dev:$FromFutureDev"
         $item = $items | Where-Object { [string]$_.primarySourceKey -eq $key } | Select-Object -First 1
+    }
+    elseif ($FromMemory) {
+        $stableId = [string]$FromMemory
+        if ($stableId -like 'atlas:*') { $stableId = $stableId.Substring(6) }
+        $key = "atlas:$stableId"
+        $item = $items | Where-Object {
+            $psk = [string](Get-YarnProp -Object $_ -Name 'primarySourceKey' -Default '')
+            $aid = [string](Get-YarnProp -Object $_ -Name 'atlasStableId' -Default '')
+            ($psk -eq $key) -or ($aid -eq $stableId)
+        } | Select-Object -First 1
+        if (-not $item) {
+            $candidates = @(Get-YarnAtlasIntakeCandidates -MetraRoot $MetraRoot)
+            $cand = $candidates | Where-Object {
+                [string](Get-YarnProp -Object $_ -Name 'stableId' -Default '') -eq $stableId
+            } | Select-Object -First 1
+            if (-not $cand) { throw "Atlas StableId not found for synthesize: $stableId" }
+            $kind = [string](Get-YarnProp -Object $cand -Name 'kind' -Default 'Plan')
+            $title = [string](Get-YarnProp -Object $cand -Name 'title' -Default $stableId)
+            $sourceText = [string](Get-YarnProp -Object $cand -Name 'sourceText' -Default $title)
+            $projectKey = [string](Get-YarnProp -Object $cand -Name 'projectKey' -Default 'Metra')
+            $incoming = New-YarnPsObject -Map @{
+                title                   = $title
+                primarySourceKey        = $key
+                sources                 = @($key)
+                sourceKind              = 'atlas'
+                atlasStableId           = $stableId
+                memoryLane              = 'atlas'
+                atlasKind               = $kind
+                projectKey              = $projectKey
+                operatorPriority        = 0
+                urgency                 = 0
+                strategicAlignment      = (Get-YarnStrategicAlignmentForAtlasKind -AtlasKind $kind)
+                boundedTodosPresent     = $false
+                verificationPathPresent = $false
+                riskKnownAndAcceptable  = $false
+                dependenciesResolved    = $true
+                sourceText              = $sourceText
+                sourceHash              = (Get-YarnSourceHash -NormalizedSourceText $sourceText)
+                health                  = 'ok'
+            }
+            if ($DryRun) {
+                # Keep -FromMemory dry-run side-effect free (no backlog upsert).
+                $item = New-YarnPsObject -Map (@{ id = 'YARN-DRYRUN' } + (ConvertTo-YarnPropertyMap -Object $incoming))
+            }
+            else {
+                $item = Sync-YarnBacklogItem -Root $Root -Incoming $incoming
+            }
+        }
     }
     if (-not $item) { throw 'Backlog item not found for synthesize' }
 
@@ -222,6 +271,9 @@ function Invoke-MetraYarnSynthesize {
             handoffContractVersion = Get-YarnHandoffContractVersion
             synthesizerVersion     = 'yarn-template-v1'
             synthesizedAt          = (Get-Date).ToUniversalTime().ToString('o')
+            atlasStableId          = [string](Get-YarnProp -Object $item -Name 'atlasStableId' -Default '')
+            atlasKind              = [string](Get-YarnProp -Object $item -Name 'atlasKind' -Default '')
+            memoryLane             = [string](Get-YarnProp -Object $item -Name 'memoryLane' -Default '')
         })
 
     Add-MetraYarnJournalEntry -Root $Root -Entry @{

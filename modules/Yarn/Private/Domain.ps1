@@ -7,12 +7,16 @@ function Get-MetraYarnStatus {
     Initialize-MetraYarnLayout -Root $Root
     $items = @(Get-MetraYarnBacklog -Root $Root)
     $links = @(Get-YarnPlanLinks -Root $Root)
+    $lane = Get-YarnMemoryLaneState -Root $Root
     $byStatus = @{}
     foreach ($i in $items) {
         $s = [string](Get-YarnProp -Object $i -Name 'status' -Default 'idea')
         if (-not $byStatus.ContainsKey($s)) { $byStatus[$s] = 0 }
         $byStatus[$s]++
     }
+    $atlasCount = @($items | Where-Object {
+            [string](Get-YarnProp -Object $_ -Name 'sourceKind' -Default '') -eq 'atlas'
+        }).Count
     return [PSCustomObject]@{
         root                   = $Root
         schemaVersion          = Get-YarnSchemaVersion
@@ -20,10 +24,14 @@ function Get-MetraYarnStatus {
         packContractVersion    = Get-YarnPackContractVersion
         rubricVersion          = Get-YarnRubricVersion
         totalItems             = $items.Count
+        atlasItemCount         = $atlasCount
         planLinkCount          = $links.Count
         byStatus               = $byStatus
+        memoryLane             = [string]$lane.memoryLane
+        memoryLaneUpdatedAt    = $lane.updatedAt
+        memoryLaneLastError    = $lane.lastError
         approvalAvailable      = $true
-        phase                  = 'A3'
+        phase                  = 'B'
     }
 }
 
@@ -99,6 +107,7 @@ function Invoke-YarnCommand {
             $backlogId = $null
             $fromCapture = $null
             $fromFuture = $null
+            $fromMemory = $null
             $dry = $false
             $confirm = $false
             $force = $false
@@ -107,6 +116,7 @@ function Invoke-YarnCommand {
                 if ($ArgsRest[$i] -eq '-BacklogId' -and ($i + 1) -lt $ArgsRest.Count) { $backlogId = [string]$ArgsRest[$i + 1]; $i++ }
                 elseif ($ArgsRest[$i] -eq '-FromCapture' -and ($i + 1) -lt $ArgsRest.Count) { $fromCapture = [string]$ArgsRest[$i + 1]; $i++ }
                 elseif ($ArgsRest[$i] -eq '-FromFutureDev' -and ($i + 1) -lt $ArgsRest.Count) { $fromFuture = [string]$ArgsRest[$i + 1]; $i++ }
+                elseif ($ArgsRest[$i] -eq '-FromMemory' -and ($i + 1) -lt $ArgsRest.Count) { $fromMemory = [string]$ArgsRest[$i + 1]; $i++ }
                 elseif ($ArgsRest[$i] -eq '-DryRun') { $dry = $true }
                 elseif ($ArgsRest[$i] -eq '-Confirm') { $confirm = $true }
                 elseif ($ArgsRest[$i] -eq '-Force') { $force = $true }
@@ -123,6 +133,7 @@ function Invoke-YarnCommand {
             if ($backlogId) { $params['BacklogId'] = $backlogId }
             if ($fromCapture) { $params['FromCapture'] = $fromCapture }
             if ($fromFuture) { $params['FromFutureDev'] = $fromFuture }
+            if ($fromMemory) { $params['FromMemory'] = $fromMemory }
             return Invoke-MetraYarnSynthesize @params
         }
         'plan' {

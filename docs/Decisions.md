@@ -30,6 +30,14 @@ Entry shape:
 
 ---
 
+---
+
+## 2026-09-02 - Yarn Phase B Atlas intake (local mirror)
+
+- Decision: Yarn Phase B adds Atlas as an optional intake source only. Yarn reads the Atlas local mirror (`data/sync/objects` + stub corpora), persists `atlasStableId` / `memoryLane=atlas` / `atlasKind` on backlog items, ranks via existing `strategicAlignment` (Plan/Roadmap 0.15, Parked 0.10), and drafts only through `yarn synthesize -FromMemory -Confirm`. Atlas providers return data only; Yarn does not promote OCC or Decisions; `atlas sync pull` never synthesizes; offline Atlas yields `memoryLane=paused` without failing Capture/Future-Dev scan.
+- Why: Bing AFFIRMed Phase B as an intake extension (not an Atlas integration project) after A4, with an explicit ban on a second Yarn content cache and on auto-draft after pull.
+- See: [docs/playbooks/yarn.md](playbooks/yarn.md); `modules/Yarn/Private/Scan.ps1`; plan `yarn_slice_7_intake_e3f36476.plan.md`
+
 ## 2026-09-02 - Yarn Slice 7 A4 lane ship vs Pattern runtime
 
 - Decision: Yarn Slice 7 **A4** is the Loom lane model only: canonical queue `projectKey`, atomic claim under the queue-namespace lock, lane-holding FSM through `accepted-pending-commit`, observe-only local commit verification, and Capture/daily ritual split. Pattern **runtime** context (loader, required catalog, plan `patternId` cite, Loom request-package attachment) is **P2/P3** and remains guidance/context, not queue or approval authority. Shipping both in one Metra commit is allowed when Bing affirms the combined diff; the conceptual scopes stay distinct in ADRs and plans.
@@ -41,6 +49,12 @@ Entry shape:
 - Decision: Metra Pattern architecture taxonomy is closed. **Products** are only Metra, Yarn, Loom, Atlas. **Concepts** are Evidence and Fabric (no modules or folders). **Cabinets** include Guild (`docs/patterns/guild/`) as an on-brand filing category, not a product. **Artifacts** are Plans, Patterns, Playbooks, and Decisions. Pattern front matter uses `owner` (runtime product) and optional `cabinet` (organizational only). Canonical plan links use `patternId`; paths live in `docs/patterns/index.yaml`. Tracked Pattern files remain authoritative; Atlas/Notion holds discoverability copies only. Cabinet values must not affect plan authorization, queue routing, or promotion authority. P0 cabinet/schema and P1 active Pattern seeds are documentation only; Pattern runtime loaders (Yarn/Loom cite) stay unauthorized until a later gate.
 - Why: Bing final review approved the architecture after removing Portfolio/Governance product leaks; six-noun whiteboard shape stays stable for peer-programmer teaching and Slice 8 promotion without inventing hidden products.
 - See: [docs/patterns/README.md](patterns/README.md); [docs/patterns/SCHEMA.md](patterns/SCHEMA.md); [docs/patterns/index.yaml](patterns/index.yaml); plan `metra_patterns_architecture_0354f980.plan.md`
+
+## 2026-09-02 - Loom Slice 8 Pattern promote (accept-gated Atlas publication)
+
+- Decision: Loom owns Pattern **score** and **promote** (`loom pattern score|promote`). Candidates require an **accepted** queue item whose baseline..completedCommit range touched `docs/patterns/**`, validated Pattern front matter, content hash matching the accepted revision, and no prior promote of the same `patternId`+`contentHash`. Confirm calls Atlas put (`pattern:<patternId>`); `-Publish` is optional. Tracked Pattern files remain authoritative. Gaps stay candidates only.
+- Why: Close Slice 8 without inventing a fifth product or transferring Pattern authority to Atlas/Notion.
+- See: [docs/patterns/guild/knowledge-promotion.md](patterns/guild/knowledge-promotion.md); `modules/Loom/Private/PatternPromote.ps1`; [docs/playbooks/loom.md](playbooks/loom.md)
 
 ## 2026-09-02 - Inspect pre-commit: live hash drift warns; Bing affirm blocks
 

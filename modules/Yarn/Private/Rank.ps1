@@ -29,7 +29,15 @@ function Measure-YarnRank {
     $strategic = [double](Get-YarnProp -Object $Item -Name 'strategicAlignment' -Default 0)
     if ($strategic -lt 0) { $strategic = 0 }
     if ($strategic -gt 0.15) { $strategic = 0.15 }
-    if ($strategic -gt 0) { [void]$reasons.Add('strategicAlignment') }
+    if ($strategic -gt 0) {
+        $atlasKind = [string](Get-YarnProp -Object $Item -Name 'atlasKind' -Default '')
+        if ($atlasKind) {
+            [void]$reasons.Add("strategicAlignment:atlasKind=$atlasKind")
+        }
+        else {
+            [void]$reasons.Add('strategicAlignment')
+        }
+    }
 
     $calculatedImpact = [math]::Min(1.0, [math]::Round($opPri + $crit + $urgency + $strategic, 2))
     $effectiveImpact = $calculatedImpact

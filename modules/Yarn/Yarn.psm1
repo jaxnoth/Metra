@@ -59,6 +59,12 @@ $export = @(
     'Get-YarnUtf8NoBomEncoding'
     'Test-YarnLoomQueueWriteForbidden'
     'Read-YarnFutureDevIdeas'
+    'Test-YarnAtlasAdapterAvailable'
+    'Get-YarnAtlasIntakeCandidates'
+    'Get-YarnAtlasProjectPath'
+    'Read-YarnAtlasIdeas'
+    'Get-YarnMemoryLaneState'
+    'Save-YarnMemoryLaneState'
 )
 
 Export-ModuleMember -Function $export

@@ -154,6 +154,10 @@ function Initialize-MetraYarnLayout {
         }
         Write-YarnAtomicUtf8Text -Path $linksPath -Text (($emptyLinks | ConvertTo-Json -Depth 8) + "`n")
     }
+    $lanePath = Get-YarnMemoryLanePath -Root $Root
+    if (-not (Test-Path -LiteralPath $lanePath)) {
+        Save-YarnMemoryLaneState -Root $Root -State 'ok' -LastError $null
+    }
 }
 
 function Get-YarnBacklogPath {
@@ -164,6 +168,64 @@ function Get-YarnBacklogPath {
 function Get-YarnPlanLinksPath {
     param([Parameter(Mandatory)][string]$Root)
     return Join-Path $Root 'plan-links.json'
+}
+
+function Get-YarnMemoryLanePath {
+    param([Parameter(Mandatory)][string]$Root)
+    return Join-Path $Root 'memory-lane.json'
+}
+
+function Get-YarnMemoryLaneState {
+    [CmdletBinding()]
+    param([Parameter(Mandatory)][string]$Root)
+    Initialize-MetraYarnLayout -Root $Root
+    $path = Get-YarnMemoryLanePath -Root $Root
+    if (-not (Test-Path -LiteralPath $path)) {
+        return [PSCustomObject]@{
+            memoryLane = 'ok'
+            updatedAt  = $null
+            lastError  = $null
+        }
+    }
+    try {
+        $doc = Read-YarnJsonFile -Path $path
+        return [PSCustomObject]@{
+            memoryLane = [string](Get-YarnProp -Object $doc -Name 'memoryLane' -Default 'ok')
+            updatedAt  = Get-YarnProp -Object $doc -Name 'updatedAt' -Default $null
+            lastError  = Get-YarnProp -Object $doc -Name 'lastError' -Default $null
+        }
+    }
+    catch {
+        return [PSCustomObject]@{
+            memoryLane = 'paused'
+            updatedAt  = (Get-Date).ToUniversalTime().ToString('o')
+            lastError  = [PSCustomObject]@{
+                operation = 'memory-lane-read'
+                message   = $_.Exception.Message
+                at        = (Get-Date).ToUniversalTime().ToString('o')
+                retryable = $true
+            }
+        }
+    }
+}
+
+function Save-YarnMemoryLaneState {
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory)][string]$Root,
+        [Parameter(Mandatory)][ValidateSet('ok', 'paused')][string]$State,
+        $LastError = $null
+    )
+    $path = Get-YarnMemoryLanePath -Root $Root
+    $doc = [ordered]@{
+        schemaVersion = Get-YarnSchemaVersion
+        memoryLane    = $State
+        updatedAt     = (Get-Date).ToUniversalTime().ToString('o')
+        lastError     = $LastError
+    }
+    Invoke-YarnWithNamedMutex -Name 'yarn-memory-lane' -Script {
+        Write-YarnAtomicUtf8Text -Path $path -Text (($doc | ConvertTo-Json -Depth 8) + "`n")
+    }
 }
 
 function Read-YarnJsonFile {

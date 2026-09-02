@@ -26,7 +26,13 @@
         "handoffContractVersion": { "type": "integer", "const": 1 },
         "packSucceeded": { "type": "boolean" },
         "approval": { "type": "object" },
-        "loomHandoff": { "type": "object" }
+        "loomHandoff": { "type": "object" },
+        "atlasStableId": { "type": "string" },
+        "atlasKind": {
+          "type": "string",
+          "enum": ["Plan", "Roadmap", "Parked"]
+        },
+        "memoryLane": { "type": "string" }
       }
     }
   }

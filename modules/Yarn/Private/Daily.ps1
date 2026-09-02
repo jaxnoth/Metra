@@ -43,10 +43,13 @@ function Get-MetraYarnDaily {
         rubricVersion      = Get-YarnRubricVersion
         totalItems         = $items.Count
         byStatus           = $byStatus
-        topRanked          = @($items | Select-Object -First 10 id, title, status, total, completionReady, readyEnough, projectKey, primarySourceKey)
+        topRanked          = @($items | Select-Object -First 10 id, title, status, total, completionReady, readyEnough, projectKey, primarySourceKey, atlasKind)
         pendingBingCount   = $pending.Count
         needsSynthesizeCount = $needsSynth.Count
+        atlasItemCount     = @($items | Where-Object { [string](Get-YarnProp -Object $_ -Name 'sourceKind' -Default '') -eq 'atlas' }).Count
+        memoryLane         = [string](Get-YarnMemoryLaneState -Root $Root).memoryLane
+        memoryLaneLastError = (Get-YarnMemoryLaneState -Root $Root).lastError
         approvalAvailable  = $true
-        note               = 'A3: yarn plan approve -BacklogId <id> -Confirm after pending-bing + fresh pack. Reconcile retries failed handoff.'
+        note               = 'Phase B: yarn synthesize -FromMemory <stableId> -Confirm. Approve after pending-bing + fresh pack. Reconcile retries failed handoff.'
     }
 }
