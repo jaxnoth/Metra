@@ -112,6 +112,27 @@ param(
 $ErrorActionPreference = 'Stop'
 Import-Module (Join-Path $PSScriptRoot 'scripts\Metra.psd1') -Force
 
+function Add-MetraLoomConfirmForward {
+    param(
+        [Parameter(Mandatory)][string]$Sub,
+        [string[]]$SubArgs = @(),
+        [switch]$ConfirmPresent
+    )
+    $forward = @($SubArgs)
+    if (-not $ConfirmPresent) { return $forward }
+    $subLower = $Sub.ToLowerInvariant()
+    if ($subLower -in @('run', 'review', 'loop')) {
+        if ($forward -notcontains '-Confirm') { $forward += '-Confirm' }
+    }
+    elseif ($subLower -eq 'migrate' -and (@($forward | Where-Object { $_ -ieq '-Apply' }).Count -gt 0)) {
+        if ($forward -notcontains '-Confirm') { $forward += '-Confirm' }
+    }
+    elseif ($subLower -eq 'daily' -and (@($forward | Where-Object { $_ -ieq 'approve' }).Count -gt 0)) {
+        if ($forward -notcontains '-Confirm') { $forward += '-Confirm' }
+    }
+    return $forward
+}
+
 function Show-Help {
     @"
 Metra CLI - operate on sibling folders under configured project roots.
@@ -968,6 +989,7 @@ switch ($Command) {
         if ($Rest.Count -gt 1) {
             $subArgs = @($Rest[1..($Rest.Count - 1)])
         }
+        $subArgs = Add-MetraLoomConfirmForward -Sub $sub -SubArgs $subArgs -ConfirmPresent:$Confirm.IsPresent
         $result = Invoke-MetraLoomCommand -Subcommand $sub -ArgsRest $subArgs
         if ($null -eq $result) { return }
         if ($result -is [System.Array]) {
@@ -1002,6 +1024,7 @@ switch ($Command) {
         if ($Rest.Count -gt 1) {
             $subArgs = @($Rest[1..($Rest.Count - 1)])
         }
+        $subArgs = Add-MetraLoomConfirmForward -Sub $sub -SubArgs $subArgs -ConfirmPresent:$Confirm.IsPresent
         $result = Invoke-MetraLoomCommand -Subcommand $sub -ArgsRest $subArgs
         if ($null -eq $result) { return }
         if ($result -is [System.Array]) {

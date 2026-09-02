@@ -683,6 +683,10 @@ function Invoke-MetraLoomDailyBuild {
     [void]$sb.AppendLine("Date: $today")
     [void]$sb.AppendLine("Review period: $ReviewDate (previous day changes)")
     [void]$sb.AppendLine('')
+    $loopPausedSection = Format-LoomLoopPausedIntakeSection -Root $Root
+    if (-not [string]::IsNullOrWhiteSpace($loopPausedSection)) {
+        [void]$sb.AppendLine($loopPausedSection)
+    }
     [void]$sb.AppendLine('## 1. Overarching changes made')
     if (@($completedItems).Count -eq 0) {
         [void]$sb.AppendLine('(none)')

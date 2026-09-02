@@ -13,6 +13,7 @@ $script:LoomHostRootOverride = $null
 . (Join-Path $PSScriptRoot 'Private\Review.ps1')
 . (Join-Path $PSScriptRoot 'Private\Runner.ps1')
 . (Join-Path $PSScriptRoot 'Private\Domain.ps1')
+. (Join-Path $PSScriptRoot 'Private\Loop.ps1')
 
 $export = @(
     'Invoke-LoomCommand'
@@ -68,6 +69,13 @@ $export = @(
         'Get-LoomSlice5Transitions'
         'Get-LoomProjectKey'
         'Invoke-MetraLoomRun'
+    'Invoke-MetraLoomLoop'
+    'Get-LoomLoopPauseState'
+    'Set-LoomLoopPauseState'
+    'Test-LoomUnattendedPolicy'
+    'Get-LoomEligibleQueuedItems'
+    'Test-LoomInspectEngineHealthy'
+    'Format-LoomLoopPausedIntakeSection'
     'Invoke-MetraLoomReview'
     'Invoke-MetraLoomMigrate'
     'Get-LoomActiveTransitionMap'

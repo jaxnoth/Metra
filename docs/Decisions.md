@@ -24,6 +24,14 @@ Entry shape:
 
 ---
 
+---
+
+## 2026-09-02 - Loom Slice 6 unattended loop (`loom loop -UntilDailyGate`)
+
+- Decision: Slice 6 adds **`metra.ps1 loom loop -UntilDailyGate`** — auto-selects **one** eligible `queued` item (score desc, createdAt asc, id asc), runs existing `run` + chained `review` to **`completed`**, stops at daily gate. **No** push, merge, or `accepted`. Tier 1 inspect/engine faults set enriched pause (`loopPaused`, `pausedAtUtc`, `pauseReason`); subsequent loop invocations fail closed (no dequeue). Classification missing → reject (never assume safe). Supervised path remains `loom run -Id -Confirm`.
+- Why: Bing-approved Phase C autonomy within governance envelope; reuse run/review machinery instead of parallel execution path.
+- See: [docs/playbooks/loom.md](playbooks/loom.md) Slice 6 section; `modules/Loom/Private/Loop.ps1`
+
 ## 2026-09-02 - Plan frontmatter todos are the progress ledger
 
 - Decision: Cursor `.plan.md` frontmatter `todos` are the operator-visible progress ledger (Plans UI checklist). Agents **update todo `status`** (`completed`, `cancelled`, etc.) as slice or subtask work lands. Do **not** treat "implement this plan" as "leave todos stale." Separately: do **not** rewrite plan body/spec (overview, architecture, acceptance criteria) during implementation unless the operator asks for a plan revision. Session one-offs ("do not edit the plan") do not override this portfolio rule.
