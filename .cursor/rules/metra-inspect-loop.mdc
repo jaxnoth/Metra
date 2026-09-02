@@ -43,7 +43,7 @@ Fix priority: Critical and High first, then actionable Medium until goal (Critic
 
 Install once: `.\metra.ps1 inspect hooks install`.
 
-On `git commit` the hook runs `inspect pre-commit`: refreshes assess + pack when needed; **blocks only** when Bing gate is not affirmed for the current diff. Inspect severity does **not** block commit (agent should have fixed during prepare-bing).
+On `git commit` the hook runs `inspect pre-commit`: **blocks only** when Bing gate is missing or the current assessment hash does not match the affirmation (`assess-gate-mismatch`). Live working-tree drift vs the affirmed assessment is a **warning** only (same policy as affirm/pack). Inspect severity does **not** block commit (agent should have fixed during prepare-bing).
 
 Emergency skip: `METRA_SKIP_BING_GATE=1`.
 

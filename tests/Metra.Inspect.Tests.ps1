@@ -2079,7 +2079,7 @@ Describe 'Inspect Bing gate slot scoping' {
     }
 }
 
-Describe 'Inspect Bing gate live hash invariant' {
+Describe 'Inspect Bing gate affirm policy' {
     It 'allows commit when live assess and gate hashes match' {
         InModuleScope Metra {
             function Set-GateTestArtifacts {
@@ -2104,6 +2104,7 @@ Describe 'Inspect Bing gate live hash invariant' {
                 $triad = Test-MetraInspectBingGateCommitAllowed -SlotKey 'Metra' -LiveInputHash 'hash-a'
                 $triad.allowed | Should -BeTrue
                 $triad.reason | Should -Be 'ok'
+                $triad.liveDrift | Should -BeFalse
             }
             finally {
                 Remove-Item -LiteralPath $stateRoot -Recurse -Force -ErrorAction SilentlyContinue
@@ -2111,7 +2112,7 @@ Describe 'Inspect Bing gate live hash invariant' {
         }
     }
 
-    It 'blocks when live hash differs from assessment' {
+    It 'allows with live-drift when working tree differs from affirmed assessment' {
         InModuleScope Metra {
             function Set-GateTestArtifacts {
                 param([string]$StateRoot, [string]$SlotKey, [string]$AssessHash, [string]$GateHash = $null)
@@ -2133,39 +2134,9 @@ Describe 'Inspect Bing gate live hash invariant' {
             Set-GateTestArtifacts -StateRoot $stateRoot -SlotKey 'Metra' -AssessHash 'hash-a' -GateHash 'hash-a'
             try {
                 $triad = Test-MetraInspectBingGateCommitAllowed -SlotKey 'Metra' -LiveInputHash 'hash-b'
-                $triad.allowed | Should -BeFalse
-                $triad.reason | Should -Be 'live-assess-mismatch'
-            }
-            finally {
-                Remove-Item -LiteralPath $stateRoot -Recurse -Force -ErrorAction SilentlyContinue
-            }
-        }
-    }
-
-    It 'blocks when live hash differs from gate affirmation' {
-        InModuleScope Metra {
-            function Set-GateTestArtifacts {
-                param([string]$StateRoot, [string]$SlotKey, [string]$AssessHash, [string]$GateHash = $null)
-                $slot = Join-Path $StateRoot $SlotKey
-                New-Item -ItemType Directory -Path $slot -Force | Out-Null
-                $report = [PSCustomObject]@{
-                    schemaVersion = 1; mode = 'diff'
-                    provenance = [PSCustomObject]@{ project = $SlotKey; inputHash = $AssessHash }
-                    findings = @()
-                }
-                ($report | ConvertTo-Json -Depth 6) | Set-Content -LiteralPath (Join-Path $slot 'latest.json') -Encoding UTF8
-                if ($null -ne $GateHash) {
-                    $gate = [ordered]@{ schemaVersion = 1; project = $SlotKey; inputHash = $GateHash; affirmedAtUtc = '2026-08-31T00:00:00Z' }
-                    ($gate | ConvertTo-Json -Depth 4) | Set-Content -LiteralPath (Join-Path $slot 'bing-gate.json') -Encoding UTF8
-                }
-            }
-            $stateRoot = Join-Path $env:TEMP ("metra-triad-" + [guid]::NewGuid().ToString('n'))
-            Mock Get-MetraInspectStateRoot { $stateRoot }
-            Set-GateTestArtifacts -StateRoot $stateRoot -SlotKey 'Metra' -AssessHash 'hash-b' -GateHash 'hash-a'
-            try {
-                $triad = Test-MetraInspectBingGateCommitAllowed -SlotKey 'Metra' -LiveInputHash 'hash-b'
-                $triad.allowed | Should -BeFalse
-                $triad.reason | Should -Be 'live-gate-mismatch'
+                $triad.allowed | Should -BeTrue
+                $triad.reason | Should -Be 'live-drift'
+                $triad.liveDrift | Should -BeTrue
             }
             finally {
                 Remove-Item -LiteralPath $stateRoot -Recurse -Force -ErrorAction SilentlyContinue
@@ -2192,11 +2163,11 @@ Describe 'Inspect Bing gate live hash invariant' {
             }
             $stateRoot = Join-Path $env:TEMP ("metra-triad-" + [guid]::NewGuid().ToString('n'))
             Mock Get-MetraInspectStateRoot { $stateRoot }
-            Set-GateTestArtifacts -StateRoot $stateRoot -SlotKey 'Metra' -AssessHash 'hash-a' -GateHash 'hash-b'
+            Set-GateTestArtifacts -StateRoot $stateRoot -SlotKey 'Metra' -AssessHash 'hash-b' -GateHash 'hash-a'
             try {
-                $triad = Test-MetraInspectBingGateCommitAllowed -SlotKey 'Metra' -LiveInputHash 'hash-a'
+                $triad = Test-MetraInspectBingGateCommitAllowed -SlotKey 'Metra' -LiveInputHash 'hash-b'
                 $triad.allowed | Should -BeFalse
-                $triad.reason | Should -Be 'live-gate-mismatch'
+                $triad.reason | Should -Be 'assess-gate-mismatch'
             }
             finally {
                 Remove-Item -LiteralPath $stateRoot -Recurse -Force -ErrorAction SilentlyContinue
@@ -2204,7 +2175,38 @@ Describe 'Inspect Bing gate live hash invariant' {
         }
     }
 
-    It 'pre-commit blocks after post-affirmation working-tree drift' {
+    It 'blocks when assessment changed after gate affirmation (live matches assess)' {
+        InModuleScope Metra {
+            function Set-GateTestArtifacts {
+                param([string]$StateRoot, [string]$SlotKey, [string]$AssessHash, [string]$GateHash = $null)
+                $slot = Join-Path $StateRoot $SlotKey
+                New-Item -ItemType Directory -Path $slot -Force | Out-Null
+                $report = [PSCustomObject]@{
+                    schemaVersion = 1; mode = 'diff'
+                    provenance = [PSCustomObject]@{ project = $SlotKey; inputHash = $AssessHash }
+                    findings = @()
+                }
+                ($report | ConvertTo-Json -Depth 6) | Set-Content -LiteralPath (Join-Path $slot 'latest.json') -Encoding UTF8
+                if ($null -ne $GateHash) {
+                    $gate = [ordered]@{ schemaVersion = 1; project = $SlotKey; inputHash = $GateHash; affirmedAtUtc = '2026-08-31T00:00:00Z' }
+                    ($gate | ConvertTo-Json -Depth 4) | Set-Content -LiteralPath (Join-Path $slot 'bing-gate.json') -Encoding UTF8
+                }
+            }
+            $stateRoot = Join-Path $env:TEMP ("metra-triad-" + [guid]::NewGuid().ToString('n'))
+            Mock Get-MetraInspectStateRoot { $stateRoot }
+            Set-GateTestArtifacts -StateRoot $stateRoot -SlotKey 'Metra' -AssessHash 'hash-a' -GateHash 'hash-b'
+            try {
+                $triad = Test-MetraInspectBingGateCommitAllowed -SlotKey 'Metra' -LiveInputHash 'hash-a'
+                $triad.allowed | Should -BeFalse
+                $triad.reason | Should -Be 'assess-gate-mismatch'
+            }
+            finally {
+                Remove-Item -LiteralPath $stateRoot -Recurse -Force -ErrorAction SilentlyContinue
+            }
+        }
+    }
+
+    It 'pre-commit warns but allows after post-affirmation working-tree drift' {
         InModuleScope Metra {
             function Set-GateTestArtifacts {
                 param([string]$StateRoot, [string]$SlotKey, [string]$AssessHash, [string]$GateHash = $null)
@@ -2231,7 +2233,10 @@ Describe 'Inspect Bing gate live hash invariant' {
                 [PSCustomObject]@{ project = 'Metra'; root = (Get-MetraRoot); inputHash = 'hash-b'; empty = $false }
             }
             try {
-                { Invoke-MetraInspectPreCommitHook -Name 'Metra' } | Should -Throw '*live-assess-mismatch*'
+                $result = Invoke-MetraInspectPreCommitHook -Name 'Metra'
+                $result.ok | Should -BeTrue
+                $result.liveDrift | Should -BeTrue
+                $result.reason | Should -Be 'live-drift'
             }
             finally {
                 Remove-Item -LiteralPath $stateRoot -Recurse -Force -ErrorAction SilentlyContinue

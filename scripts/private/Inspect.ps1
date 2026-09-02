@@ -309,7 +309,8 @@ function Resolve-MetraInspectProjectContext {
 function Get-MetraInspectPlanRoots {
     [CmdletBinding()]
     param(
-        [string]$MetraRoot = (Get-MetraRoot)
+        [string]$MetraRoot = (Get-MetraRoot),
+        [string]$ProjectRoot
     )
 
     $roots = New-Object System.Collections.Generic.List[string]
@@ -317,7 +318,59 @@ function Get-MetraInspectPlanRoots {
     if (Test-Path -LiteralPath $userPlans) { [void]$roots.Add($userPlans) }
     $checkoutPlans = Join-Path $MetraRoot '.cursor\plans'
     if (Test-Path -LiteralPath $checkoutPlans) { [void]$roots.Add($checkoutPlans) }
+    # Formal Loom/Yarn plans live under project docs (not Cursor Build-button plans).
+    $docs = Join-Path $MetraRoot 'docs'
+    if (Test-Path -LiteralPath $docs) { [void]$roots.Add([System.IO.Path]::GetFullPath($docs)) }
+    if (-not [string]::IsNullOrWhiteSpace($ProjectRoot)) {
+        $projectDocs = Join-Path $ProjectRoot 'docs'
+        if (Test-Path -LiteralPath $projectDocs) {
+            $fullDocs = [System.IO.Path]::GetFullPath($projectDocs)
+            if ($roots -notcontains $fullDocs) { [void]$roots.Add($fullDocs) }
+        }
+    }
     return @($roots)
+}
+
+function Test-MetraInspectPlanPathAllowed {
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory)][string]$Path,
+        [string]$MetraRoot = (Get-MetraRoot),
+        [string]$ProjectRoot
+    )
+    $full = [System.IO.Path]::GetFullPath($Path)
+    foreach ($planRoot in @(Get-MetraInspectPlanRoots -MetraRoot $MetraRoot -ProjectRoot $ProjectRoot)) {
+        if (Test-MetraPathWithinRoot -Path $full -Root $planRoot) { return $true }
+    }
+    return (Test-MetraInspectPathUnderSiblingProjectDocs -Path $full -MetraRoot $MetraRoot)
+}
+
+function Test-MetraInspectPathUnderSiblingProjectDocs {
+    <#
+    .SYNOPSIS
+        True when path is <parent-of-MetraRoot>\<ProjectKey>\docs\*.plan.md (Yarn formal plans).
+    #>
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory)][string]$Path,
+        [string]$MetraRoot = (Get-MetraRoot)
+    )
+    try {
+        $full = [System.IO.Path]::GetFullPath($Path)
+        $parent = [System.IO.Path]::GetFullPath((Split-Path -Parent $MetraRoot))
+        $sep = [string][System.IO.Path]::DirectorySeparatorChar
+        if (-not $parent.EndsWith($sep)) { $parent = $parent + $sep }
+        if (-not $full.StartsWith($parent, [System.StringComparison]::OrdinalIgnoreCase)) { return $false }
+        $rel = $full.Substring($parent.Length)
+        $parts = @($rel -split '[\\/]')
+        if ($parts.Count -lt 3) { return $false }
+        if ($parts[1] -ne 'docs') { return $false }
+        if ($parts[0] -notmatch '^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$') { return $false }
+        return $full.EndsWith('.plan.md', [System.StringComparison]::OrdinalIgnoreCase)
+    }
+    catch {
+        return $false
+    }
 }
 
 function Get-MetraInspectRecentPlans {
@@ -408,19 +461,13 @@ function Resolve-MetraInspectPlanPath {
                 Matches  = @()
             }
         }
-        $allowed = $false
-        foreach ($root in @(Get-MetraInspectPlanRoots -MetraRoot $MetraRoot)) {
-            if (Test-MetraPathWithinRoot -Path $fullPath -Root $root) {
-                $allowed = $true
-                break
-            }
-        }
+        $allowed = (Test-MetraInspectPlanPathAllowed -Path $fullPath -MetraRoot $MetraRoot)
         if (-not $allowed) {
             return [PSCustomObject]@{
                 Ok       = $false
                 ListOnly = $false
                 Path     = $null
-                Error    = "Plan -Path must be under a known plan root (~/.cursor/plans or <metra>/.cursor/plans): $fullPath"
+                Error    = "Plan -Path must be under a known plan root (~/.cursor/plans, <metra>/.cursor/plans, <metra>/docs, or <sibling>/docs): $fullPath"
                 Matches  = @()
             }
         }
@@ -2866,14 +2913,7 @@ function Invoke-MetraInspectPackOnly {
         $planPathOut = [string]$resolved.Path
 
         $planFull = [System.IO.Path]::GetFullPath($planPathOut)
-        $planAllowed = $false
-        foreach ($planRoot in @(Get-MetraInspectPlanRoots)) {
-            if (Test-MetraPathWithinRoot -Path $planFull -Root $planRoot) {
-                $planAllowed = $true
-                break
-            }
-        }
-        if (-not $planAllowed) {
+        if (-not (Test-MetraInspectPlanPathAllowed -Path $planFull -ProjectRoot $root)) {
             throw "Pack planPath must be under a known plan root: $planFull"
         }
         if (-not (Test-Path -LiteralPath $planFull -PathType Leaf)) {
@@ -2972,14 +3012,7 @@ function Invoke-MetraInspectPack {
         elseif ($Mode -eq 'plan' -and $report.provenance.planPath) {
             $planPathRaw = [string]$report.provenance.planPath
             $planFull = [System.IO.Path]::GetFullPath($ExecutionContext.SessionState.Path.GetUnresolvedProviderPathFromPSPath($planPathRaw))
-            $planAllowed = $false
-            foreach ($planRoot in @(Get-MetraInspectPlanRoots)) {
-                if (Test-MetraPathWithinRoot -Path $planFull -Root $planRoot) {
-                    $planAllowed = $true
-                    break
-                }
-            }
-            if (-not $planAllowed) {
+            if (-not (Test-MetraInspectPlanPathAllowed -Path $planFull)) {
                 throw "Pack planPath must be under a known plan root: $planFull"
             }
             if (Test-Path -LiteralPath $planFull -PathType Leaf) {
@@ -3028,14 +3061,7 @@ function Invoke-MetraInspectPack {
         # Rebuild failed earlier without throw - try once more under confine.
         $fbRaw = $planPathProv
         $fbFull = [System.IO.Path]::GetFullPath($ExecutionContext.SessionState.Path.GetUnresolvedProviderPathFromPSPath($fbRaw))
-        $fbAllowed = $false
-        foreach ($planRoot in @(Get-MetraInspectPlanRoots)) {
-            if (Test-MetraPathWithinRoot -Path $fbFull -Root $planRoot) {
-                $fbAllowed = $true
-                break
-            }
-        }
-        if (-not $fbAllowed) {
+        if (-not (Test-MetraInspectPlanPathAllowed -Path $fbFull)) {
             throw "Pack planPath must be under a known plan root: $fbFull"
         }
         if (Test-Path -LiteralPath $fbFull -PathType Leaf) {
@@ -4950,7 +4976,7 @@ function Get-MetraInspectSlotDiffAssess {
 function Test-MetraInspectBingGateCommitAllowed {
     <#
     .SYNOPSIS
-        Three-way gate: live working-tree hash must equal slot assessment and Bing affirmation.
+        Bing affirm gate: assessment must match affirmation. Live working-tree drift warns only.
     #>
     [CmdletBinding()]
     param(
@@ -4966,6 +4992,7 @@ function Test-MetraInspectBingGateCommitAllowed {
             liveInputHash   = $LiveInputHash
             assessInputHash = ''
             gateInputHash   = ''
+            liveDrift       = $false
         }
     }
 
@@ -4977,16 +5004,7 @@ function Test-MetraInspectBingGateCommitAllowed {
             liveInputHash   = $LiveInputHash
             assessInputHash = $assessHash
             gateInputHash   = ''
-        }
-    }
-
-    if ($LiveInputHash -ne $assessHash) {
-        return [PSCustomObject]@{
-            allowed         = $false
-            reason          = 'live-assess-mismatch'
-            liveInputHash   = $LiveInputHash
-            assessInputHash = $assessHash
-            gateInputHash   = ''
+            liveDrift       = $false
         }
     }
 
@@ -4998,20 +5016,11 @@ function Test-MetraInspectBingGateCommitAllowed {
             liveInputHash   = $LiveInputHash
             assessInputHash = $assessHash
             gateInputHash   = ''
+            liveDrift       = $false
         }
     }
 
     $gateHash = [string](Get-MetraProp -Object $gateRecord -Name 'inputHash' -Default '')
-    if ($LiveInputHash -ne $gateHash) {
-        return [PSCustomObject]@{
-            allowed         = $false
-            reason          = 'live-gate-mismatch'
-            liveInputHash   = $LiveInputHash
-            assessInputHash = $assessHash
-            gateInputHash   = $gateHash
-        }
-    }
-
     if ($assessHash -ne $gateHash) {
         return [PSCustomObject]@{
             allowed         = $false
@@ -5019,15 +5028,18 @@ function Test-MetraInspectBingGateCommitAllowed {
             liveInputHash   = $LiveInputHash
             assessInputHash = $assessHash
             gateInputHash   = $gateHash
+            liveDrift       = $false
         }
     }
 
+    $liveDrift = ($LiveInputHash -ne $assessHash) -or ($LiveInputHash -ne $gateHash)
     return [PSCustomObject]@{
         allowed         = $true
-        reason          = 'ok'
+        reason          = if ($liveDrift) { 'live-drift' } else { 'ok' }
         liveInputHash   = $LiveInputHash
         assessInputHash = $assessHash
         gateInputHash   = $gateHash
+        liveDrift       = [bool]$liveDrift
     }
 }
 
@@ -5116,6 +5128,7 @@ function Show-MetraInspectBingGateStatus {
         currentInputHash = $assessHash
         affirmed         = [bool]$triad.allowed
         reason           = [string]$triad.reason
+        liveDrift        = [bool](Get-MetraProp -Object $triad -Name 'liveDrift' -Default $false)
         affirmedAtUtc    = [string](Get-MetraProp -Object $gateRecord -Name 'affirmedAtUtc' -Default '')
         storedInputHash  = $gateHash
         packPath         = Get-MetraInspectPackPath -SlotKey $slotKey -Mode 'diff'
@@ -5277,7 +5290,7 @@ function Invoke-MetraInspectPrepareForBing {
 function Invoke-MetraInspectPreCommitHook {
     <#
     .SYNOPSIS
-        Git pre-commit: enforce live == assess == gate; does not reuse prepare-bing session state.
+        Git pre-commit: require Bing affirm for the assessed report; live tree drift warns only.
     #>
     [CmdletBinding()]
     param(
@@ -5309,11 +5322,12 @@ function Invoke-MetraInspectPreCommitHook {
                 Write-Host 'COMMIT BLOCKED — no Inspect assessment for this diff.' -ForegroundColor Red
                 Write-Host ("  Run: .\metra.ps1 inspect prepare-bing -Name {0}" -f $ctx.Project)
             }
-            'live-assess-mismatch' {
-                Write-Host 'COMMIT BLOCKED — working tree changed after Inspect assessment.' -ForegroundColor Red
-                Write-Host ("  Live:   {0}" -f $triad.liveInputHash)
+            'assess-gate-mismatch' {
+                Write-Host 'COMMIT BLOCKED — assessment changed after Bing affirmation.' -ForegroundColor Red
                 Write-Host ("  Assess: {0}" -f $triad.assessInputHash)
+                Write-Host ("  Gate:   {0}" -f $triad.gateInputHash)
                 Write-Host ("  Re-run: .\metra.ps1 inspect prepare-bing -Name {0} -Reset" -f $ctx.Project)
+                Write-Host ("  Then:   .\metra.ps1 inspect gate affirm -Name {0} -Confirm" -f $ctx.Project)
             }
             default {
                 Write-Host 'COMMIT BLOCKED — Bing review required (manual gate).' -ForegroundColor Red
@@ -5326,14 +5340,20 @@ function Invoke-MetraInspectPreCommitHook {
         throw ("Pre-commit blocked: {0}." -f $triad.reason)
     }
 
+    if ($triad.liveDrift) {
+        Write-Warning ("Working tree hash differs from the affirmed assessment (live={0}; assess/gate={1}). Commit allowed; re-run prepare-bing if the change should be re-reviewed." -f $triad.liveInputHash, $triad.assessInputHash)
+    }
+
     $gate = Get-MetraInspectBingGateRecord -SlotKey $slotKey
     Write-Host ("Pre-commit: Bing gate affirmed ({0}) — commit allowed." -f [string]$gate.affirmedAtUtc) -ForegroundColor Green
     return [PSCustomObject]@{
-        ok            = $true
-        inputHash     = [string]$live.inputHash
-        liveInputHash = [string]$triad.liveInputHash
+        ok              = $true
+        reason          = [string]$triad.reason
+        liveDrift       = [bool]$triad.liveDrift
+        inputHash       = [string]$live.inputHash
+        liveInputHash   = [string]$triad.liveInputHash
         assessInputHash = [string]$triad.assessInputHash
-        gateInputHash = [string]$triad.gateInputHash
+        gateInputHash   = [string]$triad.gateInputHash
     }
 }
 

@@ -1,4 +1,4 @@
-# Metra pre-commit: enforce live == assess == gate (see inspect pre-commit).
+# Metra pre-commit: require Bing affirm for the assessed report (live drift warns only).
 # Install: .\metra.ps1 inspect hooks install  (sets git config metra.root)
 # Emergency skip: METRA_SKIP_BING_GATE=1 git commit ...
 

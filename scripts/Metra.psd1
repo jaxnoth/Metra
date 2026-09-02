@@ -138,6 +138,7 @@
         'Set-MetraConfiguredOpsBaseUrl',
         'Invoke-MetraCaptureCommand',
         'Invoke-MetraLoomCommand',
+        'Invoke-MetraYarnCommand',
         'Invoke-MetraAzdoCommand',
         'Invoke-MetraAtlasCommand',
         'Get-MetraAtlasProjectPath',

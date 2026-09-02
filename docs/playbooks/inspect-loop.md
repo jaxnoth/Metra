@@ -27,7 +27,7 @@ Always-on rule: [`.cursor/rules/metra-inspect-loop.mdc`](../../.cursor/rules/met
 | After every plan revision | `.\metra.ps1 inspect pack-only plan <fragment-or-Path> -Name <Project>` | Agent runs automatically; report pack path + clipboard. Skip only on explicit operator opt-out |
 | Before implement (plan-driven work) | `.\metra.ps1 inspect plan -Latest -Name <Project>` (or fragment / `-Path`) | Optional Ask assess; summarize findings in chat; operator picks fix / defer / reject before coding |
 | After each coherent code batch | `.\metra.ps1 inspect prepare-bing -Name <Project> -Reset` then fix and re-run until `readyForBing=true` | Agent auto-fixes Critical/High/Medium; pack built when loop completes |
-| Before `git commit` | Operator Bing review + `inspect gate affirm` | **Only manual gate**; hook blocks without affirm |
+| Before `git commit` | Operator Bing review + `inspect gate affirm` | **Only manual gate**; hook blocks without affirm (or when assess ≠ gate). Live working-tree drift vs affirmed assessment is a warning only. |
 | After affirmed fixes | `inspect loop` again (same session) | Stop when goal met (Critical=0, High=0, Medium<=2), convergence detected, or MaxLoops=5 fence |
 | Metra executable ship (calibration) | `prepare-bing` auto-builds pack; Bing comparison lane | Re-run prepare-bing after fixes; pack is never manual |
 | A2 desk split external review | `.\metra.ps1 inspect pack-only agents -Name <Project>` | Bing-only stub + playbooks scope; no unrelated working-tree noise |

@@ -1,0 +1,40 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "yarn-backlog",
+  "type": "object",
+  "required": ["schemaVersion", "items"],
+  "properties": {
+    "schemaVersion": { "type": "integer", "const": 1 },
+    "items": {
+      "type": "array",
+      "items": { "$ref": "#/definitions/backlogItem" }
+    }
+  },
+  "definitions": {
+    "backlogItem": {
+      "type": "object",
+      "required": ["id", "title", "status", "health", "primarySourceKey", "projectKey"],
+      "properties": {
+        "id": { "type": "string", "pattern": "^YARN-" },
+        "title": { "type": "string" },
+        "status": {
+          "type": "string",
+          "enum": ["idea", "ready", "pending-bing", "stale-pack", "approved", "parked", "rejected"]
+        },
+        "health": { "type": "string", "enum": ["ok", "blocked", "inconsistent"] },
+        "primarySourceKey": { "type": "string" },
+        "sources": { "type": "array", "items": { "type": "string" } },
+        "projectKey": { "type": "string" },
+        "sourceHash": { "type": "string" },
+        "formalPlanPath": { "type": "string" },
+        "total": { "type": "number" },
+        "completionReady": { "type": "number" },
+        "readyEnough": { "type": "boolean" },
+        "rubricVersion": { "type": "string" },
+        "rankReasons": { "type": "array", "items": { "type": "string" } },
+        "firstSeenAt": { "type": "string" },
+        "lastSeenAt": { "type": "string" }
+      }
+    }
+  }
+}
