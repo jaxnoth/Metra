@@ -473,6 +473,10 @@ function Invoke-MetraLoomStateChange {
         throw "Illegal Loom transition: '$transitionFrom' -> '$To' (Phase A)"
     }
 
+    if ($transitionFrom -eq 'completed' -and $To -ne 'completed' -and -not $script:LoomDailyApproveActive) {
+        throw "Illegal Loom transition: only Invoke-MetraLoomDailyApprove may exit 'completed' (attempted -> '$To')"
+    }
+
     return Invoke-LoomWithNamedMutex -Name 'loom_queue' -Script {
         $item = Get-MetraLoomQueueItem -Root $Root -Id $ItemId
         $priorStatus = '@new'
@@ -871,6 +875,11 @@ function New-MetraLoomQueueItemFromCandidate {
         throw ("Candidate {0} is ineligible: {1}" -f $Candidate.id, (($Candidate.ineligibleReasons) -join ', '))
     }
 
+    $registry = [string](Get-LoomProp -Object $Candidate.project -Name 'registryName' -Default '')
+    if (-not [string]::IsNullOrWhiteSpace($registry)) {
+        Assert-LoomProjectAcceptanceGate -Root $Root -RegistryName $registry
+    }
+
     $id = New-MetraLoomQueueId -Root $Root
     $now = (Get-Date).ToString('o')
     $branchDay = (Get-Date).ToString('yyyy-MM-dd')
@@ -1101,54 +1110,6 @@ function Invoke-MetraLoomEnqueueFromPlan {
     return New-MetraLoomQueueItemFromCandidate -Root $Root -Candidate $cand
 }
 
-function Invoke-MetraLoomDailyStub {
-    [CmdletBinding()]
-    param(
-        [Parameter(Mandatory)][string]$Root,
-        [string]$MetraRoot = (Get-LoomHostRoot),
-        [datetime]$Date = (Get-Date)
-    )
-
-    Initialize-MetraLoomLayout -Root $Root
-    $day = $Date.ToString('yyyy-MM-dd')
-    $path = Join-Path (Join-Path $Root 'daily') ("$day-intake.md")
-
-    $pending = @(
-        Get-MetraLoomFormalPlans -MetraRoot $MetraRoot |
-            Where-Object { -not $_.approved }
-    )
-
-    $sb = New-Object System.Text.StringBuilder
-    [void]$sb.AppendLine("# Metra Daily Intake")
-    [void]$sb.AppendLine("Date: $day")
-    [void]$sb.AppendLine("Phase: A (stub — pack-diff and approve ship in Slice 5)")
-    [void]$sb.AppendLine('')
-    [void]$sb.AppendLine('## 1. Overarching changes made')
-    [void]$sb.AppendLine('(none — Phase A stub)')
-    [void]$sb.AppendLine('')
-    [void]$sb.AppendLine('## 2. Manual testing required')
-    [void]$sb.AppendLine('(none — Phase A stub)')
-    [void]$sb.AppendLine('')
-    [void]$sb.AppendLine('## 3. Next plan(s) for review')
-    if (@($pending).Count -eq 0) {
-        [void]$sb.AppendLine('(none pending)')
-    }
-    else {
-        [void]$sb.AppendLine('')
-        [void]$sb.AppendLine('| Plan | Path | Status |')
-        [void]$sb.AppendLine('|------|------|--------|')
-        foreach ($p in $pending) {
-            [void]$sb.AppendLine("| $($p.name) | $($p.path) | $($p.planStatus) |")
-        }
-    }
-    [void]$sb.AppendLine('')
-    [void]$sb.AppendLine('## Archive candidates (knowledge score ≥ 5)')
-    [void]$sb.AppendLine('(none — Slice 8 deferred)')
-
-    Write-LoomAtomicUtf8Text -Path $path -Text $sb.ToString()
-    return [PSCustomObject]@{ path = $path; phase = 'A-stub'; pendingPlans = @($pending).Count }
-}
-
 function Invoke-LoomCommand {
     <#
     .SYNOPSIS
@@ -1170,7 +1131,7 @@ function Invoke-LoomCommand {
         $Root = (Resolve-MetraLoomRoot -OverrideRoot $Root).Path
     }
 
-    $mutating = @('run', 'block', 'enqueue', 'migrate', 'review')
+    $mutating = @('run', 'block', 'enqueue', 'migrate', 'review', 'daily')
     if ($mutating -contains $Subcommand.ToLowerInvariant()) {
         Assert-LoomRootWritable -Root $Root -OverrideRoot $(if ($explicitRoot) { $Root } else { $null })
     }
@@ -1306,7 +1267,54 @@ function Invoke-LoomCommand {
             }
         }
         'daily' {
-            return Invoke-MetraLoomDailyStub -Root $Root -MetraRoot $MetraRoot
+            if ($ArgsRest.Count -eq 0) {
+                return Invoke-MetraLoomDailyBuild -Root $Root -MetraRoot $MetraRoot
+            }
+            $dailySub = [string]$ArgsRest[0]
+            switch ($dailySub.ToLowerInvariant()) {
+                'pack-diff' {
+                    $reviewDate = $null
+                    for ($i = 1; $i -lt $ArgsRest.Count; $i++) {
+                        if ($ArgsRest[$i] -eq '-ReviewDate' -and ($i + 1) -lt $ArgsRest.Count) {
+                            $reviewDate = [string]$ArgsRest[$i + 1]; $i++
+                        }
+                    }
+                    return Invoke-MetraLoomDailyPackDiff -Root $Root -MetraRoot $MetraRoot -ReviewDate $reviewDate
+                }
+                'approve' {
+                    $planPath = $null
+                    $reviewDate = $null
+                    $overrideReason = $null
+                    for ($i = 1; $i -lt $ArgsRest.Count; $i++) {
+                        if ($ArgsRest[$i] -eq '-PlanPath' -and ($i + 1) -lt $ArgsRest.Count) {
+                            $planPath = [string]$ArgsRest[$i + 1]; $i++
+                        }
+                        elseif ($ArgsRest[$i] -eq '-ReviewDate' -and ($i + 1) -lt $ArgsRest.Count) {
+                            $reviewDate = [string]$ArgsRest[$i + 1]; $i++
+                        }
+                        elseif ($ArgsRest[$i] -eq '-OverrideReason' -and ($i + 1) -lt $ArgsRest.Count) {
+                            $overrideReason = [string]$ArgsRest[$i + 1]; $i++
+                        }
+                    }
+                    if ([string]::IsNullOrWhiteSpace($planPath)) {
+                        throw 'loom daily approve -PlanPath <path> [-Confirm] [-Merge] [-ReviewDate] [-OverrideManualTest] [-OverrideReason]'
+                    }
+                    $full = $ExecutionContext.SessionState.Path.GetUnresolvedProviderPathFromPSPath($planPath)
+                    $params = @{
+                        Root     = $Root
+                        PlanPath = $full
+                    }
+                    if ($reviewDate) { $params['ReviewDate'] = $reviewDate }
+                    if ($ArgsRest -contains '-Confirm') { $params['Confirm'] = $true }
+                    if ($ArgsRest -contains '-Merge') { $params['Merge'] = $true }
+                    if ($ArgsRest -contains '-OverrideManualTest') { $params['OverrideManualTest'] = $true }
+                    if ($overrideReason) { $params['OverrideReason'] = $overrideReason }
+                    return Invoke-MetraLoomDailyApprove @params
+                }
+                default {
+                    throw "Unknown loom daily subcommand: $dailySub. Use daily | daily pack-diff | daily approve."
+                }
+            }
         }
         'migrate' {
             $apply = ($ArgsRest -contains '-Apply')

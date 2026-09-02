@@ -24,6 +24,14 @@ Entry shape:
 
 ---
 
+## 2026-09-02 - Plan frontmatter todos are the progress ledger
+
+- Decision: Cursor `.plan.md` frontmatter `todos` are the operator-visible progress ledger (Plans UI checklist). Agents **update todo `status`** (`completed`, `cancelled`, etc.) as slice or subtask work lands. Do **not** treat "implement this plan" as "leave todos stale." Separately: do **not** rewrite plan body/spec (overview, architecture, acceptance criteria) during implementation unless the operator asks for a plan revision. Session one-offs ("do not edit the plan") do not override this portfolio rule.
+- Why: Slice 5 shipped with code and tests done but plan checklist still showed S5.2-S5.6 pending because a chat instruction was misread as Metra policy. Inspect already assumes plans are editable (`pack-only plan` after revision); nothing forbids todo bookkeeping.
+- See: [docs/playbooks/inspect-loop.md](playbooks/inspect-loop.md) (Plan progress ledger); `.cursor/rules/metra-inspect-loop.mdc`
+
+---
+
 ## 2026-09-01 - AISIGNS at artifact write time
 
 - Decision: Apply `metra-persona` Output channels AISIGNS patterns when **writing** durable artifacts (docs, playbooks, `Decisions.md`, commits, ADRs, ticket posts), not only at Bing review or mojibake cleanup. Chat remains exempt from AISIGNS as style policing; the professional sink is not.
@@ -56,6 +64,14 @@ Entry shape:
 - Inspect engine pin unchanged: Cursor `gemini-3.7-flash`.
 - Why: Cursor token spend was driven by pack re-feed and rename double-ingest, not implementation size. One artifact for machine action, another for human review.
 - See: `scripts/private/Inspect.ps1`; `.cursor/rules/metra-inspect-loop.mdc`; `docs/playbooks/token-rules.md`; `docs/playbooks/inspect-loop.md`
+
+---
+
+## 2026-09-01 - Loom Slice 5 daily gate (operator acceptance authority)
+
+- Decision: Only `Invoke-MetraLoomDailyApprove` may transition queue items out of `completed`. Approve validates the entire directive batch before any mutation (prepare-all, commit-all). Acceptance records bind `itemId`, `completedCommit`, `completionCycleId`, and pack-diff manifest paths; stale or mismatched evidence blocks ACCEPT. Per-project gate: no new `run` or `enqueue` while any item for the same `registryName` is `completed`. Optional `-Merge -Confirm` performs local merge only; no `git push` in Slice 5.
+- Why: Slice 4 machine `completed` is evidence; Slice 5 is the operator authority boundary before integration (Bing R1-R11, roadmap Slice 5).
+- See: [docs/playbooks/loom.md](playbooks/loom.md); Loom `Daily.ps1`; `pack-diff-manifest.schema.json`
 
 ---
 

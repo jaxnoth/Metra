@@ -90,6 +90,22 @@ Independence of review matters more than the specific model. The safety net is i
 
 Parallel products: each `-Name <Project>` owns its slot - serial or concurrent work does not overwrite another product's pack.
 
+## Plan progress ledger
+
+Formal plans (`.cursor/plans/*.plan.md`, `docs/*.plan.md` with frontmatter todos) are editable artifacts. Two edit classes:
+
+| Edit | When | Gate |
+|------|------|------|
+| **Todo status** | Mark `todos[].status` when a listed subtask lands (or is cancelled) | None; keep checklist aligned with code/tests |
+| **Plan spec** | Change overview, architecture, acceptance criteria, or todo **content** (not just status) | `inspect pack-only plan` before implement continues on the new spec |
+
+Rules:
+
+1. **Implement-from-plan:** update frontmatter todo status as you finish each item. The Plans UI checklist is what the operator watches.
+2. **Do not rewrite spec during implement** unless the operator explicitly asks for a plan revision. Todo bookkeeping is not a spec rewrite.
+3. **After plan spec revision:** run `.\metra.ps1 inspect pack-only plan -Path <plan> -Name <Project>` and report `pack-plan.md` path.
+4. **Agent context:** still do not load full plan bodies into the coding loop unless the task is plan/policy work (`metra-inspect-loop.mdc`).
+
 - `.\metra.ps1 inspect budget -Name <Project>` — no engine call; estimates prompt payload chars and band before inspect.
 - Round 1 assess: full collapsed reduced diff. Verify rounds: touch-set bodies only; outside paths are names-only indicators.
 - Rename collapse (`git-rename`, `suffix-pair`) runs before the file cap; ambiguous pairs stay uncollapsed.

@@ -526,21 +526,39 @@ Do not call this L4 (no specialist merge). Do not grant L5 because Snapshot or H
 
 ### Workflow: Loom governed execution (Slice 4)
 
-**Purpose:** Approved plan -> queue -> isolated implement -> inspect + verify -> branch commit -> machine `completed` (operator `accepted` is Slice 5).
+**Purpose:** Approved plan -> queue -> isolated implement -> inspect + verify -> branch commit -> machine `completed`.
 
 | Field | Value |
 |-------|-------|
 | Current | L5 |
 | Target | L6 |
-| Ceiling | L3 for `accepted`, push, merge, and unattended daily gate |
+| Ceiling | L3 for push and unattended daily gate |
 | Ceiling reason | policy |
-| Completeness | incomplete |
+| Completeness | complete (Slice 4 scope) |
 | Evidence quality | authoritative when inspect + verify + commit evidence persisted in run dir |
 | Loop form | goal-based (judge = inspect outcome + verify pass + commit hash); auto-chain on `loom run -Confirm` |
-| Evidence (current) | `Invoke-MetraLoomReview` sole transition owner; discriminated inspect/verify adapters; separate retry counters; commit-before-completed; `-Confirm` for live paths; recovery via `loom review -Confirm` |
+| Evidence (current) | `Invoke-MetraLoomReview` sole transition owner to `completed`; discriminated inspect/verify adapters; separate retry counters; commit-before-completed; `-Confirm` for live paths; recovery via `loom review -Confirm` |
 | On hard stop | Item `blocked` with journal + `review.json`; cite run dir evidence; next: operator fixes findings or runs `loom review -Confirm` after engine recovery - no silent `completed` |
-| Gaps to target | 1. Unattended `-UntilDailyGate` (Slice 6). 2. Operator `accepted` daily gate (Slice 5). 3. Prove full live inspect loop on production desk without mocks |
-| Next bite | Slice 5 acceptance gate; keep Bing affirm on Metra pack before ship commits |
+| Gaps to target | 1. Unattended `-UntilDailyGate` (Slice 6). 2. Prove full live inspect loop on production desk without mocks |
+| Next bite | Slice 6 unattended loop; keep Bing affirm on Metra pack before ship commits |
+
+### Workflow: Loom daily acceptance gate (Slice 5)
+
+**Purpose:** Operator ritual: intake, pack-diff review, batch approve (`completed` -> `accepted` | `blocked` | `implementing`).
+
+| Field | Value |
+|-------|-------|
+| Current | L5 |
+| Target | L6 |
+| Ceiling | L3 for push and unattended scheduling |
+| Ceiling reason | policy |
+| Completeness | complete (Slice 5 scope) |
+| Evidence quality | authoritative when acceptance records + pack-diff manifest match `completedCommit` |
+| Loop form | operator-scheduled batch (validate-all then mutate-all); preview without `-Confirm` |
+| Evidence (current) | `Invoke-MetraLoomDailyApprove` sole exit from `completed`; per-project acceptance gate on `run`/`enqueue`; atomic acceptance records; optional local `-Merge` (no push) |
+| On hard stop | Validation failure returns zero mutations; cite plan directive errors and manifest mismatch reasons |
+| Gaps to target | 1. Unattended `-UntilDailyGate` (Slice 6). 2. Production desk proof with live inspect packs |
+| Next bite | Slice 6 auto-dequeue; operator `inspect gate affirm` before Metra ship commits |
 
 ---
 

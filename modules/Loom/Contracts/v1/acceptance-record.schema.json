@@ -5,10 +5,21 @@
   "required": ["schemaVersion", "itemId", "acceptedAt"],
   "properties": {
     "schemaVersion": { "type": "integer", "const": 1 },
+    "recordProfile": { "type": "string" },
     "itemId": { "type": "string" },
+    "acceptanceOutcome": { "type": "string" },
     "operator": { "type": "string" },
     "acceptedAt": { "type": "string" },
+    "branch": { "type": "string" },
+    "completedCommit": { "type": "string" },
+    "baselineCommit": { "type": "string" },
+    "verifyOutcome": { "type": "string" },
     "packDiffPath": { "type": "string" },
-    "manualTestComplete": { "type": "boolean" }
+    "formalPlanPath": { "type": "string" },
+    "todoOrSlice": { "type": "string" },
+    "manualTestComplete": { "type": "boolean" },
+    "completionCycleId": { "type": "string" },
+    "override": { "type": "object" },
+    "merge": { "type": "object" }
   }
 }
