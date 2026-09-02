@@ -20,6 +20,7 @@ Describe 'Loom contracts v1' {
             'verify-request.schema.json',
             'verify-result.schema.json',
             'acceptance-record.schema.json',
+            'pack-diff-manifest.schema.json',
             'blocker-report.schema.json',
             'implementation-result.schema.json'
         )

@@ -448,3 +448,47 @@ function Invoke-LoomVerifyAdapter {
         Set-Location -LiteralPath $cwdBefore.Path
     }
 }
+
+function Invoke-LoomInspectPackAdapter {
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory)][string]$Name,
+        [string]$Base,
+        [string]$ProjectRoot,
+        [scriptblock]$PackScript
+    )
+
+    if ($PackScript) {
+        return & $PackScript $Name $Base $ProjectRoot
+    }
+
+    $cmd = Get-Command Invoke-MetraInspectPackOnly -ErrorAction SilentlyContinue
+    if (-not $cmd) {
+        return [PSCustomObject]@{
+            outcome  = 'adapter-unavailable'
+            packPath = $null
+            message  = 'Invoke-MetraInspectPackOnly not loaded.'
+        }
+    }
+
+    try {
+        $result = & $cmd -Mode diff -Name $Name -Base $Base
+        $packPath = [string](Get-LoomProp -Object $result -Name 'packPath' -Default '')
+        if ([string]::IsNullOrWhiteSpace($packPath)) {
+            $packPath = [string](Get-LoomProp -Object $result -Name 'Path' -Default '')
+        }
+        return [PSCustomObject]@{
+            outcome  = 'ok'
+            packPath = $packPath
+            message  = [string](Get-LoomProp -Object $result -Name 'message' -Default '')
+            raw      = $result
+        }
+    }
+    catch {
+        return [PSCustomObject]@{
+            outcome  = 'failed'
+            packPath = $null
+            message  = $_.Exception.Message
+        }
+    }
+}

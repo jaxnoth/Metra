@@ -25,6 +25,11 @@ Governed execution harness (queue, journal, triage, branch runner). Metra hosts 
 .\metra.ps1 loom run -Id <AP-...> -Confirm -NoChainReview   # implement only; stop at reviewing
 .\metra.ps1 loom review -Id <AP-...>               # dry-run assess (no engines)
 .\metra.ps1 loom review -Id <AP-...> -Confirm      # live inspect + verify + commit + completed
+.\metra.ps1 loom daily                             # intake (sections 1-3) + prior-day pack-diff
+.\metra.ps1 loom daily pack-diff                   # pack-diff manifest only
+.\metra.ps1 loom daily approve -PlanPath .\daily\2026-09-01-plan.md   # preview (no writes)
+.\metra.ps1 loom daily approve -PlanPath ... -Confirm                 # apply batch
+.\metra.ps1 loom daily approve -PlanPath ... -Confirm -Merge          # accept + local merge (no push)
 ```
 
 ## Slice 4 review (completed vs accepted)
@@ -38,6 +43,29 @@ Governed execution harness (queue, journal, triage, branch runner). Metra hosts 
 | Recovery | `loom review -Confirm` resumes idempotently from `review.json` in run dir |
 
 Verify commands in contracts use structured entries (`executable`, `arguments`, `workingDirectory`, `timeoutSeconds`), not bare shell strings.
+
+## Slice 5 daily gate (operator acceptance)
+
+| Rule | Detail |
+|------|--------|
+| Transition owner | `Invoke-MetraLoomDailyApprove` only may exit `completed` |
+| Preview | Without `-Confirm`: validate + preview; no queue, journal, acceptance-record, or git writes |
+| Batch atomicity | Any invalid directive or gate failure blocks the entire batch (zero mutations) |
+| Per-project gate | No new `run` or `enqueue` for project `P` while any item for `P` is `completed` |
+| Evidence binding | ACCEPT requires pack-diff manifest entry matching `completedCommit` and `completionCycleId` |
+| Manual test | `MANUAL-TEST-DONE` directive required when `manualTestClass` is not `none`; override via `-OverrideManualTest -OverrideReason` |
+| Merge | Optional `-Merge` after accept merges **newly accepted** items only (local `git merge`, no push). Re-running approve on already-accepted items does not replay merge; use a future `loom daily merge` if replay is needed |
+
+Directive grammar (full line, checked checkbox):
+
+```text
+- [x] ACCEPT AP-YYYYMMDD-NNNN
+- [x] MANUAL-TEST-DONE AP-YYYYMMDD-NNNN
+- [x] RETRY AP-YYYYMMDD-NNNN
+- [x] BLOCK AP-YYYYMMDD-NNNN
+```
+
+Pack-diff output: `{loomRoot}/daily/{ReviewDate}-pack-diff/` (manifest + per-project summaries). Full inspect packs copied to `{loomRoot}/daily/{ReviewDate}-bing/{projectKey}/`.
 
 ## Storage migration
 

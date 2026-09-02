@@ -9,6 +9,7 @@ $script:LoomHostRootOverride = $null
 . (Join-Path $PSScriptRoot 'Private\Contracts\Contracts.ps1')
 . (Join-Path $PSScriptRoot 'Adapters\Metra.Adapters.ps1')
 . (Join-Path $PSScriptRoot 'Private\Migrate.ps1')
+. (Join-Path $PSScriptRoot 'Private\Daily.ps1')
 . (Join-Path $PSScriptRoot 'Private\Review.ps1')
 . (Join-Path $PSScriptRoot 'Private\Runner.ps1')
 . (Join-Path $PSScriptRoot 'Private\Domain.ps1')
@@ -58,8 +59,15 @@ $export = @(
     'New-MetraLoomQueueItemFromCandidate'
     'Invoke-MetraLoomTriage'
     'Invoke-MetraLoomEnqueueFromPlan'
-    'Invoke-MetraLoomDailyStub'
-    'Invoke-MetraLoomRun'
+        'Invoke-MetraLoomDailyStub'
+        'Invoke-MetraLoomDailyBuild'
+        'Invoke-MetraLoomDailyPackDiff'
+        'Invoke-MetraLoomDailyApprove'
+        'Read-LoomDailyPlanDirectives'
+        'Test-LoomProjectAcceptanceGate'
+        'Get-LoomSlice5Transitions'
+        'Get-LoomProjectKey'
+        'Invoke-MetraLoomRun'
     'Invoke-MetraLoomReview'
     'Invoke-MetraLoomMigrate'
     'Get-LoomActiveTransitionMap'

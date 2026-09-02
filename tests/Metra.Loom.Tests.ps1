@@ -7,7 +7,7 @@ BeforeAll {
     Import-Module (Join-Path $metraRoot 'scripts\Metra.psd1') -Force
 }
 
-Describe 'Loom transitions (Phase A + Slice 3)' {
+Describe 'Loom transitions (Phase A + Slice 3 + Slice 5)' {
     It 'allows Phase A and Slice 3 run transitions' {
         InModuleScope Loom {
             Test-MetraLoomTransition -From '@new' -To 'queued' | Should -BeTrue
@@ -15,6 +15,7 @@ Describe 'Loom transitions (Phase A + Slice 3)' {
             Test-MetraLoomTransition -From 'queued' -To 'claimed' | Should -BeTrue
             Test-MetraLoomTransition -From 'queued' -To 'accepted' | Should -BeFalse
             Test-MetraLoomTransition -From 'blocked' -To 'queued' | Should -BeFalse
+            Test-MetraLoomTransition -From 'completed' -To 'accepted' | Should -BeTrue
         }
     }
 }
@@ -314,6 +315,10 @@ Describe 'Loom daily stub' {
         InModuleScope Loom {
             $root = Join-Path ([IO.Path]::GetTempPath()) ('metra-ap-' + [guid]::NewGuid().ToString('n'))
             try {
+                $mockPack = {
+                    param($Name, $Base, $ProjectRoot)
+                    [PSCustomObject]@{ outcome = 'ok'; packPath = $null; message = 'noop' }
+                }
                 $result = Invoke-MetraLoomDailyStub -Root $root -MetraRoot (Get-LoomHostRoot)
                 Test-Path -LiteralPath $result.path | Should -BeTrue
                 $text = [System.IO.File]::ReadAllText($result.path)

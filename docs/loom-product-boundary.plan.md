@@ -9,6 +9,7 @@ m1Completed: 2026-08-31
 m2PartialCompleted: 2026-08-31
 slice3Completed: 2026-08-31
 slice4Completed: 2026-09-01
+slice5Implemented: 2026-09-01
 todos:
   - id: m0-baseline
     content: "M0 ΓÇö Baseline reconcile, freeze, git track separation, canonical status matrix, focused pack"
@@ -119,7 +120,7 @@ Evidence gathered 2026-08-31 from repository inspection (not plan text alone).
 |------------|----------|
 | Branch runner (Slice 3) | `run` CLI, clean-tree check, `runs/<itemId>/`, implementer adapter, path enforcement; **no commit** |
 | Review / inspect adapter (Slice 4) | No `completed` transition, no inspect loop wiring |
-| Daily approve / pack-diff gate (Slice 5) | Stub intake only; no `daily approve` |
+| Daily approve / pack-diff gate (Slice 5) | **Shipped** — `loom daily`, `daily pack-diff`, `daily approve`; operator-only exit from `completed` |
 | Unattended `-UntilDailyGate` (Slice 6) | Not present |
 | Plan synthesize (Slice 7) | Not present |
 | Knowledge promotion (Slice 8) | Not present |

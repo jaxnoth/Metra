@@ -11,13 +11,17 @@ function Get-LoomActiveTransitionMap {
         'implementing' = @('reviewing', 'blocked', 'failed', 'claimed')
         'blocked'      = @()
         'reviewing'    = @('completed', 'implementing', 'blocked')
-        'completed'    = @()
+        'completed'    = @('accepted', 'blocked', 'implementing')
         'accepted'     = @()
         'failed'       = @()
         'rejected'     = @()
         'needsManualTest' = @()
         'superseded'   = @()
     }
+}
+
+function Get-LoomSlice5Transitions {
+    return Get-LoomActiveTransitionMap
 }
 
 function Get-LoomSlice4Transitions {
@@ -481,6 +485,23 @@ function Invoke-MetraLoomRun {
     if (-not $item) { throw "Queue item not found: $ItemId" }
     if ([string]$item.status -ne 'queued') {
         throw "Queue item $ItemId status is '$($item.status)'; expected 'queued' for run."
+    }
+
+    $registry = [string](Get-LoomProp -Object $item.project -Name 'registryName' -Default '')
+    if (-not [string]::IsNullOrWhiteSpace($registry)) {
+        $gate = Test-LoomProjectAcceptanceGate -Root $Root -RegistryName $registry
+        if ($gate.blocked) {
+            if ($DryRun) {
+                return [PSCustomObject]@{
+                    dryRun  = $true
+                    itemId  = $ItemId
+                    blocked = $true
+                    reason  = $gate.message
+                    status  = [string]$item.status
+                }
+            }
+            throw $gate.message
+        }
     }
 
     $projectRoot = [System.IO.Path]::GetFullPath([string]$item.project.root)

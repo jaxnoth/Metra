@@ -528,6 +528,14 @@ function Invoke-MetraLoomReview {
         throw 'Transition guard rejected reviewing -> completed.'
     }
 
+    $registry = [string](Get-LoomProp -Object $item.project -Name 'registryName' -Default '')
+    if (-not [string]::IsNullOrWhiteSpace($registry)) {
+        $gate = Test-LoomProjectAcceptanceGate -Root $Root -RegistryName $registry -ExcludeItemId $ItemId
+        if ($gate.blocked) {
+            throw $gate.message
+        }
+    }
+
     $final = Invoke-MetraLoomStateChange -Root $Root -ItemId $ItemId -From 'reviewing' -To 'completed' -Reason 'review-complete' -Actor 'harness' -Mutator {
         param($i)
         if (-not $i.execution) { $i | Add-Member -NotePropertyName execution -NotePropertyValue ([PSCustomObject]@{}) -Force }
