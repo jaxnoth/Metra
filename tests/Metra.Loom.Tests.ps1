@@ -422,3 +422,83 @@ Describe 'Metra CLI loom entry' {
     }
 }
 
+
+Describe "Loom Yarn ingest handoff (A3)" {
+    It "validates handoffContractVersion and rankSnapshot" {
+        InModuleScope Loom {
+            $root = Join-Path ([IO.Path]::GetTempPath()) ("metra-loom-yarn-" + [guid]::NewGuid().ToString("n"))
+            try {
+                Initialize-MetraLoomLayout -Root $root
+                $snap = [PSCustomObject]@{ total = 1; effectiveImpact = 1; completionReady = 1; rubricVersion = "yarn-rank-v1"; rankReasons = @("x") }
+                { Invoke-MetraLoomIngestApprovedPlan -Root $root -PlanPath "C:\nope.md" -ProjectKey "Metra" -ApprovalRevision "r1" -ApprovalId "a1" -RankSnapshot $snap -HandoffContractVersion 99 } |
+                    Should -Throw "*handoffContractVersion*"
+                { Invoke-MetraLoomIngestApprovedPlan -Root $root -PlanPath "C:\nope.md" -ProjectKey "Metra" -ApprovalRevision "r1" -ApprovalId "a1" -RankSnapshot ([PSCustomObject]@{ total = 1 }) -HandoffContractVersion 1 } |
+                    Should -Throw "*rankSnapshot missing*"
+            }
+            finally {
+                Remove-Item -LiteralPath $root -Recurse -Force -ErrorAction SilentlyContinue
+            }
+        }
+    }
+
+    It "enqueues once for same planIdentity+approvalRevision" {
+        InModuleScope Loom {
+            $root = Join-Path ([IO.Path]::GetTempPath()) ("metra-loom-yarn-" + [guid]::NewGuid().ToString("n"))
+            $metraRoot = Get-LoomHostRoot
+            $planRoot = Join-Path $metraRoot ("docs\.yarn-ingest-" + [guid]::NewGuid().ToString("n"))
+            try {
+                New-Item -ItemType Directory -Path $planRoot -Force | Out-Null
+                $planPath = Join-Path $planRoot "approved.plan.md"
+                $body = @"
+---
+name: Yarn Ingest
+overview: "Metra yarn ingest fixture"
+status: Approved
+bingReviewed: true
+---
+
+# Yarn Ingest
+"@
+                Write-LoomAtomicUtf8Text -Path $planPath -Text $body
+                $snap = [PSCustomObject]@{ total = 2.5; effectiveImpact = 1.2; completionReady = 0.8; rubricVersion = "yarn-rank-v1"; rankReasons = @("objectivePresent") }
+                $a = Invoke-MetraLoomIngestApprovedPlan -Root $root -PlanPath $planPath -ProjectKey "Metra" -ApprovalRevision "rev-a" -ApprovalId "ya-1" -RankSnapshot $snap -HandoffContractVersion 1 -MetraRoot $metraRoot
+                $a.outcome | Should -Be "enqueued"
+                $b = Invoke-MetraLoomIngestApprovedPlan -Root $root -PlanPath $planPath -ProjectKey "Metra" -ApprovalRevision "rev-a" -ApprovalId "ya-1" -RankSnapshot $snap -HandoffContractVersion 1 -MetraRoot $metraRoot
+                $b.outcome | Should -Be "idempotent"
+                $b.queueItemId | Should -Be $a.queueItemId
+                $a.item.yarnHandoff.approvalRevision | Should -Be "rev-a"
+                $a.item.yarnHandoff.rankSnapshot.rubricVersion | Should -Be "yarn-rank-v1"
+            }
+            finally {
+                Remove-Item -LiteralPath $root -Recurse -Force -ErrorAction SilentlyContinue
+                Remove-Item -LiteralPath $planRoot -Recurse -Force -ErrorAction SilentlyContinue
+            }
+        }
+    }
+
+    It "rejects Pending Bing plans" {
+        InModuleScope Loom {
+            $root = Join-Path ([IO.Path]::GetTempPath()) ("metra-loom-yarn-" + [guid]::NewGuid().ToString("n"))
+            $metraRoot = Get-LoomHostRoot
+            $planRoot = Join-Path $metraRoot ("docs\.yarn-ingest-" + [guid]::NewGuid().ToString("n"))
+            try {
+                New-Item -ItemType Directory -Path $planRoot -Force | Out-Null
+                $planPath = Join-Path $planRoot "pending.plan.md"
+                Write-LoomAtomicUtf8Text -Path $planPath -Text @"
+---
+name: Pending
+status: Pending Bing Review
+bingReviewed: false
+---
+"@
+                $snap = [PSCustomObject]@{ total = 1; effectiveImpact = 1; completionReady = 1; rubricVersion = "yarn-rank-v1"; rankReasons = @("x") }
+                { Invoke-MetraLoomIngestApprovedPlan -Root $root -PlanPath $planPath -ProjectKey "Metra" -ApprovalRevision "r" -ApprovalId "a" -RankSnapshot $snap -HandoffContractVersion 1 -MetraRoot $metraRoot } |
+                    Should -Throw "*not Approved*"
+            }
+            finally {
+                Remove-Item -LiteralPath $root -Recurse -Force -ErrorAction SilentlyContinue
+                Remove-Item -LiteralPath $planRoot -Recurse -Force -ErrorAction SilentlyContinue
+            }
+        }
+    }
+}

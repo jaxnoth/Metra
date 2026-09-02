@@ -46,7 +46,7 @@ function Get-MetraYarnDaily {
         topRanked          = @($items | Select-Object -First 10 id, title, status, total, completionReady, readyEnough, projectKey, primarySourceKey)
         pendingBingCount   = $pending.Count
         needsSynthesizeCount = $needsSynth.Count
-        approvalAvailable  = $false
-        note               = 'A0-A2: approval unavailable. Use yarn reconcile or yarn synthesize -Confirm for drafts/packs.'
+        approvalAvailable  = $true
+        note               = 'A3: yarn plan approve -BacklogId <id> -Confirm after pending-bing + fresh pack. Reconcile retries failed handoff.'
     }
 }

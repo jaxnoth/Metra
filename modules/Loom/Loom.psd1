@@ -1,6 +1,6 @@
 @{
     RootModule        = 'Loom.psm1'
-    ModuleVersion     = '0.5.0'
+    ModuleVersion     = '0.6.0'
     GUID              = 'a8c0e2f4-7b91-4d3e-9f06-2c1a5b8d4e70'
     Author            = 'Metra'
     CompanyName       = 'IWU'
@@ -52,6 +52,10 @@
         'New-MetraLoomQueueItemFromCandidate'
         'Invoke-MetraLoomTriage'
         'Invoke-MetraLoomEnqueueFromPlan'
+        'Invoke-MetraLoomIngestApprovedPlan'
+        'Get-MetraLoomHandoffContractVersion'
+        'Get-MetraLoomYarnPlanIdentity'
+        'Find-MetraLoomQueueItemByYarnHandoff'
         'Invoke-MetraLoomDailyStub'
         'Invoke-MetraLoomDailyBuild'
         'Invoke-MetraLoomDailyPackDiff'

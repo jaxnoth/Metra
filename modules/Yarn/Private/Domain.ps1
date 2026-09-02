@@ -22,15 +22,15 @@ function Get-MetraYarnStatus {
         totalItems             = $items.Count
         planLinkCount          = $links.Count
         byStatus               = $byStatus
-        approvalAvailable      = $false
-        phase                  = 'A0-A2'
+        approvalAvailable      = $true
+        phase                  = 'A3'
     }
 }
 
 function Invoke-YarnCommand {
     <#
     .SYNOPSIS
-        CLI: yarn status|scan|backlog|pending|reconcile|pack|daily|synthesize
+        CLI: yarn status|scan|backlog|pending|reconcile|pack|daily|synthesize|plan
     #>
     [CmdletBinding()]
     param(
@@ -126,15 +126,34 @@ function Invoke-YarnCommand {
             return Invoke-MetraYarnSynthesize @params
         }
         'plan' {
-            # A3: approve — refuse clearly in A0-A2
             $inner = if ($ArgsRest.Count -gt 0) { $ArgsRest[0].ToLowerInvariant() } else { '' }
             if ($inner -eq 'approve') {
-                throw 'yarn plan approve is unavailable until A3 (human approval + Loom handoff).'
+                $rest = @()
+                if ($ArgsRest.Count -gt 1) { $rest = @($ArgsRest[1..($ArgsRest.Count - 1)]) }
+                $backlogId = $null
+                $path = $null
+                $dry = $false
+                $confirm = $false
+                for ($i = 0; $i -lt $rest.Count; $i++) {
+                    if ($rest[$i] -eq '-BacklogId' -and ($i + 1) -lt $rest.Count) { $backlogId = [string]$rest[$i + 1]; $i++ }
+                    elseif ($rest[$i] -eq '-Path' -and ($i + 1) -lt $rest.Count) { $path = [string]$rest[$i + 1]; $i++ }
+                    elseif ($rest[$i] -eq '-DryRun') { $dry = $true }
+                    elseif ($rest[$i] -eq '-Confirm') { $confirm = $true }
+                }
+                $params = @{
+                    Root      = $Root
+                    MetraRoot = $MetraRoot
+                    DryRun    = $dry
+                    Confirm   = $confirm
+                }
+                if ($backlogId) { $params['BacklogId'] = $backlogId }
+                if ($path) { $params['Path'] = $path }
+                return Invoke-MetraYarnPlanApprove @params
             }
-            throw "yarn plan: unknown subcommand '$inner' (A3 will add approve)"
+            throw "yarn plan: unknown subcommand '$inner' (use approve)"
         }
         default {
-            throw "Unknown yarn subcommand: $Subcommand. Use status|scan|backlog|pending|reconcile|pack|daily|synthesize"
+            throw "Unknown yarn subcommand: $Subcommand. Use status|scan|backlog|pending|reconcile|pack|daily|synthesize|plan"
         }
     }
 }

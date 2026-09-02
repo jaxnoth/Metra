@@ -1,8 +1,8 @@
-# Yarn intake playbook (A0–A2)
+# Yarn intake playbook (A0–A3)
 
 ## Route here when
 
-`yarn`, intake backlog, Capture→plan, Future-Dev scan, pack freshness for plans.
+`yarn`, intake backlog, Capture→plan, Future-Dev scan, pack freshness, plan approve / Loom handoff.
 
 ## Commands
 
@@ -15,15 +15,18 @@
 .\metra.ps1 yarn pack -BacklogId <id>
 .\metra.ps1 yarn reconcile [-DryRun]
 .\metra.ps1 yarn pending
+.\metra.ps1 yarn plan approve -BacklogId <id> -Confirm
+.\metra.ps1 yarn plan approve -Path <formal.plan.md> -Confirm
 ```
 
-## Authority (A0–A2)
+## Authority
 
 - `scan` upserts/ranks only
 - `daily` is read-only unless `-Reconcile`
-- `reconcile` may template-synthesize Capture items and pack ready-enough plans
-- Approval / Loom handoff not available (`yarn plan approve` throws until A3)
+- `reconcile` may template-synthesize Capture items, pack ready-enough plans, and retry Loom handoff (pending|failed)
+- `yarn plan approve -Confirm` is the sole human approval path (requires pending-bing + fresh pack)
+- Yarn never writes Loom queue/journal files; Loom `Invoke-MetraLoomIngestApprovedPlan` owns ingest
 
 ## Related
 
-Loom owns queue execution after A3 handoff. Atlas intake is Phase B.
+Loom owns queue execution after handoff. A4 lane split is gated on another Bing review. Atlas intake is Phase B.
