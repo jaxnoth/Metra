@@ -1,4 +1,4 @@
-# Yarn intake playbook (A0–A3)
+# Yarn intake playbook (A0–A4)
 
 ## Route here when
 
@@ -26,7 +26,8 @@
 - `reconcile` may template-synthesize Capture items, pack ready-enough plans, and retry Loom handoff (pending|failed)
 - `yarn plan approve -Confirm` is the sole human approval path (requires pending-bing + fresh pack)
 - Yarn never writes Loom queue/journal files; Loom `Invoke-MetraLoomIngestApprovedPlan` owns ingest
+- Plan review / Pending Bing live here — not in Loom daily §3
 
 ## Related
 
-Loom owns queue execution after handoff. A4 lane split is gated on another Bing review. Atlas intake is Phase B.
+Loom owns queue execution after handoff (A4: one active lane per `projectKey`, atomic claim, `accepted-pending-commit` + local commit verify). See [loom.md](loom.md). Atlas intake is Phase B (post-A4 Bing stop).

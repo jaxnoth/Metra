@@ -79,6 +79,17 @@
         'Get-LoomUtf8NoBomEncoding'
         'Test-LoomPathWithinRoot'
         'Test-LoomExecutionBranchPrefix'
+        'Get-MetraLoomLaneHoldingStatuses'
+        'Test-MetraLoomStatusHoldsLane'
+        'Get-MetraLoomQueueItemProjectKey'
+        'Get-MetraLoomBusyProjectKeys'
+        'Test-MetraLoomProjectLaneBusy'
+        'Sort-MetraLoomEligibleQueuedItems'
+        'Get-MetraLoomEligibleQueuedForClaim'
+        'Invoke-MetraLoomClaimNextEligible'
+        'Invoke-MetraLoomClaimItem'
+        'Test-MetraLoomLocalCommitVerification'
+        'Invoke-MetraLoomAcceptWithLocalCommitVerify'
     )
     AliasesToExport   = @()
     CmdletsToExport   = @()

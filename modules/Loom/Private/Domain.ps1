@@ -123,7 +123,9 @@ function Get-LoomStatusCatalog {
         Full lifecycle status enum (authority catalog). Phase A activates a subset.
     #>
     return @(
-        '@new', 'queued', 'running', 'blocked', 'completed', 'accepted', 'rejected', 'failed'
+        '@new', 'queued', 'claimed', 'implementing', 'reviewing', 'blocked',
+        'completed', 'accepted-pending-commit', 'accepted', 'rejected', 'failed',
+        'needsManualTest', 'superseded'
     )
 }
 
@@ -498,6 +500,12 @@ function Invoke-MetraLoomStateChange {
             $item = & $Mutator $item
         }
         if ($item) {
+            if ($To -eq 'blocked') {
+                $existingFrom = [string](Get-LoomProp -Object $item -Name 'blockedFrom' -Default '')
+                if ([string]::IsNullOrWhiteSpace($existingFrom) -and $priorStatus -and $priorStatus -ne '@new') {
+                    $item | Add-Member -NotePropertyName blockedFrom -NotePropertyValue $priorStatus -Force
+                }
+            }
             $item.status = $To
             $item.updatedAt = (Get-Date).ToString('o')
             Test-MetraLoomQueueItemSchema -Item $item | Out-Null
@@ -659,6 +667,8 @@ function Read-MetraLoomPlanFile {
     }
     if ($doneWhen.Count -gt 5) { $doneWhen = @($doneWhen | Select-Object -First 5) }
 
+    $patternIds = @(Get-MetraPlanPatternIds -PlanText $text)
+
     return [PSCustomObject]@{
         path           = $Path
         name           = $name
@@ -670,6 +680,7 @@ function Read-MetraLoomPlanFile {
         project        = $project
         verifyCommands = @($verifyCommands)
         doneWhen       = @($doneWhen)
+        patterns       = @($patternIds)
         lastWriteUtc   = (Get-Item -LiteralPath $Path).LastWriteTimeUtc
     }
 }
@@ -887,12 +898,21 @@ function New-MetraLoomQueueItemFromCandidate {
     if ([string]::IsNullOrWhiteSpace($projSlug)) { $projSlug = 'unknown' }
     $branch = ('loom/{0}/{1}/{2}' -f $projSlug.ToLowerInvariant(), $branchDay, $id).Replace('\', '/')
 
+    $projectKey = [string]$registry.Trim()
+    if ([string]::IsNullOrWhiteSpace($projectKey)) {
+        $projectKey = [string](Get-LoomProp -Object $Candidate -Name 'projectKey' -Default '')
+    }
+    if ([string]::IsNullOrWhiteSpace($projectKey)) {
+        throw 'Queue item requires canonical projectKey (or project.registryName).'
+    }
+
     $item = [PSCustomObject]@{
         schemaVersion = Get-MetraLoomSchemaVersion
         id            = $id
         summary       = [string]$Candidate.summary
         source        = $Candidate.source
         project       = $Candidate.project
+        projectKey    = $projectKey.Trim()
         classification = $Candidate.classification
         scores        = $Candidate.scores
         contract      = $Candidate.contract
@@ -984,58 +1004,13 @@ function Invoke-MetraLoomTriage {
         $results.Add($candidate)
     }
 
-    $captures = @(Get-LoomCaptureLedger -MetraRoot $MetraRoot -Limit 40 -Status candidate)
-    foreach ($cap in $captures) {
-        $classification = @{
-            reversibility        = 'code'
-            crossRoot            = $false
-            productionTouch      = $false
-            externalSideEffect   = $false
-            manualTestClass      = 'none'
-        }
-        $scoresIn = @{
-            impact = 2; confidence = 2; userTestBurden = 2; autoVerifiable = 1; dependencyValue = 1
-        }
-        $contract = [PSCustomObject]@{
-            objective = [string]$cap.summary
-            allowedPaths = @(); forbiddenPaths = @(); doneWhen = @(); verifyCommands = @()
-        }
-        $score = Measure-MetraLoomTriageScore -Classification $classification -Scores $scoresIn -Project ([PSCustomObject]@{
-            routingConfidence = 0.0
-        })
-        $elig = Test-MetraLoomEligibility -Classification $classification -Project ([PSCustomObject]@{
-            routingConfidence = 0.0
-        }) -Contract $contract
-        $ineligibleReasons = @($elig.reasons) + @('needs-formal-plan')
-
-        $candId = New-MetraLoomCandidateId -Root $Root
-        $candidate = [PSCustomObject]@{
-            id                = $candId
-            summary           = [string]$cap.summary
-            source            = [PSCustomObject]@{
-                type = 'capture'
-                id   = [string]$cap.id
-            }
-            project           = [PSCustomObject]@{
-                registryName = ''; root = ''; routingConfidence = 0.0; routingEvidence = 'capture-unrouted'
-            }
-            classification    = $classification
-            scores            = $score
-            contract          = $contract
-            eligible          = $false
-            ineligibleReasons = @($ineligibleReasons | Select-Object -Unique)
-            dryRun            = $true
-            triagedAt         = (Get-Date).ToString('o')
-        }
-        Save-MetraLoomCandidate -Root $Root -Candidate $candidate | Out-Null
-        $results.Add($candidate)
-    }
-
+    # A4 ritual split: Capture no longer becomes a Loom candidate through normal triage.
     return [PSCustomObject]@{
-        dryRun     = $true
-        candidates = @($results | Sort-Object { [int]$_.scores.total } -Descending)
-        planCount  = @($plans).Count
-        captureCount = @($captures).Count
+        dryRun                  = $true
+        candidates              = @($results | Sort-Object { [int]$_.scores.total } -Descending)
+        planCount               = @($plans).Count
+        captureCount            = 0
+        captureTriageRemoved    = $true
         captureAdapterAvailable = (Test-LoomCaptureAdapterAvailable)
     }
 }
@@ -1250,6 +1225,7 @@ function Invoke-MetraLoomIngestApprovedPlan {
     }
 
     $item = New-MetraLoomQueueItemFromCandidate -Root $Root -Candidate $cand
+    $item | Add-Member -NotePropertyName projectKey -NotePropertyValue ([string]$ProjectKey.Trim()) -Force
     $item | Add-Member -NotePropertyName yarnHandoff -NotePropertyValue ([PSCustomObject]@{
             planIdentity           = $planIdentity
             projectKey             = $ProjectKey
@@ -1259,6 +1235,16 @@ function Invoke-MetraLoomIngestApprovedPlan {
             rankSnapshot           = $RankSnapshot
             ingestedAt             = (Get-Date).ToUniversalTime().ToString('o')
         }) -Force
+    if ($RankSnapshot -and $item.scores) {
+        $ei = Get-LoomProp -Object $RankSnapshot -Name 'effectiveImpact' -Default $null
+        if ($null -ne $ei) {
+            $item.scores | Add-Member -NotePropertyName effectiveImpact -NotePropertyValue $ei -Force
+        }
+        $tot = Get-LoomProp -Object $RankSnapshot -Name 'total' -Default $null
+        if ($null -ne $tot) {
+            $item.scores | Add-Member -NotePropertyName total -NotePropertyValue $tot -Force
+        }
+    }
     Save-MetraLoomQueueItem -Root $Root -Item $item
     Add-MetraLoomJournalEntry -Root $Root -Entry @{
         timestamp = (Get-Date).ToString('o')

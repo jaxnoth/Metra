@@ -15,7 +15,9 @@ Describe 'Loom transitions (Phase A + Slice 3 + Slice 5)' {
             Test-MetraLoomTransition -From 'queued' -To 'claimed' | Should -BeTrue
             Test-MetraLoomTransition -From 'queued' -To 'accepted' | Should -BeFalse
             Test-MetraLoomTransition -From 'blocked' -To 'queued' | Should -BeFalse
-            Test-MetraLoomTransition -From 'completed' -To 'accepted' | Should -BeTrue
+            Test-MetraLoomTransition -From 'completed' -To 'accepted-pending-commit' | Should -BeTrue
+            Test-MetraLoomTransition -From 'accepted-pending-commit' -To 'accepted' | Should -BeTrue
+            Test-MetraLoomTransition -From 'completed' -To 'accepted' | Should -BeFalse
         }
     }
 }
@@ -324,7 +326,7 @@ Describe 'Loom daily stub' {
                 $text = [System.IO.File]::ReadAllText($result.path)
                 $text | Should -Match '## 1\. Overarching changes made'
                 $text | Should -Match '## 2\. Manual testing required'
-                $text | Should -Match '## 3\. Next plan\(s\) for review'
+                $text | Should -Match '## 3\. Plan review \(Yarn\)'
             }
             finally {
                 Remove-Item -LiteralPath $root -Recurse -Force -ErrorAction SilentlyContinue
@@ -498,6 +500,63 @@ bingReviewed: false
             finally {
                 Remove-Item -LiteralPath $root -Recurse -Force -ErrorAction SilentlyContinue
                 Remove-Item -LiteralPath $planRoot -Recurse -Force -ErrorAction SilentlyContinue
+            }
+        }
+    }
+}
+
+Describe 'Loom Pattern package (P2)' {
+    It 'parses patterns front matter and attaches excerpts to request package' {
+        InModuleScope Loom {
+            $runDir = Join-Path ([IO.Path]::GetTempPath()) ('metra-loom-pat-' + [guid]::NewGuid().ToString('n'))
+            $planDir = Join-Path ([IO.Path]::GetTempPath()) ('metra-loom-plan-' + [guid]::NewGuid().ToString('n'))
+            try {
+                [void][System.IO.Directory]::CreateDirectory($planDir)
+                $planPath = Join-Path $planDir 'with-patterns.plan.md'
+                $body = @"
+---
+name: Pattern Cite Plan
+overview: "Cite loom-review"
+status: Approved
+bingReviewed: true
+patterns:
+  - loom-review
+  - does-not-exist-xyz
+todos:
+  - id: t1
+    content: "Do"
+    status: pending
+---
+
+# Pattern Cite Plan
+"@
+                Write-LoomAtomicUtf8Text -Path $planPath -Text $body
+                $parsed = Read-MetraLoomPlanFile -Path $planPath -MetraRoot (Get-LoomHostRoot)
+                $parsed.patterns | Should -Contain 'loom-review'
+                $parsed.patterns | Should -Contain 'does-not-exist-xyz'
+
+                $item = [PSCustomObject]@{
+                    id        = 'AP-PAT-1'
+                    summary   = 'pattern package'
+                    source    = [PSCustomObject]@{ path = $planPath; type = 'formal-plan' }
+                    project   = [PSCustomObject]@{ root = (Get-LoomHostRoot); registryName = 'Metra' }
+                    execution = [PSCustomObject]@{ branch = 'loom/ap-pat-1' }
+                    contract  = [PSCustomObject]@{
+                        allowedPaths   = @('docs/patterns/')
+                        forbiddenPaths = @()
+                        doneWhen       = @('pester')
+                        verifyCommands = @('.\metra.ps1 verify')
+                    }
+                }
+                $pkg = New-LoomRunRequestPackage -Item $item -RunDir $runDir -MetraRoot (Get-LoomHostRoot)
+                @($pkg.patterns).Count | Should -Be 1
+                $pkg.patterns[0].patternId | Should -Be 'loom-review'
+                $pkg.patterns[0].contentHash | Should -Match '^[a-f0-9]{64}$'
+                ($pkg.patternWarnings -join ' ') | Should -Match 'does-not-exist-xyz'
+            }
+            finally {
+                Remove-Item -LiteralPath $runDir -Recurse -Force -ErrorAction SilentlyContinue
+                Remove-Item -LiteralPath $planDir -Recurse -Force -ErrorAction SilentlyContinue
             }
         }
     }

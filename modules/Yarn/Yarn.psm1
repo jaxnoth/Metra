@@ -4,6 +4,9 @@ Set-StrictMode -Version Latest
 
 $script:YarnModuleRoot = $PSScriptRoot
 
+# Shared Patterns matcher (P3) - host checkout scripts/private; no Metra.psm1 import.
+. ([System.IO.Path]::GetFullPath((Join-Path $PSScriptRoot '..\..\scripts\private\Patterns.ps1')))
+
 . (Join-Path $PSScriptRoot 'Private\Storage.ps1')
 . (Join-Path $PSScriptRoot 'Private\Validate.ps1')
 . (Join-Path $PSScriptRoot 'Private\Hash.ps1')

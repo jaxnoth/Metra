@@ -1,0 +1,10 @@
+# Required Pattern IDs by runtime owner (gap checklist). Activate yarn/atlas when those Patterns ship.
+loom:
+  - loom-queue-ingestion
+  - loom-project-lane
+  - loom-review
+  - guild-completed-vs-accepted
+metra:
+  - guild-agent-interaction
+yarn: []
+atlas: []

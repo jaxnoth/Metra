@@ -116,10 +116,11 @@ function Test-LoomUnattendedPolicy {
     }
 
     $registry = [string](Get-LoomProp -Object $Item.project -Name 'registryName' -Default '')
-    if (-not [string]::IsNullOrWhiteSpace($registry)) {
-        $gate = Test-LoomProjectAcceptanceGate -Root $Root -RegistryName $registry
+    $projectKey = Get-MetraLoomQueueItemProjectKey -Item $Item
+    if (-not [string]::IsNullOrWhiteSpace($projectKey) -or -not [string]::IsNullOrWhiteSpace($registry)) {
+        $gate = Test-LoomProjectAcceptanceGate -Root $Root -RegistryName $registry -ProjectKey $projectKey
         if ($gate.blocked) {
-            [void]$reasons.Add('pending-acceptance')
+            [void]$reasons.Add('lane-held')
         }
     }
 
@@ -155,25 +156,18 @@ function Get-LoomEligibleQueuedItems {
         [Parameter(Mandatory)][string]$Root
     )
 
+    $busy = @(Get-MetraLoomBusyProjectKeys -Root $Root)
+    $items = @(Get-MetraLoomEligibleQueuedForClaim -Root $Root -BusyProjectKeys $busy)
     $eligible = New-Object System.Collections.Generic.List[object]
-    foreach ($item in @(Get-MetraLoomQueueItems -Root $Root)) {
-        if ([string]$item.status -ne 'queued') { continue }
-        $policy = Test-LoomUnattendedPolicy -Root $Root -Item $item
-        if (-not $policy.eligible) { continue }
+    foreach ($item in $items) {
         [void]$eligible.Add([PSCustomObject]@{
-            item    = $item
-            score   = [int](Get-LoomProp -Object $item.scores -Name 'total' -Default 0)
-            created = Get-LoomItemCreatedUtc -Item $item
-            id      = [string]$item.id
-        })
+                item    = $item
+                score   = [double](Get-LoomProp -Object $item.scores -Name 'total' -Default 0)
+                created = Get-LoomItemCreatedUtc -Item $item
+                id      = [string]$item.id
+            })
     }
-
-    return @(
-        $eligible |
-            Sort-Object -Property @{ Expression = 'score'; Descending = $true }, `
-                @{ Expression = 'created'; Descending = $false }, `
-                @{ Expression = 'id'; Descending = $false }
-    )
+    return @($eligible.ToArray())
 }
 
 function Test-LoomInspectEngineTier1Reason {
@@ -370,18 +364,16 @@ function Invoke-MetraLoomLoop {
     }
 
     $candidates = @(Get-LoomEligibleQueuedItems -Root $Root)
-    if (@($candidates).Count -eq 0) {
-        return [PSCustomObject]@{
-            outcome = 'idle'
-            message = 'No eligible queued items'
-        }
-    }
-
-    $selected = $candidates[0]
-    $item = $selected.item
-    $policy = Test-LoomUnattendedPolicy -Root $Root -Item $item
-
     if ($DryRun) {
+        if (@($candidates).Count -eq 0) {
+            return [PSCustomObject]@{
+                outcome = 'idle'
+                message = 'No eligible queued items'
+            }
+        }
+        $selected = $candidates[0]
+        $item = $selected.item
+        $policy = Test-LoomUnattendedPolicy -Root $Root -Item $item
         return [PSCustomObject]@{
             outcome        = 'dry-run'
             selectedItemId = [string]$item.id
@@ -392,6 +384,16 @@ function Invoke-MetraLoomLoop {
         }
     }
 
+    $claim = Invoke-MetraLoomClaimNextEligible -Root $Root -Actor 'harness-loop' -Reason 'until-daily-gate'
+    if (-not $claim.claimed) {
+        return [PSCustomObject]@{
+            outcome = 'idle'
+            message = ('No eligible queued items ({0})' -f [string]$claim.reason)
+        }
+    }
+
+    $item = $claim.item
+    $policy = Test-LoomUnattendedPolicy -Root $Root -Item $item
     $sessionDir = New-LoomLoopSessionDir -Root $Root
 
     Add-MetraLoomJournalEntry -Root $Root -Entry @{
@@ -400,7 +402,7 @@ function Invoke-MetraLoomLoop {
         to      = 'dequeue'
         actor   = 'harness-loop'
         reason  = 'until-daily-gate'
-        message = "score=$($selected.score)"
+        message = ("score={0};claim={1}" -f (Get-LoomProp -Object $item.scores -Name 'total' -Default 0), $claim.reason)
     }
 
     $runResult = $null
@@ -408,15 +410,16 @@ function Invoke-MetraLoomLoop {
     try {
         if ($RunOverride) {
             $runResult = & $RunOverride @{
-                Root        = $Root
-                ItemId      = [string]$item.id
-                MetraRoot   = $MetraRoot
-                Confirm     = $true
-                ChainReview = $true
+                Root          = $Root
+                ItemId        = [string]$item.id
+                MetraRoot     = $MetraRoot
+                Confirm       = $true
+                ChainReview   = $true
+                AlreadyClaimed = $true
             }
         }
         else {
-            $runResult = Invoke-MetraLoomRun -Root $Root -ItemId ([string]$item.id) -MetraRoot $MetraRoot -Confirm -ChainReview
+            $runResult = Invoke-MetraLoomRun -Root $Root -ItemId ([string]$item.id) -MetraRoot $MetraRoot -Confirm -ChainReview -AlreadyClaimed
         }
     }
     catch {

@@ -5,16 +5,32 @@ function New-YarnPlanSlugFromTitle {
     return ConvertTo-YarnSlug -Text $Title
 }
 
+function Resolve-YarnPatternOwnerHint {
+    param([string]$ProjectKey)
+    $k = if ($ProjectKey) { $ProjectKey.Trim().ToLowerInvariant() } else { '' }
+    $allowed = @('metra', 'yarn', 'loom', 'atlas')
+    if ($allowed -contains $k) { return $k }
+    return 'metra'
+}
+
 function New-YarnFormalPlanText {
     [CmdletBinding()]
     param(
         [Parameter(Mandatory)]$BacklogItem,
+        [string]$MetraRoot = (Get-YarnHostRoot),
         [string]$SynthesizerVersion = 'yarn-template-v1'
     )
 
     $title = [string](Get-YarnProp -Object $BacklogItem -Name 'title' -Default 'Untitled')
     $captureId = [string](Get-YarnProp -Object $BacklogItem -Name 'captureId' -Default '')
     $sourceKey = [string](Get-YarnProp -Object $BacklogItem -Name 'primarySourceKey' -Default '')
+    $sourceText = [string](Get-YarnProp -Object $BacklogItem -Name 'sourceText' -Default $title)
+    $projectKey = [string](Get-YarnProp -Object $BacklogItem -Name 'projectKey' -Default 'Metra')
+    $ownerHint = Resolve-YarnPatternOwnerHint -ProjectKey $projectKey
+    $matchText = "$title`n$sourceText"
+    $matched = @(Find-MetraPatternsMatching -MetraRoot $MetraRoot -Owner $ownerHint -MatchText $matchText -MaxCount 8)
+    $gaps = @(Get-MetraPatternGaps -MetraRoot $MetraRoot -Owner $ownerHint)
+
     $atlasId = ''
     if ($sourceKey -like 'atlas:*') { $atlasId = $sourceKey.Substring(6) }
     $now = (Get-Date).ToUniversalTime().ToString('o')
@@ -29,6 +45,15 @@ function New-YarnFormalPlanText {
     if ($captureId) { [void]$sb.AppendLine("captureId: $captureId") }
     [void]$sb.AppendLine("synthesizedAt: `"$now`"")
     [void]$sb.AppendLine("synthesizerVersion: $SynthesizerVersion")
+    if ($matched.Count -eq 0) {
+        [void]$sb.AppendLine('patterns: []')
+    }
+    else {
+        [void]$sb.AppendLine('patterns:')
+        foreach ($m in $matched) {
+            [void]$sb.AppendLine("  - $($m.patternId)")
+        }
+    }
     [void]$sb.AppendLine('todos:')
     [void]$sb.AppendLine("  - id: $todoId")
     [void]$sb.AppendLine("    content: Refine scope and done-when for $title")
@@ -40,7 +65,7 @@ function New-YarnFormalPlanText {
     [void]$sb.AppendLine('')
     [void]$sb.AppendLine('## Product shape')
     [void]$sb.AppendLine('')
-    [void]$sb.AppendLine([string](Get-YarnProp -Object $BacklogItem -Name 'sourceText' -Default $title))
+    [void]$sb.AppendLine($sourceText)
     [void]$sb.AppendLine('')
     [void]$sb.AppendLine('## Architecture')
     [void]$sb.AppendLine('')
@@ -51,9 +76,21 @@ function New-YarnFormalPlanText {
     [void]$sb.AppendLine('- [ ] Clarify done-when')
     [void]$sb.AppendLine('- [ ] Add verify commands')
     [void]$sb.AppendLine('')
+    [void]$sb.AppendLine('## Pattern gaps')
+    [void]$sb.AppendLine('')
+    if ($gaps.Count -eq 0) {
+        [void]$sb.AppendLine('_None - required catalog satisfied for owner hint._')
+    }
+    else {
+        foreach ($g in $gaps) {
+            [void]$sb.AppendLine("- candidate: $($g.suggestedPatternId) (owner $($g.owner)) - $($g.observedBehavior)")
+        }
+    }
+    [void]$sb.AppendLine('')
     [void]$sb.AppendLine('## Constraints')
     [void]$sb.AppendLine('')
     [void]$sb.AppendLine('- Status remains Pending Bing Review until Yarn human approval')
+    [void]$sb.AppendLine('- Pattern gap checklist does not auto-author Pattern bodies')
     [void]$sb.AppendLine('')
     [void]$sb.AppendLine('## Open questions')
     [void]$sb.AppendLine('')
@@ -149,8 +186,9 @@ function Invoke-MetraYarnSynthesize {
         }
     }
 
-    $text = New-YarnFormalPlanText -BacklogItem $item
+    $text = New-YarnFormalPlanText -BacklogItem $item -MetraRoot $MetraRoot
     $planHash = Get-YarnPlanContentHash -PlanText $text
+    $patternIds = @(Get-MetraPlanPatternIds -PlanText $text)
     if ($DryRun) {
         return [PSCustomObject]@{
             outcome          = 'dry-run'
@@ -158,6 +196,7 @@ function Invoke-MetraYarnSynthesize {
             planPath         = $planPath
             planContentHash  = $planHash
             status           = 'Pending Bing Review'
+            patterns         = @($patternIds)
         }
     }
 

@@ -8,7 +8,9 @@ BeforeAll {
 Describe 'Loom Slice 5 transitions' {
     It 'allows completed exits only via approve map' {
         InModuleScope Loom {
-            Test-MetraLoomTransition -From 'completed' -To 'accepted' | Should -BeTrue
+            Test-MetraLoomTransition -From 'completed' -To 'accepted-pending-commit' | Should -BeTrue
+            Test-MetraLoomTransition -From 'accepted-pending-commit' -To 'accepted' | Should -BeTrue
+            Test-MetraLoomTransition -From 'completed' -To 'accepted' | Should -BeFalse
             Test-MetraLoomTransition -From 'completed' -To 'blocked' | Should -BeTrue
             Test-MetraLoomTransition -From 'completed' -To 'implementing' | Should -BeTrue
             Test-MetraLoomTransition -From 'completed' -To 'queued' | Should -BeFalse
@@ -45,7 +47,7 @@ Describe 'Loom Slice 5 transitions' {
                 $item = New-MetraLoomQueueItemFromCandidate -Root $root -Candidate $cand
                 $item.status = 'completed'
                 Save-MetraLoomQueueItem -Root $root -Item $item
-                { Invoke-MetraLoomStateChange -Root $root -ItemId $item.id -From 'completed' -To 'accepted' -Reason 'illegal' } |
+                { Invoke-MetraLoomStateChange -Root $root -ItemId $item.id -From 'completed' -To 'accepted-pending-commit' -Reason 'illegal' } |
                     Should -Throw '*only Invoke-MetraLoomDailyApprove*'
             }
             finally {
@@ -111,7 +113,7 @@ Describe 'Loom project acceptance gate' {
                     eligible = $true; ineligibleReasons = @()
                 }
                 { New-MetraLoomQueueItemFromCandidate -Root $root -Candidate $cand2 } |
-                    Should -Throw '*pending-acceptance*'
+                    Should -Throw '*lane-held*'
             }
             finally {
                 Remove-Item -LiteralPath $root -Recurse -Force -ErrorAction SilentlyContinue
@@ -242,7 +244,7 @@ Describe 'Loom daily build' {
                 $text = [System.IO.File]::ReadAllText($result.path)
                 $text | Should -Match '## 1\. Overarching changes made'
                 $text | Should -Match '## 2\. Manual testing required'
-                $text | Should -Match '## 3\. Next plan\(s\) for review'
+                $text | Should -Match '## 3\. Plan review \(Yarn\)'
             }
             finally {
                 Remove-Item -LiteralPath $root -Recurse -Force -ErrorAction SilentlyContinue

@@ -68,7 +68,9 @@ Describe 'Loom Slice 3 transitions' {
         Test-MetraLoomTransition -From 'reviewing' -To 'failed' | Should -BeFalse
     }
     It 'allows Slice 5 completed exits in map (approve runtime guard)' {
-        Test-MetraLoomTransition -From 'completed' -To 'accepted' | Should -BeTrue
+        Test-MetraLoomTransition -From 'completed' -To 'accepted-pending-commit' | Should -BeTrue
+        Test-MetraLoomTransition -From 'accepted-pending-commit' -To 'accepted' | Should -BeTrue
+        Test-MetraLoomTransition -From 'completed' -To 'accepted' | Should -BeFalse
         Test-MetraLoomTransition -From 'completed' -To 'blocked' | Should -BeTrue
         Test-MetraLoomTransition -From 'completed' -To 'implementing' | Should -BeTrue
         Test-MetraLoomTransition -From 'completed' -To 'queued' | Should -BeFalse

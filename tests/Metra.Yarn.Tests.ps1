@@ -176,6 +176,8 @@ Describe 'Yarn A2 synthesize pack reconcile' {
                 Test-Path -LiteralPath $synth.planPath | Should -BeTrue
                 (Get-Content -LiteralPath $synth.planPath -Raw) | Should -Match 'Pending Bing Review'
                 (Get-Content -LiteralPath $synth.planPath -Raw) | Should -Not -Match '(?m)^status:\s*Approved'
+                (Get-Content -LiteralPath $synth.planPath -Raw) | Should -Match '(?m)^patterns:'
+                (Get-Content -LiteralPath $synth.planPath -Raw) | Should -Match '## Pattern gaps'
 
                 $after = @(Get-MetraYarnBacklog -Root $root) | Where-Object { $_.id -eq $item.id } | Select-Object -First 1
                 $after.readyEnough | Should -BeTrue
@@ -420,6 +422,26 @@ bingReviewed: false
             finally {
                 Remove-Item -LiteralPath $root -Recurse -Force -ErrorAction SilentlyContinue
             }
+        }
+    }
+}
+
+Describe 'Yarn Pattern match (P3)' {
+    It 'emits patterns cites for loom owner when MatchText hits loadWhen' {
+        InModuleScope Yarn {
+            $hostRoot = Get-YarnHostRoot
+            $item = [PSCustomObject]@{
+                title            = 'Need loom review wiring'
+                primarySourceKey = 'capture:pat1'
+                captureId        = 'pat1'
+                projectKey       = 'loom'
+                sourceText       = 'Please run loom review after inspect'
+            }
+            $text = New-YarnFormalPlanText -BacklogItem $item -MetraRoot $hostRoot
+            $ids = @(Get-MetraPlanPatternIds -PlanText $text)
+            $ids | Should -Contain 'loom-review'
+            $text | Should -Match '## Pattern gaps'
+            $text | Should -Not -Match '(?m)^product:'
         }
     }
 }
