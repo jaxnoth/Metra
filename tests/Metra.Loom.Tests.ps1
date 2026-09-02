@@ -396,5 +396,29 @@ Describe 'Metra CLI loom entry' {
             Pop-Location
         }
     }
+
+    It 'forwards script -Confirm to loom loop ArgsRest' {
+        function Global:Get-MetraAskCapability {
+            return [PSCustomObject]@{
+                available = $true; engineHealthy = $true; reason = 'ok'; message = ''
+            }
+        }
+        InModuleScope Loom {
+            $metraRoot = (Resolve-Path (Join-Path $PSScriptRoot '..')).Path
+            $root = Join-Path ([IO.Path]::GetTempPath()) ('metra-loom-cli-' + [guid]::NewGuid().ToString('n'))
+            Initialize-MetraLoomLayout -Root $root
+            $env:METRA_LOOM_ROOT = $root
+            Push-Location $metraRoot
+            try {
+                { & (Join-Path $metraRoot 'metra.ps1') loom loop -UntilDailyGate -Confirm } | Should -Not -Throw '*requires -Confirm*'
+            }
+            finally {
+                Remove-Item Env:METRA_LOOM_ROOT -ErrorAction SilentlyContinue
+                Remove-Item -LiteralPath $root -Recurse -Force -ErrorAction SilentlyContinue
+                Pop-Location
+            }
+        }
+        Remove-Item Function:\Get-MetraAskCapability -ErrorAction SilentlyContinue
+    }
 }
 

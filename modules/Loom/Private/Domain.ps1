@@ -1113,7 +1113,7 @@ function Invoke-MetraLoomEnqueueFromPlan {
 function Invoke-LoomCommand {
     <#
     .SYNOPSIS
-        CLI: loom triage|enqueue|plans|status|show|block|run|review|daily|migrate
+        CLI: loom triage|enqueue|plans|status|show|block|run|review|loop|daily|migrate
     #>
     [CmdletBinding()]
     param(
@@ -1131,7 +1131,7 @@ function Invoke-LoomCommand {
         $Root = (Resolve-MetraLoomRoot -OverrideRoot $Root).Path
     }
 
-    $mutating = @('run', 'block', 'enqueue', 'migrate', 'review', 'daily')
+    $mutating = @('run', 'block', 'enqueue', 'migrate', 'review', 'daily', 'loop')
     if ($mutating -contains $Subcommand.ToLowerInvariant()) {
         Assert-LoomRootWritable -Root $Root -OverrideRoot $(if ($explicitRoot) { $Root } else { $null })
     }
@@ -1166,12 +1166,12 @@ function Invoke-LoomCommand {
                 if ($ArgsRest[$i] -eq '-Id' -and ($i + 1) -lt $ArgsRest.Count) { $id = [string]$ArgsRest[$i + 1]; $i++ }
                 elseif ($ArgsRest[$i] -eq '-DryRun') { $dry = $true }
             }
-            if ([string]::IsNullOrWhiteSpace($id)) { throw 'autoprogram run -Id <AP-...> [-DryRun] [-Confirm]' }
+            if ([string]::IsNullOrWhiteSpace($id)) { throw 'loom run -Id <AP-...> [-DryRun] [-Confirm] [-NoChainReview]' }
             if ($dry) {
                 return Invoke-MetraLoomRun -Root $Root -ItemId $id -MetraRoot $MetraRoot -DryRun
             }
             if ($ArgsRest -notcontains '-Confirm') {
-                throw 'autoprogram run requires -Confirm for live execution (git branch + implementer).'
+                throw 'loom run requires -Confirm for live execution (git branch + implementer).'
             }
             return Invoke-MetraLoomRun -Root $Root -ItemId $id -MetraRoot $MetraRoot -Confirm -ChainReview:$(-not ($ArgsRest -contains '-NoChainReview'))
         }
@@ -1194,7 +1194,7 @@ function Invoke-LoomCommand {
                     $id = [string]$ArgsRest[$i + 1]
                 }
             }
-            if ([string]::IsNullOrWhiteSpace($id)) { throw 'autoprogram show -Id <AP-...>' }
+            if ([string]::IsNullOrWhiteSpace($id)) { throw 'loom show -Id <AP-...>' }
             $item = Get-MetraLoomQueueItem -Root $Root -Id $id
             if (-not $item) { throw "Queue item not found: $id" }
             return $item
@@ -1206,7 +1206,7 @@ function Invoke-LoomCommand {
                 if ($ArgsRest[$i] -eq '-Id' -and ($i + 1) -lt $ArgsRest.Count) { $id = [string]$ArgsRest[$i + 1]; $i++ }
                 elseif ($ArgsRest[$i] -eq '-Reason' -and ($i + 1) -lt $ArgsRest.Count) { $reason = [string]$ArgsRest[$i + 1]; $i++ }
             }
-            if ([string]::IsNullOrWhiteSpace($id)) { throw 'autoprogram block -Id <AP-...> [-Reason "..."]' }
+            if ([string]::IsNullOrWhiteSpace($id)) { throw 'loom block -Id <AP-...> [-Reason "..."]' }
             return Invoke-MetraLoomStateChange -Root $Root -ItemId $id -From 'queued' -To 'blocked' -Reason $reason
         }
         'enqueue' {
@@ -1223,11 +1223,11 @@ function Invoke-LoomCommand {
                 elseif ($ArgsRest[$i] -eq '-Slice' -and ($i + 1) -lt $ArgsRest.Count) { $slice = [string]$ArgsRest[$i + 1]; $i++ }
             }
             if ($fromPlan) {
-                if ([string]::IsNullOrWhiteSpace($planPath)) { throw 'autoprogram enqueue -FromPlan -Path <plan.md> [-TodoId id] [-Slice name]' }
+                if ([string]::IsNullOrWhiteSpace($planPath)) { throw 'loom enqueue -FromPlan -Path <plan.md> [-TodoId id] [-Slice name]' }
                 return Invoke-MetraLoomEnqueueFromPlan -Root $Root -Path $planPath -TodoId $todoId -Slice $slice -MetraRoot $MetraRoot
             }
             if ([string]::IsNullOrWhiteSpace($candidateId)) {
-                throw 'autoprogram enqueue requires -CandidateId <id> or -FromPlan -Path <plan.md>'
+                throw 'loom enqueue requires -CandidateId <id> or -FromPlan -Path <plan.md>'
             }
             $candidate = Get-MetraLoomCandidate -Root $Root -Id $candidateId
             return New-MetraLoomQueueItemFromCandidate -Root $Root -Candidate $candidate
@@ -1238,7 +1238,7 @@ function Invoke-LoomCommand {
             return Invoke-MetraLoomTriage -Root $Root -MetraRoot $MetraRoot -DryRun:$explicitDry
         }
         'plans' {
-            if ($ArgsRest.Count -eq 0) { throw 'autoprogram plans requires list|show|pending' }
+            if ($ArgsRest.Count -eq 0) { throw 'loom plans requires list|show|pending' }
             $plansSub = [string]$ArgsRest[0]
             switch ($plansSub.ToLowerInvariant()) {
                 'list' {
@@ -1257,13 +1257,13 @@ function Invoke-LoomCommand {
                             $planPath = [string]$ArgsRest[$i + 1]
                         }
                     }
-                    if ([string]::IsNullOrWhiteSpace($planPath)) { throw 'autoprogram plans show -Path <plan.md>' }
+                    if ([string]::IsNullOrWhiteSpace($planPath)) { throw 'loom plans show -Path <plan.md>' }
                     $full = $ExecutionContext.SessionState.Path.GetUnresolvedProviderPathFromPSPath($planPath)
                     $plan = Read-MetraLoomPlanFile -Path $full -MetraRoot $MetraRoot
                     if (-not $plan) { throw "Plan not found: $full" }
                     return $plan
                 }
-                default { throw "Unknown autoprogram plans subcommand: $plansSub" }
+                default { throw "Unknown loom plans subcommand: $plansSub" }
             }
         }
         'daily' {
@@ -1316,6 +1316,21 @@ function Invoke-LoomCommand {
                 }
             }
         }
+        'loop' {
+            $untilGate = $ArgsRest -contains '-UntilDailyGate'
+            $dry = $ArgsRest -contains '-DryRun'
+            if (-not $untilGate) {
+                throw 'loom loop requires -UntilDailyGate [-DryRun] [-Confirm]'
+            }
+            $params = @{
+                Root            = $Root
+                MetraRoot       = $MetraRoot
+                UntilDailyGate  = $true
+            }
+            if ($dry) { $params['DryRun'] = $true }
+            if ($ArgsRest -contains '-Confirm') { $params['Confirm'] = $true }
+            return Invoke-MetraLoomLoop @params
+        }
         'migrate' {
             $apply = ($ArgsRest -contains '-Apply')
             $force = ($ArgsRest -contains '-Force')
@@ -1326,7 +1341,7 @@ function Invoke-LoomCommand {
             return Invoke-MetraLoomMigrate @params
         }
         default {
-            throw "Unknown loom subcommand: $Subcommand. Use triage|enqueue|plans|status|show|block|run|review|daily|migrate."
+            throw "Unknown loom subcommand: $Subcommand. Use triage|enqueue|plans|status|show|block|run|review|loop|daily|migrate."
         }
     }
 }

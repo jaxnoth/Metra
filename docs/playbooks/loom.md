@@ -30,7 +30,25 @@ Governed execution harness (queue, journal, triage, branch runner). Metra hosts 
 .\metra.ps1 loom daily approve -PlanPath .\daily\2026-09-01-plan.md   # preview (no writes)
 .\metra.ps1 loom daily approve -PlanPath ... -Confirm                 # apply batch
 .\metra.ps1 loom daily approve -PlanPath ... -Confirm -Merge          # accept + local merge (no push)
+.\metra.ps1 loom loop -UntilDailyGate -DryRun                       # preview one eligible dequeue (Slice 6)
+.\metra.ps1 loom loop -UntilDailyGate -Confirm                      # one item overnight to completed (not accepted)
 ```
+
+## Slice 6 loop (unattended to daily gate)
+
+| Rule | Detail |
+|------|--------|
+| Scope | **One** eligible `queued` item per invocation; stops at `completed` |
+| Selection | Score desc, then `createdAt` asc, then id asc |
+| Policy | Fail closed: missing `classification` rejects; code-only; routing >= 0.85; verify commands present |
+| Pause | Tier 1 engine faults set `loopPaused`, `pausedAtUtc`, `pauseReason` in `state.json` |
+| Pause enforcement | Subsequent `loom loop` emits reason + age; **no dequeue** while paused |
+| Supervised path | `loom run -Id <AP-...> -Confirm` unchanged |
+| Forbidden | No push, merge, `daily approve`, auto-enqueue, multi-item dequeue |
+
+Clear pause (v1): edit `%LOCALAPPDATA%\Metra\loom\state.json` (`loopPaused: false`). Slice 6b may add `loom loop resume`.
+
+Morning handoff unchanged: `loom daily` → pack-diff review → `daily approve -Confirm`.
 
 ## Slice 4 review (completed vs accepted)
 

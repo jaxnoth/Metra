@@ -492,3 +492,23 @@ function Invoke-LoomInspectPackAdapter {
         }
     }
 }
+
+function Invoke-LoomAskCapabilityAdapter {
+    <#
+    .SYNOPSIS
+        Adapter: Metra Ask/inspect engine capability (Slice 6 loop health probe).
+    #>
+    [CmdletBinding()]
+    param(
+        [string]$MetraRoot = (Get-LoomHostRoot)
+    )
+
+    $cmd = Get-Command Get-MetraAskCapability -ErrorAction SilentlyContinue
+    if (-not $cmd) {
+        return $null
+    }
+    if ([string]::IsNullOrWhiteSpace($MetraRoot)) {
+        $MetraRoot = Get-LoomHostRoot
+    }
+    return & $cmd -MetraRoot $MetraRoot
+}
