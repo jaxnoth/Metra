@@ -53,6 +53,7 @@ Triggers: Metra home, routing, ctx, registry, inspect, profile, decisions, works
 | audit, selfdoc, verify, registry maintenance | [docs/playbooks/maintenance-audit.md](docs/playbooks/maintenance-audit.md) |
 | Tailscale, DNSFilter, campus hosts, Serve enable | [docs/playbooks/tailscale-campus.md](docs/playbooks/tailscale-campus.md) |
 | satellite connect, Mac onboarding, profile sync merge | [docs/playbooks/satellite-remote-install.md](docs/playbooks/satellite-remote-install.md) |
+| yarn intake, backlog, synthesize, pack freshness | [docs/playbooks/yarn.md](docs/playbooks/yarn.md) |
 
 ## Token rules
 

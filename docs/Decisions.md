@@ -26,6 +26,14 @@ Entry shape:
 
 ---
 
+---
+
+## 2026-09-02 - Inspect pre-commit: live hash drift warns; Bing affirm blocks
+
+- Decision: Pre-commit requires Bing gate affirmation for the **assessed** report (`assessInputHash` equals `gateInputHash`). Live working-tree hash drift vs that pair is a **warning** only (`live-drift`), not a hard block. Hard blocks remain: no assessment, no gate record, or `assess-gate-mismatch` (re-assess after affirm without re-affirm). Aligns affirm/pack stale-hash warnings with the commit hook.
+- Why: Affirm already warned and recorded the assessed hash while pre-commit still threw `live-assess-mismatch`, blocking ship after pack appendix scrub or minor post-assess edits.
+- See: `Test-MetraInspectBingGateCommitAllowed`; `Invoke-MetraInspectPreCommitHook`; [docs/playbooks/inspect-loop.md](playbooks/inspect-loop.md)
+
 ## 2026-09-02 - Loom Slice 6 unattended loop (`loom loop -UntilDailyGate`)
 
 - Decision: Slice 6 adds **`metra.ps1 loom loop -UntilDailyGate`** — auto-selects **one** eligible `queued` item (score desc, createdAt asc, id asc), runs existing `run` + chained `review` to **`completed`**, stops at daily gate. **No** push, merge, or `accepted`. Tier 1 inspect/engine faults set enriched pause (`loopPaused`, `pausedAtUtc`, `pauseReason`); subsequent loop invocations fail closed (no dequeue). Classification missing → reject (never assume safe). Supervised path remains `loom run -Id -Confirm`.

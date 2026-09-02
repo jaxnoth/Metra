@@ -37,7 +37,7 @@ param(
     [ValidateSet(
         'list', 'status', 'pull', 'fetch', 'run', 'new', 'apply', 'workspace',
         'audit', 'snapshot', 'selfdoc', 'ops', 'host', 'chats', 'roots', 'routing',
-        'export-profile', 'import-profile', 'ctx', 'setup', 'verify', 'unblock', 'tailscale', 'satellite', 'desk', 'profile', 'decisions', 'coverage', 'ask', 'capture', 'watch', 'inspect', 'azdo', 'atlas', 'loom', 'autoprogram', 'help'
+        'export-profile', 'import-profile', 'ctx', 'setup', 'verify', 'unblock', 'tailscale', 'satellite', 'desk', 'profile', 'decisions', 'coverage', 'ask', 'capture', 'watch', 'inspect', 'azdo', 'atlas', 'loom', 'yarn', 'autoprogram', 'help'
     )]
     [string]$Command = 'help',
 
@@ -129,6 +129,23 @@ function Add-MetraLoomConfirmForward {
     }
     elseif ($subLower -eq 'daily' -and (@($forward | Where-Object { $_ -ieq 'approve' }).Count -gt 0)) {
         if ($forward -notcontains '-Confirm') { $forward += '-Confirm' }
+    }
+    return $forward
+}
+
+function Add-MetraYarnConfirmForward {
+    param(
+        [Parameter(Mandatory)][string]$Sub,
+        [string[]]$SubArgs = @(),
+        [switch]$ConfirmPresent
+    )
+    $forward = @($SubArgs)
+    if (-not $ConfirmPresent) { return $forward }
+    $subLower = $Sub.ToLowerInvariant()
+    if ($subLower -eq 'synthesize') {
+        if ($forward -notcontains '-Confirm' -and $forward -notcontains '-DryRun') {
+            $forward += '-Confirm'
+        }
     }
     return $forward
 }
@@ -239,6 +256,10 @@ Usage:
       Read-only Azure DevOps remote evidence (PAT: METRA_AZDO_PAT or docs/azdo.local.json). gaps maps AzDO vs registry/disk.
   .\metra.ps1 atlas <Atlas.ps1 args...>
       Passthrough to sibling Atlas knowledge bus (plans/docs sync). Example: .\metra.ps1 atlas search biblequiz
+  .\metra.ps1 loom status|triage|enqueue|run|review|loop|daily|migrate
+      Governed plan execution queue (code daily / accept).
+  .\metra.ps1 yarn status|scan|backlog|daily|synthesize|pack|reconcile|pending
+      L1.5 intake: ranked backlog, template synth, pack freshness (approval in A3).
   .\metra.ps1 verify
 
 Roots:
@@ -1004,6 +1025,31 @@ switch ($Command) {
             }
             elseif ($sub -ieq 'triage') {
                 $result | Format-List
+            }
+            else {
+                $result | Format-Table -AutoSize
+            }
+        }
+        else {
+            $result | Format-List
+        }
+    }
+
+    'yarn' {
+        if (-not $Rest -or $Rest.Count -eq 0) {
+            throw "yarn requires a subcommand. Example: .\metra.ps1 yarn status"
+        }
+        $sub = $Rest[0]
+        $subArgs = @()
+        if ($Rest.Count -gt 1) {
+            $subArgs = @($Rest[1..($Rest.Count - 1)])
+        }
+        $subArgs = Add-MetraYarnConfirmForward -Sub $sub -SubArgs $subArgs -ConfirmPresent:$Confirm.IsPresent
+        $result = Invoke-MetraYarnCommand -Subcommand $sub -ArgsRest $subArgs
+        if ($null -eq $result) { return }
+        if ($result -is [System.Array]) {
+            if (@($result).Count -eq 0) {
+                Write-Host '(none)'
             }
             else {
                 $result | Format-Table -AutoSize

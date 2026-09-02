@@ -1,0 +1,33 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "yarn-plan-links",
+  "type": "object",
+  "required": ["schemaVersion", "links"],
+  "properties": {
+    "schemaVersion": { "type": "integer", "const": 1 },
+    "links": {
+      "type": "array",
+      "items": { "$ref": "#/definitions/planLink" }
+    }
+  },
+  "definitions": {
+    "planLink": {
+      "type": "object",
+      "required": ["backlogId", "formalPlanPath", "planStatus", "handoffContractVersion"],
+      "properties": {
+        "backlogId": { "type": "string" },
+        "formalPlanPath": { "type": "string" },
+        "planStatus": { "type": "string" },
+        "sourceHash": { "type": "string" },
+        "planContentHash": { "type": "string" },
+        "packInputHash": { "type": "string" },
+        "packPlanPath": { "type": "string" },
+        "packContractVersion": { "type": "string" },
+        "handoffContractVersion": { "type": "integer", "const": 1 },
+        "packSucceeded": { "type": "boolean" },
+        "approval": { "type": "object" },
+        "loomHandoff": { "type": "object" }
+      }
+    }
+  }
+}
