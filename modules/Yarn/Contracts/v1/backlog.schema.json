@@ -33,7 +33,17 @@
         "rubricVersion": { "type": "string" },
         "rankReasons": { "type": "array", "items": { "type": "string" } },
         "firstSeenAt": { "type": "string" },
-        "lastSeenAt": { "type": "string" }
+        "lastSeenAt": { "type": "string" },
+        "sourceKind": {
+          "type": "string",
+          "enum": ["capture", "future-dev", "atlas"]
+        },
+        "atlasStableId": { "type": "string" },
+        "atlasKind": {
+          "type": "string",
+          "enum": ["Plan", "Roadmap", "Parked"]
+        },
+        "memoryLane": { "type": "string" }
       }
     }
   }

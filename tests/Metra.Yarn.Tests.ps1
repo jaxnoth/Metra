@@ -107,6 +107,7 @@ Describe 'Yarn A1 rank and scan' {
                             tags    = @()
                         })
                 }
+                $script:YarnAtlasOverride = { @() }
                 # Empty Future-Dev (no ### headings)
                 Set-Content -LiteralPath (Join-Path $docs 'Future-Development.local.md') -Value "# Future`n" -Encoding utf8
                 # Read-YarnFutureDevIdeas expects docs under MetraRoot\docs\
@@ -124,6 +125,7 @@ Describe 'Yarn A1 rank and scan' {
             finally {
                 $script:YarnHostRootOverride = $null
                 $script:YarnCaptureOverride = $null
+                $script:YarnAtlasOverride = $null
                 Remove-Item -LiteralPath $root -Recurse -Force -ErrorAction SilentlyContinue
                 Remove-Item -LiteralPath $docs -Recurse -Force -ErrorAction SilentlyContinue
             }
@@ -442,6 +444,117 @@ Describe 'Yarn Pattern match (P3)' {
             $ids | Should -Contain 'loom-review'
             $text | Should -Match '## Pattern gaps'
             $text | Should -Not -Match '(?m)^product:'
+        }
+    }
+}
+
+Describe 'Yarn Phase B Atlas intake' {
+    It 'scan upserts atlas fields, skips Session, pauses offline, and FromMemory requires Confirm' {
+        InModuleScope Yarn {
+            $root = Join-Path ([IO.Path]::GetTempPath()) ('metra-yarn-' + [guid]::NewGuid().ToString('n'))
+            $hostRoot = Join-Path ([IO.Path]::GetTempPath()) ('metra-yarn-host-' + [guid]::NewGuid().ToString('n'))
+            try {
+                New-Item -ItemType Directory -Path (Join-Path $hostRoot 'docs') -Force | Out-Null
+                Set-Content -LiteralPath (Join-Path $hostRoot 'docs\Future-Development.local.md') -Value "# Future`n" -Encoding utf8
+                $script:YarnHostRootOverride = $hostRoot
+                $script:YarnCaptureOverride = { @() }
+                $script:YarnAtlasOverride = {
+                    param($req)
+                    @(
+                        [PSCustomObject]@{
+                            stableId   = 'plan:phase-b-demo'
+                            title      = 'Phase B Demo Plan'
+                            kind       = 'Plan'
+                            projectKey = 'Metra'
+                            sourceText = 'Atlas plan body for intake'
+                        }
+                        [PSCustomObject]@{
+                            stableId   = 'session:skip-me'
+                            title      = 'Session noise'
+                            kind       = 'Session'
+                            projectKey = 'Metra'
+                            sourceText = 'should skip'
+                        }
+                        [PSCustomObject]@{
+                            stableId   = 'parked:phase-b-park'
+                            title      = 'Parked Idea'
+                            kind       = 'Parked'
+                            projectKey = 'Metra'
+                            sourceText = 'parked body'
+                        }
+                    )
+                }
+
+                $scan = Invoke-MetraYarnScan -Root $root -MetraRoot $hostRoot
+                $scan.memoryLane | Should -Be 'ok'
+                $scan.atlasCount | Should -Be 2
+                $items = @(Get-MetraYarnBacklog -Root $root)
+                $planItem = $items | Where-Object { $_.atlasStableId -eq 'plan:phase-b-demo' } | Select-Object -First 1
+                $planItem | Should -Not -BeNullOrEmpty
+                $planItem.primarySourceKey | Should -Be 'atlas:plan:phase-b-demo'
+                $planItem.memoryLane | Should -Be 'atlas'
+                $planItem.atlasKind | Should -Be 'Plan'
+                $planItem.strategicAlignment | Should -Be 0.15
+                $planItem.rankReasons -join ',' | Should -Match 'atlasKind=Plan'
+                @($items | Where-Object { $_.atlasStableId -eq 'session:skip-me' }).Count | Should -Be 0
+                $park = $items | Where-Object { $_.atlasKind -eq 'Parked' } | Select-Object -First 1
+                $park.strategicAlignment | Should -Be 0.10
+
+                # Sibling skip: plan-link with atlasStableId blocks re-emit
+                Sync-YarnPlanLink -Root $root -Link ([PSCustomObject]@{
+                        backlogId              = [string]$planItem.id
+                        formalPlanPath         = (Join-Path $hostRoot 'docs\already.plan.md')
+                        planStatus             = 'Pending Bing Review'
+                        handoffContractVersion = 1
+                        atlasStableId          = 'plan:phase-b-demo'
+                    })
+                Write-YarnAtomicUtf8Text -Path (Join-Path $hostRoot 'docs\already.plan.md') -Text "# already`n"
+                $scan2 = Invoke-MetraYarnScan -Root $root -MetraRoot $hostRoot
+                $scan2.atlasCount | Should -Be 1
+
+                # Offline pause: adapter throws
+                $script:YarnAtlasOverride = { throw 'atlas down' }
+                $scan3 = Invoke-MetraYarnScan -Root $root -MetraRoot $hostRoot
+                $scan3.memoryLane | Should -Be 'paused'
+                $scan3.atlasCount | Should -Be 0
+                $status = Get-MetraYarnStatus -Root $root
+                $status.memoryLane | Should -Be 'paused'
+                $status.phase | Should -Be 'B'
+                Test-YarnLoomQueueWriteForbidden | Should -BeTrue
+
+                $script:YarnAtlasOverride = {
+                    @([PSCustomObject]@{
+                            stableId   = 'plan:from-mem'
+                            title      = 'From Memory Plan'
+                            kind       = 'Plan'
+                            projectKey = 'Metra'
+                            sourceText = 'from memory body'
+                        })
+                }
+                { Invoke-MetraYarnSynthesize -Root $root -MetraRoot $hostRoot -FromMemory 'plan:from-mem' } | Should -Throw
+                $beforeCount = @(Get-MetraYarnBacklog -Root $root).Count
+                $beforeLinks = @(Get-YarnPlanLinks -Root $root).Count
+                $dry = Invoke-MetraYarnSynthesize -Root $root -MetraRoot $hostRoot -FromMemory 'plan:from-mem' -DryRun
+                $dry.outcome | Should -Be 'dry-run'
+                $dry.backlogId | Should -Be 'YARN-DRYRUN'
+                @(Get-MetraYarnBacklog -Root $root).Count | Should -Be $beforeCount
+                @(Get-YarnPlanLinks -Root $root).Count | Should -Be $beforeLinks
+                @(Get-MetraYarnBacklog -Root $root | Where-Object { $_.atlasStableId -eq 'plan:from-mem' }).Count | Should -Be 0
+                $synth = Invoke-MetraYarnSynthesize -Root $root -MetraRoot $hostRoot -FromMemory 'plan:from-mem' -Confirm
+                $synth.outcome | Should -Be 'synthesized'
+                (Get-Content -LiteralPath $synth.planPath -Raw) | Should -Match 'atlasStableId:\s*plan:from-mem'
+                $link = @(Get-YarnPlanLinks -Root $root) | Where-Object { $_.backlogId -eq $synth.backlogId } | Select-Object -First 1
+                $link.atlasStableId | Should -Be 'plan:from-mem'
+                $link.atlasKind | Should -Be 'Plan'
+                $link.memoryLane | Should -Be 'atlas'
+            }
+            finally {
+                $script:YarnHostRootOverride = $null
+                $script:YarnCaptureOverride = $null
+                $script:YarnAtlasOverride = $null
+                Remove-Item -LiteralPath $root -Recurse -Force -ErrorAction SilentlyContinue
+                Remove-Item -LiteralPath $hostRoot -Recurse -Force -ErrorAction SilentlyContinue
+            }
         }
     }
 }
