@@ -1,0 +1,8 @@
+# patternId -> path relative to docs/patterns/
+# Keep IDs unique. Paths are relative to this directory.
+
+loom-queue-ingestion: loom/queue-ingestion.md
+loom-project-lane: loom/project-lane.md
+loom-review: loom/review.md
+guild-completed-vs-accepted: guild/completed-vs-accepted.md
+guild-agent-interaction: guild/agent-interaction.md

@@ -54,6 +54,20 @@ Triggers: Metra home, routing, ctx, registry, inspect, profile, decisions, works
 | Tailscale, DNSFilter, campus hosts, Serve enable | [docs/playbooks/tailscale-campus.md](docs/playbooks/tailscale-campus.md) |
 | satellite connect, Mac onboarding, profile sync merge | [docs/playbooks/satellite-remote-install.md](docs/playbooks/satellite-remote-install.md) |
 | yarn intake, backlog, synthesize, pack freshness | [docs/playbooks/yarn.md](docs/playbooks/yarn.md) |
+| loom queue, triage, run, review, daily, loop | [docs/playbooks/loom.md](docs/playbooks/loom.md) |
+
+## On-demand patterns
+
+Architectural methods (how Metra / Yarn / Loom / Atlas are designed). Bodies under [docs/patterns/](docs/patterns/README.md). Not always-on. Runtime Pattern loaders not authorized yet.
+
+| Trigger | Read |
+| --- | --- |
+| Pattern taxonomy, cabinet, schema, patternId | [docs/patterns/README.md](docs/patterns/README.md), [docs/patterns/SCHEMA.md](docs/patterns/SCHEMA.md) |
+| loom queue ingest, Approved plan enqueue | [docs/patterns/loom/queue-ingestion.md](docs/patterns/loom/queue-ingestion.md) |
+| loom project lane, loop concurrency | [docs/patterns/loom/project-lane.md](docs/patterns/loom/project-lane.md) |
+| loom review, completed vs inspect/verify | [docs/patterns/loom/review.md](docs/patterns/loom/review.md) |
+| completed vs accepted, daily approve | [docs/patterns/guild/completed-vs-accepted.md](docs/patterns/guild/completed-vs-accepted.md) |
+| agent/inspect engines, adapters, pause | [docs/patterns/guild/agent-interaction.md](docs/patterns/guild/agent-interaction.md) |
 
 ## Token rules
 

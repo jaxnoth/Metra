@@ -28,6 +28,12 @@ Entry shape:
 
 ---
 
+## 2026-09-02 - Patterns taxonomy (Products, Concepts, Cabinets, Artifacts)
+
+- Decision: Metra Pattern architecture taxonomy is closed. **Products** are only Metra, Yarn, Loom, Atlas. **Concepts** are Evidence and Fabric (no modules or folders). **Cabinets** include Guild (`docs/patterns/guild/`) as an on-brand filing category, not a product. **Artifacts** are Plans, Patterns, Playbooks, and Decisions. Pattern front matter uses `owner` (runtime product) and optional `cabinet` (organizational only). Canonical plan links use `patternId`; paths live in `docs/patterns/index.yaml`. Tracked Pattern files remain authoritative; Atlas/Notion holds discoverability copies only. Cabinet values must not affect plan authorization, queue routing, or promotion authority. P0 cabinet/schema and P1 active Pattern seeds are documentation only; Pattern runtime loaders (Yarn/Loom cite) stay unauthorized until a later gate.
+- Why: Bing final review approved the architecture after removing Portfolio/Governance product leaks; six-noun whiteboard shape stays stable for peer-programmer teaching and Slice 8 promotion without inventing hidden products.
+- See: [docs/patterns/README.md](patterns/README.md); [docs/patterns/SCHEMA.md](patterns/SCHEMA.md); [docs/patterns/index.yaml](patterns/index.yaml); plan `metra_patterns_architecture_0354f980.plan.md`
+
 ## 2026-09-02 - Inspect pre-commit: live hash drift warns; Bing affirm blocks
 
 - Decision: Pre-commit requires Bing gate affirmation for the **assessed** report (`assessInputHash` equals `gateInputHash`). Live working-tree hash drift vs that pair is a **warning** only (`live-drift`), not a hard block. Hard blocks remain: no assessment, no gate record, or `assess-gate-mismatch` (re-assess after affirm without re-affirm). Aligns affirm/pack stale-hash warnings with the commit hook.

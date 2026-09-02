@@ -18,6 +18,7 @@ A file sitting on disk.
 Examples:
 
 - `docs/playbooks/*.md`
+- `docs/patterns/*.md` (architectural method docs; see Cabinet rules)
 - `docs/Decisions.md`
 - `decision-registry.json`
 - `solutions/`
@@ -51,7 +52,8 @@ What Metra/Cursor load every turn without a trigger. This is the thing being man
 
 | Type | Role | Metra home | Default context? |
 | --- | --- | --- | --- |
-| Procedural | How to do things | Stub ceilings, playbook index, `docs/playbooks/*.md`, future A4 `SKILL.md` | Stub index and ceilings yes; playbook bodies no |
+| Procedural (operator) | How to run Metra | Stub ceilings, playbook index, `docs/playbooks/*.md`, future A4 `SKILL.md` | Stub index and ceilings yes; playbook bodies no |
+| Procedural (architectural) | How Metra / Yarn / Loom / Atlas are designed to work | Pattern index in stub, `docs/patterns/**`, [patterns/SCHEMA.md](patterns/SCHEMA.md) | Stub index yes; Pattern bodies no |
 | Working | Current chat | Cursor / Ask in-thread messages | Yes, session only |
 | Semantic | Facts | Decision Registry, OCC, `Decisions.md`, solutions, registry serves | Retrieved, capped, deduped |
 | Episodic | What already happened | Ask Session Journal, chats, Attention, Capture promote path | Labeled recall only |
@@ -113,12 +115,23 @@ Playbook bodies under `docs/playbooks/*.md` do not count toward the stub budget.
 
 ## Cabinet rules
 
-- Use `docs/playbooks/*.md` only (one doorknob; no alternate paths).
-- One procedure per file.
+Two doorknobs (do not invent a third):
+
+| Doorknob | Audience | Path |
+| --- | --- | --- |
+| Playbooks | Operator how-to | `docs/playbooks/*.md` |
+| Patterns | Architectural methods (peer-programmer teaching + agent cite) | `docs/patterns/**` |
+
+Shared rules:
+
+- One procedure or one Pattern per file.
 - Keep cabinet files specific.
-- Do not move generic background sludge into playbooks just to preserve it.
+- Do not move generic background sludge into playbooks or Patterns just to preserve it.
 - Cabinet files are not mounted always-on.
-- Playbook bodies load only when a task triggers a Read.
+- Playbook and Pattern bodies load only when a task triggers a Read (or an explicit plan `patterns:` cite when runtime is authorized).
+- Pattern `cabinet:` front-matter values (for example `guild`) are **organizational only** - they must not drive authorization, queue routing, or promotion authority. See [Decisions.md](Decisions.md) (2026-09-02 Patterns taxonomy) and [patterns/SCHEMA.md](patterns/SCHEMA.md).
+- Do not use `docs/patterns/portfolio/` or `docs/patterns/governance/` (Guild cabinet is `docs/patterns/guild/`).
+- Pattern bodies and playbook bodies do not count toward the AGENTS stub line budget.
 
 ## Playbook front matter
 
@@ -151,7 +164,8 @@ Every playbook moved from `AGENTS.md` during a desk split should include:
 
 When adding durable knowledge, classify the home first:
 
-- Procedural: playbook or stub pointer
+- Procedural (operator): playbook or stub pointer
+- Procedural (architectural): Pattern under `docs/patterns/` + `index.yaml` entry; stub On-demand patterns row
 - Semantic: `Decisions.md`, Decision Registry, OCC, `solutions/`
 - Episodic: Journal / Capture / Recall path
 - Working: current chat only
@@ -160,7 +174,7 @@ Then:
 
 1. Dedupe against the target home.
 2. Write to the correct home.
-3. Update the stub index if a playbook was added.
+3. Update the stub index if a playbook or Pattern was added.
 4. Keep default context lean.
 
 ## Artifact prose (AISIGNS)
@@ -181,8 +195,9 @@ Chat voice may stay conversational; docs, playbooks, decisions, commits, and tic
 - Never treat storage as context.
 - Never mount full playbooks always-on.
 - Never collapse cabinet files back into stubs during ticket pressure.
-- Never auto-promote playbooks into Ask prompts or Cursor rules.
-- Never hide a required safety ceiling only in a cabinet playbook.
+- Never auto-promote playbooks or Patterns into Ask prompts or Cursor rules.
+- Never hide a required safety ceiling only in a cabinet playbook or Pattern.
+- Never treat Pattern `cabinet` as a runtime product or special-case branch.
 - Never make Context Footprint Estimate a quality score, maturity score, or merge gate in A2.
 
 ## Audit hygiene
