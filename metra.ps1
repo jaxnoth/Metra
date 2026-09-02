@@ -147,6 +147,11 @@ function Add-MetraYarnConfirmForward {
             $forward += '-Confirm'
         }
     }
+    elseif ($subLower -eq 'plan' -and $forward.Count -gt 0 -and $forward[0].ToLowerInvariant() -eq 'approve') {
+        if ($forward -notcontains '-Confirm' -and $forward -notcontains '-DryRun') {
+            $forward += '-Confirm'
+        }
+    }
     return $forward
 }
 

@@ -4,6 +4,7 @@
 $script:YarnHostRootOverride = $null
 $script:YarnCaptureOverride = $null
 $script:YarnPackOverride = $null
+$script:YarnLoomIngestOverride = $null
 
 function Get-YarnHostRoot {
     [CmdletBinding()]

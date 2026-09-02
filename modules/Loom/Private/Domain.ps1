@@ -1040,6 +1040,245 @@ function Invoke-MetraLoomTriage {
     }
 }
 
+function Get-MetraLoomHandoffContractVersion {
+    return 1
+}
+
+function ConvertTo-MetraLoomNormalizedPlanPath {
+    [CmdletBinding()]
+    param([Parameter(Mandatory)][string]$Path)
+    $full = [System.IO.Path]::GetFullPath($Path)
+    return $full.TrimEnd('\', '/')
+}
+
+function Get-MetraLoomYarnPlanIdentity {
+    <#
+    .SYNOPSIS
+        Idempotency key: projectKey + Windows-normalized full plan path (case-insensitive).
+    #>
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory)][string]$ProjectKey,
+        [Parameter(Mandatory)][string]$PlanPath
+    )
+    $key = [string]$ProjectKey.Trim().ToLowerInvariant()
+    $norm = (ConvertTo-MetraLoomNormalizedPlanPath -Path $PlanPath).ToLowerInvariant()
+    return ('{0}|{1}' -f $key, $norm)
+}
+
+function Test-MetraLoomYarnApprovedPlanPathAllowed {
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory)][string]$Path,
+        [Parameter(Mandatory)][string]$ProjectKey,
+        [string]$MetraRoot = (Get-LoomHostRoot)
+    )
+
+    $full = ConvertTo-MetraLoomNormalizedPlanPath -Path $Path
+    if (Test-MetraLoomFormalPlanPathAllowed -Path $full -MetraRoot $MetraRoot) {
+        return $true
+    }
+
+    $key = [string]$ProjectKey.Trim()
+    if ($key -match '[\\/]' -or $key -match '\.\.' -or $key -notmatch '^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$') {
+        return $false
+    }
+    $parent = Split-Path -Parent $MetraRoot
+    $docs = [System.IO.Path]::GetFullPath((Join-Path (Join-Path $parent $key) 'docs'))
+    return (Test-LoomPathWithinRoot -Path $full -Root $docs)
+}
+
+function Test-MetraLoomYarnRankSnapshot {
+    [CmdletBinding()]
+    param([Parameter(Mandatory)]$RankSnapshot)
+
+    if ($null -eq $RankSnapshot) {
+        throw 'rankSnapshot is required for Yarn-approved plan ingest.'
+    }
+    foreach ($name in @('total', 'effectiveImpact', 'completionReady', 'rubricVersion', 'rankReasons')) {
+        $prop = $RankSnapshot.PSObject.Properties[$name]
+        if (-not $prop) {
+            throw "rankSnapshot missing required field: $name"
+        }
+    }
+    return $true
+}
+
+function Find-MetraLoomQueueItemByYarnHandoff {
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory)][string]$Root,
+        [Parameter(Mandatory)][string]$PlanIdentity,
+        [Parameter(Mandatory)][string]$ApprovalRevision
+    )
+
+    foreach ($item in @(Get-MetraLoomQueueItems -Root $Root)) {
+        $handoff = Get-LoomProp -Object $item -Name 'yarnHandoff' -Default $null
+        if ($null -eq $handoff) { continue }
+        $idMatch = [string](Get-LoomProp -Object $handoff -Name 'planIdentity' -Default '')
+        $revMatch = [string](Get-LoomProp -Object $handoff -Name 'approvalRevision' -Default '')
+        if ($idMatch -eq $PlanIdentity -and $revMatch -eq $ApprovalRevision) {
+            return $item
+        }
+    }
+    return $null
+}
+
+function Invoke-MetraLoomIngestApprovedPlan {
+    <#
+    .SYNOPSIS
+        Yarn→Loom handoff: ingest an Approved formal plan with idempotent identity (A3).
+        Does not change lane scheduling or Capture triage semantics.
+    #>
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory)][string]$Root,
+        [Parameter(Mandatory)][string]$PlanPath,
+        [Parameter(Mandatory)][string]$ProjectKey,
+        [Parameter(Mandatory)][string]$ApprovalRevision,
+        [Parameter(Mandatory)][string]$ApprovalId,
+        [Parameter(Mandatory)]$RankSnapshot,
+        [Parameter(Mandatory)][int]$HandoffContractVersion,
+        [string]$MetraRoot = (Get-LoomHostRoot)
+    )
+
+    if ([string]::IsNullOrWhiteSpace($PlanPath)) { throw 'PlanPath is required.' }
+    if ([string]::IsNullOrWhiteSpace($ProjectKey)) { throw 'ProjectKey is required.' }
+    if ([string]::IsNullOrWhiteSpace($ApprovalRevision)) { throw 'ApprovalRevision is required.' }
+    if ([string]::IsNullOrWhiteSpace($ApprovalId)) { throw 'ApprovalId is required.' }
+
+    $expectedHandoff = Get-MetraLoomHandoffContractVersion
+    if ([int]$HandoffContractVersion -ne [int]$expectedHandoff) {
+        throw ("handoffContractVersion $HandoffContractVersion (expected $expectedHandoff)")
+    }
+    [void](Test-MetraLoomYarnRankSnapshot -RankSnapshot $RankSnapshot)
+
+    $full = ConvertTo-MetraLoomNormalizedPlanPath -Path $PlanPath
+    if (-not (Test-Path -LiteralPath $full)) {
+        throw "Plan not found: $full"
+    }
+    if (-not (Test-MetraLoomYarnApprovedPlanPathAllowed -Path $full -ProjectKey $ProjectKey -MetraRoot $MetraRoot)) {
+        throw "Plan path is not under an allowed formal plan root for projectKey '$ProjectKey': $full"
+    }
+
+    $plan = Read-MetraLoomPlanFile -Path $full -MetraRoot $MetraRoot
+    if (-not $plan) { throw "Plan not found: $full" }
+    if (-not $plan.approved) {
+        throw "Plan is not Approved (status: $($plan.planStatus)). Yarn human approval required before ingest."
+    }
+
+    $planIdentity = Get-MetraLoomYarnPlanIdentity -ProjectKey $ProjectKey -PlanPath $full
+    $existing = Find-MetraLoomQueueItemByYarnHandoff -Root $Root -PlanIdentity $planIdentity -ApprovalRevision $ApprovalRevision
+    if ($existing) {
+        return [PSCustomObject]@{
+            outcome          = 'idempotent'
+            queueItemId      = [string]$existing.id
+            item             = $existing
+            planIdentity     = $planIdentity
+            approvalRevision = $ApprovalRevision
+            approvalId       = $ApprovalId
+        }
+    }
+
+    Initialize-MetraLoomLayout -Root $Root
+
+    $project = $plan.project
+    if ([string]::IsNullOrWhiteSpace([string](Get-LoomProp -Object $project -Name 'registryName' -Default ''))) {
+        $project = [PSCustomObject]@{
+            registryName      = $ProjectKey
+            root              = ''
+            routingConfidence = 0.95
+            routingEvidence   = 'yarn-projectKey'
+        }
+    }
+    elseif ([string]$project.registryName -ne $ProjectKey) {
+        # Prefer Yarn's canonical projectKey for identity; keep routing metadata.
+        $project = [PSCustomObject]@{
+            registryName      = $ProjectKey
+            root              = [string](Get-LoomProp -Object $project -Name 'root' -Default '')
+            routingConfidence = [double](Get-LoomProp -Object $project -Name 'routingConfidence' -Default 0.9)
+            routingEvidence   = ('yarn-projectKey-override:' + [string](Get-LoomProp -Object $project -Name 'routingEvidence' -Default ''))
+        }
+    }
+
+    $classification = @{
+        reversibility      = 'code'
+        crossRoot          = $false
+        productionTouch    = $false
+        externalSideEffect = $false
+        manualTestClass    = 'none'
+    }
+    $scoresIn = @{
+        impact          = 4
+        confidence      = 5
+        userTestBurden  = 1
+        autoVerifiable  = 5
+        dependencyValue = 3
+    }
+    $contract = [PSCustomObject]@{
+        objective      = [string]$plan.overview
+        allowedPaths   = @('scripts', 'tests', 'docs')
+        forbiddenPaths = @('docs/Decisions.md')
+        doneWhen       = @($(if (@($plan.doneWhen).Count -gt 0) { $plan.doneWhen } else { 'Plan slice acceptance criteria met.' }))
+        verifyCommands = @($(if (@($plan.verifyCommands).Count -gt 0) { $plan.verifyCommands } else { '.\metra.ps1 verify' }))
+    }
+    $score = Measure-MetraLoomTriageScore -Classification $classification -Scores $scoresIn -Project $project
+    $elig = Test-MetraLoomEligibility -Classification $classification -Project $project -Contract $contract
+    if (-not $elig.eligible) {
+        throw ("Plan ineligible for ingest: {0}" -f (($elig.reasons) -join ', '))
+    }
+
+    $source = [PSCustomObject]@{
+        type           = 'yarn-approved-plan'
+        path           = $full
+        planStatus     = [string]$plan.planStatus
+        bingReviewed   = $true
+        approvalId     = $ApprovalId
+        approvalRevision = $ApprovalRevision
+    }
+
+    $cand = [PSCustomObject]@{
+        id                = 'yarn-approved'
+        summary           = [string]$plan.name
+        source            = $source
+        project           = $project
+        classification    = $classification
+        scores            = $score
+        contract          = $contract
+        eligible          = $true
+        ineligibleReasons = @()
+    }
+
+    $item = New-MetraLoomQueueItemFromCandidate -Root $Root -Candidate $cand
+    $item | Add-Member -NotePropertyName yarnHandoff -NotePropertyValue ([PSCustomObject]@{
+            planIdentity           = $planIdentity
+            projectKey             = $ProjectKey
+            approvalId             = $ApprovalId
+            approvalRevision       = $ApprovalRevision
+            handoffContractVersion = [int]$HandoffContractVersion
+            rankSnapshot           = $RankSnapshot
+            ingestedAt             = (Get-Date).ToUniversalTime().ToString('o')
+        }) -Force
+    Save-MetraLoomQueueItem -Root $Root -Item $item
+    Add-MetraLoomJournalEntry -Root $Root -Entry @{
+        timestamp = (Get-Date).ToString('o')
+        itemId    = [string]$item.id
+        from      = 'queued'
+        to        = 'queued'
+        actor     = 'yarn-handoff'
+        reason    = ('ingest-approved-plan:' + $ApprovalRevision)
+    }
+
+    return [PSCustomObject]@{
+        outcome          = 'enqueued'
+        queueItemId      = [string]$item.id
+        item             = $item
+        planIdentity     = $planIdentity
+        approvalRevision = $ApprovalRevision
+        approvalId       = $ApprovalId
+    }
+}
+
 function Invoke-MetraLoomEnqueueFromPlan {
     [CmdletBinding()]
     param(

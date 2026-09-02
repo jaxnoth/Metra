@@ -25,7 +25,7 @@ function Get-YarnPlanContentForHash {
     $canonical = Get-YarnCanonicalText -Text $PlanText
     $filtered = New-Object System.Collections.Generic.List[string]
     foreach ($line in ($canonical -split "`n")) {
-        if ($line -match '^\s*(packedAt|packPlanPath|packInputHash)\s*:') { continue }
+        if ($line -match '^\s*(packedAt|packPlanPath|packInputHash|status|bingReviewed|approvedAt|approvedBy|approvalId|approvalRevision)\s*:') { continue }
         [void]$filtered.Add($line)
     }
     return ($filtered -join "`n")

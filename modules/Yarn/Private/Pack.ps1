@@ -1,4 +1,4 @@
-# Pack adapter + reconcile (A2). Approval unavailable.
+# Pack adapter + reconcile (A2/A3). Approval + handoff retry in Approve.ps1 / reconcile.
 
 function Get-YarnInspectPackDir {
     param(
@@ -187,6 +187,26 @@ function Invoke-MetraYarnReconcile {
     )
 
     $results = New-Object System.Collections.Generic.List[object]
+
+    # A3: retry Loom handoff for approved items (pending|failed).
+    foreach ($link in @(Get-YarnPlanLinks -Root $Root)) {
+        $handoff = Get-YarnProp -Object $link -Name 'loomHandoff' -Default $null
+        $state = [string](Get-YarnProp -Object $handoff -Name 'state' -Default '')
+        if ($state -notin @('pending', 'failed')) { continue }
+        $bid = [string](Get-YarnProp -Object $link -Name 'backlogId' -Default '')
+        if ([string]::IsNullOrWhiteSpace($bid)) { continue }
+        if ($DryRun) {
+            [void]$results.Add([PSCustomObject]@{
+                    backlogId = $bid
+                    action    = 'would-retry-handoff'
+                    state     = $state
+                })
+            continue
+        }
+        $retry = Invoke-YarnHandoffIngestRetry -Root $Root -BacklogId $bid -MetraRoot $MetraRoot
+        [void]$results.Add($retry)
+    }
+
     foreach ($item in @(Get-MetraYarnBacklog -Root $Root)) {
         if ([string]$item.status -in @('parked', 'rejected', 'approved')) { continue }
         $health = [string](Get-YarnProp -Object $item -Name 'health' -Default 'ok')
@@ -240,9 +260,22 @@ function Invoke-MetraYarnReconcile {
         }
     }
 
+    $approvedPending = @()
+    foreach ($link in @(Get-YarnPlanLinks -Root $Root)) {
+        $st = [string](Get-YarnProp -Object (Get-YarnProp -Object $link -Name 'loomHandoff' -Default $null) -Name 'state' -Default '')
+        if ($st -in @('pending', 'failed')) {
+            $approvedPending += [PSCustomObject]@{
+                backlogId = [string]$link.backlogId
+                handoff   = $st
+                lastError = [string](Get-YarnProp -Object $link.loomHandoff -Name 'lastError' -Default '')
+            }
+        }
+    }
+
     return [PSCustomObject]@{
-        outcome = $(if ($DryRun) { 'reconcile-dry-run' } else { 'reconciled' })
-        actions = @($results.ToArray())
+        outcome                    = $(if ($DryRun) { 'reconcile-dry-run' } else { 'reconciled' })
+        actions                    = @($results.ToArray())
+        approvedButNotEnqueued     = @($approvedPending)
     }
 }
 
