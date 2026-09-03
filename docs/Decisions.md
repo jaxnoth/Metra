@@ -32,6 +32,14 @@ Entry shape:
 
 ---
 
+---
+
+## 2026-09-02 - Yarn Phase C leftovers / Loom naming
+
+- Decision: **Yarn** is a Metra-hosted L1.5 intake product on the portfolio line: **Atlas** remembers; **Metra** coordinates; **Yarn** prepares; **Forge** generates; **Loom** executes. AutoProgram is not a current product name. It remains a deprecated CLI alias (`metra.ps1 autoprogram`), migrate path, dual branch prefix, and historical ID shape (`AP-*` / `CAND-*`) only. AutoProgram-named redirect stubs under `docs/` are deleted; canonical homes are `loom-product-boundary.plan.md` and `loom-m0-tracks.md`.
+- Why: Slice 7 Phase C closes AutoProgram leftovers after Yarn Phase B without reopening Track G or weakening Loom compatibility.
+- See: [docs/loom-product-boundary.plan.md](loom-product-boundary.plan.md); [docs/playbooks/yarn.md](playbooks/yarn.md); [docs/portfolio-memory-path.md](portfolio-memory-path.md)
+
 ## 2026-09-02 - Yarn Phase B Atlas intake (local mirror)
 
 - Decision: Yarn Phase B adds Atlas as an optional intake source only. Yarn reads the Atlas local mirror (`data/sync/objects` + stub corpora), persists `atlasStableId` / `memoryLane=atlas` / `atlasKind` on backlog items, ranks via existing `strategicAlignment` (Plan/Roadmap 0.15, Parked 0.10), and drafts only through `yarn synthesize -FromMemory -Confirm`. Atlas providers return data only; Yarn does not promote OCC or Decisions; `atlas sync pull` never synthesizes; offline Atlas yields `memoryLane=paused` without failing Capture/Future-Dev scan.
@@ -137,25 +145,25 @@ Entry shape:
 
 ## 2026-08-31 - Completion is evidence; acceptance is authority
 
-- Decision: Machine **completion** is evidence that a governed process met its contract (inspect goal, verify, scope, done-when). Operator **acceptance** is authority to integrate (merge, push, promote, close). **Completion without acceptance is forbidden** for AutoProgram queue items, TicketWatch recommendations, Atlas knowledge promotion, and future agentic write surfaces. No harness may treat its own judgment as operator approval.
+- Decision: Machine **completion** is evidence that a governed process met its contract (inspect goal, verify, scope, done-when). Operator **acceptance** is authority to integrate (merge, push, promote, close). **Completion without acceptance is forbidden** for Loom queue items (working name through M2 was AutoProgram; current name is Loom), TicketWatch recommendations, Atlas knowledge promotion, and future agentic write surfaces. No harness may treat its own judgment as operator approval.
 - Why: Portfolio principle surfaced during AutoProgram boundary review (Bing 2026-08-31). Prevents authority drift as automation grows.
-- See: [docs/autoprogram-product-boundary.plan.md](autoprogram-product-boundary.plan.md); AutoProgram roadmap plan Slice 4+ daily gate
+- See: [docs/loom-product-boundary.plan.md](loom-product-boundary.plan.md); Loom roadmap plan Slice 4+ daily gate
 
 ---
 
 ## 2026-08-31 - AutoProgram dependency direction (adapters, not private imports)
 
-- Decision: AutoProgram domain code calls Metra only through **documented adapters** to public Metra surfaces (routing, Capture read, plan roots, inspect, verify, Ops health). **Forbidden:** Loom/AutoProgram importing or dot-sourcing `scripts/private/Routing.ps1`, `Capture.ps1`, or other Metra private implementation files. Direction: `Loom (AutoProgram) → Adapters → Metra`. Extraction readiness requires AutoProgram module tests green **without** `Import-Module Metra.psm1`.
+- Decision: Loom domain code (working name through M2 was AutoProgram; current name is Loom) calls Metra only through **documented adapters** to public Metra surfaces (routing, Capture read, plan roots, inspect, verify, Ops health). **Forbidden:** Loom importing or dot-sourcing `scripts/private/Routing.ps1`, `Capture.ps1`, or other Metra private implementation files. Direction: `Loom → Adapters → Metra`. Extraction readiness requires Loom module tests green **without** `Import-Module Metra.psm1`.
 - Why: Difference between a future extractable module and a permanent god module (Bing 2026-08-31). Highest-value rule in boundary plan Section 6.
-- See: [docs/autoprogram-product-boundary.plan.md](autoprogram-product-boundary.plan.md) Section 6, 10.5
+- See: [docs/loom-product-boundary.plan.md](loom-product-boundary.plan.md) Section 6, 10.5
 
 ---
 
 ## 2026-08-31 - Loom is a governed-execution domain (not Forge)
 
-- Decision: Portfolio products: **Atlas** remembers; **Metra** coordinates; **Forge** generates declarative artifacts from structured definitions; **Loom** executes governed plans (approved formal plans → governed queue → isolated mutation → review → operator acceptance). Working name through M2: **AutoProgram** (`metra.ps1 autoprogram`, `modules/AutoProgram/`). Loom does **not** move into Forge. Forge authority is regenerable output; Loom authority is mutable execution history (queue, journal, branches, review evidence, acceptance records). Metra hosts the CLI façade temporarily; module boundary must be extractable before sibling repo. **Non-goals:** move into Forge; sibling repo during M0–M2; autonomous merge/push/accept; Notion as queue backend. **Extraction:** sibling repo only when Section 15 triggers in [autoprogram-product-boundary.plan.md](autoprogram-product-boundary.plan.md) are met (any two, including isolation gate).
+- Decision: Portfolio products: **Atlas** remembers; **Metra** coordinates; **Yarn** prepares; **Forge** generates declarative artifacts from structured definitions; **Loom** executes governed plans (approved formal plans → governed queue → isolated mutation → review → operator acceptance). Working name through M2 was **AutoProgram** (`metra.ps1 autoprogram`, `modules/AutoProgram/`); current name is **Loom**. Loom does **not** move into Forge. Forge authority is regenerable output; Loom authority is mutable execution history (queue, journal, branches, review evidence, acceptance records). Metra hosts the CLI façade temporarily; module boundary must be extractable before sibling repo. **Non-goals:** move into Forge; sibling repo during M0–M2; autonomous merge/push/accept; Notion as queue backend. **Extraction:** sibling repo only when Section 15 triggers in [loom-product-boundary.plan.md](loom-product-boundary.plan.md) are met (any two, including isolation gate).
 - Why: Forge and Loom have different operating models (regenerate vs accumulate evidence). Bing boundary review approved this split 2026-08-31.
-- See: [docs/autoprogram-product-boundary.plan.md](autoprogram-product-boundary.plan.md) Sections 1, 15, 16; tag `boundary-correction-start` (`7d90ebe`)
+- See: [docs/loom-product-boundary.plan.md](loom-product-boundary.plan.md) Sections 1, 15, 16; tag `boundary-correction-start` (`7d90ebe`)
 
 ---
 
