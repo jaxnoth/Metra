@@ -1,233 +1,73 @@
-# Plan: Metra Scout
+# Plan: Scout (parked)
 
-**Status:** Approved direction - initial plan (2026-09-03)
+**Status:** Parked (2026-09-03)
 **Date:** 2026-09-03
-**Product:** Metra Scout - iOS application and always-on investigative subsystem
-**Supersedes naming:** Metra iOS, Metra Mobile, Metra Companion (all retired)
-**Related plans:**
+**Not approved as:** a separate Metra subsystem
+**Related:** [ios-companion-app.plan.md](ios-companion-app.plan.md) (Metra iOS brand), Attention (existing signal / recommendation layer)
 
-| Plan | Doc | Status |
-|------|-----|--------|
-| iOS app umbrella (UI shape, presence, voice) | [ios-companion-app.plan.md](ios-companion-app.plan.md) | Approved - UI shape remains valid |
-| iOS conversation policy | [ios-conversation-policy.plan.md](ios-conversation-policy.plan.md) | Approved - policy layer still applies |
-| iOS presence behavior | [ios-presence-behavior.plan.md](ios-presence-behavior.plan.md) | Approved - presence transitions still valid |
-| Vision Ask contract | [ios-vision-ask-contract.md](ios-vision-ask-contract.md) | Approved - Ask contract still valid |
-| Tailscale identity auth | [tailscale-identity-auth.plan.md](tailscale-identity-auth.plan.md) | Approved direction |
-
-**Decision Registry:** `docs/Decisions.md` (2026-09-03 Scout entries)
+**Decision Registry:** `docs/Decisions.md` (2026-09-03 Scout park)
 
 ---
 
-## 1. What Scout is
+## Disposition
 
-Scout is an **investigative capability**, not a chatbot, not a virtual personality, and not a peer application.
+Scout is **not** approved as a first-class Metra subsystem.
 
-Scout exists to discover what deserves attention.
+Desired investigative behaviors were identified, but no clear ownership boundary differentiates Scout from **Attention**. Granting Scout peer status next to Atlas, Codex, Loom, and Attention would invent a sibling whose mission still overlaps Attention + recommendations.
 
-The iOS application named Metra Scout is the primary operator surface for Scout observations. The Scout subsystem also operates continuously in the background, independent of whether the iOS app is open.
+**Likely future path:** Scout ideas may fold into **Attention 2.0** rather than become a separate product. Revisit only if a concrete workflow needs dedicated investigative reasoning beyond Attention recommendations.
 
-Scout is not the Ani/Grok companion replacement. It is a distinct product identity built around investigation rather than conversation.
-
----
-
-## 2. Architectural position
-
-```
-Metra
-├── Atlas          (portfolio memory, document exchange)
-├── TicketTracker  (ticket lifecycle, helpdesk ops)
-├── Codex          (knowledge base, KB articles)
-├── Loom           (plan execution, agentic coding)
-├── Attention      (signal bus, detection layer)
-└── Scout          (investigative subsystem, analyst layer)
-```
-
-Scout is a first-class subsystem. It is not a feature of another subsystem.
-
-### Signal chain
-
-```
-Signal
-  → Attention         (detects; routes signal to Scout)
-  → Scout             (investigates; generates observations, hypotheses, recommendations)
-  → Recommendation    (confidence-scored, evidence-based output)
-  → Human Affirmation (required before any action)
-```
-
-Attention and Scout are intentionally separate layers. Attention detects; Scout investigates. This separation preserves independent replaceability: Attention can evolve its detection logic without changing Scout's investigative contract, and Scout can evolve its reasoning without changing how signals are detected.
+Earlier same-day drafts that formalized Scout as an approved subsystem (or renamed the iOS app) are superseded by the park decision.
 
 ---
 
-## 3. Scout contract
+## Settled (not Scout)
 
-### Primary mission
-
-Discover what deserves attention.
-
-### What Scout does
-
-- Identify weak assumptions in prevailing theories or plans
-- Generate alternate explanations for observed patterns
-- Challenge architectural direction with evidence
-- Review code changes for drift, risk, or missed implications
-- Detect recurring patterns across tickets, commits, and observations
-- Surface anomalies in system behavior or portfolio activity
-- Identify missing evidence before decisions are made
-- Suggest investigations the operator has not yet considered
-- Generate new ideas from cross-domain signal
-- Find contradictory signals across sources
-
-### What Scout does not do
-
-Scout may not:
-
-- Approve any action
-- Deploy to any environment
-- Commit code
-- Send communications on behalf of the operator
-- Modify production systems
-- Execute changes without explicit human affirmation
-
-Human affirmation is required for all Scout outputs that affect the portfolio.
+- iOS application name and brand remain **Metra**.
+- Phone is a client of Metra, not a second Metra.
+- Secretary / coworker framing applies to Metra on the phone, not to a Scout product.
 
 ---
 
-## 4. Notification model
+## Desired attributes (parked notes)
 
-Scout may proactively generate observations. Observations are:
+Keep these as candidate behaviors for a later Attention evolution or a future subsystem proof:
 
-- **Concise** - one to three sentences; lead with the signal
-- **Evidence-based** - cite the source (ticket, commit, Attention card, pattern)
-- **Confidence-scored** - low / medium / high; do not overstate certainty
-- **Recommendation-oriented** - close with a suggested investigation or next step
+- Alternate / competing explanations
+- Contradiction detection
+- Assumption challenges
+- Investigative or deliberately adversarial reasoning
 
-Example observations:
+Example of a *possible* distinct behavior (not approved, not implemented):
 
-> "Three Pentegra employees remain unexplained in the ticket evidence. Confidence: medium. Suggest reviewing the meeting prep notes for the remaining three names."
+> Attention: "Pentegra discrepancy detected."
+> Investigative step: "The current explanation is probably incomplete. Here are three competing explanations."
 
-> "Recent commits suggest Atlas responsibility is drifting into Metra routing logic. Confidence: high. Recommend reviewing the routing decision boundary before the next release."
-
-> "TicketTracker activity shows four DNSFilter exception requests in 30 days. Confidence: high. A solutions write-up may reduce repeat ticket handling time."
-
-> "An alternate explanation exists for the payroll discrepancy: the Colleague feed timing change on 2026-08-15 predates the first report by two days. Confidence: medium."
-
-Observations that do not meet evidence or confidence thresholds should be withheld or flagged as speculative rather than surfaced as authoritative.
+If that step never needs a separate owner, it belongs in Attention.
 
 ---
 
-## 5. Provider strategy
+## Open question (reopen trigger)
 
-Scout is provider-agnostic. The provider is an implementation detail.
+Do the attributes above belong in **Attention**, or do they justify a dedicated subsystem after a concrete workflow appears?
 
-### Configuration
+Revisit when:
 
-Scout uses a `scout.engine` configuration pin, following the same pattern as `ask.engine` and `inspect.*` pins.
-
-```json
-{
-  "scout": {
-    "engine": "claude",
-    "fallback": "local"
-  }
-}
-```
-
-### Supported provider families (initial)
-
-- Claude (Anthropic)
-- GPT (OpenAI)
-- Grok (xAI) - not required; not the primary
-- Local models (Ollama)
-- Future providers
-
-### Engine independence
-
-When implementation and Scout review use different model families, Scout findings are stronger. The engine independence principle from Inspect applies here: do not treat Scout observations as independent validation when the Metra Agent and Scout share the same model family.
+- A named workflow requires competing explanations or assumption challenges that Attention recommendations cannot cover, **or**
+- Attention is explicitly redesigned as Attention 2.0 and absorbs these notes.
 
 ---
 
-## 6. iOS application: Metra Scout
+## Explicit non-goals while parked
 
-The iOS application is renamed **Metra Scout**. The app is the primary operator-facing surface for Scout observations. It is a client of the operator's Metra Ops host over Tailscale.
-
-### Prior UI contracts (still valid)
-
-The presence behavior, conversation policy, and Vision Ask contracts from the prior iOS companion plans remain in effect for the UI layer. Scout changes the identity and mission framing of the app; it does not invalidate the SwiftUI architecture, Tailscale auth, or presence face design.
-
-| Layer | Prior contract | Scout impact |
-|-------|---------------|--------------|
-| Presence face / transitions | `ios-presence-behavior.plan.md` | No change |
-| Conversation Desk / Vision | `ios-conversation-policy.plan.md` | Vision mode reframed as Scout investigation surface |
-| Voice identity | `ios-voice-identity.plan.md` | No change |
-| Tailscale auth | `tailscale-identity-auth.plan.md` | No change |
-| Backend | `/api/ask`, capture/journal, profile | Scout adds `/api/scout` investigation lane |
-
-### Mode mapping (updated)
-
-| Mode | Prior name | Scout framing |
-|------|-----------|---------------|
-| Vision | Companion chat / Ani replacement | Scout investigation surface - open-ended inquiry, observation capture, proactive Scout output |
-| Bounded | Explicit portfolio Metra | Portfolio ops on phone - route + evidence (unchanged) |
-
-### Eventual capabilities (not committed for v1)
-
-- Meeting preparation summaries before calendar events
-- Ticket observations before opening a ticket in iSupport
-- Architecture review suggestions on recent commits
-- Code review surfacing on active Loom executions
-- Investigation tracking across sessions
-- Idea generation from cross-portfolio signal
-- Voice-first Scout interaction (drive-time use case)
-- Proactive push notifications from background Scout activity
+- No Scout registry project / `AGENTS.md`
+- No `scout.engine` pin as a shipping contract
+- No Loom / Yarn enqueue for Scout implementation
+- No iOS app rename to Scout or Metra Scout
+- No claim that Scout is already Attention's peer
 
 ---
 
-## 7. Background Scout subsystem
+## Historical note
 
-Scout also operates as a background subsystem independent of the iOS app. This is the "always-on" layer.
-
-Background Scout is not yet implemented. The initial plan establishes the capability contract and the signal chain. Implementation follows in later phases.
-
-Background Scout will:
-
-- Consume Attention output on a configurable cadence
-- Run investigations against the current portfolio state
-- Queue observations for the operator (iOS push, Ops desk card, or both)
-- Respect the authority ceiling at all times
-
-Background Scout will not run in a continuous loop without a cadence gate. Observation volume must be controllable. The Attention volume handling decision (2026-08-11, `attentionVisibleCount`) applies here: Scout must not flood the operator with low-confidence observations.
-
----
-
-## 8. Open questions (to resolve as Scout evolves)
-
-| Question | Notes |
-|----------|-------|
-| Scout cadence gate | How often does background Scout run? Configurable interval? Event-triggered? |
-| Observation store | Where do Scout observations live? Attention memory? A Scout-specific store? Atlas? |
-| Confidence calibration | How are confidence scores derived and displayed? Manual tagging by the engine, or a calibration layer? |
-| Investigation tracking | Can the operator follow up on a Scout observation across sessions? What persists? |
-| Loom integration | Does Scout review active Loom executions? Does Loom trigger Scout? |
-| Codex integration | Does Scout surface KB gaps from TicketTracker patterns? Does Scout draft KB articles? |
-| Registry entry | Scout needs a `projects.json` entry and `AGENTS.md` when implementation begins |
-
----
-
-## 9. Tagline candidates
-
-"Find what deserves attention." - mission-accurate, calm
-
-"See around corners." - more evocative, slightly informal
-
-Both are candidates. No decision required now.
-
----
-
-## 10. What this plan does not change
-
-- Metra routing logic remains unchanged. Scout does not route; Metra routes.
-- TicketTracker remains the ticket lifecycle system. Scout may surface ticket observations; it does not write tickets.
-- Atlas remains the document exchange and portfolio memory layer. Scout may recommend Atlas puts; it does not perform them.
-- Codex remains the KB system. Scout may surface KB gaps; it does not publish KB articles.
-- Loom remains the plan execution layer. Scout may observe Loom runs; it does not trigger or modify them.
-- Human affirmation is required before any Scout recommendation becomes an action.
+This file previously carried an "Approved direction" Scout subsystem architecture (signal chain, provider strategy, async delivery). That content is withdrawn from active architecture. Source discussion and Bing park guidance live in chat / Decision Registry; do not treat older Scout hierarchy diagrams as current.

@@ -2,7 +2,8 @@
 
 **Status:** Approved with minor amendments (Bing 2026-08-29)  
 **Date:** 2026-08-29  
-**Product:** Native iOS companion for the operator (phone). Client of the operator’s **Metra Ops host** over Tailscale - not a separate cloud Metra.  
+**Product:** Native iOS **Metra** app for the operator (phone). Client of the operator’s **Metra Ops host** over Tailscale - not a separate cloud Metra.  
+**Brand:** Metra. Scout is a **parked** idea (possible Attention 2.0), not an approved subsystem and not the app name (see [scout.plan.md](scout.plan.md)).  
 **Replaces (long-term):** Ani / Grok personal-assistant continuity on phone  
 **Related contracts (locked or provisional):**
 
@@ -27,10 +28,12 @@ One app, **two modes** (operator sketch 2026-08-27):
 
 | Mode | Job | Conversation policy lean |
 |------|-----|---------------------------|
-| **Vision** (default v1) | Unbounded companion chat - Ani replacement; Metra personality; Capture forks | Company / Deliver / personal support as policy dictates |
+| **Vision** (default v1) | Unbounded Metra conversation - Ani replacement; Metra personality; Capture forks | Company / Deliver / personal support as policy dictates |
 | **Bounded** (later) | Explicit portfolio Metra on phone - route + evidence | Desk / DeskStrict |
 
 Hard rule: do **not** merge Vision freedom into Ops desk Chat, and do **not** force every Vision turn through portfolio routing.
+
+The app identity is **Metra**. Scout is parked and is not part of the shipping app identity.
 
 **Centering scar (Bing):** Phone is a client of Metra. Phone is not a second Metra.
 
@@ -292,3 +295,4 @@ No Mac → stay on Phase 0 PWA or pause native; do not pretend Windows Cursor ca
 | 2026-08-29 | Trial finding: Attend-as-tab useless. Next shell = Ask+presence single pane; face scales up for voice-only. |
 | 2026-08-29 | User chrome: home is **Metra** (not Ask); no main tabs; Settings = gear mark only. |
 | 2026-08-29 | Shell merge landed in clients/ios (Metra home + gear). |
+| 2026-09-03 | Brand: iOS app stays **Metra**. Scout parked (not an approved subsystem; may become Attention 2.0) - [scout.plan.md](scout.plan.md). |

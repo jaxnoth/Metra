@@ -563,38 +563,42 @@ Describe 'Yarn Plan Board projection' {
     It 'resolves explicit precedence (not Stage max)' {
         InModuleScope Yarn {
             $p = Resolve-YarnPlanBoardProjection -CursorPlan 'a.plan.md' -YarnStatus 'idea' -VerifiedLoomAccepted:$true
-            $p.Stage | Should -Be 5
+            $p.Stage | Should -Be 6
             $p.Board | Should -Be 'Shipped'
             $p.signal | Should -Be 'verified-loom-accepted'
 
             $p = Resolve-YarnPlanBoardProjection -CursorPlan 'a.plan.md' -YarnStatus 'rejected' -HasActiveLoomQueue:$true
-            $p.Stage | Should -Be 7
+            $p.Stage | Should -Be 8
             $p.Board | Should -Be 'Drop'
 
             $p = Resolve-YarnPlanBoardProjection -CursorPlan 'a.plan.md' -YarnStatus 'parked' -HandoffSucceeded:$true
-            $p.Stage | Should -Be 6
+            $p.Stage | Should -Be 7
             $p.Board | Should -Be 'Parked'
 
             $p = Resolve-YarnPlanBoardProjection -CursorPlan 'a.plan.md' -YarnStatus 'approved' -HandoffSucceeded:$true
-            $p.Stage | Should -Be 4
+            $p.Stage | Should -Be 5
             $p.signal | Should -Be 'loom-handoff'
 
             $p = Resolve-YarnPlanBoardProjection -CursorPlan 'a.plan.md' -YarnStatus '' -HasActiveLoomQueue:$true
-            $p.Stage | Should -Be 4
+            $p.Stage | Should -Be 5
 
             $p = Resolve-YarnPlanBoardProjection -CursorPlan 'a.plan.md' -YarnStatus 'approved'
-            $p.Stage | Should -Be 4
+            $p.Stage | Should -Be 5
             $p.signal | Should -Be 'yarn-approved'
 
             $p = Resolve-YarnPlanBoardProjection -CursorPlan 'a.plan.md' -YarnStatus 'pending-bing'
-            $p.Stage | Should -Be 3
+            $p.Stage | Should -Be 4
             $p = Resolve-YarnPlanBoardProjection -CursorPlan 'a.plan.md' -YarnStatus 'stale-pack'
-            $p.Stage | Should -Be 3
+            $p.Stage | Should -Be 4
 
-            $p = Resolve-YarnPlanBoardProjection -CursorPlan 'a.plan.md' -YarnStatus 'idea'
+            $p = Resolve-YarnPlanBoardProjection -CursorPlan 'a.plan.md' -YarnStatus 'idea' -HasFormalPlan:$true
+            $p.Stage | Should -Be 3
+            $p.Board | Should -Be 'Idea'
+            $p = Resolve-YarnPlanBoardProjection -CursorPlan '' -YarnStatus 'idea' -HasFormalPlan:$false
             $p.Stage | Should -Be 2
-            $p = Resolve-YarnPlanBoardProjection -CursorPlan 'a.plan.md' -YarnStatus 'ready'
-            $p.Stage | Should -Be 2
+            $p.Board | Should -Be 'Backlog'
+            $p = Resolve-YarnPlanBoardProjection -CursorPlan 'a.plan.md' -YarnStatus 'ready' -HasFormalPlan:$true
+            $p.Stage | Should -Be 3
 
             $p = Resolve-YarnPlanBoardProjection -CursorPlan 'a.plan.md' -YarnStatus '' -ExistingPlanBoardCard:$true
             $p.Stage | Should -Be 1
@@ -603,6 +607,62 @@ Describe 'Yarn Plan Board projection' {
             $p = Resolve-YarnPlanBoardProjection -CursorPlan 'a.plan.md' -YarnStatus ''
             $p.action | Should -Be 'skip'
             $p.signal | Should -Be 'no-authoritative-signal'
+        }
+    }
+
+    It 'preserves existing side-tab Board and heals Stage; unknown Board goes Inbox without signal' {
+        InModuleScope Yarn {
+            $p = Resolve-YarnPlanBoardProjection -YarnStatus '' -ExistingPlanBoardCard:$true -ExistingBoard 'Backlog'
+            $p.Board | Should -Be 'Backlog'
+            $p.Stage | Should -Be 2
+            $p.signal | Should -Be 'existing-side-tab-preserve'
+
+            $p = Resolve-YarnPlanBoardProjection -YarnStatus '' -ExistingPlanBoardCard:$true -ExistingBoard 'Drop'
+            $p.Board | Should -Be 'Drop'
+            $p.Stage | Should -Be 8
+
+            $p = Resolve-YarnPlanBoardProjection -YarnStatus '' -ExistingPlanBoardCard:$true -ExistingBoard 'Inbox'
+            $p.Board | Should -Be 'Inbox'
+            $p.Stage | Should -Be 1
+
+            $p = Resolve-YarnPlanBoardProjection -YarnStatus 'idea' -HasFormalPlan:$true -ExistingPlanBoardCard:$true -ExistingBoard 'Mystery'
+            $p.Board | Should -Be 'Idea'
+            $p.Stage | Should -Be 3
+
+            $p = Resolve-YarnPlanBoardProjection -YarnStatus '' -ExistingPlanBoardCard:$true -ExistingBoard 'Mystery'
+            $p.Board | Should -Be 'Inbox'
+            $p.Stage | Should -Be 1
+
+            $healed = Resolve-YarnPlanBoardHealProjection -Projection ([PSCustomObject]@{
+                    action = 'project'; CursorPlan = 'x.plan.md'; YarnId = 'Y1'; Stage = 2; Board = 'Idea'; Title = 'x'; signal = 'legacy'
+                })
+            $healed.Stage | Should -Be 3
+            $healed.Board | Should -Be 'Idea'
+        }
+    }
+
+    It 'matches dual identity: Yarn-only card gains CursorPlan; split conflict modifies neither' {
+        InModuleScope Yarn {
+            $yarnOnly = [PSCustomObject]@{ pageId = 'page-y'; CursorPlan = ''; YarnId = 'Y-1'; Board = 'Backlog'; Stage = 2 }
+            $m = Resolve-YarnPlanBoardCardMatch -CursorPlan 'new.plan.md' -YarnId 'Y-1' -ExistingCards @($yarnOnly) `
+                -DatabaseId 'db' -ApiKey 'k'
+            $m.status | Should -Be 'matched'
+            $m.reason | Should -Be 'yarn-id'
+            $m.populateCursorPlan | Should -BeTrue
+            $m.card.pageId | Should -Be 'page-y'
+
+            $cardA = [PSCustomObject]@{ pageId = 'page-a'; CursorPlan = 'a.plan.md'; YarnId = 'Y-A'; Board = 'Idea'; Stage = 3 }
+            $cardB = [PSCustomObject]@{ pageId = 'page-b'; CursorPlan = 'b.plan.md'; YarnId = 'Y-B'; Board = 'Backlog'; Stage = 2 }
+            $split = Resolve-YarnPlanBoardCardMatch -CursorPlan 'a.plan.md' -YarnId 'Y-B' -ExistingCards @($cardA, $cardB) `
+                -DatabaseId 'db' -ApiKey 'k'
+            $split.status | Should -Be 'conflict'
+            $split.reason | Should -Be 'split-identity'
+
+            $dups = Resolve-YarnPlanBoardCardMatch -CursorPlan 'a.plan.md' -YarnId '' -ExistingCards @(
+                $cardA, [PSCustomObject]@{ pageId = 'page-a2'; CursorPlan = 'a.plan.md'; YarnId = 'Y-Z'; Board = 'Idea'; Stage = 3 }
+            ) -DatabaseId 'db' -ApiKey 'k'
+            $dups.status | Should -Be 'conflict'
+            $dups.reason | Should -Be 'duplicate-cursor-plan'
         }
     }
 
@@ -654,7 +714,7 @@ Describe 'Yarn Plan Board projection' {
                 $updated.status | Should -Be 'ready'
                 $upsertCalls = @($script:pbCalls | Where-Object { $_.Operation -eq 'upsert' })
                 $upsertCalls.Count | Should -Be 1
-                [int]$upsertCalls[0].Projection.Stage | Should -Be 2
+                [int]$upsertCalls[0].Projection.Stage | Should -Be 3
 
                 $script:pbCalls = New-Object System.Collections.Generic.List[object]
                 [void](Set-YarnBacklogItemStatus -Root $root -BacklogId $bid -Status 'parked' -SkipPlanBoard)
@@ -734,7 +794,7 @@ Describe 'Yarn Plan Board projection' {
                 $st.access | Should -Be 'accessible'
                 $script:pbWrites | Should -Be 0
 
-                { Invoke-YarnPlanBoardCommand -ArgsRest @('sync', '-Inventory') -Root $root } | Should -Throw '*Inventory*'
+                { Invoke-YarnPlanBoardCommand -ArgsRest @('sync', '-Inventory') -Root $root } | Should -Throw -ExpectedMessage '*inventory*'
             }
             finally {
                 $script:YarnPlanBoardOverride = $null
@@ -880,8 +940,8 @@ Describe 'Yarn Plan Board projection' {
 
                 $s1 = Invoke-MetraYarnPlanBoardSync -Root $root
                 $s1.Examined | Should -BeGreaterThan 0
-                ($s1.Actions | Where-Object { $_.CursorPlan -eq 'scan-idea.plan.md' }).Count | Should -Be 1
-                ($s1.Actions | Where-Object { $_.CursorPlan -eq 'scan-idea.plan.md' }).signal | Should -Be 'yarn-idea'
+                @($s1.Actions | Where-Object { $_.CursorPlan -eq 'scan-idea.plan.md' }).Count | Should -Be 1
+                (@($s1.Actions | Where-Object { $_.CursorPlan -eq 'scan-idea.plan.md' })[0]).signal | Should -Be 'yarn-idea'
                 $s1.Created | Should -BeGreaterThan 0
 
                 $s2 = Invoke-MetraYarnPlanBoardSync -Root $root
@@ -905,13 +965,192 @@ Describe 'Yarn Plan Board projection' {
                         YarnId     = ''
                     })
                 $sDup = Invoke-MetraYarnPlanBoardSync -Root $root
-                $sDup.Failed | Should -BeGreaterThan 0
-                ($sDup.Actions | Where-Object { $_.CursorPlan -eq 'scan-idea.plan.md' -and $_.outcome -eq 'failed' }).Count | Should -Be 1
+                $sDup.identityConflicts | Should -BeGreaterThan 0
+                @($sDup.Actions | Where-Object { $_.CursorPlan -eq 'scan-idea.plan.md' -and $_.outcome -eq 'identity-conflict' }).Count | Should -Be 1
             }
             finally {
                 $script:YarnPlanBoardOverride = $null
                 $script:pbWrites = 0
                 $script:pbCards = $null
+                Remove-Item Env:METRA_NOTION_API_KEY -ErrorAction SilentlyContinue
+                Remove-Item -LiteralPath $root -Recurse -Force -ErrorAction SilentlyContinue
+            }
+        }
+    }
+
+    It 'inventory pack is versioned; apply skips review, rejects unknown schema, requires Confirm, and skips stale keep after approve' {
+        InModuleScope Yarn {
+            $root = Join-Path $env:TEMP ("yarn-pb-inv-" + [guid]::NewGuid().ToString('n'))
+            $script:pbWrites = 0
+            try {
+                Initialize-MetraYarnLayout -Root $root
+                $created = Sync-YarnBacklogItem -Root $root -Incoming ([PSCustomObject]@{
+                        title            = 'No Plan Idea'
+                        status           = 'idea'
+                        formalPlanPath   = ''
+                        projectKey       = 'Metra'
+                        primarySourceKey = 'capture:inv1'
+                        sources          = @('capture:inv1')
+                        sourceText       = 'No Plan Idea'
+                    }) -SkipPlanBoard
+                $bid = [string]$created.id
+                $env:METRA_NOTION_API_KEY = 'test-token-not-real'
+                Write-YarnAtomicUtf8Text -Path (Join-Path $root 'plan-board.settings.json') -Text (@{ DatabaseId = 'db-test' } | ConvertTo-Json)
+                $script:YarnPlanBoardOverride = {
+                    param($req)
+                    if ($req.Operation -eq 'upsert') {
+                        if (-not $req.DryRun) { $script:pbWrites++ }
+                        return [PSCustomObject]@{ outcome = 'created'; pageId = 'page-inv'; projection = $req.Projection }
+                    }
+                    if ($req.Operation -eq 'rest') {
+                        return [PSCustomObject]@{ results = @(); has_more = $false }
+                    }
+                    return $null
+                }
+
+                $inv = Invoke-MetraYarnPlanBoardInventory -Root $root
+                $inv.schemaVersion | Should -Be 2
+                Test-Path -LiteralPath $inv.jsonPath | Should -BeTrue
+                $pack = Get-Content -LiteralPath $inv.jsonPath -Raw | ConvertFrom-Json
+                $pack.schemaVersion | Should -Be 2
+                $yarnRow = @($pack.rows | Where-Object { $_.yarnId -eq $bid }) | Select-Object -First 1
+                $yarnRow | Should -Not -BeNullOrEmpty
+                $yarnRow.proposedDecision | Should -Not -BeNullOrEmpty
+                $yarnRow.decision | Should -Be 'review'
+
+                { Invoke-MetraYarnPlanBoardInventoryApply -Root $root } | Should -Throw -ExpectedMessage '*Confirm*'
+                $script:pbWrites | Should -Be 0
+
+                $applyReview = Invoke-MetraYarnPlanBoardInventoryApply -Root $root -Confirm
+                $applyReview.skippedReview | Should -BeGreaterThan 0
+                $applyReview.applied | Should -Be 0
+                $script:pbWrites | Should -Be 0
+
+                $badPath = Join-Path $root 'plan-board-inventory.json'
+                $bad = @{ schemaVersion = 99; generatedAt = (Get-Date).ToUniversalTime().ToString('o'); inventoryId = 'x'; roots = @(); rows = @() }
+                Write-YarnAtomicUtf8Text -Path $badPath -Text (($bad | ConvertTo-Json -Depth 6) + "`n")
+                { Invoke-MetraYarnPlanBoardInventoryApply -Root $root -Confirm } | Should -Throw -ExpectedMessage '*schemaVersion*'
+
+                $keepRow = [PSCustomObject]@{
+                    rowId            = "yarn:$bid"
+                    proposedDecision = 'keep'
+                    decision         = 'keep'
+                    proposedBoard    = 'Backlog'
+                    proposedStage    = 2
+                    decisionReason   = $null
+                    cursorPlan       = $null
+                    yarnId           = $bid
+                    notionPageId     = $null
+                    sourceType       = 'yarn'
+                    sourcePath       = $null
+                    reasonCodes      = @()
+                    evidence         = @()
+                    title            = 'No Plan Idea'
+                }
+                $stalePack = @{
+                    schemaVersion = 2
+                    generatedAt   = (Get-Date).ToUniversalTime().ToString('o')
+                    inventoryId   = 'stale-test'
+                    roots         = @()
+                    rows          = @($keepRow)
+                }
+                Write-YarnAtomicUtf8Text -Path $badPath -Text (($stalePack | ConvertTo-Json -Depth 8) + "`n")
+                [void](Set-YarnBacklogItemStatus -Root $root -BacklogId $bid -Status 'approved' -SkipPlanBoard)
+                $stale = Invoke-MetraYarnPlanBoardInventoryApply -Root $root -Confirm
+                $stale.skippedStale | Should -BeGreaterThan 0
+                $stale.applied | Should -Be 0
+
+                $malformed = [PSCustomObject]@{
+                    rowId            = 'keep-bad'
+                    proposedDecision = 'keep'
+                    decision         = 'keep'
+                    proposedBoard    = 'Backlog'
+                    proposedStage    = 8
+                    cursorPlan       = $null
+                    yarnId           = $bid
+                    notionPageId     = $null
+                    sourceType       = 'yarn'
+                    title            = 'x'
+                }
+                # approved item: live Loom/5 supersedes malformed keep
+                Write-YarnAtomicUtf8Text -Path $badPath -Text ((@{
+                            schemaVersion = 2
+                            generatedAt   = (Get-Date).ToUniversalTime().ToString('o')
+                            inventoryId   = 'malform'
+                            roots         = @()
+                            rows          = @($malformed)
+                        } | ConvertTo-Json -Depth 8) + "`n")
+                $mf = Invoke-MetraYarnPlanBoardInventoryApply -Root $root -Confirm
+                ($mf.skippedStale + $mf.failed + $mf.Failed) | Should -BeGreaterThan 0
+
+                $dropNoId = [PSCustomObject]@{
+                    rowId            = 'drop-noid'
+                    proposedDecision = 'drop'
+                    decision         = 'drop'
+                    proposedBoard    = 'Drop'
+                    proposedStage    = 8
+                    cursorPlan       = 'ghost.plan.md'
+                    yarnId           = $null
+                    notionPageId     = $null
+                    sourceType       = 'cursor-plan'
+                    title            = 'ghost'
+                }
+                Write-YarnAtomicUtf8Text -Path $badPath -Text ((@{
+                            schemaVersion = 2
+                            generatedAt   = (Get-Date).ToUniversalTime().ToString('o')
+                            inventoryId   = 'drop'
+                            roots         = @()
+                            rows          = @($dropNoId)
+                        } | ConvertTo-Json -Depth 8) + "`n")
+                $dr = Invoke-MetraYarnPlanBoardInventoryApply -Root $root -Confirm
+                $dr.failed | Should -BeGreaterThan 0
+                @($dr.Actions | Where-Object { $_.error -eq 'drop-requires-stable-identity' }).Count | Should -Be 1
+            }
+            finally {
+                $script:YarnPlanBoardOverride = $null
+                $script:pbWrites = 0
+                Remove-Item Env:METRA_NOTION_API_KEY -ErrorAction SilentlyContinue
+                Remove-Item -LiteralPath $root -Recurse -Force -ErrorAction SilentlyContinue
+            }
+        }
+    }
+
+    It 'continues after one upsert failure and reports partial success fields' {
+        InModuleScope Yarn {
+            $root = Join-Path $env:TEMP ("yarn-pb-partial-" + [guid]::NewGuid().ToString('n'))
+            $script:upsertN = 0
+            try {
+                Initialize-MetraYarnLayout -Root $root
+                [void](Sync-YarnBacklogItem -Root $root -Incoming ([PSCustomObject]@{
+                            title = 'A'; status = 'idea'; formalPlanPath = 'a.plan.md'; projectKey = 'Metra'
+                            primarySourceKey = 'capture:a'; sources = @('capture:a'); sourceText = 'A'
+                        }) -SkipPlanBoard)
+                [void](Sync-YarnBacklogItem -Root $root -Incoming ([PSCustomObject]@{
+                            title = 'B'; status = 'idea'; formalPlanPath = 'b.plan.md'; projectKey = 'Metra'
+                            primarySourceKey = 'capture:b'; sources = @('capture:b'); sourceText = 'B'
+                        }) -SkipPlanBoard)
+                $script:YarnPlanBoardOverride = {
+                    param($req)
+                    if ($req.Operation -eq 'upsert') {
+                        $script:upsertN++
+                        if ($script:upsertN -eq 1) { throw 'notion one-item fail' }
+                        return [PSCustomObject]@{ outcome = 'created'; pageId = "p-$($script:upsertN)"; projection = $req.Projection }
+                    }
+                    if ($req.Operation -eq 'rest') {
+                        return [PSCustomObject]@{ results = @(); has_more = $false }
+                    }
+                    return $null
+                }
+                $env:METRA_NOTION_API_KEY = 'test-token-not-real'
+                Write-YarnAtomicUtf8Text -Path (Join-Path $root 'plan-board.settings.json') -Text (@{ DatabaseId = 'db-test' } | ConvertTo-Json)
+                $s = Invoke-MetraYarnPlanBoardSync -Root $root
+                $s.failed | Should -BeGreaterThan 0
+                $s.applied | Should -BeGreaterThan 0
+                $s.scanned | Should -BeGreaterThan 0
+            }
+            finally {
+                $script:YarnPlanBoardOverride = $null
+                $script:upsertN = 0
                 Remove-Item Env:METRA_NOTION_API_KEY -ErrorAction SilentlyContinue
                 Remove-Item -LiteralPath $root -Recurse -Force -ErrorAction SilentlyContinue
             }

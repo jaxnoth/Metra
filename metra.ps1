@@ -152,6 +152,15 @@ function Add-MetraYarnConfirmForward {
             $forward += '-Confirm'
         }
     }
+    elseif ($subLower -eq 'plan-board') {
+        # plan-board inventory apply -Confirm (affirmation gate)
+        $isInventoryApply = ($forward.Count -ge 2 -and
+            $forward[0].ToLowerInvariant() -eq 'inventory' -and
+            $forward[1].ToLowerInvariant() -eq 'apply')
+        if ($isInventoryApply -and $forward -notcontains '-Confirm') {
+            $forward += '-Confirm'
+        }
+    }
     return $forward
 }
 
@@ -265,8 +274,8 @@ Usage:
       Governed plan execution queue (code daily / accept).
   .\metra.ps1 yarn status|scan|backlog|daily|synthesize|pack|reconcile|pending|plan-board
       L1.5 intake: ranked backlog, template synth, pack freshness (approval in A3).
-  .\metra.ps1 plan-board sync|sync -DryRun|status
-      Notion Plan Board projection catch-up (Yarn/Loom remain authoritative; fail-open).
+  .\metra.ps1 plan-board sync|sync -DryRun|status|inventory|inventory apply -Confirm
+      Notion Plan Board projection catch-up + Bing inventory pack (Yarn/Loom remain authoritative; fail-open).
   .\metra.ps1 verify
 
 Roots:
@@ -1069,9 +1078,10 @@ switch ($Command) {
 
     'plan-board' {
         if (-not $Rest -or $Rest.Count -eq 0) {
-            throw "plan-board requires sync|status. Example: .\metra.ps1 plan-board status"
+            throw "plan-board requires sync|status|inventory. Example: .\metra.ps1 plan-board status"
         }
-        $result = Invoke-MetraYarnCommand -Subcommand 'plan-board' -ArgsRest $Rest
+        $pbArgs = Add-MetraYarnConfirmForward -Sub 'plan-board' -SubArgs $Rest -ConfirmPresent:$Confirm.IsPresent
+        $result = Invoke-MetraYarnCommand -Subcommand 'plan-board' -ArgsRest $pbArgs
         if ($null -eq $result) { return }
         if ($result -is [System.Array]) {
             if (@($result).Count -eq 0) {
