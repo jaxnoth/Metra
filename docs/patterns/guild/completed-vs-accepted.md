@@ -38,7 +38,7 @@ Governs the hard split between machine `completed` and operator `accepted` acros
 | Loom review | May set `completed` when contract met |
 | `Invoke-MetraLoomDailyApprove` / accept+verify | Sole owner of exits from `completed` |
 | Operator + Bing | Pack-diff review, ACCEPT / RETRY / BLOCK directives |
-| Atlas promote (future Slice 8) | Requires acceptance before promotable candidates |
+| Atlas promote (Slice 8) | Requires acceptance before promotable candidates; tracked file stays authoritative |
 
 ## Inputs / outputs
 

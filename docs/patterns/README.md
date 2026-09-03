@@ -2,7 +2,7 @@
 
 Architectural method docs for how **Metra · Yarn · Loom · Atlas** are designed to work. Peer-programmer teaching surface. Not operator command checklists (those stay in [playbooks](../playbooks/)).
 
-**Status:** P0 cabinet + P1 active seeds + **P2/P3 runtime** (`scripts/private/Patterns.ps1`: Loom package attach, Yarn synthesize match + gap checklist). Slice 8 promote still deferred.
+**Status:** P0–P3 landed. **P4/Slice 8:** `loom pattern score|promote` (accept-gated Atlas put). Active Pattern: `guild-knowledge-promotion`.
 
 ## Purpose
 

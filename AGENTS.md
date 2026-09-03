@@ -58,7 +58,7 @@ Triggers: Metra home, routing, ctx, registry, inspect, profile, decisions, works
 
 ## On-demand patterns
 
-Architectural methods (how Metra / Yarn / Loom / Atlas are designed). Bodies under [docs/patterns/](docs/patterns/README.md). Not always-on. Loom attaches cited Patterns to the implementer package; Yarn emits `patterns:` + gap checklist on synthesize.
+Architectural methods (how Metra / Yarn / Loom / Atlas are designed). Bodies under [docs/patterns/](docs/patterns/README.md). Not always-on. Loom attaches cited Patterns to the implementer package; Yarn emits `patterns:` + gap checklist on synthesize. Loom owns accept-gated `pattern score|promote` (Atlas put).
 
 | Trigger | Read |
 | --- | --- |
@@ -68,6 +68,7 @@ Architectural methods (how Metra / Yarn / Loom / Atlas are designed). Bodies und
 | loom review, completed vs inspect/verify | [docs/patterns/loom/review.md](docs/patterns/loom/review.md) |
 | completed vs accepted, daily approve | [docs/patterns/guild/completed-vs-accepted.md](docs/patterns/guild/completed-vs-accepted.md) |
 | agent/inspect engines, adapters, pause | [docs/patterns/guild/agent-interaction.md](docs/patterns/guild/agent-interaction.md) |
+| pattern score/promote, Atlas put, Slice 8 | [docs/patterns/guild/knowledge-promotion.md](docs/patterns/guild/knowledge-promotion.md) |
 
 ## Token rules
 

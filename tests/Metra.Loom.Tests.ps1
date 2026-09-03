@@ -561,3 +561,232 @@ todos:
         }
     }
 }
+
+Describe 'Loom Slice 8 Pattern promote' {
+    It 'blocks promote when item is not accepted' {
+        InModuleScope Loom {
+            $loomRoot = Join-Path ([IO.Path]::GetTempPath()) ('metra-loom-s8-' + [guid]::NewGuid().ToString('n'))
+            $hostRoot = Join-Path ([IO.Path]::GetTempPath()) ('metra-host-s8-' + [guid]::NewGuid().ToString('n'))
+            try {
+                Initialize-MetraLoomLayout -Root $loomRoot
+                $patDir = Join-Path $hostRoot 'docs\patterns\guild'
+                [void][System.IO.Directory]::CreateDirectory($patDir)
+                $body = @"
+---
+patternSchemaVersion: 1
+defaultContext: false
+patternId: guild-knowledge-promotion
+owner: loom
+cabinet: guild
+status: active
+implemented: true
+---
+# Guild Knowledge Promotion Pattern
+"@
+                $patPath = Join-Path $patDir 'knowledge-promotion.md'
+                [System.IO.File]::WriteAllText($patPath, $body, [System.Text.UTF8Encoding]::new($false))
+                'guild-knowledge-promotion: guild/knowledge-promotion.md' | Set-Content -LiteralPath (Join-Path $hostRoot 'docs\patterns\index.yaml') -Encoding utf8
+
+                $item = [PSCustomObject]@{
+                    id            = 'AP-20260902-0001'
+                    schemaVersion = 1
+                    summary       = 's8 block'
+                    createdAt     = '2026-09-02T00:00:00Z'
+                    updatedAt     = '2026-09-02T00:00:00Z'
+                    status        = 'completed'
+                    project       = [PSCustomObject]@{ root = $hostRoot; registryName = 'Metra' }
+                    execution     = [PSCustomObject]@{
+                        baselineCommit  = 'aaa'
+                        completedCommit = 'bbb'
+                        branch          = 'loom/metra/x'
+                    }
+                }
+                Save-MetraLoomQueueItem -Root $loomRoot -Item $item
+
+                $script:LoomPatternDiffOverride = {
+                    param($ProjectRoot, $BaselineCommit, $CompletedCommit, $PathFilter)
+                    @('docs/patterns/guild/knowledge-promotion.md')
+                }
+                $script:LoomPatternBlobOverride = {
+                    param($ProjectRoot, $Commit, $RepoRelativePath)
+                    return [System.IO.File]::ReadAllText($patPath, [System.Text.UTF8Encoding]::new($false))
+                }
+
+                $prev = Invoke-MetraLoomPatternPromote -Root $loomRoot -MetraRoot $hostRoot -Path $patPath -ItemId 'AP-20260902-0001' -Preview
+                $prev.eligible | Should -BeFalse
+                $prev.reasons -join ' ' | Should -Match 'item-not-accepted'
+            }
+            finally {
+                $script:LoomPatternDiffOverride = $null
+                $script:LoomPatternBlobOverride = $null
+                $script:LoomAtlasPutOverride = $null
+                Remove-Item -LiteralPath $loomRoot -Recurse -Force -ErrorAction SilentlyContinue
+                Remove-Item -LiteralPath $hostRoot -Recurse -Force -ErrorAction SilentlyContinue
+            }
+        }
+    }
+
+    It 'promotes on Confirm when accepted evidence matches and records ledger' {
+        InModuleScope Loom {
+            $loomRoot = Join-Path ([IO.Path]::GetTempPath()) ('metra-loom-s8b-' + [guid]::NewGuid().ToString('n'))
+            $hostRoot = Join-Path ([IO.Path]::GetTempPath()) ('metra-host-s8b-' + [guid]::NewGuid().ToString('n'))
+            try {
+                Initialize-MetraLoomLayout -Root $loomRoot
+                $patDir = Join-Path $hostRoot 'docs\patterns\guild'
+                [void][System.IO.Directory]::CreateDirectory($patDir)
+                $body = @"
+---
+patternSchemaVersion: 1
+defaultContext: false
+patternId: guild-knowledge-promotion
+owner: loom
+cabinet: guild
+status: active
+implemented: true
+---
+# Guild Knowledge Promotion Pattern
+"@
+                $patPath = Join-Path $patDir 'knowledge-promotion.md'
+                [System.IO.File]::WriteAllText($patPath, $body, [System.Text.UTF8Encoding]::new($false))
+                'guild-knowledge-promotion: guild/knowledge-promotion.md' | Set-Content -LiteralPath (Join-Path $hostRoot 'docs\patterns\index.yaml') -Encoding utf8
+
+                $item = [PSCustomObject]@{
+                    id            = 'AP-20260902-0002'
+                    schemaVersion = 1
+                    summary       = 's8 promote'
+                    createdAt     = '2026-09-02T00:00:00Z'
+                    updatedAt     = '2026-09-02T00:00:00Z'
+                    status        = 'accepted'
+                    project       = [PSCustomObject]@{ root = $hostRoot; registryName = 'Metra' }
+                    execution     = [PSCustomObject]@{
+                        baselineCommit  = 'aaa'
+                        completedCommit = 'bbb'
+                        branch          = 'loom/metra/x'
+                    }
+                }
+                Save-MetraLoomQueueItem -Root $loomRoot -Item $item
+
+                $script:LoomPatternDiffOverride = {
+                    param($ProjectRoot, $BaselineCommit, $CompletedCommit, $PathFilter)
+                    @('docs/patterns/guild/knowledge-promotion.md')
+                }
+                $script:LoomPatternBlobOverride = {
+                    param($ProjectRoot, $Commit, $RepoRelativePath)
+                    return [System.IO.File]::ReadAllText($patPath, [System.Text.UTF8Encoding]::new($false))
+                }
+                $script:LoomAtlasPutOverride = {
+                    param($StableId, $Project, $Kind, $Title, $BodyPath, $Publish, $MetraRoot)
+                    [PSCustomObject]@{ ok = $true; stableId = $StableId; stub = $true; published = [bool]$Publish }
+                }
+
+                $prev = Invoke-MetraLoomPatternPromote -Root $loomRoot -MetraRoot $hostRoot -Path $patPath -ItemId 'AP-20260902-0002' -Preview
+                $prev.eligible | Should -BeTrue
+                $prev.stableId | Should -Be 'pattern:guild-knowledge-promotion'
+
+                $done = Invoke-MetraLoomPatternPromote -Root $loomRoot -MetraRoot $hostRoot -Path $patPath -ItemId 'AP-20260902-0002' -Confirm
+                $done.outcome | Should -Be 'promoted'
+                $ledger = Get-LoomPatternPromotions -Root $loomRoot
+                @($ledger.promotions).Count | Should -Be 1
+                $ledger.promotions[0].patternId | Should -Be 'guild-knowledge-promotion'
+
+                $again = Invoke-MetraLoomPatternPromote -Root $loomRoot -MetraRoot $hostRoot -Path $patPath -ItemId 'AP-20260902-0002' -Preview
+                $again.eligible | Should -BeFalse
+                $again.reasons -join ' ' | Should -Match 'already-promoted'
+            }
+            finally {
+                $script:LoomPatternDiffOverride = $null
+                $script:LoomPatternBlobOverride = $null
+                $script:LoomAtlasPutOverride = $null
+                Remove-Item -LiteralPath $loomRoot -Recurse -Force -ErrorAction SilentlyContinue
+                Remove-Item -LiteralPath $hostRoot -Recurse -Force -ErrorAction SilentlyContinue
+            }
+        }
+    }
+
+    It 'scores eligible candidates from accepted pattern diffs' {
+        InModuleScope Loom {
+            $loomRoot = Join-Path ([IO.Path]::GetTempPath()) ('metra-loom-s8c-' + [guid]::NewGuid().ToString('n'))
+            $hostRoot = Join-Path ([IO.Path]::GetTempPath()) ('metra-host-s8c-' + [guid]::NewGuid().ToString('n'))
+            try {
+                Initialize-MetraLoomLayout -Root $loomRoot
+                $patDir = Join-Path $hostRoot 'docs\patterns\guild'
+                [void][System.IO.Directory]::CreateDirectory($patDir)
+                $body = @"
+---
+patternSchemaVersion: 1
+defaultContext: false
+patternId: guild-knowledge-promotion
+owner: loom
+cabinet: guild
+status: active
+implemented: true
+---
+# Guild Knowledge Promotion Pattern
+"@
+                $patPath = Join-Path $patDir 'knowledge-promotion.md'
+                [System.IO.File]::WriteAllText($patPath, $body, [System.Text.UTF8Encoding]::new($false))
+                'guild-knowledge-promotion: guild/knowledge-promotion.md' | Set-Content -LiteralPath (Join-Path $hostRoot 'docs\patterns\index.yaml') -Encoding utf8
+
+                Save-MetraLoomQueueItem -Root $loomRoot -Item ([PSCustomObject]@{
+                        id            = 'AP-20260902-0003'
+                        schemaVersion = 1
+                        summary       = 's8 score'
+                        createdAt     = '2026-09-02T00:00:00Z'
+                        updatedAt     = '2026-09-02T00:00:00Z'
+                        status        = 'accepted'
+                        project       = [PSCustomObject]@{ root = $hostRoot; registryName = 'Metra' }
+                        execution     = [PSCustomObject]@{ baselineCommit = 'a'; completedCommit = 'b'; branch = 'loom/x' }
+                    })
+
+                $script:LoomPatternDiffOverride = {
+                    param($ProjectRoot, $BaselineCommit, $CompletedCommit, $PathFilter)
+                    @('docs/patterns/guild/knowledge-promotion.md')
+                }
+                $script:LoomPatternBlobOverride = {
+                    param($ProjectRoot, $Commit, $RepoRelativePath)
+                    return [System.IO.File]::ReadAllText($patPath, [System.Text.UTF8Encoding]::new($false))
+                }
+
+                $score = Invoke-MetraLoomPatternScore -Root $loomRoot -MetraRoot $hostRoot
+                $score.outcome | Should -Be 'scored'
+                @($score.candidates | Where-Object { $_.eligible }).Count | Should -BeGreaterOrEqual 1
+            }
+            finally {
+                $script:LoomPatternDiffOverride = $null
+                $script:LoomPatternBlobOverride = $null
+                Remove-Item -LiteralPath $loomRoot -Recurse -Force -ErrorAction SilentlyContinue
+                Remove-Item -LiteralPath $hostRoot -Recurse -Force -ErrorAction SilentlyContinue
+            }
+        }
+    }
+
+    It 'fails closed on path escape and absolute paths outside docs/patterns' {
+        InModuleScope Loom {
+            $hostRoot = Join-Path ([IO.Path]::GetTempPath()) ('metra-host-s8d-' + [guid]::NewGuid().ToString('n'))
+            try {
+                $patDir = Join-Path $hostRoot 'docs\patterns\guild'
+                [void][System.IO.Directory]::CreateDirectory($patDir)
+                $body = @"
+---
+patternSchemaVersion: 1
+defaultContext: false
+patternId: guild-knowledge-promotion
+owner: loom
+cabinet: guild
+status: active
+implemented: true
+---
+# ok
+"@
+                [System.IO.File]::WriteAllText((Join-Path $patDir 'knowledge-promotion.md'), $body, [System.Text.UTF8Encoding]::new($false))
+                { Resolve-LoomPatternFileUnderMetra -Path 'C:\Temp\evil.md' -MetraRoot $hostRoot } | Should -Throw '*escapes docs/patterns*'
+                { Resolve-LoomPatternFileUnderMetra -Path '..\..\..\Windows\System32\drivers\etc\hosts' -MetraRoot $hostRoot } | Should -Throw '*escapes docs/patterns*'
+                $ok = Resolve-LoomPatternFileUnderMetra -Path (Join-Path $patDir 'knowledge-promotion.md') -MetraRoot $hostRoot
+                $ok.repoRelative | Should -Be 'docs/patterns/guild/knowledge-promotion.md'
+            }
+            finally {
+                Remove-Item -LiteralPath $hostRoot -Recurse -Force -ErrorAction SilentlyContinue
+            }
+        }
+    }
+}

@@ -12,13 +12,53 @@ function Get-MetraPatternsDirectory {
 function Get-MetraPatternContentHash {
     [CmdletBinding()]
     param([Parameter(Mandatory)][string]$Text)
-    $bytes = [System.Text.Encoding]::UTF8.GetBytes($Text)
+    $normalized = ($Text -replace "`r`n", "`n")
+    $bytes = [System.Text.Encoding]::UTF8.GetBytes($normalized)
     $sha = [System.Security.Cryptography.SHA256]::Create()
     try {
         $hash = $sha.ComputeHash($bytes)
         return ([System.BitConverter]::ToString($hash) -replace '-', '').ToLowerInvariant()
     }
     finally { $sha.Dispose() }
+}
+
+function Get-MetraCanonicalPath {
+    [CmdletBinding()]
+    param([Parameter(Mandatory)][AllowEmptyString()][string]$Path)
+    if ([string]::IsNullOrWhiteSpace($Path)) { return $Path }
+    $full = [System.IO.Path]::GetFullPath($Path)
+    if (-not (Test-Path -LiteralPath $full)) { return $full }
+    $cursor = $full
+    $guard = 0
+    while ($cursor -and $guard -lt 32) {
+        $guard++
+        $item = Get-Item -LiteralPath $cursor -Force -ErrorAction SilentlyContinue
+        if ($item -and ($item.Attributes -band [System.IO.FileAttributes]::ReparsePoint)) {
+            $raw = @($item.Target)[0]
+            if ([string]::IsNullOrWhiteSpace([string]$raw)) { break }
+            $target = [string]$raw
+            if (-not [System.IO.Path]::IsPathRooted($target)) {
+                $parentDir = if ($item.PSIsContainer) { $item.Parent.FullName } else { $item.Directory.FullName }
+                $target = Join-Path $parentDir $target
+            }
+            $targetFull = [System.IO.Path]::GetFullPath($target)
+            if ([string]::Equals($cursor, $full, [System.StringComparison]::OrdinalIgnoreCase)) {
+                $full = $targetFull
+            }
+            else {
+                $suffix = $full.Substring($cursor.Length).TrimStart('\', '/')
+                $full = if ($suffix) { [System.IO.Path]::GetFullPath((Join-Path $targetFull $suffix)) } else { $targetFull }
+            }
+            $cursor = $full
+            continue
+        }
+        $parent = [System.IO.Path]::GetDirectoryName($cursor)
+        if ([string]::IsNullOrWhiteSpace($parent) -or [string]::Equals($parent, $cursor, [System.StringComparison]::OrdinalIgnoreCase)) {
+            break
+        }
+        $cursor = $parent
+    }
+    return $full
 }
 
 function Test-MetraPatternPathWithinPatternsRoot {
@@ -30,8 +70,8 @@ function Test-MetraPatternPathWithinPatternsRoot {
     if ([string]::IsNullOrWhiteSpace($Path)) { return $false }
     try {
         $patternsRoot = Get-MetraPatternsDirectory -MetraRoot $MetraRoot
-        $full = [System.IO.Path]::GetFullPath($Path)
-        $rootFull = $patternsRoot.TrimEnd('\', '/')
+        $full = Get-MetraCanonicalPath -Path $Path
+        $rootFull = (Get-MetraCanonicalPath -Path $patternsRoot).TrimEnd('\', '/')
         if ([string]::Equals($full, $rootFull, [System.StringComparison]::OrdinalIgnoreCase)) {
             return $true
         }
@@ -248,7 +288,7 @@ function Resolve-MetraPatternPath {
         return [PSCustomObject]@{ ok = $false; path = $null; relativePath = $rel; errors = @('absolute-path-in-index'); warnings = @($warnings) }
     }
     $patternsRoot = Get-MetraPatternsDirectory -MetraRoot $MetraRoot
-    $candidate = [System.IO.Path]::GetFullPath((Join-Path $patternsRoot $rel))
+    $candidate = Get-MetraCanonicalPath -Path (Join-Path $patternsRoot $rel)
     if (-not (Test-MetraPatternPathWithinPatternsRoot -Path $candidate -MetraRoot $MetraRoot)) {
         return [PSCustomObject]@{ ok = $false; path = $null; relativePath = $rel; errors = @('path-escapes-patterns-root'); warnings = @($warnings) }
     }

@@ -32,6 +32,9 @@ Governed execution harness (queue, journal, triage, branch runner). Metra hosts 
 .\metra.ps1 loom daily approve -PlanPath ... -Confirm -Merge          # accept + local merge (no push)
 .\metra.ps1 loom loop -UntilDailyGate -DryRun                       # preview one eligible dequeue (Slice 6)
 .\metra.ps1 loom loop -UntilDailyGate -Confirm                      # one item overnight to completed (not accepted)
+.\metra.ps1 loom pattern score                                      # Slice 8 promote candidates
+.\metra.ps1 loom pattern promote -Path <one-pattern.md> -Preview
+.\metra.ps1 loom pattern promote -Path <one-pattern.md> -Confirm    # Atlas put (add -Publish to push)
 ```
 
 ## A4 per-project lane and acceptance
@@ -60,6 +63,16 @@ Governed execution harness (queue, journal, triage, branch runner). Metra hosts 
 Clear pause (v1): edit `%LOCALAPPDATA%\Metra\loom\state.json` (`loopPaused: false`). Slice 6b may add `loom loop resume`.
 
 Morning handoff unchanged: `loom daily` → pack-diff review → `daily approve -Confirm`.
+
+## Slice 8 Pattern promote (Atlas publication)
+
+| Rule | Detail |
+|------|--------|
+| Commands | `loom pattern score`; `loom pattern promote -Path <md> -Preview\|-Confirm` optional `-Publish` |
+| Gate | Item must be **accepted**; path under `docs/patterns/`; path in accepted commit range; hash matches accepted revision; not already promoted at same hash |
+| Authority | Tracked Pattern file stays authoritative; Atlas holds discoverability copy only |
+| Ledger | `{loomRoot}/patterns/promotions.json` + journal `pattern-promote` |
+| Pattern | [guild-knowledge-promotion](../patterns/guild/knowledge-promotion.md) |
 
 ## Slice 4 review (completed vs accepted)
 
