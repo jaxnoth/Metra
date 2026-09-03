@@ -26,7 +26,31 @@ Entry shape:
 
 ---
 
----
+## 2026-09-03 - Scout: iOS app rename and investigative subsystem formalization
+
+Three related decisions captured together. See `docs/scout.plan.md` for the full architectural plan.
+
+- Decision: Rename the Metra iOS application to **Metra Scout**. Previous working names (Metra iOS, Metra Mobile, Metra Companion) are retired.
+- Why: "Scout" describes the job of the application rather than the technology behind it. The mobile experience centers on investigation, awareness, and proactive observation - not orchestration or peer companionship. The name communicates mission.
+- See: `docs/scout.plan.md`
+
+- Decision: Formalize **Scout** as a first-class Metra investigative subsystem, positioned at the same architectural level as Atlas, TicketTracker, Codex, Loom, and Attention. Scout is not a chatbot, not a virtual personality, and not a peer application. Scout is an always-on capability that discovers what deserves attention.
+- Why: The original iOS companion concept was anchored to a specific provider (Grok companion). Provider availability is uncertain. Separating the investigative capability contract from the provider implementation makes Scout resilient to vendor changes. Capability contracts outlast individual models.
+- See: `docs/scout.plan.md`, `docs/ios-companion-app.plan.md` (prior Vision/Bounded contract; UI shape remains valid)
+
+- Decision: Scout is provider-agnostic by design. Scout gets a `scout.engine` configuration pin, following the same pattern as `ask.engine` and `inspect.*` pins. Providers (Claude, GPT, Grok, local models, future) are implementation details. Metra determines routing. Scout continues functioning if a provider disappears.
+- Why: Lock-in risk. If Scout were tied to a single model vendor, losing that vendor's API access would disable the subsystem. The capability contract over provider identity pattern is already established in Metra Inspect and Ask.
+- See: `docs/scout.plan.md`
+
+## 2026-09-03 - Scout authority ceiling and Attention relationship
+
+- Decision: Scout authority is **observe, investigate, analyze, review, summarize, recommend, draft** only. Scout may not approve, deploy, commit code, send communications, modify production systems, or execute changes without human affirmation.
+- Why: An always-on background investigative system without an authority ceiling creates risk of automated action on incomplete evidence. Metra's existing affirmation-first philosophy applies. Scout recommendations are inputs to human decisions, not decisions themselves.
+- See: `docs/scout.plan.md`
+
+- Decision: Scout sits downstream of **Attention** in the signal chain. Attention remains the signal bus (detection layer). Scout is the analyst layer that reads Attention output and produces investigations, alternate hypotheses, and recommendations. Signal chain: Signal → Attention → Scout Investigation → Recommendation → Human Affirmation.
+- Why: Keeping Attention and Scout as separate layers preserves independent replaceability. Attention detects; Scout investigates. Merging them would couple signal detection to investigative reasoning, making both harder to evolve independently.
+- See: `docs/scout.plan.md`
 
 ---
 
