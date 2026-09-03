@@ -17,6 +17,7 @@ $script:YarnModuleRoot = $PSScriptRoot
 . (Join-Path $PSScriptRoot 'Private\Synthesize.ps1')
 . (Join-Path $PSScriptRoot 'Private\Pack.ps1')
 . (Join-Path $PSScriptRoot 'Private\Approve.ps1')
+. (Join-Path $PSScriptRoot 'Private\PlanBoard.ps1')
 . (Join-Path $PSScriptRoot 'Private\Daily.ps1')
 . (Join-Path $PSScriptRoot 'Private\Domain.ps1')
 
@@ -65,6 +66,15 @@ $export = @(
     'Read-YarnAtlasIdeas'
     'Get-YarnMemoryLaneState'
     'Save-YarnMemoryLaneState'
+    'Resolve-YarnPlanBoardProjection'
+    'Invoke-YarnPlanBoardNotifyFailOpen'
+    'Invoke-MetraYarnPlanBoardSync'
+    'Get-MetraYarnPlanBoardStatus'
+    'Set-YarnBacklogItemStatus'
+    'Get-YarnPlanBoardConfig'
+    'Get-YarnPlanBoardCursorPlanName'
+    'Test-YarnPlanBoardCursorPlanMatch'
+    'Invoke-YarnPlanBoardCommand'
 )
 
 Export-ModuleMember -Function $export

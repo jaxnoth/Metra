@@ -610,3 +610,56 @@ function Invoke-LoomAtlasPutAdapter {
         mode      = $(if ($Publish) { 'published' } else { 'local' })
     }
 }
+
+function Invoke-LoomPlanBoardAcceptedNotify {
+    <#
+    .SYNOPSIS
+      Fail-open Plan Board notify after verified Loom accepted (never accepted-pending-commit).
+    #>
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory)]
+        [psobject]$Item
+    )
+
+    try {
+        $cursorPlan = $null
+        foreach ($name in @('cursorPlan', 'CursorPlan', 'formalPlanPath', 'planPath', 'planFile', 'sourcePlan')) {
+            if ($Item.PSObject.Properties[$name] -and $Item.$name) {
+                $cursorPlan = [string]$Item.$name
+                break
+            }
+        }
+        if ([string]::IsNullOrWhiteSpace($cursorPlan)) {
+            $src = $null
+            if ($Item.PSObject.Properties['source']) { $src = $Item.source }
+            if ($src -and $src.PSObject.Properties['path'] -and $src.path) {
+                $cursorPlan = [string]$src.path
+            }
+        }
+
+        if ([string]::IsNullOrWhiteSpace($cursorPlan)) {
+            return
+        }
+
+        $cmd = Get-Command Invoke-YarnPlanBoardNotifyFailOpen -ErrorAction SilentlyContinue
+        if (-not $cmd) {
+            Import-Module (Join-Path (Get-LoomHostRoot) 'modules\Yarn\Yarn.psd1') -Force -ErrorAction SilentlyContinue
+            $cmd = Get-Command Invoke-YarnPlanBoardNotifyFailOpen -ErrorAction SilentlyContinue
+        }
+        if (-not $cmd) {
+            return
+        }
+
+        $yarnRootCmd = Get-Command Get-MetraYarnRoot -ErrorAction SilentlyContinue
+        $yarnRoot = if ($yarnRootCmd) { & $yarnRootCmd } else { $null }
+        if ([string]::IsNullOrWhiteSpace($yarnRoot)) {
+            return
+        }
+
+        & $cmd -Root $yarnRoot -MetraRoot (Get-LoomHostRoot) -CursorPlan $cursorPlan.Trim() -Reason 'LoomAccepted'
+    }
+    catch {
+        Write-Warning ("Plan Board sync after Loom accepted failed (fail-open): {0}" -f $_.Exception.Message)
+    }
+}

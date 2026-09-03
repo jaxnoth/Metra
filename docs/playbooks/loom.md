@@ -45,7 +45,7 @@ Governed execution harness (queue, journal, triage, branch runner). Metra hosts 
 | Lane-holding | At most one active item per `projectKey`: `claimed`, `implementing`, `reviewing`, `completed`, `accepted-pending-commit`, or `blocked` with `blockedFrom` from an active state |
 | Atomic claim | `run` and `loop` share claim helpers under the `loom_queue` namespace lock: reload → busy lanes → select → `queued`→`claimed` → persist and journal → unlock |
 | Selection | Among free lanes: `scores.total` desc → `effectiveImpact` desc → `createdAt` asc → `id` asc |
-| Acceptance | `completed` → `accepted-pending-commit` (human ACCEPT; lane busy) → `accepted` after observe-only local commit verification. No commit/push/merge in verify. |
+| Acceptance | `completed` → `accepted-pending-commit` (human ACCEPT; lane busy) → `accepted` after observe-only local commit verification. No commit/push/merge in verify. Verified `accepted` fail-open notifies Yarn Plan Board (Shipped); `accepted-pending-commit` does not. |
 | Ritual split | Triage no longer promotes Capture→candidate. Daily §3 points plan review at Yarn. Manual `loom enqueue -FromPlan` remains break-glass for Approved plans only. |
 
 ## Slice 6 loop (unattended to daily gate)
@@ -139,3 +139,4 @@ When upgrading from AutoProgram storage layout:
 
 - [loom-product-boundary.plan.md](../loom-product-boundary.plan.md)
 - [inspect-loop.md](inspect-loop.md) (Metra inspect gate for commits)
+- [yarn.md](yarn.md) (intake + Plan Board projection catch-up via `plan-board sync`)

@@ -159,6 +159,9 @@ function Invoke-MetraYarnPack {
                 packContractVersion    = Get-YarnPackContractVersion
                 handoffContractVersion = Get-YarnHandoffContractVersion
             })
+        if ($ok) {
+            Invoke-YarnPlanBoardNotifyFailOpen -Root $Root -MetraRoot $MetraRoot -BacklogId ([string]$item.id) -CursorPlan $planPath -Reason 'yarn-status:pending-bing'
+        }
     }
 
     Add-MetraYarnJournalEntry -Root $Root -Entry @{
