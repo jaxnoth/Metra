@@ -19,6 +19,7 @@ ceiling:
   - Tier 1 engine faults pause dequeue; auto-recover transients without permission theater
 relatedDecisions:
   - "2026-08-31 AutoProgram dependency direction"
+  - "2026-09-02 Yarn Phase C leftovers / Loom naming"
   - "2026-08-25 Inspect engine configuration split"
   - "2026-08-12 Metra Inspect engine independence"
   - "2026-09-02 Loom Slice 6 unattended loop"

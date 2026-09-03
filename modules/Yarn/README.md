@@ -4,7 +4,7 @@ L1.5 intake for Metra: Capture / Future-Dev / Atlas → ranked backlog → forma
 
 ## Phase
 
-**A0–A4 + Phase B Atlas shipped.** Atlas intake reads the local mirror only (no second Yarn content cache). Slice 8 Notion promote and Phase C leftovers remain out of scope here.
+**A0–A4 + Phase B Atlas shipped.** Slice 7 Phase C AutoProgram leftovers are closed (docs/naming). Slice 8 Notion promote remains out of scope here.
 
 ## Commands
 

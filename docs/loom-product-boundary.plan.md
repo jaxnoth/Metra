@@ -33,8 +33,8 @@ todos:
     content: "Slice 4 — Review and completion (inspect + verify adapters, orchestrator, auto-chain, branch commit)"
     status: completed
   - id: m2-naming-review
-    content: "Post-M2 ΓÇö Execute Loom rename track (decision recorded 2026-08-31); separate from module extraction"
-    status: pending
+    content: "Post-M2 — Execute Loom rename track (decision recorded 2026-08-31); separate from module extraction"
+    status: completed
 atlasStableId: null
 synthesizedAt: null
 relatedPlans:
@@ -63,8 +63,9 @@ relatedPlans:
 |---------|-----|
 | **Atlas** | Remembers ΓÇö portfolio knowledge bus, StableIds, promoted knowledge |
 | **Metra** | Coordinates ΓÇö routing, context, decisions, operational surfaces, human authority |
+| **Yarn** | Prepares ΓÇö Capture / Future-Dev / Atlas intake, ranked backlog, plan pack, human approval |
 | **Forge** | Generates ΓÇö structured definitions ΓåÆ regenerable declarative artifacts |
-| **Loom** (working name **Loom** through M2) | Executes ΓÇö Approved formal plans ΓåÆ governed queue ΓåÆ isolated mutation ΓåÆ review ΓåÆ operator acceptance |
+| **Loom** | Executes ΓÇö Approved formal plans ΓåÆ governed queue ΓåÆ isolated mutation ΓåÆ review ΓåÆ operator acceptance |
 
 **Why not Forge:** ForgeΓÇÖs authority model is **definition ΓåÆ disposable generated output**. LoomΓÇÖs authority model is **mutable execution state** (queue, journal, branches, review evidence, acceptance records). Merging them reduces Forge coherence without reducing Metra coupling.
 
