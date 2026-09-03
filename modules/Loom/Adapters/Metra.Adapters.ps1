@@ -1,5 +1,10 @@
 # Metra host adapters for Loom. Domain code calls these only — never scripts/private/*.ps1.
 
+$script:LoomHostRootOverride = $null
+$script:LoomAtlasPutOverride = $null
+$script:LoomPatternDiffOverride = $null
+$script:LoomPatternBlobOverride = $null
+
 function Get-LoomHostRoot {
     [CmdletBinding()]
     param()
@@ -511,4 +516,97 @@ function Invoke-LoomAskCapabilityAdapter {
         $MetraRoot = Get-LoomHostRoot
     }
     return & $cmd -MetraRoot $MetraRoot
+}
+
+function Get-LoomAtlasCliPath {
+    [CmdletBinding()]
+    param([string]$MetraRoot = (Get-LoomHostRoot))
+
+    $metraFull = [System.IO.Path]::GetFullPath($MetraRoot)
+    $candidates = @(
+        (Join-Path (Split-Path -Parent $metraFull) 'Atlas')
+        'C:\Projects\Atlas'
+    )
+    foreach ($c in $candidates) {
+        $cli = Join-Path $c 'Atlas.ps1'
+        if (Test-Path -LiteralPath $cli) {
+            return (Resolve-Path -LiteralPath $cli).Path
+        }
+    }
+    return $null
+}
+
+function Invoke-LoomAtlasPutAdapter {
+    <#
+    .SYNOPSIS
+        Adapter: Atlas put (local unless -Publish). Overridable for Pester.
+    #>
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory)][string]$StableId,
+        [Parameter(Mandatory)][string]$Project,
+        [Parameter(Mandatory)][string]$Title,
+        [Parameter(Mandatory)][string]$BodyPath,
+        [string]$Kind = 'Doc',
+        [switch]$Publish,
+        [string]$MetraRoot = (Get-LoomHostRoot)
+    )
+
+    if ($script:LoomAtlasPutOverride) {
+        return & $script:LoomAtlasPutOverride -StableId $StableId -Project $Project -Kind $Kind `
+            -Title $Title -BodyPath $BodyPath -Publish:$Publish -MetraRoot $MetraRoot
+    }
+
+    $cli = Get-LoomAtlasCliPath -MetraRoot $MetraRoot
+    if (-not $cli) {
+        throw 'Atlas project not found (expected sibling Atlas with Atlas.ps1).'
+    }
+
+    $argList = @(
+        'put'
+        '-StableId', $StableId
+        '-Project', $Project
+        '-Kind', $Kind
+        '-Title', $Title
+        '-BodyPath', $BodyPath
+        '-Confirm:$false'
+    )
+    if ($Publish) { $argList += '-Publish' }
+
+    $prev = $ConfirmPreference
+    $failed = $false
+    $detail = ''
+    try {
+        $ConfirmPreference = 'None'
+        $output = & $cli @argList 2>&1
+        if (-not $?) {
+            $failed = $true
+            $detail = (($output | ForEach-Object { "$_" }) -join '; ').Trim()
+        }
+    }
+    catch {
+        $failed = $true
+        $detail = $_.Exception.Message
+    }
+    finally {
+        $ConfirmPreference = $prev
+    }
+
+    if ($failed) {
+        if ([string]::IsNullOrWhiteSpace($detail)) { $detail = 'Atlas put failed' }
+        return [PSCustomObject]@{
+            ok        = $false
+            stableId  = $StableId
+            published = [bool]$Publish
+            mode      = $(if ($Publish) { 'published' } else { 'local' })
+            message   = $detail
+        }
+    }
+
+    return [PSCustomObject]@{
+        ok        = $true
+        stableId  = $StableId
+        published = [bool]$Publish
+        mode      = $(if ($Publish) { 'published' } else { 'local' })
+    }
 }

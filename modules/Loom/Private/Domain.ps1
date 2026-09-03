@@ -162,7 +162,7 @@ function Initialize-MetraLoomLayout {
         [Parameter(Mandatory)][string]$Root
     )
 
-    foreach ($sub in @('queue', 'journal', 'candidates', 'runs', 'daily', 'locks')) {
+    foreach ($sub in @('queue', 'journal', 'candidates', 'runs', 'daily', 'locks', 'patterns')) {
         $dir = Join-Path $Root $sub
         if (-not (Test-Path -LiteralPath $dir)) {
             [void][System.IO.Directory]::CreateDirectory($dir)
@@ -1338,7 +1338,7 @@ function Invoke-MetraLoomEnqueueFromPlan {
 function Invoke-LoomCommand {
     <#
     .SYNOPSIS
-        CLI: loom triage|enqueue|plans|status|show|block|run|review|loop|daily|migrate
+        CLI: loom triage|enqueue|plans|status|show|block|run|review|loop|daily|pattern|migrate
     #>
     [CmdletBinding()]
     param(
@@ -1356,7 +1356,7 @@ function Invoke-LoomCommand {
         $Root = (Resolve-MetraLoomRoot -OverrideRoot $Root).Path
     }
 
-    $mutating = @('run', 'block', 'enqueue', 'migrate', 'review', 'daily', 'loop')
+    $mutating = @('run', 'block', 'enqueue', 'migrate', 'review', 'daily', 'loop', 'pattern')
     if ($mutating -contains $Subcommand.ToLowerInvariant()) {
         Assert-LoomRootWritable -Root $Root -OverrideRoot $(if ($explicitRoot) { $Root } else { $null })
     }
@@ -1565,8 +1565,55 @@ function Invoke-LoomCommand {
             if ($ArgsRest -contains '-Confirm') { $params['Confirm'] = $true }
             return Invoke-MetraLoomMigrate @params
         }
+        'pattern' {
+            if ($ArgsRest.Count -eq 0) {
+                throw 'loom pattern requires score|promote'
+            }
+            $patSub = [string]$ArgsRest[0]
+            switch ($patSub.ToLowerInvariant()) {
+                'score' {
+                    $itemId = $null
+                    for ($i = 1; $i -lt $ArgsRest.Count; $i++) {
+                        if ($ArgsRest[$i] -eq '-ItemId' -and ($i + 1) -lt $ArgsRest.Count) {
+                            $itemId = [string]$ArgsRest[$i + 1]; $i++
+                        }
+                    }
+                    $params = @{ Root = $Root; MetraRoot = $MetraRoot }
+                    if ($itemId) { $params['ItemId'] = $itemId }
+                    return Invoke-MetraLoomPatternScore @params
+                }
+                'promote' {
+                    $path = $null
+                    $itemId = $null
+                    for ($i = 1; $i -lt $ArgsRest.Count; $i++) {
+                        if ($ArgsRest[$i] -eq '-Path' -and ($i + 1) -lt $ArgsRest.Count) {
+                            $path = [string]$ArgsRest[$i + 1]; $i++
+                        }
+                        elseif ($ArgsRest[$i] -eq '-ItemId' -and ($i + 1) -lt $ArgsRest.Count) {
+                            $itemId = [string]$ArgsRest[$i + 1]; $i++
+                        }
+                    }
+                    if ([string]::IsNullOrWhiteSpace($path)) {
+                        throw 'loom pattern promote -Path <one-pattern.md> [-ItemId AP-...] [-Preview|-Confirm] [-Publish]'
+                    }
+                    $params = @{
+                        Root      = $Root
+                        Path      = $path
+                        MetraRoot = $MetraRoot
+                    }
+                    if ($itemId) { $params['ItemId'] = $itemId }
+                    if ($ArgsRest -contains '-Preview') { $params['Preview'] = $true }
+                    if ($ArgsRest -contains '-Confirm') { $params['Confirm'] = $true }
+                    if ($ArgsRest -contains '-Publish') { $params['Publish'] = $true }
+                    return Invoke-MetraLoomPatternPromote @params
+                }
+                default {
+                    throw "Unknown loom pattern subcommand: $patSub. Use score|promote."
+                }
+            }
+        }
         default {
-            throw "Unknown loom subcommand: $Subcommand. Use triage|enqueue|plans|status|show|block|run|review|loop|daily|migrate."
+            throw "Unknown loom subcommand: $Subcommand. Use triage|enqueue|plans|status|show|block|run|review|loop|daily|pattern|migrate."
         }
     }
 }

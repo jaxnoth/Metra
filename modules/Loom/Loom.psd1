@@ -90,6 +90,10 @@
         'Invoke-MetraLoomClaimItem'
         'Test-MetraLoomLocalCommitVerification'
         'Invoke-MetraLoomAcceptWithLocalCommitVerify'
+        'Invoke-MetraLoomPatternScore'
+        'Invoke-MetraLoomPatternPromote'
+        'Test-MetraLoomPatternPromoteEligibility'
+        'Get-LoomPatternPromotions'
     )
     AliasesToExport   = @()
     CmdletsToExport   = @()

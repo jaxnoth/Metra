@@ -42,6 +42,27 @@ Describe 'Pattern path containment' {
         $r.ok | Should -BeTrue
         Test-MetraPatternPathWithinPatternsRoot -Path $r.path -MetraRoot $script:MetraRoot | Should -BeTrue
     }
+
+    It 'rejects a junction whose target escapes docs/patterns' {
+        $root = Join-Path ([IO.Path]::GetTempPath()) ('metra-pat-' + [guid]::NewGuid().ToString('n'))
+        $outside = Join-Path $root 'outside'
+        $pat = Join-Path $root 'docs\patterns'
+        try {
+            [void][System.IO.Directory]::CreateDirectory($outside)
+            [void][System.IO.Directory]::CreateDirectory($pat)
+            [System.IO.File]::WriteAllText((Join-Path $outside 'evil.md'), "# evil`n", [System.Text.UTF8Encoding]::new($false))
+            $link = Join-Path $pat 'escaped'
+            New-Item -ItemType Junction -Path $link -Target $outside | Out-Null
+            $escapedFile = Join-Path $link 'evil.md'
+            Test-MetraPatternPathWithinPatternsRoot -Path $escapedFile -MetraRoot $root | Should -BeFalse
+        }
+        finally {
+            if (Test-Path -LiteralPath (Join-Path $pat 'escaped')) {
+                cmd /c rmdir "$(Join-Path $pat 'escaped')" | Out-Null
+            }
+            Remove-Item -LiteralPath $root -Recurse -Force -ErrorAction SilentlyContinue
+        }
+    }
 }
 
 Describe 'Pattern front matter validation' {

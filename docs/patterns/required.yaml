@@ -4,6 +4,7 @@ loom:
   - loom-project-lane
   - loom-review
   - guild-completed-vs-accepted
+  - guild-knowledge-promotion
 metra:
   - guild-agent-interaction
 yarn: []

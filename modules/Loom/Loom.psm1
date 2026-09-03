@@ -18,6 +18,7 @@ $script:LoomHostRootOverride = $null
 . (Join-Path $PSScriptRoot 'Private\Domain.ps1')
 . (Join-Path $PSScriptRoot 'Private\Loop.ps1')
 . (Join-Path $PSScriptRoot 'Private\Lane.ps1')
+. (Join-Path $PSScriptRoot 'Private\PatternPromote.ps1')
 
 $export = @(
     'Invoke-LoomCommand'
@@ -102,6 +103,10 @@ $export = @(
     'Invoke-MetraLoomClaimItem'
     'Test-MetraLoomLocalCommitVerification'
     'Invoke-MetraLoomAcceptWithLocalCommitVerify'
+    'Invoke-MetraLoomPatternScore'
+    'Invoke-MetraLoomPatternPromote'
+    'Test-MetraLoomPatternPromoteEligibility'
+    'Get-LoomPatternPromotions'
 )
 
 Export-ModuleMember -Function $export
