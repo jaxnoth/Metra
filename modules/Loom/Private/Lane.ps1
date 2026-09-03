@@ -468,6 +468,7 @@ function Invoke-MetraLoomAcceptWithLocalCommitVerify {
             # Idempotent: already verified evidence present while still pending-commit -> finish to accepted
             $final = Invoke-MetraLoomStateChange -Root $Root -ItemId $ItemId -From 'accepted-pending-commit' -To 'accepted' `
                 -Reason 'commit-verified-idempotent' -Actor $Actor
+            Invoke-LoomPlanBoardAcceptedNotify -Item $final
             return [PSCustomObject]@{ outcome = 'accepted'; itemId = $ItemId; status = $final.status; item = $final; sha = $existingCv.sha }
         }
 
@@ -517,6 +518,8 @@ function Invoke-MetraLoomAcceptWithLocalCommitVerify {
                     }) -Force
                 return $i
             }
+
+        Invoke-LoomPlanBoardAcceptedNotify -Item $final
 
         return [PSCustomObject]@{
             outcome = 'accepted'

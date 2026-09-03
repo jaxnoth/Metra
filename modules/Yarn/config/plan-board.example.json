@@ -1,0 +1,5 @@
+{
+  "DatabaseId": "<notion-database-id>",
+  "DataSourceId": "<notion-data-source-id>",
+  "HttpTimeoutSec": 15
+}

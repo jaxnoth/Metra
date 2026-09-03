@@ -18,7 +18,31 @@
 .\metra.ps1 yarn pending
 .\metra.ps1 yarn plan approve -BacklogId <id> -Confirm
 .\metra.ps1 yarn plan approve -Path <formal.plan.md> -Confirm
+.\metra.ps1 plan-board status
+.\metra.ps1 plan-board sync -DryRun
+.\metra.ps1 plan-board sync
 ```
+
+## Plan Board projection
+
+Notion Plan Board is an **ops projection** only. Yarn backlog status and Loom verified `accepted` remain systems of record.
+
+Copy `modules/Yarn/config/plan-board.example.json` to the Yarn root settings file (placeholders only in the example):
+
+`%LOCALAPPDATA%\Metra\yarn\plan-board.settings.json`
+
+That path is `Join-Path (Get-MetraYarnRoot) 'plan-board.settings.json'` (override with `METRA_YARN_ROOT` if set). Token: `METRA_NOTION_API_KEY`, else Atlas Notion `apiKey`. Missing Plan Board never blocks intake or approve.
+
+`yarn scan` skips per-item Plan Board notifies. Full catch-up is `plan-board sync`, which rebuilds from Yarn backlog + plan-links + Loom queue plan paths + existing Plan Board cards (not event history alone).
+| Event | Board update? |
+|-------|---------------|
+| Yarn status persisted: `idea` \| `ready` \| `pending-bing` \| `stale-pack` \| `approved` \| `parked` \| `rejected` | Yes (fail-open, once after persist; not during bulk `scan`) |
+| Successful Loom handoff | Yes |
+| Verified Loom `accepted` (after local commit verify) | Yes (Shipped) |
+| `accepted-pending-commit` / other Loom hops | No |
+| Failed Yarn mutation or failed handoff | No |
+
+Resolver uses **explicit precedence** (not highest Stage). Manual Notion Board/Stage edits are non-authoritative and may be overwritten. `-Inventory` is unsupported in v1.
 
 ## Authority
 
@@ -30,6 +54,7 @@
 - Yarn never writes Loom queue/journal files; Loom `Invoke-MetraLoomIngestApprovedPlan` owns ingest
 - Plan review / Pending Bing live here — not in Loom daily §3
 - Atlas providers return data only (local mirror); Yarn never promotes OCC/Decisions from Atlas
+- Plan Board never Approves or enqueues; sync never writes Yarn/Loom status from Notion
 
 ## Phase B (Atlas)
 
@@ -39,4 +64,4 @@
 
 ## Related
 
-Loom owns queue execution after handoff (A4: one active lane per `projectKey`, atomic claim, `accepted-pending-commit` + local commit verify). See [loom.md](loom.md). Slice 7 Phase C AutoProgram leftovers are closed (naming/docs only; alias/migrate stay in the Loom playbook).
+Loom owns queue execution after handoff (A4: one active lane per `projectKey`, atomic claim, `accepted-pending-commit` + local commit verify). Verified accept also notifies Plan Board (Shipped). See [loom.md](loom.md). Slice 7 Phase C AutoProgram leftovers are closed (naming/docs only; alias/migrate stay in the Loom playbook).

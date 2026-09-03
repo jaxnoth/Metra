@@ -276,6 +276,8 @@ function Invoke-MetraYarnSynthesize {
             memoryLane             = [string](Get-YarnProp -Object $item -Name 'memoryLane' -Default '')
         })
 
+    Invoke-YarnPlanBoardNotifyFailOpen -Root $Root -MetraRoot $MetraRoot -BacklogId ([string]$item.id) -CursorPlan $planPath -Reason 'yarn-status:pending-bing'
+
     Add-MetraYarnJournalEntry -Root $Root -Entry @{
         op        = 'synthesize'
         backlogId = [string]$item.id

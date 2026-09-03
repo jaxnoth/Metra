@@ -34,6 +34,14 @@ Entry shape:
 
 ---
 
+---
+
+## 2026-09-02 - Plan Board ops projection (Yarn + verified Loom accept)
+
+- Decision: Notion Plan Board is a fail-open **ops projection** of Yarn lifecycle status and verified Loom `accepted` only. Yarn and Loom remain systems of record. Board and Stage are written as a matched pair from an **explicit precedence** resolver (verified accepted → rejected → parked → handoff/active queue → approved → pending-bing/stale-pack → idea/ready → existing card Inbox → else no update). Do not use highest Stage integer. Shipped applies only after `Invoke-MetraLoomAcceptWithLocalCommitVerify` persists `accepted` (never `accepted-pending-commit`). Sync is inline try/catch with bounded HTTP timeout; missing Plan Board/token/Notion must not fail approve, reconcile, or accept. Upsert by exact ordinal-ignore-case `CursorPlan` filename; create only for Yarn/Loom-path plans; duplicates fail that item. CLI: `metra.ps1 plan-board sync|sync -DryRun|status`. Manual Notion Board/Stage edits are non-authoritative. Atlas Plans DB and Pattern promote stay unchanged; no Atlas Kind for Plan Board in v1.
+- Why: Keep the operator board aligned with the real intake→handoff→accept path without making Notion authoritative or required on clean machines.
+- See: [docs/playbooks/yarn.md](playbooks/yarn.md); [docs/playbooks/loom.md](playbooks/loom.md); `modules/Yarn/Private/PlanBoard.ps1`
+
 ## 2026-09-02 - Yarn Phase C leftovers / Loom naming
 
 - Decision: **Yarn** is a Metra-hosted L1.5 intake product on the portfolio line: **Atlas** remembers; **Metra** coordinates; **Yarn** prepares; **Forge** generates; **Loom** executes. AutoProgram is not a current product name. It remains a deprecated CLI alias (`metra.ps1 autoprogram`), migrate path, dual branch prefix, and historical ID shape (`AP-*` / `CAND-*`) only. AutoProgram-named redirect stubs under `docs/` are deleted; canonical homes are `loom-product-boundary.plan.md` and `loom-m0-tracks.md`.

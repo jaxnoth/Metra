@@ -199,6 +199,8 @@ function Set-YarnPlanApproved {
         approvalRevision = $approvalRevision
     }
 
+    Invoke-YarnPlanBoardNotifyFailOpen -Root $Root -MetraRoot $MetraRoot -BacklogId $backlogId -CursorPlan $planPath -Reason 'yarn-status:approved'
+
     if ($SkipIngest) {
         return [PSCustomObject]@{
             outcome          = 'approved-pending-ingest'
@@ -277,6 +279,7 @@ function Invoke-YarnHandoffIngestRetry {
             state       = 'succeeded'
             queueItemId = $queueItemId
         }
+        Invoke-YarnPlanBoardNotifyFailOpen -Root $Root -MetraRoot $MetraRoot -BacklogId $BacklogId -CursorPlan $planPath -Reason 'loom-handoff'
         return [PSCustomObject]@{
             outcome          = 'approved-enqueued'
             backlogId        = $BacklogId

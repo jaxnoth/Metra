@@ -1,6 +1,6 @@
 @{
     RootModule        = 'Yarn.psm1'
-    ModuleVersion     = '0.3.0'
+    ModuleVersion     = '0.4.0'
     GUID              = 'b9d1f3e5-8c02-4e4f-a017-3d2b6c9e5f81'
     Author            = 'Metra'
     CompanyName       = 'IWU'
@@ -46,6 +46,15 @@
         'Get-YarnUtf8NoBomEncoding'
         'Test-YarnLoomQueueWriteForbidden'
         'Read-YarnFutureDevIdeas'
+        'Resolve-YarnPlanBoardProjection'
+        'Invoke-YarnPlanBoardNotifyFailOpen'
+        'Invoke-MetraYarnPlanBoardSync'
+        'Get-MetraYarnPlanBoardStatus'
+        'Set-YarnBacklogItemStatus'
+        'Get-YarnPlanBoardConfig'
+        'Get-YarnPlanBoardCursorPlanName'
+        'Test-YarnPlanBoardCursorPlanMatch'
+        'Invoke-YarnPlanBoardCommand'
     )
     AliasesToExport   = @()
     CmdletsToExport   = @()

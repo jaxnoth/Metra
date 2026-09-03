@@ -91,7 +91,8 @@ function Sync-YarnBacklogItem {
     [CmdletBinding()]
     param(
         [Parameter(Mandatory)][string]$Root,
-        [Parameter(Mandatory)]$Incoming
+        [Parameter(Mandatory)]$Incoming,
+        [switch]$SkipPlanBoard
     )
     $items = @(Get-MetraYarnBacklog -Root $Root)
     $sourceKey = [string](Get-YarnProp -Object $Incoming -Name 'primarySourceKey' -Default '')
@@ -124,6 +125,11 @@ function Sync-YarnBacklogItem {
         $updated = (New-YarnPsObject -Map $map)
         $items = @($items | Where-Object { [string]$_.id -ne [string]$updated.id }) + @($updated)
         Save-MetraYarnBacklogItems -Root $Root -Items $items
+        $st = [string](Get-YarnProp -Object $updated -Name 'status' -Default '')
+        if (-not $SkipPlanBoard -and $st -in @('idea', 'ready', 'pending-bing', 'stale-pack', 'approved', 'parked', 'rejected')) {
+            $fp = [string](Get-YarnProp -Object $updated -Name 'formalPlanPath' -Default '')
+            Invoke-YarnPlanBoardNotifyFailOpen -Root $Root -BacklogId ([string]$updated.id) -CursorPlan $fp -Reason "yarn-status:$st"
+        }
         return $updated
     }
 
@@ -144,6 +150,11 @@ function Sync-YarnBacklogItem {
     $created = (New-YarnPsObject -Map $map)
     $items = @($items) + @($created)
     Save-MetraYarnBacklogItems -Root $Root -Items $items
+    $stNew = [string](Get-YarnProp -Object $created -Name 'status' -Default '')
+    if (-not $SkipPlanBoard -and $stNew -in @('idea', 'ready', 'pending-bing', 'stale-pack', 'approved', 'parked', 'rejected')) {
+        $fpNew = [string](Get-YarnProp -Object $created -Name 'formalPlanPath' -Default '')
+        Invoke-YarnPlanBoardNotifyFailOpen -Root $Root -BacklogId ([string]$created.id) -CursorPlan $fpNew -Reason "yarn-status:$stNew"
+    }
     return $created
 }
 

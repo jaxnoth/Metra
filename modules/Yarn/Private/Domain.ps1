@@ -1,4 +1,4 @@
-# Yarn CLI harness — status|scan|backlog|pending|reconcile|pack|daily|synthesize
+# Yarn CLI harness — status|scan|backlog|pending|reconcile|pack|daily|synthesize|plan|plan-board
 
 function Get-MetraYarnStatus {
     [CmdletBinding()]
@@ -38,7 +38,7 @@ function Get-MetraYarnStatus {
 function Invoke-YarnCommand {
     <#
     .SYNOPSIS
-        CLI: yarn status|scan|backlog|pending|reconcile|pack|daily|synthesize|plan
+        CLI: yarn status|scan|backlog|pending|reconcile|pack|daily|synthesize|plan|plan-board
     #>
     [CmdletBinding()]
     param(
@@ -163,8 +163,59 @@ function Invoke-YarnCommand {
             }
             throw "yarn plan: unknown subcommand '$inner' (use approve)"
         }
+        'plan-board' {
+            return Invoke-YarnPlanBoardCommand -ArgsRest $ArgsRest -Root $Root -MetraRoot $MetraRoot
+        }
         default {
-            throw "Unknown yarn subcommand: $Subcommand. Use status|scan|backlog|pending|reconcile|pack|daily|synthesize|plan"
+            throw "Unknown yarn subcommand: $Subcommand. Use status|scan|backlog|pending|reconcile|pack|daily|synthesize|plan|plan-board"
+        }
+    }
+}
+
+function Invoke-YarnPlanBoardCommand {
+    <#
+    .SYNOPSIS
+        CLI: plan-board sync|status (also yarn plan-board ...). -Inventory unsupported in v1.
+    #>
+    [CmdletBinding()]
+    param(
+        [string[]]$ArgsRest = @(),
+        [string]$Root,
+        [string]$MetraRoot = (Get-YarnHostRoot)
+    )
+
+    if ([string]::IsNullOrWhiteSpace($Root)) {
+        $Root = Get-MetraYarnRoot
+    }
+    else {
+        $Root = Get-MetraYarnRoot -Override $Root
+    }
+    Initialize-MetraYarnLayout -Root $Root
+
+    if (-not $ArgsRest -or $ArgsRest.Count -eq 0) {
+        throw "plan-board requires sync|status. Example: .\metra.ps1 plan-board status"
+    }
+    if ($ArgsRest -contains '-Inventory') {
+        throw 'plan-board -Inventory is unsupported in v1 (no default Cursor plan inventory).'
+    }
+
+    $sub = $ArgsRest[0].ToLowerInvariant()
+    $rest = @()
+    if ($ArgsRest.Count -gt 1) { $rest = @($ArgsRest[1..($ArgsRest.Count - 1)]) }
+    if ($rest -contains '-Inventory') {
+        throw 'plan-board -Inventory is unsupported in v1 (no default Cursor plan inventory).'
+    }
+
+    switch ($sub) {
+        'sync' {
+            $dry = $rest -contains '-DryRun'
+            return Invoke-MetraYarnPlanBoardSync -Root $Root -MetraRoot $MetraRoot -DryRun:$dry
+        }
+        'status' {
+            return Get-MetraYarnPlanBoardStatus -Root $Root -MetraRoot $MetraRoot
+        }
+        default {
+            throw "Unknown plan-board subcommand: $sub. Use sync|status [-DryRun on sync]."
         }
     }
 }

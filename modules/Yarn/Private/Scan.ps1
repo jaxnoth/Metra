@@ -239,7 +239,7 @@ function Invoke-MetraYarnScan {
         $map = @{}
         foreach ($p in $idea.PSObject.Properties) { $map[$p.Name] = $p.Value }
         $map['sourceHash'] = Get-YarnSourceHash -NormalizedSourceText ([string]$idea.sourceText)
-        $row = Sync-YarnBacklogItem -Root $Root -Incoming (New-YarnPsObject -Map $map)
+        $row = Sync-YarnBacklogItem -Root $Root -Incoming (New-YarnPsObject -Map $map) -SkipPlanBoard
         [void]$upserted.Add($row)
     }
     Add-MetraYarnJournalEntry -Root $Root -Entry @{

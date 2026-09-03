@@ -37,7 +37,7 @@ param(
     [ValidateSet(
         'list', 'status', 'pull', 'fetch', 'run', 'new', 'apply', 'workspace',
         'audit', 'snapshot', 'selfdoc', 'ops', 'host', 'chats', 'roots', 'routing',
-        'export-profile', 'import-profile', 'ctx', 'setup', 'verify', 'unblock', 'tailscale', 'satellite', 'desk', 'profile', 'decisions', 'coverage', 'ask', 'capture', 'watch', 'inspect', 'azdo', 'atlas', 'loom', 'yarn', 'autoprogram', 'help'
+        'export-profile', 'import-profile', 'ctx', 'setup', 'verify', 'unblock', 'tailscale', 'satellite', 'desk', 'profile', 'decisions', 'coverage', 'ask', 'capture', 'watch', 'inspect', 'azdo', 'atlas', 'loom', 'yarn', 'plan-board', 'autoprogram', 'help'
     )]
     [string]$Command = 'help',
 
@@ -263,8 +263,10 @@ Usage:
       Passthrough to sibling Atlas knowledge bus (plans/docs sync). Example: .\metra.ps1 atlas search biblequiz
   .\metra.ps1 loom status|triage|enqueue|run|review|loop|daily|migrate
       Governed plan execution queue (code daily / accept).
-  .\metra.ps1 yarn status|scan|backlog|daily|synthesize|pack|reconcile|pending
+  .\metra.ps1 yarn status|scan|backlog|daily|synthesize|pack|reconcile|pending|plan-board
       L1.5 intake: ranked backlog, template synth, pack freshness (approval in A3).
+  .\metra.ps1 plan-board sync|sync -DryRun|status
+      Notion Plan Board projection catch-up (Yarn/Loom remain authoritative; fail-open).
   .\metra.ps1 verify
 
 Roots:
@@ -1051,6 +1053,25 @@ switch ($Command) {
         }
         $subArgs = Add-MetraYarnConfirmForward -Sub $sub -SubArgs $subArgs -ConfirmPresent:$Confirm.IsPresent
         $result = Invoke-MetraYarnCommand -Subcommand $sub -ArgsRest $subArgs
+        if ($null -eq $result) { return }
+        if ($result -is [System.Array]) {
+            if (@($result).Count -eq 0) {
+                Write-Host '(none)'
+            }
+            else {
+                $result | Format-Table -AutoSize
+            }
+        }
+        else {
+            $result | Format-List
+        }
+    }
+
+    'plan-board' {
+        if (-not $Rest -or $Rest.Count -eq 0) {
+            throw "plan-board requires sync|status. Example: .\metra.ps1 plan-board status"
+        }
+        $result = Invoke-MetraYarnCommand -Subcommand 'plan-board' -ArgsRest $Rest
         if ($null -eq $result) { return }
         if ($result -is [System.Array]) {
             if (@($result).Count -eq 0) {
