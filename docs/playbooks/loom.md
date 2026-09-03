@@ -139,4 +139,4 @@ When upgrading from AutoProgram storage layout:
 
 - [loom-product-boundary.plan.md](../loom-product-boundary.plan.md)
 - [inspect-loop.md](inspect-loop.md) (Metra inspect gate for commits)
-- [yarn.md](yarn.md) (intake + Plan Board projection catch-up via `plan-board sync`)
+- [yarn.md](yarn.md) (intake + Plan Board v2 projection: `plan-board sync` and Bing `plan-board inventory`)

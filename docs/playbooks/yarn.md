@@ -21,6 +21,8 @@
 .\metra.ps1 plan-board status
 .\metra.ps1 plan-board sync -DryRun
 .\metra.ps1 plan-board sync
+.\metra.ps1 plan-board inventory
+.\metra.ps1 plan-board inventory apply -Confirm
 ```
 
 ## Plan Board projection
@@ -33,7 +35,8 @@ Copy `modules/Yarn/config/plan-board.example.json` to the Yarn root settings fil
 
 That path is `Join-Path (Get-MetraYarnRoot) 'plan-board.settings.json'` (override with `METRA_YARN_ROOT` if set). Token: `METRA_NOTION_API_KEY`, else Atlas Notion `apiKey`. Missing Plan Board never blocks intake or approve.
 
-`yarn scan` skips per-item Plan Board notifies. Full catch-up is `plan-board sync`, which rebuilds from Yarn backlog + plan-links + Loom queue plan paths + existing Plan Board cards (not event history alone).
+`yarn scan` skips per-item Plan Board notifies. Full catch-up is `plan-board sync`, which rebuilds from **all** Yarn backlog items (with or without `formalPlanPath`), plan-links, Loom queue plan paths, and existing Plan Board cards.
+
 | Event | Board update? |
 |-------|---------------|
 | Yarn status persisted: `idea` \| `ready` \| `pending-bing` \| `stale-pack` \| `approved` \| `parked` \| `rejected` | Yes (fail-open, once after persist; not during bulk `scan`) |
@@ -42,7 +45,32 @@ That path is `Join-Path (Get-MetraYarnRoot) 'plan-board.settings.json'` (overrid
 | `accepted-pending-commit` / other Loom hops | No |
 | Failed Yarn mutation or failed handoff | No |
 
-Resolver uses **explicit precedence** (not highest Stage). Manual Notion Board/Stage edits are non-authoritative and may be overwritten. `-Inventory` is unsupported in v1.
+Resolver uses **explicit precedence** (not highest Stage). Manual Notion Board/Stage edits are non-authoritative and may be overwritten.
+
+### Stages and views (v2)
+
+| Stage | Board | On By Stage? | Meaning |
+|------:|-------|:------------:|---------|
+| 1 | Inbox | no | Unresolved existing card |
+| 2 | Backlog | no | Idea/process without formal plan |
+| 3 | Idea | yes | Formal plan path; not yet Active |
+| 4 | Active | yes | `pending-bing` / `stale-pack` |
+| 5 | Loom | yes | Handoff / active queue / `approved` |
+| 6 | Shipped | yes | Verified Loom `accepted` only |
+| 7 | Parked | yes | Yarn `parked` or affirmed inventory Park |
+| 8 | Drop | no | Yarn `rejected` or affirmed inventory Drop |
+
+One Notion database. Operator views (Metra does not create them via API): **By Stage** is the default/main tab (lean: Idea, Active, Loom, Shipped, Parked). Side tabs: Inbox, Backlog, Drop. Optional Kanban uses the same lean filter. Remove any tab named **Default view**. Notion one-time: add Board option `Backlog`; Stage up to 8.
+
+Existing Inbox/Backlog/Drop cards with no current Yarn/Loom signal keep that Board; sync only normalizes Stage. Identity match: CursorPlan first, else YarnId (Yarn-only card may gain CursorPlan). Split or duplicate identity is a conflict: skip both sides; never auto Drop.
+
+### Inventory (Bing pack)
+
+`plan-board inventory` scans Yarn backlog, `%USERPROFILE%\.cursor\plans\*.plan.md`, `_meta/docs\*.plan.md`, Loom queue paths, and existing cards. It writes `%LOCALAPPDATA%\Metra\yarn\plan-board-inventory.md` and `.json` (`schemaVersion` 2). Heuristics set `proposedDecision`; `decision` stays `review` until Bing/operator affirms. Zero Notion writes.
+
+`plan-board inventory apply -Confirm` is an affirmation gate (not an authority override). Applies only `keep` \| `drop` \| `park`. Skips `review`, unrated, and identity conflicts. Re-resolves each row against current Yarn/Loom/card state and skips stale proposals. Unknown `schemaVersion` or missing `-Confirm` attempts nothing. Drop of an existing card requires `notionPageId`. Inventory cannot approve Yarn or enqueue Loom.
+
+Sync and apply summaries use a **stable public contract**: `scanned`, `proposed`, `applied`, `unchanged`, `skippedReview`, `skippedStale`, `identityConflicts`, `failed`, `notionUnavailable`. Rename only with a versioned migration.
 
 ## Authority
 

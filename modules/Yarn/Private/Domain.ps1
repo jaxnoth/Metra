@@ -175,7 +175,7 @@ function Invoke-YarnCommand {
 function Invoke-YarnPlanBoardCommand {
     <#
     .SYNOPSIS
-        CLI: plan-board sync|status (also yarn plan-board ...). -Inventory unsupported in v1.
+        CLI: plan-board sync|status|inventory|inventory apply -Confirm
     #>
     [CmdletBinding()]
     param(
@@ -193,29 +193,34 @@ function Invoke-YarnPlanBoardCommand {
     Initialize-MetraYarnLayout -Root $Root
 
     if (-not $ArgsRest -or $ArgsRest.Count -eq 0) {
-        throw "plan-board requires sync|status. Example: .\metra.ps1 plan-board status"
-    }
-    if ($ArgsRest -contains '-Inventory') {
-        throw 'plan-board -Inventory is unsupported in v1 (no default Cursor plan inventory).'
+        throw "plan-board requires sync|status|inventory. Example: .\metra.ps1 plan-board status"
     }
 
     $sub = $ArgsRest[0].ToLowerInvariant()
     $rest = @()
     if ($ArgsRest.Count -gt 1) { $rest = @($ArgsRest[1..($ArgsRest.Count - 1)]) }
-    if ($rest -contains '-Inventory') {
-        throw 'plan-board -Inventory is unsupported in v1 (no default Cursor plan inventory).'
-    }
 
     switch ($sub) {
         'sync' {
+            if ($rest -contains '-Inventory') {
+                throw 'plan-board sync -Inventory is unsupported; use: plan-board inventory'
+            }
             $dry = $rest -contains '-DryRun'
             return Invoke-MetraYarnPlanBoardSync -Root $Root -MetraRoot $MetraRoot -DryRun:$dry
         }
         'status' {
             return Get-MetraYarnPlanBoardStatus -Root $Root -MetraRoot $MetraRoot
         }
+        'inventory' {
+            $apply = ($rest.Count -gt 0 -and $rest[0].ToLowerInvariant() -eq 'apply')
+            if ($apply) {
+                $confirm = $rest -contains '-Confirm'
+                return Invoke-MetraYarnPlanBoardInventoryApply -Root $Root -MetraRoot $MetraRoot -Confirm:$confirm
+            }
+            return Invoke-MetraYarnPlanBoardInventory -Root $Root -MetraRoot $MetraRoot
+        }
         default {
-            throw "Unknown plan-board subcommand: $sub. Use sync|status [-DryRun on sync]."
+            throw "Unknown plan-board subcommand: $sub. Use sync|status|inventory|inventory apply -Confirm."
         }
     }
 }

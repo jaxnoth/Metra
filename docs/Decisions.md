@@ -26,30 +26,56 @@ Entry shape:
 
 ---
 
-## 2026-09-03 - Scout: iOS app rename and investigative subsystem formalization
+## 2026-09-03 - Scout parked; Metra iOS name settled; not a separate subsystem
 
-Three related decisions captured together. See `docs/scout.plan.md` for the full architectural plan.
+Supersedes same-day entries that formalized Scout as an approved investigative subsystem or treated Scout as settled architecture. See `docs/scout.plan.md`.
 
-- Decision: Rename the Metra iOS application to **Metra Scout**. Previous working names (Metra iOS, Metra Mobile, Metra Companion) are retired.
-- Why: "Scout" describes the job of the application rather than the technology behind it. The mobile experience centers on investigation, awareness, and proactive observation - not orchestration or peer companionship. The name communicates mission.
+- Decision: The iOS application remains **Metra**. Do not rename the phone app to Scout, Metra Scout, or any Scout compound. Informal working names (Companion, Mobile) are not a new product brand.
+- Why: Metra is the brand the operator talks to. If Scout later merges into Attention, dies, or renames, the phone name still works.
+- See: `docs/ios-companion-app.plan.md`, `docs/scout.plan.md`
+
+- Decision: Scout is **not** approved as a separate Metra subsystem. Status: **Parked** for future consideration. Desired attributes may be recorded as notes (alternate theories, contradiction detection, assumption challenges, investigative reasoning) without granting peer status next to Atlas, Codex, Loom, or Attention.
+- Why: No unique ownership boundary was identified that differentiates Scout from Attention. An always-on observation engine is Attention territory. Scout may later become **Attention 2.0** rather than a distinct product.
 - See: `docs/scout.plan.md`
 
-- Decision: Formalize **Scout** as a first-class Metra investigative subsystem, positioned at the same architectural level as Atlas, TicketTracker, Codex, Loom, and Attention. Scout is not a chatbot, not a virtual personality, and not a peer application. Scout is an always-on capability that discovers what deserves attention.
-- Why: The original iOS companion concept was anchored to a specific provider (Grok companion). Provider availability is uncertain. Separating the investigative capability contract from the provider implementation makes Scout resilient to vendor changes. Capability contracts outlast individual models.
-- See: `docs/scout.plan.md`, `docs/ios-companion-app.plan.md` (prior Vision/Bounded contract; UI shape remains valid)
+- Decision: Revisit Scout only if a concrete workflow requires dedicated investigative or adversarial reasoning beyond Attention recommendations, or if Attention is explicitly redesigned to absorb those behaviors.
+- Why: Keep the promising idea without inventing a blurry subsystem. Park preserves notes; it does not enqueue implementation.
+- See: `docs/scout.plan.md`
 
-- Decision: Scout is provider-agnostic by design. Scout gets a `scout.engine` configuration pin, following the same pattern as `ask.engine` and `inspect.*` pins. Providers (Claude, GPT, Grok, local models, future) are implementation details. Metra determines routing. Scout continues functioning if a provider disappears.
+## 2026-09-03 - Plan Board v2 (Backlog, dual identity, inventory)
+
+- Decision: Plan Board v2 inserts **Backlog** at Stage 2 (Idea..Drop become 3..8). **By Stage** is the lean default view; Inbox, Backlog, and Drop are side tabs. Sync projects all Yarn items (YarnId-only cards allowed). Match CursorPlan first, else YarnId; a Yarn-only card may gain CursorPlan; split or duplicate identity is a conflict (skip, never auto Drop). Existing Inbox/Backlog/Drop without a current signal is preserved (Stage normalized). Inventory writes a versioned Bing pack (`schemaVersion` 2) with `proposedDecision` separate from `decision`; `inventory apply -Confirm` is an affirmation gate, stale-safe, and rejects unknown schema. Summary fields `scanned`, `proposed`, `applied`, `unchanged`, `skippedReview`, `skippedStale`, `identityConflicts`, `failed`, `notionUnavailable` are a stable public contract. Yarn/Loom remain systems of record; Notion stays fail-open; inventory cannot approve or enqueue.
+- Why: Operators need visibility for ideas without formal plans and a Bing-reviewed triage path without inventing a third workflow engine.
+- See: [docs/playbooks/yarn.md](playbooks/yarn.md); [docs/playbooks/loom.md](playbooks/loom.md); `modules/Yarn/Private/PlanBoard.ps1`
+
+## 2026-09-03 - Metra stays the iOS brand; Scout is the investigative subsystem
+
+**Status: SUPERSEDED** by [2026-09-03 - Scout parked; Metra iOS name settled; not a separate subsystem](#2026-09-03---scout-parked-metra-ios-name-settled-not-a-separate-subsystem). Do not treat the Decision bullets below as active policy.
+
+Withdraws the same-day draft that renamed the iOS app to Metra Scout or styled the subsystem as Scout Investigator. See `docs/scout.plan.md`.
+
+- Decision (superseded): Do **not** rename the Metra iOS application. Official iOS name and brand stay **Metra**. Informal working names (Companion, Mobile, iOS) are not a new product brand. Metra on the phone remains the secretary / coworker interface for all Metra areas. **Active restatement:** iOS brand remains Metra (unchanged by the park entry).
+- Why: Putting Scout on the app name dilutes the Metra brand. The operator talks to Metra. Scout is staff behind that desk, not a second home-screen product.
+- See: `docs/scout.plan.md`, `docs/ios-companion-app.plan.md`
+
+- Decision (superseded): Formalize **Scout** as a first-class Metra investigative subsystem, positioned at the same architectural level as Atlas, TicketTracker, Codex, Loom, and Attention. Scout is not a chatbot, not a virtual personality, and not a peer application. It is an always-on capability that discovers what deserves attention and can emit async observations into Metra (iOS, Ops, later channels). **Active policy:** Scout is **Parked**, not a separate subsystem.
+- Why: Provider lock-in risk on companion-style apps. Separating the Metra client surface from the Scout capability contract keeps the brand intact and keeps investigation replaceable if a model vendor disappears.
+- See: `docs/scout.plan.md`, `docs/ios-companion-app.plan.md`
+
+- Decision (superseded): Scout is provider-agnostic by design. Scout gets a `scout.engine` configuration pin, following the same pattern as `ask.engine` and `inspect.*` pins. Providers (Claude, GPT, Grok, local models, future) are implementation details. Metra determines routing. Scout continues functioning if a provider disappears. **Active policy:** no Scout subsystem pin until park is lifted.
 - Why: Lock-in risk. If Scout were tied to a single model vendor, losing that vendor's API access would disable the subsystem. The capability contract over provider identity pattern is already established in Metra Inspect and Ask.
 - See: `docs/scout.plan.md`
 
 ## 2026-09-03 - Scout authority ceiling and Attention relationship
 
-- Decision: Scout authority is **observe, investigate, analyze, review, summarize, recommend, draft** only. Scout may not approve, deploy, commit code, send communications, modify production systems, or execute changes without human affirmation.
+**Status: SUPERSEDED** by [2026-09-03 - Scout parked; Metra iOS name settled; not a separate subsystem](#2026-09-03---scout-parked-metra-ios-name-settled-not-a-separate-subsystem). Authority/Attention bullets below are historical notes only; they do not authorize a Scout subsystem while park stands.
+
+- Decision (superseded): Scout authority is **observe, investigate, analyze, review, summarize, recommend, draft** only. Scout may not approve, deploy, commit code, send communications, modify production systems, or execute changes without human affirmation. This ceiling attaches to Scout, not to the entire Metra iOS app.
 - Why: An always-on background investigative system without an authority ceiling creates risk of automated action on incomplete evidence. Metra's existing affirmation-first philosophy applies. Scout recommendations are inputs to human decisions, not decisions themselves.
 - See: `docs/scout.plan.md`
 
-- Decision: Scout sits downstream of **Attention** in the signal chain. Attention remains the signal bus (detection layer). Scout is the analyst layer that reads Attention output and produces investigations, alternate hypotheses, and recommendations. Signal chain: Signal → Attention → Scout Investigation → Recommendation → Human Affirmation.
-- Why: Keeping Attention and Scout as separate layers preserves independent replaceability. Attention detects; Scout investigates. Merging them would couple signal detection to investigative reasoning, making both harder to evolve independently.
+- Decision (superseded): Scout sits downstream of **Attention** in the signal chain. Attention remains the signal bus (detection layer). Scout is the analyst layer that reads Attention output and produces investigations, alternate hypotheses, and recommendations. Metra iOS is one surface that can present those results. Signal chain: Signal → Attention → Scout → ObservationFeed → Metra (iOS / Ops / later) → Human Affirmation.
+- Why: Keeping Attention and Scout as separate layers preserves independent replaceability. Attention detects; Scout investigates. Keeping the iOS app named Metra avoids redefining every mobile interaction as investigation-only.
 - See: `docs/scout.plan.md`
 
 ---
