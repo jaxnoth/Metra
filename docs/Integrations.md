@@ -41,7 +41,7 @@ flowchart LR
 | Multi-root workspace file | `.\metra.ps1 workspace` -> `Metra.code-workspace` (optional; orchestration folder labeled **Metra**) |
 | Metra Ops board | `.\metra.ps1 snapshot` installs/refreshes one `metra-ops-board.canvas.tsx` (Route / Portfolio / Stewardship). Route opens with a capped Needs attention queue and Resolve this classifier; the sticky tab bar keeps all three views reachable. Component code refreshes on template drift; data every run. Board is a retrieval surface - durable writes stay in CLI/chat. |
 | Metra Ops webview (VS Code / Cursor) | Optional IDE shell: install `integrations/vscode-metra-ops` (Extensions: Install from Location), then **Metra Ops: Open Desk**. Bridge messages are `requestProposalApply` / `askInChat` / `openWorkspacePath` / `copyText` (never bare apply). Disk apply stays on the tray Host. Plain browser desk still works without the extension. |
-| Metra self-documentation | Visual explain surface (not the ops desk). Refresh with `.\metra.ps1 selfdoc` after registry route/trigger changes (`snapshot` also runs it). Template `integrations/cursor/metra-self-documentation.canvas.tsx.template`; live canvas under Cursor projects `canvases/`. Prose twin: `docs/Overview.md`. Sidecar: `docs/selfdoc-routes.json`. |
+| Metra self-documentation | Visual explain surface (not the ops desk). Refresh with `.\metra.ps1 selfdoc` after registry route/trigger changes (`snapshot` also runs it). Template `integrations/cursor/metra-self-documentation.canvas.tsx.template`; live canvas under Cursor projects `canvases/`. Prose twin: `docs/Overview.md`. Sidecar: `%LOCALAPPDATA%\Metra\selfdoc\selfdoc-routes.json`. |
 | Prior chat search | `.\metra.ps1 chats` (reads Cursor agent transcripts) |
 | Stale Ops refresh on chat start | `.cursor/hooks.json` `sessionStart` -> `.cursor/hooks/session-snapshot.ps1` |
 
@@ -77,7 +77,7 @@ Cursor **project hooks** run on **agent chat session start**, not when you open 
 | Refresh Ops board when snapshot is stale (`snapshot -Quick`) | Yes - `sessionStart` hook (fail-open; never blocks chat) |
 | Rebuild `Metra.code-workspace` | **No** - run `.\metra.ps1 workspace` manually when folders change (auto-rewrite can reload Cursor mid-session) |
 
-Stale means: snapshot older than 4 hours, **or** `projects.json` / `projects.local.json` / `metra.config.json` / root `registryFile` newer than `docs/canvas-snapshot.json`.
+Stale means: snapshot older than 4 hours, **or** `projects.json` / `projects.local.json` / `metra.config.json` / root `registryFile` newer than `%LOCALAPPDATA%\Metra\desk\canvas-snapshot.json`.
 
 ### Quick vs full snapshot
 
@@ -90,7 +90,7 @@ Plain English is preferred over slash commands for this operator. Ask to refresh
 
 ### Multi-root search echo
 
-After routing, scope Grep/Glob to one absolute project path. See [Search-Echo.md](Search-Echo.md).
+After routing, scope Grep/Glob to one absolute project path. See [search-echo.md](playbooks/search-echo.md).
 
 ## Universal handoff with `ctx`
 
@@ -99,7 +99,7 @@ After routing, scope Grep/Glob to one absolute project path. See [Search-Echo.md
 .\metra.ps1 ctx -Query "your topic"
 ```
 
-Default outputs (gitignored): `docs/context-pack.md` and `docs/context-pack.json` (title: **Metra context pack**).
+Default outputs (machine-local): `%LOCALAPPDATA%\Metra\desk\context-pack.md` and `context-pack.json` (title: **Metra context pack**).
 
 Use the pack with **any** coding agent: `@` in Cursor, attach/paste in Claude Code / Codex / other chats. Prefer `ctx` over dumping `canvas-snapshot.json` or full registries.
 
@@ -117,7 +117,7 @@ Claude Code, Codex, Copilot, and similar tools are **not** generated in this pas
 - [Brand.md](Brand.md) - operator-facing palette and professional sink
 - [Customizing-Metra.md](Customizing-Metra.md) - persona, Origin, and overlays
 - [Context-Routing.md](Context-Routing.md) - registries, audit, Metra Ops board
-- [Search-Echo.md](Search-Echo.md) - multi-root Grep echo and path scoping
+- [search-echo.md](playbooks/search-echo.md) - multi-root Grep echo and path scoping
 - [Decisions.md](Decisions.md) - append-only portfolio decisions
 - [ops/README.md](../ops/README.md) - Ask + Capture HTTP contract for native clients
 - [Routing-Scenarios.md](Routing-Scenarios.md) - routing / persona smoke + `verify` fixtures

@@ -30,7 +30,7 @@ function Initialize-Metra {
     .PARAMETER OpsBaseUrl
         HQ Ops URL for Satellite (absolute http:// or https://). No prompt when set with -Quiet.
     .PARAMETER SyncToken
-        Optional profile sync token for Satellite (writes docs/profile-sync.local.json).
+        Optional profile sync token for Satellite (writes %LOCALAPPDATA%/Metra/profile-sync.local.json).
         Plain string for v1; SecureString support may follow profile-sync evolution.
     .PARAMETER PreferFriendly
         Prefer http://metra/ when port 80 is free (HQ/Standalone). Cannot combine with

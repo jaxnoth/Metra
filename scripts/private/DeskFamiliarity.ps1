@@ -1,7 +1,7 @@
 # Desk familiarity - durable working-together register (operator-private local ledger).
 # Humor-desk companion; mechanical CLI - agent performs chat analysis.
 
-$script:MetraDeskFamiliarityRelativePath = 'docs/desk-familiarity.local.json'
+$script:MetraDeskFamiliarityRelativePath = 'desk-familiarity.local.json'
 $script:MetraDeskFamiliarityBands = @('Cold', 'Warming', 'Familiar')
 $script:MetraDeskFamiliarityScoreMin = 0
 $script:MetraDeskFamiliarityScoreMax = 8
@@ -13,12 +13,13 @@ function Get-MetraDeskFamiliarityPaths {
     [CmdletBinding()]
     param([string]$MetraRoot = (Get-MetraRoot))
 
-    $rel = $script:MetraDeskFamiliarityRelativePath -replace '/', [IO.Path]::DirectorySeparatorChar
-    $ledger = Join-Path $MetraRoot $rel
+    $ledger = Get-MetraDeskFamiliarityLedgerPath -MetraRoot $MetraRoot
+    $example = Join-Path $MetraRoot ('docs' + [IO.Path]::DirectorySeparatorChar + 'examples' + [IO.Path]::DirectorySeparatorChar + 'desk-familiarity.local.example.json')
     return [PSCustomObject]@{
-        LedgerPath     = $ledger
-        RelativePath   = $script:MetraDeskFamiliarityRelativePath
-        ExamplePath    = Join-Path $MetraRoot ('docs' + [IO.Path]::DirectorySeparatorChar + 'desk-familiarity.local.example.json')
+        LedgerPath      = $ledger
+        RelativePath    = $script:MetraDeskFamiliarityRelativePath
+        ExamplePath     = $example
+        MachineDataRoot = (Get-MetraMachineDataRoot -MetraRoot $MetraRoot)
     }
 }
 

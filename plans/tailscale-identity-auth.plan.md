@@ -101,6 +101,6 @@ Client resolves Ops via configured MagicDNS name, Tailscale IP, or Serve HTTPS U
 
 - Decision: `docs/Decisions.md` (2026-08-29 Tailscale identity)
 - `SECURITY.md` - Reach vs authority
-- `docs/ios-companion-app.plan.md` - section 2.3 Device auth
+- `plans/ios-companion-app.plan.md` - section 2.3 Device auth
 - `docs/Brand.md` - Profile sync token (transitional)
 - `docs/Cross-Device.local.md` - current paste flow

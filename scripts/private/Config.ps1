@@ -4,6 +4,218 @@ function Get-MetraRoot {
     return $script:MetraModuleRoot
 }
 
+function Get-MetraMachineDataRoot {
+    <#
+    .SYNOPSIS
+        Machine-local Metra state root (%LOCALAPPDATA%\Metra), overridable for tests.
+    .NOTES
+        Explicit sandbox -MetraRoot (≠ live module root) wins over METRA_DATA_ROOT so Pester
+        stays isolated. Otherwise METRA_DATA_ROOT forces the root. Live ops ledgers:
+        %LOCALAPPDATA%\Metra\ops\ (and sibling *.local.json files).
+    #>
+    [CmdletBinding()]
+    param([string]$MetraRoot)
+    $live = $null
+    $liveRoot = Get-MetraRoot
+    if (-not [string]::IsNullOrWhiteSpace($liveRoot)) {
+        try { $live = [System.IO.Path]::GetFullPath($liveRoot) } catch { $live = $null }
+    }
+    if (-not [string]::IsNullOrWhiteSpace($MetraRoot)) {
+        $sandbox = [System.IO.Path]::GetFullPath($MetraRoot)
+        if ([string]::IsNullOrWhiteSpace($live) -or
+            -not [string]::Equals($sandbox, $live, [System.StringComparison]::OrdinalIgnoreCase)) {
+            [void][System.IO.Directory]::CreateDirectory($sandbox)
+            return $sandbox
+        }
+    }
+    if (-not [string]::IsNullOrWhiteSpace($env:METRA_DATA_ROOT)) {
+        $p = [System.IO.Path]::GetFullPath($env:METRA_DATA_ROOT.Trim())
+        [void][System.IO.Directory]::CreateDirectory($p)
+        return $p
+    }
+    $local = [string]$env:LOCALAPPDATA
+    if ([string]::IsNullOrWhiteSpace($local)) {
+        $local = [System.Environment]::GetFolderPath([System.Environment+SpecialFolder]::LocalApplicationData)
+    }
+    if ([string]::IsNullOrWhiteSpace($local)) {
+        throw 'LOCALAPPDATA unavailable; set METRA_DATA_ROOT for machine-local Metra state.'
+    }
+    $p = [System.IO.Path]::GetFullPath((Join-Path $local 'Metra'))
+    [void][System.IO.Directory]::CreateDirectory($p)
+    return $p
+}
+
+function Move-MetraLegacyDocsGeneratedIfNeeded {
+    <#
+    .SYNOPSIS
+        One-shot: move gitignored/docs-generated leaf into DestPath when Dest is missing.
+    #>
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory)][string]$LegacyRelativeUnderDocs,
+        [Parameter(Mandatory)][string]$DestinationPath,
+        [string]$MetraRoot = (Get-MetraRoot)
+    )
+    if (Test-Path -LiteralPath $DestinationPath) { return }
+    if ([string]::IsNullOrWhiteSpace($MetraRoot) -or -not [System.IO.Path]::IsPathRooted($MetraRoot)) {
+        return
+    }
+    $legacy = Join-Path $MetraRoot (Join-Path 'docs' $LegacyRelativeUnderDocs)
+    if (-not (Test-Path -LiteralPath $legacy)) { return }
+    $dir = Split-Path -Parent $DestinationPath
+    if ($dir) { [void][System.IO.Directory]::CreateDirectory($dir) }
+    try {
+        Move-Item -LiteralPath $legacy -Destination $DestinationPath -Force -ErrorAction Stop
+    }
+    catch {
+        Write-Warning ("Move-MetraLegacyDocsGeneratedIfNeeded: could not move '{0}' -> '{1}': {2}" -f $legacy, $DestinationPath, $_.Exception.Message)
+    }
+}
+
+function Resolve-MetraMachineLedgerPath {
+    <#
+    .SYNOPSIS
+        Machine-local ledger path under Get-MetraMachineDataRoot, with docs\ legacy migrate.
+    #>
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory)][string]$RelativeUnderMachineData,
+        [Parameter(Mandatory)][string]$LegacyRelativeUnderDocs,
+        [string]$MetraRoot = (Get-MetraRoot)
+    )
+    $dest = Join-Path (Get-MetraMachineDataRoot -MetraRoot $MetraRoot) $RelativeUnderMachineData
+    $dir = Split-Path -Parent $dest
+    if ($dir) { [void][System.IO.Directory]::CreateDirectory($dir) }
+    Move-MetraLegacyDocsGeneratedIfNeeded -LegacyRelativeUnderDocs $LegacyRelativeUnderDocs `
+        -DestinationPath $dest -MetraRoot $MetraRoot
+    return $dest
+}
+
+function Get-MetraOpsAskLogPath {
+    [CmdletBinding()]
+    param([string]$MetraRoot = (Get-MetraRoot))
+    return Resolve-MetraMachineLedgerPath -MetraRoot $MetraRoot `
+        -RelativeUnderMachineData 'ops\ask-log.json' `
+        -LegacyRelativeUnderDocs 'ops-ask-log.local.json'
+}
+
+function Get-MetraOpsCapturePath {
+    [CmdletBinding()]
+    param([string]$MetraRoot = (Get-MetraRoot))
+    return Resolve-MetraMachineLedgerPath -MetraRoot $MetraRoot `
+        -RelativeUnderMachineData 'ops\capture.json' `
+        -LegacyRelativeUnderDocs 'ops-capture.local.json'
+}
+
+function Get-MetraOpsAttentionPath {
+    [CmdletBinding()]
+    param([string]$MetraRoot = (Get-MetraRoot))
+    return Resolve-MetraMachineLedgerPath -MetraRoot $MetraRoot `
+        -RelativeUnderMachineData 'ops\attention.json' `
+        -LegacyRelativeUnderDocs 'ops-attention.local.json'
+}
+
+function Get-MetraOpsPlacePath {
+    [CmdletBinding()]
+    param([string]$MetraRoot = (Get-MetraRoot))
+    return Resolve-MetraMachineLedgerPath -MetraRoot $MetraRoot `
+        -RelativeUnderMachineData 'ops\place.json' `
+        -LegacyRelativeUnderDocs 'ops-place.local.json'
+}
+
+function Get-MetraOpsPreferencesPath {
+    [CmdletBinding()]
+    param([string]$MetraRoot = (Get-MetraRoot))
+    return Resolve-MetraMachineLedgerPath -MetraRoot $MetraRoot `
+        -RelativeUnderMachineData 'ops\preferences.json' `
+        -LegacyRelativeUnderDocs 'ops-preferences.local.json'
+}
+
+function Get-MetraAzdoLocalConfigPath {
+    [CmdletBinding()]
+    param([string]$MetraRoot = (Get-MetraRoot))
+    return Resolve-MetraMachineLedgerPath -MetraRoot $MetraRoot `
+        -RelativeUnderMachineData 'azdo.local.json' `
+        -LegacyRelativeUnderDocs 'azdo.local.json'
+}
+
+function Get-MetraTicketWatchConfigPath {
+    [CmdletBinding()]
+    param([string]$MetraRoot = (Get-MetraRoot))
+    return Resolve-MetraMachineLedgerPath -MetraRoot $MetraRoot `
+        -RelativeUnderMachineData 'ticket-watch.local.json' `
+        -LegacyRelativeUnderDocs 'ticket-watch.local.json'
+}
+
+function Get-MetraClientAuthLocalPath {
+    [CmdletBinding()]
+    param([string]$MetraRoot = (Get-MetraRoot))
+    return Resolve-MetraMachineLedgerPath -MetraRoot $MetraRoot `
+        -RelativeUnderMachineData 'client-auth.local.json' `
+        -LegacyRelativeUnderDocs 'client-auth.local.json'
+}
+
+function Get-MetraProfileSyncLocalPath {
+    [CmdletBinding()]
+    param([string]$MetraRoot = (Get-MetraRoot))
+    return Resolve-MetraMachineLedgerPath -MetraRoot $MetraRoot `
+        -RelativeUnderMachineData 'profile-sync.local.json' `
+        -LegacyRelativeUnderDocs 'profile-sync.local.json'
+}
+
+function Get-MetraDeskFamiliarityLedgerPath {
+    [CmdletBinding()]
+    param([string]$MetraRoot = (Get-MetraRoot))
+    return Resolve-MetraMachineLedgerPath -MetraRoot $MetraRoot `
+        -RelativeUnderMachineData 'desk-familiarity.local.json' `
+        -LegacyRelativeUnderDocs 'desk-familiarity.local.json'
+}
+
+function Get-MetraCanvasSnapshotPath {
+    <#
+    .SYNOPSIS
+        Ops/canvas portfolio snapshot JSON (machine-local desk state).
+    #>
+    [CmdletBinding()]
+    param([string]$MetraRoot = (Get-MetraRoot))
+    return Resolve-MetraMachineLedgerPath -MetraRoot $MetraRoot `
+        -RelativeUnderMachineData 'desk\canvas-snapshot.json' `
+        -LegacyRelativeUnderDocs 'canvas-snapshot.json'
+}
+
+function Get-MetraContextPackPath {
+    <#
+    .SYNOPSIS
+        Default ctx / context-pack output path under machine-local desk state.
+    #>
+    [CmdletBinding()]
+    param(
+        [ValidateSet('md', 'json')]
+        [string]$Format = 'md',
+        [string]$MetraRoot = (Get-MetraRoot)
+    )
+    $leaf = if ($Format -eq 'json') { 'context-pack.json' } else { 'context-pack.md' }
+    return Resolve-MetraMachineLedgerPath -MetraRoot $MetraRoot `
+        -RelativeUnderMachineData ('desk\' + $leaf) `
+        -LegacyRelativeUnderDocs $leaf
+}
+
+function Get-MetraSelfDocRoutesPath {
+    [CmdletBinding()]
+    param([string]$MetraRoot = (Get-MetraRoot))
+    return Resolve-MetraMachineLedgerPath -MetraRoot $MetraRoot `
+        -RelativeUnderMachineData 'selfdoc\selfdoc-routes.json' `
+        -LegacyRelativeUnderDocs 'selfdoc-routes.json'
+}
+
+function Get-MetraSelfDocRoutingExamplesPath {
+    [CmdletBinding()]
+    param([string]$MetraRoot = (Get-MetraRoot))
+    return Resolve-MetraMachineLedgerPath -MetraRoot $MetraRoot `
+        -RelativeUnderMachineData 'selfdoc\selfdoc-routing-examples.json' `
+        -LegacyRelativeUnderDocs 'selfdoc-routing-examples.json'
+}
+
 function Initialize-MetraConfigCache {
     <#
     .SYNOPSIS

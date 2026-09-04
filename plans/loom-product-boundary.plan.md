@@ -40,7 +40,7 @@ synthesizedAt: null
 relatedPlans:
   - path: C:\Users\admin.sswan\.cursor\plans\metra_auto-programming_loop_0e30e91c.plan.md
     role: execution-roadmap
-  - path: C:\Projects\_meta\docs\routing-graph-phase5-review.plan.md
+  - path: C:\Projects\_meta\plans\routing-graph-phase5-review.plan.md
     role: separate-track
 ---
 
@@ -89,7 +89,7 @@ Evidence gathered 2026-08-31 from repository inspection (not plan text alone).
 | Loom tests | **`tests/Metra.Loom.Tests.ps1`** ΓÇö **untracked** |
 | Metra wiring | `metra.ps1`, `scripts/Metra.psd1`, `scripts/Metra.psm1` ΓÇö **modified**, uncommitted |
 | Mixed modified tracks (same working tree) | Routing (`Routing.ps1` +518 lines), Ask (`AskEngine.ps1`, `AskLane.ps1`, Cursor engine), Ops/Inspect, `Metra.Tests.ps1` |
-| Separate track (untracked plan) | `docs/routing-graph-phase5-review.plan.md` |
+| Separate track (untracked plan) | `plans/routing-graph-phase5-review.plan.md` |
 
 **Uncertainty:** Whether the two commits ahead of origin include any Loom work ΓÇö **no**; they are routing/memory/Ask sidecar commits per `git log`.
 

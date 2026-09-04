@@ -182,7 +182,7 @@ cd <extracted-metra-folder>
 
 Downloaded / synced copies (ZIP, OneDrive, email) can leave mark-of-the-web on scripts; `.\metra.ps1 verify` WARNs when that remains, and `.\metra.ps1 unblock` is the recovery anchor.
 
-After `setup`, you have a working CLI *and* an agent-ready map: open `docs/context-pack.md`, paste it into a chat, or `@` it in Cursor. Routing stubs in `projects.json` teach agents (and humans) which folder owns which ask. In Cursor (or any harness that loads `AGENTS.md`), the Metra communication model kicks in - route first, then talk like a desk partner.
+After `setup`, you have a working CLI *and* an agent-ready map: open `%LOCALAPPDATA%/Metra/desk/context-pack.md`, paste it into a chat, or `@` it in Cursor. Routing stubs in `projects.json` teach agents (and humans) which folder owns which ask. In Cursor (or any harness that loads `AGENTS.md`), the Metra communication model kicks in - route first, then talk like a desk partner.
 
 ### What setup did
 
@@ -191,7 +191,7 @@ After `setup`, you have a working CLI *and* an agent-ready map: open `docs/conte
 | `roots` | Disk locations Metra scans for sibling project folders |
 | `workspace` | Rebuilds `Metra.code-workspace` folder list from those roots (recent activity + `alwaysInclude`) |
 | `routing` | Named registry projects + triggers vs `Present` on disk (`whenMissing` advice if absent) |
-| `ctx` | Writes `docs/context-pack.md` - bounded context for any agent |
+| `ctx` | Writes `%LOCALAPPDATA%/Metra/desk/context-pack.md` - bounded context for any agent |
 
 Editing `roots` alone does **not** change Cursor folders until `setup` (or `.\metra.ps1 workspace`) runs again. Optional personal/cloud root snippets (iCloud, OneDrive, ...): [docs/Customizing-Metra.md](docs/Customizing-Metra.md).
 
@@ -290,7 +290,7 @@ Writes a map of roots and present projects - enough to pick a stop without dumpi
 | `projects.json` (example stubs) | `projects.local.json` |
 | `metra-persona.mdc` (full base) | `.cursor/rules/metra-persona.local.mdc` |
 | `profiles/addons/` (opt-in Persona Add-ons) | `.cursor/rules/metra-humor.local.mdc`, `metra-teaching-gentle.local.mdc` (after import) |
-| `*.example.json` / `*.local.example.mdc` | `docs/canvas-snapshot.json`, `docs/context-pack.*`, `docs/decision-registry.json`, `docs/operator-contract.json` |
+| `*.example.json` / `*.local.example.mdc` | `%LOCALAPPDATA%/Metra/desk/canvas-snapshot.json`, `%LOCALAPPDATA%/Metra/desk/context-pack.*`, `docs/decision-registry.json`, `docs/operator-contract.json` |
 | `profiles/sample/` (ready-to-import pack) | generated `Metra.code-workspace` (after `.\metra.ps1 workspace`) |
 | `Metra.code-workspace.example` (Metra-only starter) | |
 | `.cursor/hooks/` (sessionStart Ops refresh) | |
@@ -335,7 +335,7 @@ Personal-root `registryFile` is **not** auto-included - copy it with that root. 
 | `apply <file>` | Copy a shared file into matching projects |
 | `workspace` | Rebuild multi-root workspace from recent activity (optional IDE helper) |
 | `audit` | Context/token audit + optional `-DriftOnly` vs registries |
-| `snapshot` | Write `docs/canvas-snapshot.json` and refresh / install Metra Ops canvas (advanced IDE; `-Quick` skips deep audit/git/verify) |
+| `snapshot` | Write `%LOCALAPPDATA%/Metra/desk/canvas-snapshot.json` and refresh / install Metra Ops canvas (advanced IDE; `-Quick` skips deep audit/git/verify) |
 | `ops` | Console HTML Ops desk on localhost (operator/debug; Route-first Ask; serves `ops/dist`) |
 | `host` | User-session tray host so Metra stays alive without a console (Host->Ops->Ask; Start Menu Metra Ops) |
 | `chats` | Search local Cursor agent transcripts (bounded) - prior session evidence |

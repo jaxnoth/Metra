@@ -287,6 +287,24 @@ Accept when Pester passes.
         }
     }
 
+    It 'allows Yarn-approved paths under project plans' {
+        InModuleScope Loom {
+            $metraRoot = Join-Path ([IO.Path]::GetTempPath()) ('metra-ap-plans-' + [guid]::NewGuid().ToString('n'))
+            try {
+                $plans = Join-Path $metraRoot 'plans'
+                New-Item -ItemType Directory -Path $plans -Force | Out-Null
+                $planPath = Join-Path $plans 'handoff.plan.md'
+                Write-LoomAtomicUtf8Text -Path $planPath -Text "# Handoff`n"
+                Test-MetraLoomYarnApprovedPlanPathAllowed -Path $planPath -ProjectKey 'Metra' -MetraRoot $metraRoot |
+                    Should -BeTrue
+                Test-MetraLoomFormalPlanPathAllowed -Path $planPath -MetraRoot $metraRoot | Should -BeTrue
+            }
+            finally {
+                Remove-Item -LiteralPath $metraRoot -Recurse -Force -ErrorAction SilentlyContinue
+            }
+        }
+    }
+
     It 'rejects Pending Bing plans' {
         InModuleScope Loom {
             $root = Join-Path ([IO.Path]::GetTempPath()) ('metra-ap-' + [guid]::NewGuid().ToString('n'))

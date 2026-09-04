@@ -85,7 +85,7 @@ function Get-MetraAttentionMemoryPath {
     [CmdletBinding()]
     param([string]$MetraRoot = (Get-MetraRoot))
 
-    return Join-Path $MetraRoot 'docs\ops-attention.local.json'
+    return Get-MetraOpsAttentionPath -MetraRoot $MetraRoot
 }
 
 function Get-MetraAttentionMemoryDefaults {

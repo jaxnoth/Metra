@@ -34,7 +34,7 @@ Legacy read-only until migrated: `%LOCALAPPDATA%\Metra\autoprogram\`
 
 ## Docs
 
-- [loom-product-boundary.plan.md](../docs/loom-product-boundary.plan.md)
+- [loom-product-boundary.plan.md](../plans/loom-product-boundary.plan.md)
 - [docs/playbooks/loom.md](../docs/playbooks/loom.md)
 
 Isolation gate: `Import-Module .\modules\Loom\Loom.psd1` without `Metra.psm1`.

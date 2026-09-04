@@ -496,7 +496,7 @@ function Update-MetraSelfDocumentation {
     .DESCRIPTION
         Repeatable operation after registry / trigger / route changes. Also invoked from Export-MetraSnapshot.
         Standing examples are verified with Get-MetraRoutingAmbiguity so docs track ticket precedence and
-        home fallback. Writes docs/selfdoc-routing-examples.json as a living validation suite.
+        home fallback. Writes machine-local selfdoc/selfdoc-routing-examples.json as a living validation suite.
     #>
     [CmdletBinding()]
     param(
@@ -508,16 +508,11 @@ function Update-MetraSelfDocumentation {
     $payload = Get-MetraSelfDocRouteExamples -DiagramLimit $DiagramLimit -TableLimit $TableLimit
     $behavior = Get-MetraSelfDocBehaviorExamples -RoutePayload $payload
 
-    $docsDir = Join-Path $metraRoot 'docs'
-    if (-not (Test-Path -LiteralPath $docsDir)) {
-        [void][System.IO.Directory]::CreateDirectory($docsDir)
-    }
-
-    $jsonPath = Join-Path $docsDir 'selfdoc-routes.json'
+    $jsonPath = Get-MetraSelfDocRoutesPath
     [System.IO.File]::WriteAllText($jsonPath, (($payload | ConvertTo-Json -Depth 8) + "`r`n"))
     Write-Host ("Wrote self-doc routes: {0}" -f $jsonPath) -ForegroundColor Green
 
-    $behaviorPath = Join-Path $docsDir 'selfdoc-routing-examples.json'
+    $behaviorPath = Get-MetraSelfDocRoutingExamplesPath
     [System.IO.File]::WriteAllText($behaviorPath, (($behavior | ConvertTo-Json -Depth 8) + "`r`n"))
     Write-Host ("Wrote self-doc routing examples: {0} (failCount={1})" -f $behaviorPath, $behavior.failCount) -ForegroundColor Green
 

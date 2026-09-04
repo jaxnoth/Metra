@@ -22,7 +22,7 @@ function Get-MetraPlaceQuarantineRoot {
 function Get-MetraPlaceMemoryPath {
     [CmdletBinding()]
     param([string]$MetraRoot = (Get-MetraRoot))
-    return (Join-Path $MetraRoot 'docs\ops-place.local.json')
+    return (Get-MetraOpsPlacePath -MetraRoot $MetraRoot)
 }
 
 function Get-MetraPlaceHomeCatalog {

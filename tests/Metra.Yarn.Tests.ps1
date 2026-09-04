@@ -156,7 +156,10 @@ Describe 'Yarn A2 synthesize pack reconcile' {
             $hostRoot = Join-Path ([IO.Path]::GetTempPath()) ('metra-yarn-host-' + [guid]::NewGuid().ToString('n'))
             try {
                 New-Item -ItemType Directory -Path (Join-Path $hostRoot 'docs') -Force | Out-Null
+                $cursorPlans = Join-Path $hostRoot 'cursor-plans'
+                New-Item -ItemType Directory -Path $cursorPlans -Force | Out-Null
                 $script:YarnHostRootOverride = $hostRoot
+                $script:YarnCursorPlansDirOverride = $cursorPlans
                 $script:YarnPackOverride = {
                     param($req)
                     $packDir = Join-Path $env:LOCALAPPDATA 'Metra\inspect\Metra'
@@ -176,6 +179,10 @@ Describe 'Yarn A2 synthesize pack reconcile' {
                 $synth.outcome | Should -Be 'synthesized'
                 $synth.status | Should -Be 'Pending Bing Review'
                 Test-Path -LiteralPath $synth.planPath | Should -BeTrue
+                ([System.IO.Path]::GetFullPath($synth.planPath)).StartsWith(
+                    [System.IO.Path]::GetFullPath($cursorPlans),
+                    [System.StringComparison]::OrdinalIgnoreCase
+                ) | Should -BeTrue
                 (Get-Content -LiteralPath $synth.planPath -Raw) | Should -Match 'Pending Bing Review'
                 (Get-Content -LiteralPath $synth.planPath -Raw) | Should -Not -Match '(?m)^status:\s*Approved'
                 (Get-Content -LiteralPath $synth.planPath -Raw) | Should -Match '(?m)^patterns:'
@@ -192,6 +199,7 @@ Describe 'Yarn A2 synthesize pack reconcile' {
             }
             finally {
                 $script:YarnHostRootOverride = $null
+                $script:YarnCursorPlansDirOverride = $null
                 $script:YarnPackOverride = $null
                 Remove-Item -LiteralPath $root -Recurse -Force -ErrorAction SilentlyContinue
                 Remove-Item -LiteralPath $hostRoot -Recurse -Force -ErrorAction SilentlyContinue
@@ -321,11 +329,14 @@ Describe "Yarn A3 approve and handoff" {
     It "approves pending-bing, transfers contract fields, retries after Loom failure" {
         InModuleScope Yarn {
             $root = Join-Path ([IO.Path]::GetTempPath()) ("metra-yarn-a3-" + [guid]::NewGuid().ToString("n"))
-            $docs = Join-Path $root "docs"
+            $hostRoot = Join-Path ([IO.Path]::GetTempPath()) ("metra-yarn-a3-host-" + [guid]::NewGuid().ToString("n"))
+            $cursorDir = Join-Path $hostRoot 'cursor-plans'
             try {
                 Initialize-MetraYarnLayout -Root $root
-                New-Item -ItemType Directory -Path $docs -Force | Out-Null
-                $planPath = Join-Path $docs "approve-me.plan.md"
+                New-Item -ItemType Directory -Path $cursorDir -Force | Out-Null
+                New-Item -ItemType Directory -Path (Join-Path $hostRoot 'plans') -Force | Out-Null
+                $script:YarnHostRootOverride = $hostRoot
+                $planPath = Join-Path $cursorDir "approve-me.plan.md"
                 $planBody = @"
 ---
 name: Approve Me
@@ -363,14 +374,18 @@ bingReviewed: false
                     param($req)
                     throw "loom down"
                 }
-                $failed = Invoke-MetraYarnPlanApprove -Root $root -BacklogId $item.id -Confirm
+                $failed = Invoke-MetraYarnPlanApprove -Root $root -MetraRoot $hostRoot -BacklogId $item.id -Confirm
                 $failed.outcome | Should -Be "approved-handoff-failed"
+                $expectedRepo = [System.IO.Path]::GetFullPath((Join-Path $hostRoot 'plans\approve-me.plan.md'))
+                $failed.planPath | Should -Be $expectedRepo
+                Test-Path -LiteralPath $expectedRepo | Should -BeTrue
                 $link = @(Get-YarnPlanLinks -Root $root) | Where-Object { $_.backlogId -eq $item.id } | Select-Object -First 1
                 $link.planStatus | Should -Be "Approved"
+                $link.formalPlanPath | Should -Be $expectedRepo
                 $link.approval.approvalRevision | Should -Be $planHash
                 $link.approval.planContentHash | Should -Be $planHash
                 $link.loomHandoff.state | Should -Be "failed"
-                (Get-Content -LiteralPath $planPath -Raw) | Should -Match "status:\s*Approved"
+                (Get-Content -LiteralPath $expectedRepo -Raw) | Should -Match "status:\s*Approved"
 
                 $script:YarnLoomIngestOverride = {
                     param($req)
@@ -379,19 +394,22 @@ bingReviewed: false
                         approvalId = $req.ApprovalId; approvalRevision = $req.ApprovalRevision
                     }
                 }
-                $retry = Invoke-MetraYarnReconcile -Root $root
+                $retry = Invoke-MetraYarnReconcile -Root $root -MetraRoot $hostRoot
                 $retry.actions | Where-Object { $_.outcome -eq "approved-enqueued" } | Should -Not -BeNullOrEmpty
                 $link2 = @(Get-YarnPlanLinks -Root $root) | Where-Object { $_.backlogId -eq $item.id } | Select-Object -First 1
                 $link2.loomHandoff.state | Should -Be "succeeded"
                 $link2.loomHandoff.queueItemId | Should -Be "AP-20260902-0001"
+                $link2.formalPlanPath | Should -Be $expectedRepo
 
                 # second approve same revision stays one logical handoff success
-                $again = Invoke-MetraYarnPlanApprove -Root $root -BacklogId $item.id -Confirm
+                $again = Invoke-MetraYarnPlanApprove -Root $root -MetraRoot $hostRoot -BacklogId $item.id -Confirm
                 $again.outcome | Should -BeIn @("approved-enqueued", "handoff-already-succeeded")
             }
             finally {
                 $script:YarnLoomIngestOverride = $null
+                $script:YarnHostRootOverride = $null
                 Remove-Item -LiteralPath $root -Recurse -Force -ErrorAction SilentlyContinue
+                Remove-Item -LiteralPath $hostRoot -Recurse -Force -ErrorAction SilentlyContinue
             }
         }
     }
@@ -641,6 +659,97 @@ Describe 'Yarn Plan Board projection' {
         }
     }
 
+    It 'maps Project select, Description/PlanPath, and counts plan todos for Pending/Done' {
+        InModuleScope Yarn {
+            (Resolve-YarnPlanBoardProjectSelect -ProjectKey 'TicketTracker') | Should -Be 'TicketTracker'
+            (Resolve-YarnPlanBoardProjectSelect -ProjectKey 'Finance') | Should -Be 'Other'
+            (Resolve-YarnPlanBoardProjectSelect -ProjectKey '' -CursorPlan 'metra_ios_no-mac_.plan.md' -Title 'Metra iOS') | Should -Be 'Metra'
+            (Resolve-YarnPlanBoardProjectSelect -ProjectKey '' -Title 'Sprint coworker' -CursorPlan 'tickettracker_sprint.plan.md') | Should -Be 'TicketTracker'
+            (Resolve-YarnPlanBoardProjectSelect -ProjectKey '' -Title 'Sprint coworker' -CursorPlan 'sprint_coworker.plan.md') | Should -Be 'Metra'
+
+            $tmp = Join-Path ([IO.Path]::GetTempPath()) ('pb-todos-' + [guid]::NewGuid().ToString('n') + '.plan.md')
+            try {
+                @(
+                    '---'
+                    'name: Todo Sample'
+                    'overview: Short blurb for the board card'
+                    'todos:'
+                    '  - id: a'
+                    '    content: one'
+                    '    status: completed'
+                    '  - id: b'
+                    '    content: two'
+                    '    status: pending'
+                    '  - id: c'
+                    '    content: three'
+                    '    status: cancelled'
+                    '  - id: d'
+                    '    content: four'
+                    '    status: pending'
+                    '---'
+                    '# body'
+                ) | Set-Content -LiteralPath $tmp -Encoding utf8
+                $c = Get-YarnPlanBoardPlanTodoCounts -Path $tmp
+                $c.HasTodos | Should -BeTrue
+                $c.Done | Should -Be 1
+                $c.Pending | Should -Be 2
+                $c.PlanName | Should -Be 'Todo Sample'
+                $c.Overview | Should -Be 'Short blurb for the board card'
+                (Get-YarnPlanBoardShortDescription -Text $c.Overview) | Should -Be 'Short blurb for the board card'
+                $fullPath = [System.IO.Path]::GetFullPath($tmp)
+                $props = New-YarnPlanBoardNotionProperties -Projection ([PSCustomObject]@{
+                        Title = 'Todo Sample'; Board = 'Idea'; Stage = 3; CursorPlan = 'todo.plan.md'
+                        YarnId = ''; Project = 'Metra'; Pending = 2; Done = 1
+                        Description = (Get-YarnPlanBoardShortDescription -Text $c.Overview)
+                        PlanPath = $fullPath
+                    })
+                $props.Project.select.name | Should -Be 'Metra'
+                $props.Pending.number | Should -Be 2
+                $props.Done.number | Should -Be 1
+                $props.Description.rich_text[0].text.content | Should -Be 'Short blurb for the board card'
+                $props.PlanPath.rich_text[0].text.content | Should -Be $fullPath
+                (Resolve-YarnPlanBoardSubprojectSelect -ClusterHint 'Ask' -Project 'Metra') | Should -Be 'Ask'
+                (Resolve-YarnPlanBoardSubprojectSelect -Title 'Ask engine polish' -CursorPlan 'ask_engine.plan.md' -Project 'Metra') | Should -Be 'Ask'
+                $props2 = New-YarnPlanBoardNotionProperties -Projection ([PSCustomObject]@{
+                        Title = 'Ask'; Board = 'Idea'; Stage = 3; CursorPlan = 'a.plan.md'
+                        Project = 'Metra'; Subproject = 'Ask'
+                    })
+                $props2.Subproject.select.name | Should -Be 'Ask'
+
+                $plansDir = Join-Path $env:USERPROFILE '.cursor\plans'
+                $fxLeaf = 'pb_fuzzy_resolve_aabbccdd.plan.md'
+                $fxPath = Join-Path $plansDir $fxLeaf
+                $createdFx = $false
+                try {
+                    if (-not (Test-Path -LiteralPath $plansDir)) {
+                        New-Item -ItemType Directory -Path $plansDir -Force | Out-Null
+                    }
+                    if (-not (Test-Path -LiteralPath $fxPath)) {
+                        @(
+                            '---'
+                            'name: Fuzzy Resolve Fixture'
+                            'overview: Fuzzy path fill'
+                            'todos:'
+                            '  - id: a'
+                            '    content: x'
+                            '    status: pending'
+                            '---'
+                        ) | Set-Content -LiteralPath $fxPath -Encoding utf8
+                        $createdFx = $true
+                    }
+                    $fuzzy = Resolve-YarnPlanBoardPlanFilePath -CursorPlan 'pb_fuzzy_resolve_' -MetraRoot ''
+                    $fuzzy | Should -Be ([System.IO.Path]::GetFullPath($fxPath))
+                }
+                finally {
+                    if ($createdFx) { Remove-Item -LiteralPath $fxPath -Force -ErrorAction SilentlyContinue }
+                }
+            }
+            finally {
+                Remove-Item -LiteralPath $tmp -Force -ErrorAction SilentlyContinue
+            }
+        }
+    }
+
     It 'matches dual identity: Yarn-only card gains CursorPlan; split conflict modifies neither' {
         InModuleScope Yarn {
             $yarnOnly = [PSCustomObject]@{ pageId = 'page-y'; CursorPlan = ''; YarnId = 'Y-1'; Board = 'Backlog'; Stage = 2 }
@@ -661,8 +770,18 @@ Describe 'Yarn Plan Board projection' {
             $dups = Resolve-YarnPlanBoardCardMatch -CursorPlan 'a.plan.md' -YarnId '' -ExistingCards @(
                 $cardA, [PSCustomObject]@{ pageId = 'page-a2'; CursorPlan = 'a.plan.md'; YarnId = 'Y-Z'; Board = 'Idea'; Stage = 3 }
             ) -DatabaseId 'db' -ApiKey 'k'
-            $dups.status | Should -Be 'conflict'
-            $dups.reason | Should -Be 'duplicate-cursor-plan'
+            $dups.status | Should -Be 'matched'
+            $dups.reason | Should -Be 'cursor-plan-stem-preferred'
+            $dups.conflictCards.Count | Should -Be 1
+
+            $stub = [PSCustomObject]@{ pageId = 'page-stub'; CursorPlan = 'ask_conversation_execution_'; YarnId = ''; Board = 'Active'; Stage = 4 }
+            $full = [PSCustomObject]@{ pageId = 'page-full'; CursorPlan = 'ask_conversation_execution_27fc070b.plan.md'; YarnId = ''; Board = 'Idea'; Stage = 3 }
+            Test-YarnPlanBoardCursorPlanMatch -Left $stub.CursorPlan -Right $full.CursorPlan | Should -BeTrue
+            $stem = Resolve-YarnPlanBoardCardMatch -CursorPlan $full.CursorPlan -YarnId '' -ExistingCards @($stub, $full) `
+                -DatabaseId 'db' -ApiKey 'k'
+            $stem.status | Should -Be 'matched'
+            $stem.card.pageId | Should -Be 'page-stub'
+            $stem.populateCursorPlan | Should -BeTrue
         }
     }
 
@@ -974,6 +1093,264 @@ Describe 'Yarn Plan Board projection' {
                 $script:pbCards = $null
                 Remove-Item Env:METRA_NOTION_API_KEY -ErrorAction SilentlyContinue
                 Remove-Item -LiteralPath $root -Recurse -Force -ErrorAction SilentlyContinue
+            }
+        }
+    }
+
+    It 'inventory classifiers: noise, parked beats noise, echo, hash twin, clusterHint' {
+        InModuleScope Yarn {
+            # Stem normalize strips plan suffix and trailing 8-hex
+            (Get-YarnPlanBoardInventoryNormalizeStem -Text 'commit_then_knowledge_coverage_2b8f30d2.plan.md') |
+                Should -Be 'commit-then-knowledge-coverage'
+            (Get-YarnPlanBoardInventoryNormalizeStem -Text 'Commit Then Knowledge Coverage') |
+                Should -Be 'commit-then-knowledge-coverage'
+
+            # Fixture / index / test-card propose drop
+            $fx = Get-YarnPlanBoardInventoryHeuristic -Title 'calibrate_a13_benign_20260825.plan.md' -SourceType 'cursor-plan' -HasFormalPlan:$true
+            $fx.proposedDecision | Should -Be 'drop'
+            $fx.reasonCodes | Should -Contain 'fixture'
+            $fx.isNoise | Should -BeTrue
+
+            $ix = Get-YarnPlanBoardInventoryHeuristic -Title 'Open Cursor plans (created, not fully done)' -SourceType 'yarn' -YarnStatus 'idea' -HasFormalPlan:$false
+            $ix.proposedDecision | Should -Be 'drop'
+            $ix.reasonCodes | Should -Contain 'index-heading'
+            $ix.isNoise | Should -BeTrue
+
+            # Legitimate titles that share words with Future-Dev headings must not drop
+            $legLadder = Get-YarnPlanBoardInventoryHeuristic -Title 'Voice Ladder' -SourceType 'yarn' -YarnStatus 'idea' -HasFormalPlan:$false
+            $legLadder.proposedDecision | Should -Not -Be 'drop'
+            $legLadder.reasonCodes | Should -Not -Contain 'index-heading'
+            $legVerify = Get-YarnPlanBoardInventoryHeuristic -Title 'Verify Who Service Owns X' -SourceType 'yarn' -YarnStatus 'idea' -HasFormalPlan:$false
+            $legVerify.proposedDecision | Should -Not -Be 'drop'
+            $legVerify.reasonCodes | Should -Not -Contain 'index-heading'
+            (Get-YarnPlanBoardInventoryNoiseKind -Title 'Ladder' -HasFormalPlan:$false -SourceType 'yarn') |
+                Should -Be 'index-heading'
+            (Get-YarnPlanBoardInventoryEchoKey -Text 'routing-phase4-2026-09-01') |
+                Should -Be (Get-YarnPlanBoardInventoryEchoKey -Text 'routing-phase4-2026-09-02')
+            (Get-YarnPlanBoardInventoryEchoKey -Text 'routing-phase4') |
+                Should -Not -Be (Get-YarnPlanBoardInventoryEchoKey -Text 'routing-phase5')
+
+            $tc = Get-YarnPlanBoardInventoryHeuristic -Title 'Fail Test' -SourceType 'notion' -ExistingBoard 'Inbox'
+            $tc.proposedDecision | Should -Be 'drop'
+            $tc.reasonCodes | Should -Contain 'test-card'
+
+            # Parked status beats noise
+            $park = Get-YarnPlanBoardInventoryHeuristic -Title 'Fail Test' -SourceType 'yarn' -YarnStatus 'parked' -HasFormalPlan:$false
+            $park.proposedDecision | Should -Be 'park'
+            $park.proposedDecision | Should -Not -Be 'drop'
+            $park.reasonCodes | Should -Contain 'park-language'
+
+            $tmp = Join-Path $env:TEMP ('yarn-pb-cls-' + [guid]::NewGuid().ToString('n'))
+            New-Item -ItemType Directory -Path $tmp | Out-Null
+            try {
+                $oldPath = Join-Path $tmp 'commit_then_knowledge_coverage_aaaaaaaa.plan.md'
+                $newPath = Join-Path $tmp 'commit_then_knowledge_coverage_bbbbbbbb.plan.md'
+                Set-Content -LiteralPath $oldPath -Value '# old' -Encoding utf8
+                Start-Sleep -Milliseconds 50
+                Set-Content -LiteralPath $newPath -Value '# new' -Encoding utf8
+
+                $twinOld = [PSCustomObject]@{
+                    rowId = 'cursor-plan:commit_then_knowledge_coverage_aaaaaaaa.plan.md'
+                    proposedDecision = 'keep'; decision = 'review'; proposedBoard = 'Idea'; proposedStage = 3
+                    cursorPlan = 'commit_then_knowledge_coverage_aaaaaaaa.plan.md'
+                    yarnId = $null; notionPageId = $null; sourceType = 'cursor-plan'; sourcePath = $oldPath
+                    reasonCodes = @('formal-plan'); evidence = @(); title = 'commit_then_knowledge_coverage_aaaaaaaa.plan.md'
+                    isNoise = $false; echoOf = $null; supersededBy = $null; clusterHint = $null
+                }
+                $twinNew = [PSCustomObject]@{
+                    rowId = 'cursor-plan:commit_then_knowledge_coverage_bbbbbbbb.plan.md'
+                    proposedDecision = 'keep'; decision = 'review'; proposedBoard = 'Idea'; proposedStage = 3
+                    cursorPlan = 'commit_then_knowledge_coverage_bbbbbbbb.plan.md'
+                    yarnId = $null; notionPageId = $null; sourceType = 'cursor-plan'; sourcePath = $newPath
+                    reasonCodes = @('formal-plan'); evidence = @(); title = 'commit_then_knowledge_coverage_bbbbbbbb.plan.md'
+                    isNoise = $false; echoOf = $null; supersededBy = $null; clusterHint = $null
+                }
+
+                # Noise yarn shares stem with a real cursor-plan; noise must not win echo
+                $noiseYarn = [PSCustomObject]@{
+                    rowId = 'yarn:open-cursor'
+                    proposedDecision = 'drop'; decision = 'review'; proposedBoard = 'Drop'; proposedStage = 8
+                    cursorPlan = 'consumer_ready_ask_activation.plan.md'
+                    yarnId = 'YARN-NOISE'; notionPageId = $null; sourceType = 'yarn'; sourcePath = $null
+                    reasonCodes = @('index-heading'); evidence = @('status:idea')
+                    title = 'Open Cursor plans'
+                    isNoise = $true; echoOf = $null; supersededBy = $null; clusterHint = $null
+                }
+                $realPlan = [PSCustomObject]@{
+                    rowId = 'cursor-plan:consumer_ready_ask_activation.plan.md'
+                    proposedDecision = 'keep'; decision = 'review'; proposedBoard = 'Idea'; proposedStage = 3
+                    cursorPlan = 'consumer_ready_ask_activation.plan.md'
+                    yarnId = $null; notionPageId = $null; sourceType = 'cursor-plan'; sourcePath = (Join-Path $tmp 'consumer_ready_ask_activation.plan.md')
+                    reasonCodes = @('formal-plan'); evidence = @()
+                    title = 'consumer_ready_ask_activation.plan.md'
+                    isNoise = $false; echoOf = $null; supersededBy = $null; clusterHint = $null
+                }
+                Set-Content -LiteralPath $realPlan.sourcePath -Value '# ask' -Encoding utf8
+
+                # Echo: meta-doc loses to cursor-plan; reasonCodes append
+                $metaEcho = [PSCustomObject]@{
+                    rowId = 'meta-doc:consumer_ready_ask_activation.plan.md'
+                    proposedDecision = 'keep'; decision = 'review'; proposedBoard = 'Backlog'; proposedStage = 2
+                    cursorPlan = 'consumer_ready_ask_activation.plan.md'
+                    yarnId = $null; notionPageId = $null; sourceType = 'meta-doc'; sourcePath = $null
+                    reasonCodes = @('discovered-plan-doc', 'meta-plan-doc'); evidence = @()
+                    title = 'consumer_ready_ask_activation.plan.md'
+                    isNoise = $false; echoOf = $null; supersededBy = $null; clusterHint = $null
+                }
+
+                $done = @(Complete-YarnPlanBoardInventoryRows -Rows @($twinOld, $twinNew, $noiseYarn, $realPlan, $metaEcho))
+                $twinLoser = @($done | Where-Object { $_.rowId -eq $twinOld.rowId }) | Select-Object -First 1
+                $twinWinner = @($done | Where-Object { $_.rowId -eq $twinNew.rowId }) | Select-Object -First 1
+                $twinLoser.proposedDecision | Should -Be 'drop'
+                $twinLoser.reasonCodes | Should -Contain 'formal-plan'
+                $twinLoser.reasonCodes | Should -Contain 'hash-twin-superseded'
+                $twinLoser.supersededBy | Should -Be $twinWinner.rowId
+                $twinWinner.proposedDecision | Should -Be 'keep'
+
+                $noiseDone = @($done | Where-Object { $_.rowId -eq $noiseYarn.rowId }) | Select-Object -First 1
+                $planDone = @($done | Where-Object { $_.rowId -eq $realPlan.rowId }) | Select-Object -First 1
+                $metaDone = @($done | Where-Object { $_.rowId -eq $metaEcho.rowId }) | Select-Object -First 1
+                $planDone.proposedDecision | Should -Be 'keep'
+                $noiseDone.echoOf | Should -Be $planDone.rowId
+                $noiseDone.proposedDecision | Should -Be 'drop'
+                # Noise must not be echo winner (plan stays keep; noise has echoOf pointing at plan)
+                $planDone.echoOf | Should -BeNullOrEmpty
+                $metaDone.proposedDecision | Should -Be 'drop'
+                $metaDone.echoOf | Should -Be $planDone.rowId
+                $metaDone.reasonCodes | Should -Contain 'discovered-plan-doc'
+                $metaDone.reasonCodes | Should -Contain 'echo-duplicate'
+
+                $planDone.clusterHint | Should -Be 'Ask'
+                $twinWinner.clusterHint | Should -Not -BeNullOrEmpty
+
+                # Wrapped module-scrap; shipped leftover parks (docs), index Shipped archive still drops
+                $scrap = Get-YarnPlanBoardInventoryHeuristic -Title 'Ask recommend (`AskRecommend.ps1`)' -SourceType 'yarn' -YarnStatus 'idea' -HasFormalPlan:$false
+                $scrap.proposedDecision | Should -Be 'drop'
+                $scrap.reasonCodes | Should -Contain 'module-scrap'
+                $shipPark = Get-YarnPlanBoardInventoryHeuristic -Title 'installer_smartscreen_signing_shipped.plan.md' -SourceType 'cursor-plan' -HasFormalPlan:$true
+                $shipPark.proposedDecision | Should -Be 'park'
+                $shipPark.reasonCodes | Should -Contain 'shipped-archive'
+                $shipIdx = Get-YarnPlanBoardInventoryHeuristic -Title 'Shipped (archive)' -SourceType 'yarn' -YarnStatus 'idea' -HasFormalPlan:$false
+                $shipIdx.proposedDecision | Should -Be 'drop'
+                $shipIdx.reasonCodes | Should -Contain 'index-heading'
+
+                (Get-YarnPlanBoardInventoryEchoKey -Text 'sprint_coworker_ticket_analysis_20260910.plan.md') |
+                    Should -Be (Get-YarnPlanBoardInventoryEchoKey -Text 'sprint-coworker-ticket-analysis-2026-09.plan.md')
+
+                $cursorSprint = [PSCustomObject]@{
+                    rowId = 'cursor-plan:sprint_coworker_ticket_analysis_20260910.plan.md'
+                    proposedDecision = 'keep'; decision = 'review'; proposedBoard = 'Idea'; proposedStage = 3
+                    cursorPlan = 'sprint_coworker_ticket_analysis_20260910.plan.md'
+                    yarnId = $null; notionPageId = $null; sourceType = 'cursor-plan'; sourcePath = $null
+                    reasonCodes = @('formal-plan'); evidence = @()
+                    title = 'sprint_coworker_ticket_analysis_20260910.plan.md'
+                    isNoise = $false; echoOf = $null; supersededBy = $null; clusterHint = $null
+                }
+                $metaSprint = [PSCustomObject]@{
+                    rowId = 'meta-doc:sprint-coworker-ticket-analysis-2026-09.plan.md'
+                    proposedDecision = 'keep'; decision = 'review'; proposedBoard = 'Backlog'; proposedStage = 2
+                    cursorPlan = 'sprint-coworker-ticket-analysis-2026-09.plan.md'
+                    yarnId = $null; notionPageId = $null; sourceType = 'meta-doc'; sourcePath = $null
+                    reasonCodes = @('discovered-plan-doc', 'meta-plan-doc'); evidence = @()
+                    title = 'sprint-coworker-ticket-analysis-2026-09.plan.md'
+                    isNoise = $false; echoOf = $null; supersededBy = $null; clusterHint = $null
+                }
+                $loose = @(Complete-YarnPlanBoardInventoryRows -Rows @($cursorSprint, $metaSprint))
+                $metaLoose = @($loose | Where-Object { $_.rowId -eq $metaSprint.rowId }) | Select-Object -First 1
+                $curLoose = @($loose | Where-Object { $_.rowId -eq $cursorSprint.rowId }) | Select-Object -First 1
+                $curLoose.proposedDecision | Should -Be 'keep'
+                $metaLoose.proposedDecision | Should -Be 'drop'
+                $metaLoose.echoOf | Should -Be $curLoose.rowId
+                $metaLoose.reasonCodes | Should -Contain 'echo-duplicate'
+
+                $notionKeep = [PSCustomObject]@{
+                    rowId = 'notion:page-sprint'
+                    proposedDecision = 'review'; decision = 'review'; proposedBoard = 'Idea'; proposedStage = 3
+                    cursorPlan = 'sprint_coworker_ticket_analysis_20260910.plan.md'
+                    yarnId = $null; notionPageId = 'page-sprint'; sourceType = 'notion'; sourcePath = $null
+                    reasonCodes = @('unsure'); evidence = @()
+                    title = 'Sprint coworker ticket analysis 2026-09-10'
+                    isNoise = $false; echoOf = $null; supersededBy = $null; clusterHint = $null
+                }
+                $boardEcho = @(Complete-YarnPlanBoardInventoryRows -Rows @($cursorSprint, $notionKeep))
+                $nKeep = @($boardEcho | Where-Object { $_.rowId -eq $notionKeep.rowId }) | Select-Object -First 1
+                $nKeep.proposedDecision | Should -Not -Be 'drop'
+                $nKeep.reasonCodes | Should -Contain 'echo-board-keep'
+                $nKeep.echoOf | Should -Be $cursorSprint.rowId
+
+                $md = Format-YarnPlanBoardInventoryMarkdown -InventoryId 'x' -GeneratedAt 't' -Rows @($cursorSprint, $notionKeep)
+                $md | Should -Match 'Review this markdown'
+                $md | Should -Match 'AffirmCluster'
+
+                $noiseDrop = [PSCustomObject]@{
+                    decision = 'review'; proposedDecision = 'drop'; reasonCodes = @('test-card')
+                    notionPageId = 'p1'; clusterHint = 'Other'
+                }
+                (Get-YarnPlanBoardInventoryApplyDecision -Row $noiseDrop -Affirm 'drop,park') | Should -Be 'drop'
+                $echoBoard = [PSCustomObject]@{
+                    decision = 'review'; proposedDecision = 'drop'; reasonCodes = @('echo-board-keep')
+                    notionPageId = 'p2'; clusterHint = 'Ask'
+                }
+                (Get-YarnPlanBoardInventoryApplyDecision -Row $echoBoard -Affirm 'drop,park') | Should -Be 'review'
+                $askKeep = [PSCustomObject]@{
+                    decision = 'review'; proposedDecision = 'keep'; reasonCodes = @('formal-plan')
+                    notionPageId = $null; clusterHint = 'Ask'
+                }
+                (Get-YarnPlanBoardInventoryApplyDecision -Row $askKeep -Affirm 'drop,park') | Should -Be 'review'
+                (Get-YarnPlanBoardInventoryApplyDecision -Row $askKeep -Affirm 'keep,park') | Should -Be 'keep'
+                (Get-YarnPlanBoardInventoryApplyDecision -Row $askKeep -Affirm 'keep park') | Should -Be 'keep'
+                $parkRow = [PSCustomObject]@{
+                    decision = 'review'; proposedDecision = 'park'; reasonCodes = @('completed-unmarked')
+                    notionPageId = $null; clusterHint = 'LoomYarn'
+                }
+                (Get-YarnPlanBoardInventoryApplyDecision -Row $parkRow -Affirm 'keep,park') | Should -Be 'park'
+                (Get-YarnPlanBoardInventoryApplyDecision -Row $askKeep -AffirmCluster 'Ask') | Should -Be 'keep'
+                (Get-YarnPlanBoardInventoryApplyDecision -Row $askKeep -AffirmCluster 'Ask' -As 'park') | Should -Be 'park'
+
+                $doneSlice = [PSCustomObject]@{
+                    rowId = 'cursor-plan:ask_activation_closeout_1f6a514c.plan.md'
+                    proposedDecision = 'keep'; decision = 'review'; proposedBoard = 'Idea'; proposedStage = 3
+                    cursorPlan = 'ask_activation_closeout_1f6a514c.plan.md'
+                    yarnId = $null; notionPageId = $null; sourceType = 'cursor-plan'; sourcePath = $null
+                    reasonCodes = @('formal-plan'); evidence = @()
+                    title = 'ask_engine_polish_b9dd3dc1.plan.md'
+                    isNoise = $false; echoOf = $null; supersededBy = $null; clusterHint = $null
+                    blurb = 'Ask engine polish - DONE 2026-08-08'
+                }
+                $doneOut = @(Complete-YarnPlanBoardInventoryRows -Rows @($doneSlice)) | Select-Object -First 1
+                $doneOut.proposedDecision | Should -Be 'park'
+                $doneOut.reasonCodes | Should -Contain 'completed-unmarked'
+                $doneOut.reasonCodes | Should -Contain 'formal-plan'
+
+                $sliceDir = Join-Path $tmp 'slice-complete'
+                New-Item -ItemType Directory -Path $sliceDir | Out-Null
+                $slicePath = Join-Path $sliceDir 'loom_slice_4.plan.md'
+                @(
+                    '---'
+                    'name: Loom Slice 4'
+                    'todos:'
+                    '  - id: a'
+                    '    content: work'
+                    '    status: completed'
+                    '---'
+                    '# Loom Slice 4'
+                ) | Set-Content -LiteralPath $slicePath -Encoding utf8
+                (Test-YarnPlanBoardInventoryPlanFileComplete -Path $slicePath) | Should -BeTrue
+                $sliceRow = [PSCustomObject]@{
+                    rowId = 'cursor-plan:loom_slice_4.plan.md'
+                    proposedDecision = 'keep'; decision = 'review'; proposedBoard = 'Idea'; proposedStage = 3
+                    cursorPlan = 'loom_slice_4.plan.md'
+                    yarnId = $null; notionPageId = $null; sourceType = 'cursor-plan'; sourcePath = $slicePath
+                    reasonCodes = @('formal-plan'); evidence = @()
+                    title = 'loom_slice_4.plan.md'
+                    isNoise = $false; echoOf = $null; supersededBy = $null; clusterHint = $null
+                }
+                $sliceOut = @(Complete-YarnPlanBoardInventoryRows -Rows @($sliceRow)) | Select-Object -First 1
+                $sliceOut.proposedDecision | Should -Be 'park'
+                $sliceOut.reasonCodes | Should -Contain 'completed-unmarked'
+            }
+            finally {
+                Remove-Item -LiteralPath $tmp -Recurse -Force -ErrorAction SilentlyContinue
             }
         }
     }

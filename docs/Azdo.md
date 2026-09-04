@@ -4,7 +4,7 @@ Read-only Azure DevOps REST access from Metra (`.\metra.ps1 azdo ...`). No clone
 
 ## Setup
 
-1. Copy `docs/azdo.local.example.json` to `docs/azdo.local.json` (gitignored).
+1. Copy `docs/examples/azdo.local.example.json` to `%LOCALAPPDATA%\Metra\azdo.local.json` (gitignored).
 2. Set `organization` (required). Optional `project` limits repo inventory to one AzDO project.
 3. Authenticate with a PAT (precedence: **Process** `METRA_AZDO_PAT`, then **User**, then **Machine**, then `"pat"` in local JSON):
 
@@ -58,7 +58,7 @@ Last gap summary is cached under `%LOCALAPPDATA%\Metra\azdo\gaps-latest.json`. `
 
 ## Bounded retrieval
 
-Caps in `docs/azdo.local.json` (defaults in example file) are enforced on every command. Oversize `get` responses truncate; oversize `tree` fails closed with a clear cap message.
+Caps in `%LOCALAPPDATA%\Metra\azdo.local.json` (defaults in example file) are enforced on every command. Oversize `get` responses truncate; oversize `tree` fails closed with a clear cap message.
 
 | Cap | Operator default | Ask evidence |
 |-----|------------------|--------------|

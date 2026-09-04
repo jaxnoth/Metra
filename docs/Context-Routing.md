@@ -107,8 +107,8 @@ What it updates:
 |----------|------|
 | Cursor canvas `metra-self-documentation` | Visual primary - route diagram + standing examples verified by the live router |
 | `docs/Overview.md` | Sendable prose twin (standing route table between HTML markers) |
-| `docs/selfdoc-routes.json` | Sidecar for site/forge later |
-| `docs/selfdoc-routing-examples.json` | Living validation suite (ticket id, home fallback, verified asks) |
+| `%LOCALAPPDATA%\Metra\selfdoc\selfdoc-routes.json` | Sidecar for site/forge later |
+| `%LOCALAPPDATA%\Metra\selfdoc\selfdoc-routing-examples.json` | Living validation suite (ticket id, home fallback, verified asks) |
 | `integrations/cursor/metra-self-documentation.canvas.tsx.template` | Tracked template synced from the live canvas |
 
 Selfdoc documents **routing behavior**, not only registry fields:
@@ -147,7 +147,7 @@ Metra itself is a registry destination (`projects.json` name `Metra`) and the **
 .\metra.ps1 ops
 ```
 
-Browser home screen on loopback (`http://127.0.0.1:7380` by default). **General** mode is Route-first (Ask, next attention, Classify/Handoff). **Advanced desk** in Settings unlocks Projects / Recent / Health. Shared brain: `docs/canvas-snapshot.json` via `Get-MetraDeskPayload`. Cursor is optional.
+Browser home screen on loopback (`http://127.0.0.1:7380` by default). **General** mode is Route-first (Ask, next attention, Classify/Handoff). **Advanced desk** in Settings unlocks Projects / Recent / Health. Shared brain: `%LOCALAPPDATA%\Metra\desk\canvas-snapshot.json` via `Get-MetraDeskPayload`. Cursor is optional.
 
 ## Canvas Ops board (advanced IDE)
 
@@ -214,6 +214,6 @@ Do not dump full JSONL transcripts into agent context unless the user opens a sp
 
 - [Routing-Scenarios.md](Routing-Scenarios.md) - routing / persona smoke + `verify`
 - [Integrations.md](Integrations.md) - Cursor adapter, sessionStart, ctx handoff
-- [Search-Echo.md](Search-Echo.md) - multi-root Grep echo
+- [search-echo.md](playbooks/search-echo.md) - multi-root Grep echo
 - [Decisions.md](Decisions.md) - append-only Metra policy
 - [Brand.md](Brand.md) - Ops board brand kit

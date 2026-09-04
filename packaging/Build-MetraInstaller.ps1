@@ -78,12 +78,8 @@ $excludeRelativeExact = [System.Collections.Generic.HashSet[string]]::new([Strin
     'docs/context-pack.md',
     'docs/context-pack.json',
     'docs/canvas-snapshot.json',
-    'docs/ops-preferences.local.json',
-    'docs/ops-ask-log.local.json',
-    'docs/ops-capture.local.json',
     'docs/setup.local.log',
     'docs/installer.local.log',
-    'docs/profile-sync.local.json',
     '.cursor/mcp.json'
 ) | ForEach-Object { [void]$excludeRelativeExact.Add(($_ -replace '/', '\')) }
 
@@ -116,6 +112,9 @@ function Test-MetraStageExcluded {
             return $true
         }
         if ($name -like '*.local.log' -and $rel.StartsWith('docs\', [StringComparison]::OrdinalIgnoreCase)) {
+            return $true
+        }
+        if ($name -like '*.local.json') {
             return $true
         }
         if ($name -like '*.local.mdc' -and $rel.StartsWith('.cursor\rules\', [StringComparison]::OrdinalIgnoreCase)) {

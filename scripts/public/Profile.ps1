@@ -404,7 +404,7 @@ function Sync-MetraProfile {
         Pulls HQ profile pack over Ops when contentHash differs (satellite apply).
     .DESCRIPTION
         Metra Profile Sync v1: HQ-published, satellite-pulled. Calls GET /api/profile/status,
-        downloads export when remote hash differs from docs/profile-sync.local.json, then
+        downloads export when remote hash differs from %LOCALAPPDATA%/Metra/profile-sync.local.json, then
         Import-MetraProfile. Never writes the remote machine. Best-effort check-in after status/sync.
         Supports native -WhatIf / -Confirm (SupportsShouldProcess).
     #>
@@ -445,7 +445,7 @@ function Sync-MetraProfile {
             $pair = Invoke-MetraProfileClientPair -OpsBaseUrl $base -MetraRoot $metraRoot
         }
         catch {
-            throw ("Profile sync token missing and Tailscale pair failed: {0}. Pass -SyncToken (break-glass), set METRA_PROFILE_SYNC_TOKEN, or store syncToken in docs/profile-sync.local.json." -f $_.Exception.Message)
+            throw ("Profile sync token missing and Tailscale pair failed: {0}. Pass -SyncToken (break-glass), set METRA_PROFILE_SYNC_TOKEN, or store syncToken in %LOCALAPPDATA%/Metra/profile-sync.local.json." -f $_.Exception.Message)
         }
         if ($pair -and $pair.Pending) {
             throw ("Profile pair pending Ops approve (requestId={0}). Approve on HQ Settings, then re-run profile sync. Or pass -SyncToken for break-glass." -f $pair.RequestId)
@@ -456,7 +456,7 @@ function Sync-MetraProfile {
         }
         $token = Resolve-MetraProfileSyncToken -SyncToken '' -MetraRoot $metraRoot
         if ([string]::IsNullOrWhiteSpace($token)) {
-            throw 'Profile sync token missing after pair. Pass -SyncToken or store syncToken in docs/profile-sync.local.json.'
+            throw 'Profile sync token missing after pair. Pass -SyncToken or store syncToken in %LOCALAPPDATA%/Metra/profile-sync.local.json.'
         }
     }
 

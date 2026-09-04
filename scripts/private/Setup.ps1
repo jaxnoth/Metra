@@ -18,7 +18,7 @@ function Get-MetraSetupTasks {
         [PSCustomObject]@{ Name = 'ProfileSync'; Kind = 'satellite'; Summary = 'Pull overlays from HQ on Satellite' }
         [PSCustomObject]@{ Name = 'Workspace'; Kind = 'write'; Summary = 'Regenerate Metra.code-workspace' }
         [PSCustomObject]@{ Name = 'Routing'; Kind = 'read'; Summary = 'Resolve present/missing routing table' }
-        [PSCustomObject]@{ Name = 'ContextPack'; Kind = 'write'; Summary = 'Export docs/context-pack.md' }
+        [PSCustomObject]@{ Name = 'ContextPack'; Kind = 'write'; Summary = 'Export machine-local desk/context-pack.md' }
         [PSCustomObject]@{ Name = 'SelfDocumentation'; Kind = 'write'; Summary = 'Refresh Overview / canvas / selfdoc JSON from live routing' }
         [PSCustomObject]@{ Name = 'ProposalStore'; Kind = 'ensure'; Summary = 'Ensure local proposal store root exists' }
         [PSCustomObject]@{ Name = 'StartMenu'; Kind = 'write'; Summary = 'Install Metra Ops Start Menu shortcut' }
@@ -316,7 +316,7 @@ function Invoke-MetraSetup {
     $ctxResult = Export-MetraContextPack -Quiet
     if (-not $Quiet -and $ctxResult) {
         $ctxPath = Get-MetraProp -Object $ctxResult -Name 'Path' -Default ''
-        if (-not $ctxPath) { $ctxPath = Get-MetraProp -Object $ctxResult -Name 'OutPath' -Default 'docs/context-pack.md' }
+        if (-not $ctxPath) { $ctxPath = Get-MetraProp -Object $ctxResult -Name 'OutPath' -Default (Get-MetraContextPackPath -Format md) }
         Write-Host ("Context pack: {0}" -f $ctxPath) -ForegroundColor Cyan
     }
 

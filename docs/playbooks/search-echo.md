@@ -17,4 +17,4 @@ After routing to one project, always pass an absolute `path` to Grep/Glob (that 
 
 Do **not** auto-run `.\metra.ps1 workspace` on chat start - rewriting the workspace file can reload Cursor mid-session.
 
-See [Integrations.md](Integrations.md) for sessionStart snapshot hooks. Broader routing cadence: [Context-Routing.md](Context-Routing.md).
+See [Integrations.md](../Integrations.md) for sessionStart snapshot hooks. Broader routing cadence: [Context-Routing.md](../Context-Routing.md).

@@ -38,7 +38,7 @@ function Export-MetraSnapshot {
     )
 
     $metraRoot = Get-MetraRoot
-    $outPath = Join-Path $metraRoot 'docs\canvas-snapshot.json'
+    $outPath = Get-MetraCanvasSnapshotPath
     $action = if ($Quick) {
         'Export quick Metra Ops canvas snapshot (writes snapshot + canvas embed)'
     }

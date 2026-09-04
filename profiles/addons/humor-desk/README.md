@@ -12,7 +12,7 @@ Installs `.cursor/rules/metra-humor.local.mdc` with:
 - Project-draw dig for thin brainstorms (decision-framed)
 - Humor additive, not substitutive; hard off for incidents, tickets (mostly), redistribution drafts
 
-Durable numeric familiarity: `.\metra.ps1 profile familiarity show` / `analyze-nudge` (local `docs/desk-familiarity.local.json`). Prose prefs stay OCC.
+Durable numeric familiarity: `.\metra.ps1 profile familiarity show` / `analyze-nudge` (local `%LOCALAPPDATA%\Metra\desk-familiarity.local.json`). Prose prefs stay OCC.
 
 ## Import
 

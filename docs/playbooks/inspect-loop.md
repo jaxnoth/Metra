@@ -92,7 +92,7 @@ Parallel products: each `-Name <Project>` owns its slot - serial or concurrent w
 
 ## Plan progress ledger
 
-Formal plans (`.cursor/plans/*.plan.md`, `docs/*.plan.md` with frontmatter todos) are editable artifacts. Two edit classes:
+Formal plans (`.cursor/plans/*.plan.md`, `plans/*.plan.md` with frontmatter todos) are editable artifacts. Two edit classes:
 
 | Edit | When | Gate |
 |------|------|------|

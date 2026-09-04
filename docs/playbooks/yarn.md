@@ -4,6 +4,16 @@
 
 `yarn`, intake backlog, Capture→plan, Future-Dev scan, Atlas memory intake, pack freshness, plan approve / Loom handoff.
 
+## Formal plan path homes
+
+| Stage | Location |
+|-------|----------|
+| Yarn `synthesize` / Bing draft | `%USERPROFILE%\.cursor\plans\` (Cursor Build/preview UX) |
+| Successful Loom ingest (after `yarn plan approve` handoff) | **Copy** to `<project>\plans\` + rewrite backlog/plan-link `formalPlanPath` |
+| Human docs | `<project>\docs\` only — not a Yarn synthesize writer |
+
+Copy runs on successful Loom ingest (including reconcile retry that succeeds). `-SkipIngest` leaves the draft in `.cursor\plans`. Legacy `docs\*.plan.md` remain readable for inventory/allowlists.
+
 ## Commands
 
 ```powershell
@@ -60,15 +70,40 @@ Resolver uses **explicit precedence** (not highest Stage). Manual Notion Board/S
 | 7 | Parked | yes | Yarn `parked` or affirmed inventory Park |
 | 8 | Drop | no | Yarn `rejected` or affirmed inventory Drop |
 
-One Notion database. Operator views (Metra does not create them via API): **By Stage** is the default/main tab (lean: Idea, Active, Loom, Shipped, Parked). Side tabs: Inbox, Backlog, Drop. Optional Kanban uses the same lean filter. Remove any tab named **Default view**. Notion one-time: add Board option `Backlog`; Stage up to 8.
+One Notion database. Operator views (Metra does not create them via API): **By Stage** is the default/main tab (lean: Idea, Active, Loom, Shipped, Parked). Side tabs: Inbox, Backlog, Drop. Optional Kanban uses the same lean filter. Group/board columns by **Stage** (1–8), not Board (Board A–Z puts Active before Backlog). Remove any tab named **Default view**. Notion one-time: add Board option `Backlog`; Stage up to 8.
+
+Upsert writes **Project** (select: Metra / TicketTracker / Atlas / Other) from Yarn `projectKey`, else title/CursorPlan hints, else Metra for formal plans. **Subproject** (Ask, LoomYarn, Inspect, Installer, OpsDesk, Routing, iOS/Face, Persona, Ticket, AtlasMemory, Personal, Other) mirrors inventory `clusterHint` and is filled especially for Metra cards. **Description** is a short blurb from the plan YAML `overview` (trimmed, ~280 chars). **PlanPath** is the full resolved path to the `.plan.md` (formal path, else `%USERPROFILE%\.cursor\plans\`, else `_meta\plans\`, else `_meta\docs\`). Truncated Pass 1 CursorPlan stems (missing `_xxxxxxxx.plan.md`) resolve by unique stem / newest hash-twin under those folders. **CursorPlan** identity also matches equal inventory normalize stems (hash suffix stripped; date tokens kept) so a truncated stub and a full leaf are treated as one plan (preferred keeper: Active/Loom > Parked/Shipped > Idea; full leaf wins ties). Exact duplicate CursorPlan leaves on two Notion pages remain an identity conflict. **Pending** / **Done** are Cursor plan YAML todo counts (`pending` / `completed`; cancelled ignored). Sync heals Stage from Board and backfills Project/Subproject/Description/PlanPath/Pending/Done when blank or drifted. Operator: show Description and PlanPath on the By Stage view.
 
 Existing Inbox/Backlog/Drop cards with no current Yarn/Loom signal keep that Board; sync only normalizes Stage. Identity match: CursorPlan first, else YarnId (Yarn-only card may gain CursorPlan). Split or duplicate identity is a conflict: skip both sides; never auto Drop.
 
 ### Inventory (Bing pack)
 
-`plan-board inventory` scans Yarn backlog, `%USERPROFILE%\.cursor\plans\*.plan.md`, `_meta/docs\*.plan.md`, Loom queue paths, and existing cards. It writes `%LOCALAPPDATA%\Metra\yarn\plan-board-inventory.md` and `.json` (`schemaVersion` 2). Heuristics set `proposedDecision`; `decision` stays `review` until Bing/operator affirms. Zero Notion writes.
+`plan-board inventory` scans Yarn backlog, `%USERPROFILE%\.cursor\plans\*.plan.md`, `_meta/plans\*.plan.md`, `_meta/docs\*.plan.md` (legacy), Loom queue paths, and existing cards. It writes `%LOCALAPPDATA%\Metra\yarn\plan-board-inventory.md` and `.json` (`schemaVersion` 2). Heuristics set `proposedDecision`; `decision` stays `review` until Bing/operator affirms. Zero Notion writes.
 
-`plan-board inventory apply -Confirm` is an affirmation gate (not an authority override). Applies only `keep` \| `drop` \| `park`. Skips `review`, unrated, and identity conflicts. Re-resolves each row against current Yarn/Loom/card state and skips stale proposals. Unknown `schemaVersion` or missing `-Confirm` attempts nothing. Drop of an existing card requires `notionPageId`. Inventory cannot approve Yarn or enqueue Loom.
+Pipeline: scan → per-row heuristic (status/language, then noise) → post-pass (hash twins, echo collapse, `clusterHint`) → pack. Heuristic stays local; cross-row work stays in post-pass.
+
+**Noise (propose drop):** fixtures (`calibrate_a13_`), test cards (`Fail Test`, `Sync Test`, `PB Test`, smoke capture), Future-Dev index headings (Ladder, Sequencing rules, Open Cursor plans, …), module-scrap titles that mention a `*.ps1` file without a formal plan (including `Ask recommend (\`AskRecommend.ps1\`)`). **Shipped leftover / `shipped` plan docs propose Park** (archive). Plan headings/blurbs that say DONE, shipped, or closeout, and Cursor plan YAML (`status: Shipped|Complete`, `shippedAt`, or every todo `completed`) propose Park as `completed-unmarked`. Those stay documentation in the pack; `-Affirm drop,park` still will not create drop cards without a page. `-Affirm keep,park` creates Parked and Idea/Backlog cards from proposals. Park a finished cluster with `-AffirmCluster LoomYarn -As park`.
+
+**Echo collapse:** same `echoKey` (normalized stem with trailing date tokens stripped) so `sprint_coworker_…_20260910` matches `sprint-coworker-…-2026-09`. Preference `loom` / `cursor-plan` / `meta-plan` > yarn-with-formal > yarn > meta-doc > notion. **Noise rows never win** an echo group. Losers append `echo-duplicate` (reason history preserved) and set `echoOf`. Hash-twin cursor plans (same stem, different `_xxxxxxxx` leaves): newest `LastWriteTime` wins; losers append `hash-twin-superseded` and set `supersededBy`.
+
+**`clusterHint`:** Ask, iOS/Face, Routing, Inspect, Installer, OpsDesk, Ticket, LoomYarn, AtlasMemory, Persona, Personal, Other. Metadata only — inventory does not create parent Yarn items or Notion epics. Additive pack fields: `clusterHint`, `echoOf`, `supersededBy` (schemaVersion stays 2).
+
+**Surface:** `plan-board inventory` writes `%LOCALAPPDATA%\Metra\yarn\plan-board-inventory.md` grouped by `clusterHint` (already on board / review to keep / drop / park) with a one-line blurb from the plan file when present. **Read that markdown.** Do not rate 197 JSON `decision` cells.
+
+Batch apply (still requires `-Confirm`; `decision` in JSON may stay `review`):
+
+```powershell
+.\metra.ps1 plan-board inventory apply -Confirm -Affirm drop,park
+.\metra.ps1 plan-board inventory apply -Confirm -Affirm keep,park
+# Quote if the host splits commas: -Affirm 'keep,park'
+.\metra.ps1 plan-board inventory apply -Confirm -AffirmCluster Ask
+.\metra.ps1 plan-board inventory apply -Confirm -AffirmCluster "iOS/Face" -As park
+.\metra.ps1 plan-board inventory apply -Confirm -AffirmNoise
+```
+
+`-Affirm drop,park` applies proposed drop (existing page only) and does not create. `-Affirm keep,park` creates/updates Idea/Backlog and Parked cards from proposals (skips echo-board-keep and echo-duplicate). `-AffirmCluster` applies that cluster (default uses `proposedDecision`; `-As keep|drop|park` overrides).
+
+`apply -Confirm` with no `-Affirm*` still requires JSON `decision` keep/drop/park. Unknown `schemaVersion` or missing `-Confirm` attempts nothing. Drop of an existing card requires `notionPageId`. Inventory cannot approve Yarn or enqueue Loom.
 
 Sync and apply summaries use a **stable public contract**: `scanned`, `proposed`, `applied`, `unchanged`, `skippedReview`, `skippedStale`, `identityConflicts`, `failed`, `notionUnavailable`. Rename only with a versioned migration.
 

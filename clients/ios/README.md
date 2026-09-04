@@ -2,7 +2,7 @@
 
 SwiftUI shell: single **Metra** home (presence + chat); Settings via gear. Ops Ask API over Tailscale.
 
-**Plan:** [docs/ios-phase1-spike.plan.md](../../docs/ios-phase1-spike.plan.md)
+**Plan:** [plans/ios-phase1-spike.plan.md](../../plans/ios-phase1-spike.plan.md)
 
 ## Defaults
 

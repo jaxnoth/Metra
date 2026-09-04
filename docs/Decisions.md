@@ -28,19 +28,25 @@ Entry shape:
 
 ## 2026-09-03 - Scout parked; Metra iOS name settled; not a separate subsystem
 
-Supersedes same-day entries that formalized Scout as an approved investigative subsystem or treated Scout as settled architecture. See `docs/scout.plan.md`.
+Supersedes same-day entries that formalized Scout as an approved investigative subsystem or treated Scout as settled architecture. See `plans/scout.plan.md`.
 
 - Decision: The iOS application remains **Metra**. Do not rename the phone app to Scout, Metra Scout, or any Scout compound. Informal working names (Companion, Mobile) are not a new product brand.
 - Why: Metra is the brand the operator talks to. If Scout later merges into Attention, dies, or renames, the phone name still works.
-- See: `docs/ios-companion-app.plan.md`, `docs/scout.plan.md`
+- See: `plans/ios-companion-app.plan.md`, `plans/scout.plan.md`
 
 - Decision: Scout is **not** approved as a separate Metra subsystem. Status: **Parked** for future consideration. Desired attributes may be recorded as notes (alternate theories, contradiction detection, assumption challenges, investigative reasoning) without granting peer status next to Atlas, Codex, Loom, or Attention.
 - Why: No unique ownership boundary was identified that differentiates Scout from Attention. An always-on observation engine is Attention territory. Scout may later become **Attention 2.0** rather than a distinct product.
-- See: `docs/scout.plan.md`
+- See: `plans/scout.plan.md`
 
 - Decision: Revisit Scout only if a concrete workflow requires dedicated investigative or adversarial reasoning beyond Attention recommendations, or if Attention is explicitly redesigned to absorb those behaviors.
 - Why: Keep the promising idea without inventing a blurry subsystem. Park preserves notes; it does not enqueue implementation.
-- See: `docs/scout.plan.md`
+- See: `plans/scout.plan.md`
+
+## 2026-09-03 - Plan Board inventory classifiers (noise, echo, twins)
+
+- Decision: Inventory adds durable classifiers without changing the affirmation gate. Per-row heuristic proposes drop for fixtures, test cards, Future-Dev index headings (short labels like ladder / verify who match **exactly**; longer section titles may include a known parenthetical suffix; prefer yarn/meta-doc without a formal plan), and module-scrap titles (a `*.ps1` mention without a formal plan) after authoritative Yarn parked/rejected (and park/drop title language) checks. **Shipped leftover plan docs propose Park** (keep documentation) after those index checks. Post-pass handles hash-twin cursor plans (`supersededBy`, newest LastWriteTime wins) and cross-source echo collapse (`echoOf`; `echoKey` strips trailing dates so meta-doc and Cursor plan twins match; preference loom/cursor-plan > yarn-with-formal > yarn > meta-doc > notion). **Noise rows never become echo winners.** Live Notion cards that match a plan are `echo-board-keep` (not Drop). Slice plan headings that say DONE, shipped, or closeout, **or** plan YAML `status` Shipped/Complete / `shippedAt` / all todos `completed`, propose Park (`completed-unmarked`) instead of Idea keep. Demotions append `reasonCodes` (never replace). `clusterHint` buckets unmatched rows to **Other**; batch apply may use `-AffirmCluster` but assignment stays conservative regex buckets (no forced fit). Operator review surface is the inventory **markdown** (grouped by cluster + blurb); batch apply is `-Affirm drop,park` and `-AffirmCluster <hint> [-As keep|drop|park]`, not hand-editing JSON `decision` on every row. `schemaVersion` stays 2 with additive fields `clusterHint`, `echoOf`, `supersededBy`, `blurb`. `decision` remains `review` until operator/Bing affirm; apply unchanged except those batch flags.
+- Why: First inventory packs inflated ~2x from source echo, fixtures, and index headings. That failure mode recurs every scan; shrink proposals in the pack without inventing a third authority.
+- See: [docs/playbooks/yarn.md](playbooks/yarn.md); `modules/Yarn/Private/PlanBoard.ps1`
 
 ## 2026-09-03 - Plan Board v2 (Backlog, dual identity, inventory)
 
@@ -52,19 +58,19 @@ Supersedes same-day entries that formalized Scout as an approved investigative s
 
 **Status: SUPERSEDED** by [2026-09-03 - Scout parked; Metra iOS name settled; not a separate subsystem](#2026-09-03---scout-parked-metra-ios-name-settled-not-a-separate-subsystem). Do not treat the Decision bullets below as active policy.
 
-Withdraws the same-day draft that renamed the iOS app to Metra Scout or styled the subsystem as Scout Investigator. See `docs/scout.plan.md`.
+Withdraws the same-day draft that renamed the iOS app to Metra Scout or styled the subsystem as Scout Investigator. See `plans/scout.plan.md`.
 
 - Decision (superseded): Do **not** rename the Metra iOS application. Official iOS name and brand stay **Metra**. Informal working names (Companion, Mobile, iOS) are not a new product brand. Metra on the phone remains the secretary / coworker interface for all Metra areas. **Active restatement:** iOS brand remains Metra (unchanged by the park entry).
 - Why: Putting Scout on the app name dilutes the Metra brand. The operator talks to Metra. Scout is staff behind that desk, not a second home-screen product.
-- See: `docs/scout.plan.md`, `docs/ios-companion-app.plan.md`
+- See: `plans/scout.plan.md`, `plans/ios-companion-app.plan.md`
 
 - Decision (superseded): Formalize **Scout** as a first-class Metra investigative subsystem, positioned at the same architectural level as Atlas, TicketTracker, Codex, Loom, and Attention. Scout is not a chatbot, not a virtual personality, and not a peer application. It is an always-on capability that discovers what deserves attention and can emit async observations into Metra (iOS, Ops, later channels). **Active policy:** Scout is **Parked**, not a separate subsystem.
 - Why: Provider lock-in risk on companion-style apps. Separating the Metra client surface from the Scout capability contract keeps the brand intact and keeps investigation replaceable if a model vendor disappears.
-- See: `docs/scout.plan.md`, `docs/ios-companion-app.plan.md`
+- See: `plans/scout.plan.md`, `plans/ios-companion-app.plan.md`
 
 - Decision (superseded): Scout is provider-agnostic by design. Scout gets a `scout.engine` configuration pin, following the same pattern as `ask.engine` and `inspect.*` pins. Providers (Claude, GPT, Grok, local models, future) are implementation details. Metra determines routing. Scout continues functioning if a provider disappears. **Active policy:** no Scout subsystem pin until park is lifted.
 - Why: Lock-in risk. If Scout were tied to a single model vendor, losing that vendor's API access would disable the subsystem. The capability contract over provider identity pattern is already established in Metra Inspect and Ask.
-- See: `docs/scout.plan.md`
+- See: `plans/scout.plan.md`
 
 ## 2026-09-03 - Scout authority ceiling and Attention relationship
 
@@ -72,11 +78,11 @@ Withdraws the same-day draft that renamed the iOS app to Metra Scout or styled t
 
 - Decision (superseded): Scout authority is **observe, investigate, analyze, review, summarize, recommend, draft** only. Scout may not approve, deploy, commit code, send communications, modify production systems, or execute changes without human affirmation. This ceiling attaches to Scout, not to the entire Metra iOS app.
 - Why: An always-on background investigative system without an authority ceiling creates risk of automated action on incomplete evidence. Metra's existing affirmation-first philosophy applies. Scout recommendations are inputs to human decisions, not decisions themselves.
-- See: `docs/scout.plan.md`
+- See: `plans/scout.plan.md`
 
 - Decision (superseded): Scout sits downstream of **Attention** in the signal chain. Attention remains the signal bus (detection layer). Scout is the analyst layer that reads Attention output and produces investigations, alternate hypotheses, and recommendations. Metra iOS is one surface that can present those results. Signal chain: Signal → Attention → Scout → ObservationFeed → Metra (iOS / Ops / later) → Human Affirmation.
 - Why: Keeping Attention and Scout as separate layers preserves independent replaceability. Attention detects; Scout investigates. Keeping the iOS app named Metra avoids redefining every mobile interaction as investigation-only.
-- See: `docs/scout.plan.md`
+- See: `plans/scout.plan.md`
 
 ---
 
@@ -94,9 +100,9 @@ Withdraws the same-day draft that renamed the iOS app to Metra Scout or styled t
 
 ## 2026-09-02 - Yarn Phase C leftovers / Loom naming
 
-- Decision: **Yarn** is a Metra-hosted L1.5 intake product on the portfolio line: **Atlas** remembers; **Metra** coordinates; **Yarn** prepares; **Forge** generates; **Loom** executes. AutoProgram is not a current product name. It remains a deprecated CLI alias (`metra.ps1 autoprogram`), migrate path, dual branch prefix, and historical ID shape (`AP-*` / `CAND-*`) only. AutoProgram-named redirect stubs under `docs/` are deleted; canonical homes are `loom-product-boundary.plan.md` and `loom-m0-tracks.md`.
+- Decision: **Yarn** is a Metra-hosted L1.5 intake product on the portfolio line: **Atlas** remembers; **Metra** coordinates; **Yarn** prepares; **Forge** generates; **Loom** executes. AutoProgram is not a current product name. It remains a deprecated CLI alias (`metra.ps1 autoprogram`), migrate path, dual branch prefix, and historical ID shape (`AP-*` / `CAND-*`) only. AutoProgram-named redirect stubs under `docs/` are deleted; canonical homes are `loom-product-boundary.plan.md` and `research/loom-m0-tracks.md`.
 - Why: Slice 7 Phase C closes AutoProgram leftovers after Yarn Phase B without reopening Track G or weakening Loom compatibility.
-- See: [docs/loom-product-boundary.plan.md](loom-product-boundary.plan.md); [docs/playbooks/yarn.md](playbooks/yarn.md); [docs/portfolio-memory-path.md](portfolio-memory-path.md)
+- See: [plans/loom-product-boundary.plan.md](../plans/loom-product-boundary.plan.md); [docs/playbooks/yarn.md](playbooks/yarn.md); [docs/portfolio-memory-path.md](portfolio-memory-path.md)
 
 ## 2026-09-02 - Yarn Phase B Atlas intake (local mirror)
 
@@ -189,7 +195,7 @@ Withdraws the same-day draft that renamed the iOS app to Metra Scout or styled t
 
 - Decision: **Loom rename shipped** in Metra checkout: module path `modules/Loom/`, primary CLI `metra.ps1 loom`, storage default `%LOCALAPPDATA%\Metra\loom\`, migration via `loom migrate -Apply -Confirm`. **Hard rename** of PowerShell exports (`Get-MetraLoom*` only). Temporary compat: `metra.ps1 autoprogram` CLI alias (deprecation warning); legacy storage read-only until migration. **AP-\*** / **CAND-\*** IDs unchanged; persisted `autoprogram/` branch names not rewritten.
 - Why: Operator-amended Phase D rename after M2 isolation gate; pre-Slice 4 clean naming.
-- See: [docs/loom-product-boundary.plan.md](loom-product-boundary.plan.md), [docs/playbooks/loom.md](playbooks/loom.md)
+- See: [plans/loom-product-boundary.plan.md](../plans/loom-product-boundary.plan.md), [docs/playbooks/loom.md](playbooks/loom.md)
 
 ---
 
@@ -197,7 +203,7 @@ Withdraws the same-day draft that renamed the iOS app to Metra Scout or styled t
 
 - Decision: The fourth portfolio product (governed plan execution: queue, journal, branches, review, operator acceptance) is named **Loom**. Portfolio line: **Atlas** remembers; **Metra** coordinates; **Forge** generates; **Loom** executes. Module: `modules/Loom/`. CLI: `metra.ps1 loom` (legacy `autoprogram` alias temporary).
 - Why: Operator naming decision 2026-08-31 after Bing review (Loom over Assembly). Describes role (weaving approved work through stages) rather than implementation technique (auto coding).
-- See: [docs/loom-product-boundary.plan.md](loom-product-boundary.plan.md) Section 17
+- See: [plans/loom-product-boundary.plan.md](../plans/loom-product-boundary.plan.md) Section 17
 
 ---
 
@@ -205,7 +211,7 @@ Withdraws the same-day draft that renamed the iOS app to Metra Scout or styled t
 
 - Decision: Machine **completion** is evidence that a governed process met its contract (inspect goal, verify, scope, done-when). Operator **acceptance** is authority to integrate (merge, push, promote, close). **Completion without acceptance is forbidden** for Loom queue items (working name through M2 was AutoProgram; current name is Loom), TicketWatch recommendations, Atlas knowledge promotion, and future agentic write surfaces. No harness may treat its own judgment as operator approval.
 - Why: Portfolio principle surfaced during AutoProgram boundary review (Bing 2026-08-31). Prevents authority drift as automation grows.
-- See: [docs/loom-product-boundary.plan.md](loom-product-boundary.plan.md); Loom roadmap plan Slice 4+ daily gate
+- See: [plans/loom-product-boundary.plan.md](../plans/loom-product-boundary.plan.md); Loom roadmap plan Slice 4+ daily gate
 
 ---
 
@@ -213,15 +219,15 @@ Withdraws the same-day draft that renamed the iOS app to Metra Scout or styled t
 
 - Decision: Loom domain code (working name through M2 was AutoProgram; current name is Loom) calls Metra only through **documented adapters** to public Metra surfaces (routing, Capture read, plan roots, inspect, verify, Ops health). **Forbidden:** Loom importing or dot-sourcing `scripts/private/Routing.ps1`, `Capture.ps1`, or other Metra private implementation files. Direction: `Loom → Adapters → Metra`. Extraction readiness requires Loom module tests green **without** `Import-Module Metra.psm1`.
 - Why: Difference between a future extractable module and a permanent god module (Bing 2026-08-31). Highest-value rule in boundary plan Section 6.
-- See: [docs/loom-product-boundary.plan.md](loom-product-boundary.plan.md) Section 6, 10.5
+- See: [plans/loom-product-boundary.plan.md](../plans/loom-product-boundary.plan.md) Section 6, 10.5
 
 ---
 
 ## 2026-08-31 - Loom is a governed-execution domain (not Forge)
 
-- Decision: Portfolio products: **Atlas** remembers; **Metra** coordinates; **Yarn** prepares; **Forge** generates declarative artifacts from structured definitions; **Loom** executes governed plans (approved formal plans → governed queue → isolated mutation → review → operator acceptance). Working name through M2 was **AutoProgram** (`metra.ps1 autoprogram`, `modules/AutoProgram/`); current name is **Loom**. Loom does **not** move into Forge. Forge authority is regenerable output; Loom authority is mutable execution history (queue, journal, branches, review evidence, acceptance records). Metra hosts the CLI façade temporarily; module boundary must be extractable before sibling repo. **Non-goals:** move into Forge; sibling repo during M0–M2; autonomous merge/push/accept; Notion as queue backend. **Extraction:** sibling repo only when Section 15 triggers in [loom-product-boundary.plan.md](loom-product-boundary.plan.md) are met (any two, including isolation gate).
+- Decision: Portfolio products: **Atlas** remembers; **Metra** coordinates; **Yarn** prepares; **Forge** generates declarative artifacts from structured definitions; **Loom** executes governed plans (approved formal plans → governed queue → isolated mutation → review → operator acceptance). Working name through M2 was **AutoProgram** (`metra.ps1 autoprogram`, `modules/AutoProgram/`); current name is **Loom**. Loom does **not** move into Forge. Forge authority is regenerable output; Loom authority is mutable execution history (queue, journal, branches, review evidence, acceptance records). Metra hosts the CLI façade temporarily; module boundary must be extractable before sibling repo. **Non-goals:** move into Forge; sibling repo during M0–M2; autonomous merge/push/accept; Notion as queue backend. **Extraction:** sibling repo only when Section 15 triggers in [loom-product-boundary.plan.md](../plans/loom-product-boundary.plan.md) are met (any two, including isolation gate).
 - Why: Forge and Loom have different operating models (regenerate vs accumulate evidence). Bing boundary review approved this split 2026-08-31.
-- See: [docs/loom-product-boundary.plan.md](loom-product-boundary.plan.md) Sections 1, 15, 16; tag `boundary-correction-start` (`7d90ebe`)
+- See: [plans/loom-product-boundary.plan.md](../plans/loom-product-boundary.plan.md) Sections 1, 15, 16; tag `boundary-correction-start` (`7d90ebe`)
 
 ---
 
@@ -237,7 +243,7 @@ Withdraws the same-day draft that renamed the iOS app to Metra Scout or styled t
 
 - Decision: Accepted routing edges persist machine-locally under `%LOCALAPPDATA%\Metra\routing\graph.json` and apply only via explicit `routing edges accept` / `affirm` / `remove`. Routing telemetry and `routing edges candidates` remain Observe-only and never write accepted edges. Review proposals live in `proposals.json`; `propose` and `reject` never write `graph.json`.
 - Why: Misroutes outweigh routine confirms; silent Observe→Apply would recreate untrusted routing state.
-- See: [docs/routing-graph-phase4-persistence.plan.md](routing-graph-phase4-persistence.plan.md), [docs/routing-graph-phase5-review.plan.md](routing-graph-phase5-review.plan.md)
+- See: [plans/routing-graph-phase4-persistence.plan.md](../plans/routing-graph-phase4-persistence.plan.md), [plans/routing-graph-phase5-review.plan.md](../plans/routing-graph-phase5-review.plan.md)
 
 ---
 
@@ -245,7 +251,7 @@ Withdraws the same-day draft that renamed the iOS app to Metra Scout or styled t
 
 - Decision: Phase 5 Review derives pending edge proposals from ambiguous telemetry (`routing edges propose`) when compound cue evidence disagrees with the ambiguous primary (MinCount default 2). Operator **affirm** applies via `Add-MetraRoutingAcceptedEdge`; **reject** dismisses without graph write. Rejected fingerprints are not re-proposed; manual `accept` remains valid.
 - Why: Closes Observe → Recommend → Approve → Apply without silent learning or LLM routing.
-- See: [docs/routing-graph-phase5-review.plan.md](routing-graph-phase5-review.plan.md)
+- See: [plans/routing-graph-phase5-review.plan.md](../plans/routing-graph-phase5-review.plan.md)
 
 ---
 
@@ -278,7 +284,7 @@ Three product scars locked with the Vision Ask contract bite. Server proof: `scr
 
 - Decision: Metra clients (Satellite CLI, future iOS companion, remote Ask) authenticate to the Ops host by **Tailscale peer identity** (WhoIs: login, node name, and/or tags) plus a host **allowlist**. Do **not** invent a second shared secret “derived from Tailscale,” and do **not** keep long-lived pasteable tokens as the primary pairing model. Optional **device capability tokens** (Keychain / local store) may be **minted by the host after** a Tailscale-proven first pairing so a single phone can be revoked without removing the whole node from the tailnet. Profile sync token paste (`X-Metra-Profile-Sync` / `profile issue-sync-token`) remains transitional until this path ships. Tailscale remains **reach + identity**, never local authority by itself (Serve must not collapse to loopback authority - existing scar).
 - Why: Copied sync/Ask keys get lost, drift across machines, and train operators to treat a bearer string as the product. Tailscale already proves which node is calling; Metra should authorize that identity. A derived PSK duplicates identity poorly. Device tokens keep revoke granularity for phones without public-internet auth complexity.
-- See: `docs/tailscale-identity-auth.plan.md`; `SECURITY.md` (Reach vs authority); `docs/ios-companion-app.plan.md` section 2.3; Brand “Profile sync token”
+- See: `plans/tailscale-identity-auth.plan.md`; `SECURITY.md` (Reach vs authority); `plans/ios-companion-app.plan.md` section 2.3; Brand “Profile sync token”
 
 ---
 
@@ -616,7 +622,7 @@ Three product scars locked with the Vision Ask contract bite. Server proof: `scr
 - Decision: TicketWatch may filter generic routing triggers when deriving product cues from the registry. That filter is not a vocabulary proposal blacklist and must not grow in response to ticket-subject noise.
 - Decision: Product-cue recognition uses token-boundary matching for single-token cues (avoid substring false positives) and phrase substring for multi-word cues.
 - Why: A hardcoded IWU product list in TicketWatch.ps1 drifted (ILLiad hand-add) and duplicated solutions + registry vocabulary ownership.
-- See: `scripts/private/TicketWatch.ps1` (`ConvertTo-MetraTicketWatchNormalizedProductCues`, `Get-MetraTicketWatchProductCueList`, `Test-MetraTicketWatchTextHasCue`); `docs/ticket-watch.local.example.json`
+- See: `scripts/private/TicketWatch.ps1` (`ConvertTo-MetraTicketWatchNormalizedProductCues`, `Get-MetraTicketWatchProductCueList`, `Test-MetraTicketWatchTextHasCue`); `docs/examples/ticket-watch.local.example.json`
 
 ## 2026-08-11 - Preview recommendation soft-gate (operator feedback)
 
@@ -1060,14 +1066,14 @@ Three product scars locked with the Vision Ask contract bite. Server proof: `scr
 
 ## 2026-08-11 - Self-doc documents live routing behavior
 
-- Decision: `.\metra.ps1 selfdoc` verifies standing sample asks with `Get-MetraRoutingAmbiguity` (present projects only). Featured order comes from `routing.featuredProjects` and/or project `featured: true` - not a hard-coded list in `SelfDocumentation.ps1`. Also writes `docs/selfdoc-routing-examples.json` as a living validation suite (ticket id, home fallback, verified asks). Overview and canvas show why (ticket-id / trigger-phrase / home-default / ...) so adoption docs cannot claim routes the engine will not take.
+- Decision: `.\metra.ps1 selfdoc` verifies standing sample asks with `Get-MetraRoutingAmbiguity` (present projects only). Featured order comes from `routing.featuredProjects` and/or project `featured: true` - not a hard-coded list in `SelfDocumentation.ps1`. Also writes `%LOCALAPPDATA%/Metra/selfdoc/selfdoc-routing-examples.json` as a living validation suite (ticket id, home fallback, verified asks). Overview and canvas show why (ticket-id / trigger-phrase / home-default / ...) so adoption docs cannot claim routes the engine will not take.
 - Why: Registry-only examples drift from ticket precedence and home-first routing; behavior docs keep Overview/canvas trustworthy as the intelligence layer evolves.
-- See: `scripts/private/SelfDocumentation.ps1`, `docs/Context-Routing.md`, `docs/selfdoc-routing-examples.json`
+- See: `scripts/private/SelfDocumentation.ps1`, `docs/Context-Routing.md`, `%LOCALAPPDATA%/Metra/selfdoc/selfdoc-routing-examples.json`
 - Amends: 2026-08-04 "Self-doc refresh is a required step after route changes"
 
 ## 2026-08-04 - Self-doc refresh is a required step after route changes
 
-- Decision: `.\metra.ps1 selfdoc` regenerates standing route examples into the self-documentation canvas embed, `docs/Overview.md` markers, `docs/selfdoc-routes.json`, and the tracked canvas template. After registry trigger, purpose, or project-row changes that should appear in the explain surface, operators and agents must run `selfdoc` (or `Export-MetraSnapshot -RefreshSelfDocumentation`) - do not hand-edit the generated route table or `SELFDOC_ROUTES` embed. (Amended 2026-08-11: examples are live-routing verified; snapshot no longer refreshes selfdoc by default - see "Snapshot export stays focused".)
+- Decision: `.\metra.ps1 selfdoc` regenerates standing route examples into the self-documentation canvas embed, `docs/Overview.md` markers, `%LOCALAPPDATA%/Metra/selfdoc/selfdoc-routes.json`, and the tracked canvas template. After registry trigger, purpose, or project-row changes that should appear in the explain surface, operators and agents must run `selfdoc` (or `Export-MetraSnapshot -RefreshSelfDocumentation`) - do not hand-edit the generated route table or `SELFDOC_ROUTES` embed. (Amended 2026-08-11: examples are live-routing verified; snapshot no longer refreshes selfdoc by default - see "Snapshot export stays focused".)
 - Why: Leadership asked for visual self-docs; those docs go stale the first time a route changes unless refresh is an explicit, repeatable product operation.
 - See: `scripts/private/SelfDocumentation.ps1`, `docs/Context-Routing.md`, `.\metra.ps1 selfdoc`
 
@@ -1082,7 +1088,7 @@ Three product scars locked with the Vision Ask contract bite. Server proof: `scr
 
 - Decision: `docs/Demo.md` is a standalone brief for colleagues and leadership after a walkthrough (or without one). Lead with middle path, what Metra is, vision/institutional fit (including growth paths and light campus posture contrast), how it works, and Q&A. No speaker stage directions. Live demo beats stay optional in chat or a separate presenter cut if needed later.
 - Why: The CIO/audience need something sendable. Talk-note framing ("say this slowly," "if faces look blank") does not travel well as email or handout.
-- See: `docs/Demo.md`, README / Brand / Customizing / Integrations pointers
+- See: `docs/Overview.md` (formerly Demo.md), README / Brand / Customizing / Integrations pointers
 - Supersedes in part: 2026-08-03 "coworker talk is pitch-first" (story spine remains; document role is leave-behind)
 - **Superseded by:** 2026-08-04 Self-documentation canvas + Overview.md
 
@@ -1102,7 +1108,7 @@ Three product scars locked with the Vision Ask contract bite. Server proof: `scr
 
 - Decision: Keep the Cursor canvas Ops board as a supported surface for now. The HTML Ops desk remains the primary board, and the canvas stays a read-mostly in-editor view refreshed by `snapshot`. Retiring the canvas is not scheduled; revisit only if maintaining both surfaces starts costing more than the in-editor view returns.
 - Why: The canvas is useful when the desk is not open or the operator is already in Cursor, and it survives desk restarts. Removing it now would trade a working surface for a small maintenance saving.
-- See: `scripts/private/Snapshot.ps1` (canvas embed), `docs/canvas-snapshot.json`, `.\metra.ps1 snapshot`
+- See: `scripts/private/Snapshot.ps1` (canvas embed), `%LOCALAPPDATA%/Metra/desk/canvas-snapshot.json`, `.\metra.ps1 snapshot`
 
 ## 2026-08-03 - Durable-write home classification (before propose)
 
@@ -1269,7 +1275,7 @@ Experience   Primary focus (HTML desk, Ask, project activation, local AI)
 
 - Decision: Ship an operator-private **Decision Registry** for operational why-we-chose memory, separate from `docs/Decisions.md` (product policy) and the Operator Communication Contract (collaboration rhythm). Ledger is gitignored `docs/decision-registry.json` (`candidates` + `confirmed`). Flow: note/harvest -> promote; never auto-promote. Required on promote: non-empty `why`, `confidence` (`high`|`medium`|`low`), and at least one `evidence` item. Also store `source` and `origin` (`operator`|`backfill`|`harvest`). Cap 50 active confirmed. Retrieved only via `.\metra.ps1 decisions search|get` and bounded `ctx -Query` top 3 `relatedDecisions` - no always-on `.mdc`. CLI also includes `harvest` (candidates only from project `AGENTS.md`) and `seed` (curated local backfill). Travels with `export-profile` / `import-profile`. Boundary test: would every Metra clone benefit? If yes, use Decisions.md instead.
 - Why: Institutional operational scars had no home that was neither routing, personality, nor product docs. Explicit promote plus retrieval-only load keeps trust and avoids memory soup in every prompt.
-- See: `.\metra.ps1 decisions`, `docs/decision-registry.example.json`, `scripts/private/DecisionRegistry.ps1`
+- See: `.\metra.ps1 decisions`, `docs/examples/decision-registry.example.json`, `scripts/private/DecisionRegistry.ps1`
 - Future: see Why Here entry (item 1 done); remaining relationship-surfacing items listed there.
 
 ## 2026-07-31 - One generated workspace file
@@ -1282,7 +1288,7 @@ Experience   Primary focus (HTML desk, Ask, project activation, local AI)
 
 - Decision: Ship an **Operator Communication Contract** for the shared operating rhythm between Metra and the operator (how we collaborate - soft working guidelines), not a user profile or hidden memory. Ledger is gitignored `docs/operator-contract.json` (`candidates` + `confirmedGuidelines`). Always-on load is gitignored `.cursor/rules/metra-learned.local.mdc` rendered as a confirmed soft-guideline list plus a fixed Interpretation footer - no auto-generated prose brief. Flow: candidate -> propose -> confirm -> promote; never auto-promote. Hard cap 20 confirmed guidelines. Portfolio-wide corrections (routing, professional sink, root isolation, evidence hierarchy, public product framing, base persona policy) must refuse personal promote and point at Decisions / README / base persona instead. CLI: `.\metra.ps1 profile` (private helpers; no new public module export). Travels with `export-profile` / `import-profile`. Base policy always wins on conflict.
 - Why: Communication discipline that never evolves feels fake across sessions and model swaps. Explicit promotion and a deterministic guideline list keep trust inspectable without hidden memory or interpretation drift from synthesized briefs.
-- See: `.\metra.ps1 profile`, `docs/operator-contract.example.json`, `.cursor/rules/metra-learned.local.example.mdc`, `docs/Customizing-Metra.md`
+- See: `.\metra.ps1 profile`, `docs/examples/operator-contract.example.json`, `.cursor/rules/metra-learned.local.example.mdc`, `docs/Customizing-Metra.md`
 
 ## 2026-07-31 - Product triangle: routing + context + communication
 
@@ -1377,7 +1383,7 @@ Experience   Primary focus (HTML desk, Ask, project activation, local AI)
 
 ## 2026-07-30 - Quiet verify smoke
 
-- Decision: `.\metra.ps1 verify` uses quiet `ctx` (`-Path -`) and quiet `import-profile -Preview` so fixture smoke does not rewrite `docs/context-pack.*` or spam host output. Focused Pester under `tests/` covers routing rows, import refuse/Preview, quiet ctx, and verify Ok.
+- Decision: `.\metra.ps1 verify` uses quiet `ctx` (`-Path -`) and quiet `import-profile -Preview` so fixture smoke does not rewrite the default machine-local context-pack or spam host output. Focused Pester under `tests/` covers routing rows, import refuse/Preview, quiet ctx, and verify Ok.
 - Why: Smoke should be pass/fail without mutating generated packs or drowning the result table.
 - See: `Invoke-MetraVerify`, `tests/Invoke-MetraTests.ps1`, `docs/Routing-Scenarios.md`
 
@@ -1445,14 +1451,14 @@ Experience   Primary focus (HTML desk, Ask, project activation, local AI)
 
 - Decision: Coworker demo leads with Metra Ops Route (Needs attention / Resolve this / Standing routes), then the routing CLI table, then Trivia chat + professional-sink draft. Rename `Demo-5min.md` to `Demo.md` (recommended ~8 min; keep a strict 5-minute cut). Do not demo Canva/MCP, Decision Registry, OCC, personal roots, or live ticket posts in the default talk.
 - Why: The Ops board is the product face for wayfinding; a chat-first script under-taught the desk and over-taught an AI primer.
-- See: `docs/Demo.md`, `docs/Brand.md`, `docs/Integrations.md`
+- See: `docs/Overview.md` (formerly Demo.md), `docs/Brand.md`, `docs/Integrations.md`
 - Superseded: 2026-08-03 pitch-first rewrite (middle path story before live clicks).
 
 ## 2026-08-03 - Coworker talk is pitch-first (middle path), not a feature demo
 
 - Decision: `docs/Demo.md` is a sales pitch for coworkers. Lead with the balancing act - neither carte blanche AI nor chatbot-only - then optional Ops Ask / routing proof. Live clicks are support, not the spine. Keep non-tech language; drop CLI-heavy face tours as the default path.
 - Why: Feature-timed demos were hard to deliver and under-sold what is unique: Metra steers AI to one project, keeps chat useful, and keeps durable writes professional and on request.
-- See: `docs/Demo.md`, `docs/Brand.md`
+- See: `docs/Overview.md` (formerly Demo.md), `docs/Brand.md`
 
 ## 2026-07-31 - MCP tool bindings are documented pointers, never tracked credentials
 
@@ -1494,10 +1500,10 @@ Experience   Primary focus (HTML desk, Ask, project activation, local AI)
 
 - Decision: Ask routing must prefer **compound intent** (product + ops verb/outcome) over bare product-name keyword ownership. Example: `IWUDATA` + `run` / `job` / `status` / failure language -> **IWUDATA-Automation**, not **IWUDATA-SQL**. SQL keeps source/deploy ownership (`iwudata sql`, warehouse procedure). No project may monopolize a shared product token (e.g. bare `iwudata`) when sibling stops own the operational meaning. Longer term: grow beyond keyword haystack scoring (intent/compound cues first; embeddings only as soft assist after deterministic route - never replace the map).
 - Why: Phone Ask (2026-08-29) answered "How did IWUDATA run today?" from IWUDATA-SQL and correctly said it had no run status - wrong stop, honest empty. Operator: the combination should have been the indicator; Metra needs to get smarter than keywords alone.
-- See: Decision Registry `d9b91b622c7`; `projects.local.json` (remove bare `iwudata` from SQL; Automation phrases `iwudata run` / `iwudata job` / `iwudata status`); `Get-MetraRoutingGraph` / `Update-MetraScoredRoutingWithCompoundCues` / `Get-MetraScoredRoutingProjects` (Phase 2 foundation); [routing-graph-evolution.plan.md](routing-graph-evolution.plan.md); [routing-graph-phase2-foundation.plan.md](routing-graph-phase2-foundation.plan.md).
+- See: Decision Registry `d9b91b622c7`; `projects.local.json` (remove bare `iwudata` from SQL; Automation phrases `iwudata run` / `iwudata job` / `iwudata status`); `Get-MetraRoutingGraph` / `Update-MetraScoredRoutingWithCompoundCues` / `Get-MetraScoredRoutingProjects` (Phase 2 foundation); [routing-graph-evolution.plan.md](../plans/routing-graph-evolution.plan.md); [routing-graph-phase2-foundation.plan.md](../plans/routing-graph-phase2-foundation.plan.md).
 
 ## 2026-08-29 - Routing Observe telemetry is machine-local JSONL (no learning)
 
 - Decision: Phase 3 routing telemetry appends Observe-only events to `%LOCALAPPDATA%\Metra\routing\events.jsonl` after `Get-MetraRoutingAmbiguity` builds its result. Query text is newline-normalized and capped at 512 characters. Telemetry never re-scores, never learns, and never creates durable edges. Path getters and `routing events` are read-only (they do not create the sink). `%LOCALAPPDATA%` data stays untracked; any future export or aggregation needs a separate explicit design decision.
 - Why: Need evidence of confident vs ambiguous vs home routes before Persistence/Review, without turning Observe into Apply or shipping query payloads off-box.
-- See: [routing-graph-phase3-telemetry.plan.md](routing-graph-phase3-telemetry.plan.md); `Add-MetraRoutingTelemetryEvent` / `Show-MetraRoutingEventsCli`.
+- See: [routing-graph-phase3-telemetry.plan.md](../plans/routing-graph-phase3-telemetry.plan.md); `Add-MetraRoutingTelemetryEvent` / `Show-MetraRoutingEventsCli`.

@@ -86,7 +86,7 @@ function Get-MetraTicketWatchConfig {
         vocabularyMinSightings   = 2        # subject-DF floor for non-acronym proposals
         vocabularyMaxSubjectShare = 0.40    # drop tokens that appear in too many subjects
     }
-    $cfgPath = Join-Path $MetraRoot 'docs\ticket-watch.local.json'
+    $cfgPath = Get-MetraTicketWatchConfigPath -MetraRoot $MetraRoot
     if (-not (Test-Path -LiteralPath $cfgPath)) { return $defaults }
     try {
         $raw = Get-Content -LiteralPath $cfgPath -Raw -ErrorAction Stop | ConvertFrom-Json

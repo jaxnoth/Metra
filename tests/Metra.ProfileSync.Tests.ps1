@@ -139,8 +139,7 @@ Describe 'Metra Profile Sync' {
     }
 
     It 'Sync-MetraProfile -WhatIf does not write lastAppliedHash' {
-        $root = Get-MetraRoot
-        $statePath = Join-Path $root 'docs\profile-sync.local.json'
+        $statePath = (Join-Path (Get-MetraMachineDataRoot) 'profile-sync.local.json')
         $backup = $null
         if (Test-Path -LiteralPath $statePath) {
             $backup = Get-Content -LiteralPath $statePath -Raw -Encoding UTF8
@@ -186,8 +185,7 @@ Describe 'Metra Profile Sync' {
     }
 
     It 'Sync-MetraProfile no-ops when lastAppliedHash matches' {
-        $root = Get-MetraRoot
-        $statePath = Join-Path $root 'docs\profile-sync.local.json'
+        $statePath = (Join-Path (Get-MetraMachineDataRoot) 'profile-sync.local.json')
         $backup = $null
         if (Test-Path -LiteralPath $statePath) {
             $backup = Get-Content -LiteralPath $statePath -Raw -Encoding UTF8

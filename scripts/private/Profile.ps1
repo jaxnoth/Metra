@@ -319,7 +319,7 @@ function Get-MetraProfileStatus {
 
 function Get-MetraProfileSyncStatePath {
     param([string]$MetraRoot = (Get-MetraRoot))
-    return Join-Path $MetraRoot 'docs\profile-sync.local.json'
+    return Get-MetraProfileSyncLocalPath -MetraRoot $MetraRoot
 }
 
 function Get-MetraProfileSyncTokenHashPath {
@@ -407,7 +407,7 @@ function Initialize-MetraProfileSyncToken {
         Path      = $path
         Created   = $true
         HasToken  = $true
-        Message   = 'Copy this token to the satellite docs/profile-sync.local.json as syncToken. It is shown once.'
+        Message   = 'Copy this token to the satellite %LOCALAPPDATA%/Metra/profile-sync.local.json as syncToken. It is shown once.'
         Header    = 'X-Metra-Profile-Sync'
     }
 }
@@ -780,7 +780,7 @@ function Send-MetraProfileCheckIn {
 function Set-MetraProfileSyncClientToken {
     <#
     .SYNOPSIS
-        Writes or updates syncToken in docs/profile-sync.local.json (satellite client).
+        Writes or updates syncToken in %LOCALAPPDATA%/Metra/profile-sync.local.json (satellite client).
     #>
     [CmdletBinding()]
     param(
@@ -819,7 +819,7 @@ function Resolve-MetraProfileOpsBaseUrl {
 
     $resolved = Get-MetraProfileOpsBaseUrlOrNull -OpsBaseUrl $OpsBaseUrl -MetraRoot $MetraRoot
     if ([string]::IsNullOrWhiteSpace($resolved)) {
-        throw 'Ops base URL not set. Pass -OpsBaseUrl, set METRA_OPS_BASE_URL, metra.config.json opsBaseUrl, or docs/profile-sync.local.json.'
+        throw 'Ops base URL not set. Pass -OpsBaseUrl, set METRA_OPS_BASE_URL, metra.config.json opsBaseUrl, or %LOCALAPPDATA%/Metra/profile-sync.local.json.'
     }
     return $resolved
 }

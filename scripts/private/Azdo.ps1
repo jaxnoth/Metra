@@ -8,7 +8,7 @@ function Get-MetraAzdoConfigPath {
     [CmdletBinding()]
     param([string]$MetraRoot = (Get-MetraRoot))
 
-    return Join-Path $MetraRoot 'docs\azdo.local.json'
+    return Get-MetraAzdoLocalConfigPath -MetraRoot $MetraRoot
 }
 
 function Get-MetraAzdoCacheDir {
@@ -141,7 +141,7 @@ function Get-MetraAzdoAuthHeader {
 
     $pat = Get-MetraAzdoPat -MetraRoot $MetraRoot
     if ([string]::IsNullOrWhiteSpace($pat)) {
-        throw 'Azure DevOps PAT not configured. Set METRA_AZDO_PAT or docs/azdo.local.json (see docs/azdo.local.example.json).'
+        throw 'Azure DevOps PAT not configured. Set METRA_AZDO_PAT or %LOCALAPPDATA%/Metra/azdo.local.json (see docs/examples/azdo.local.example.json).'
     }
     $pair = [Convert]::ToBase64String([Text.Encoding]::ASCII.GetBytes(":$pat"))
     return @{
@@ -159,7 +159,7 @@ function Get-MetraAzdoBaseUrl {
     $cfg = Get-MetraAzdoConfig -MetraRoot $MetraRoot
     $org = if ($Organization) { $Organization } else { [string]$cfg.organization }
     if ([string]::IsNullOrWhiteSpace($org)) {
-        throw 'Azure DevOps organization not configured. Set organization in docs/azdo.local.json.'
+        throw 'Azure DevOps organization not configured. Set organization in %LOCALAPPDATA%/Metra/azdo.local.json.'
     }
     return "https://dev.azure.com/$org"
 }
@@ -245,7 +245,7 @@ function Get-MetraAzdoStatus {
         cacheDir       = Get-MetraAzdoCacheDir
         apiVersion     = Get-MetraAzdoApiVersion
         ready          = ($patPresent -and $orgConfigured)
-        exampleConfig  = 'docs/azdo.local.example.json'
+        exampleConfig  = 'docs/examples/azdo.local.example.json'
     }
 }
 
@@ -716,7 +716,7 @@ function Get-MetraAzdoGaps {
     )
 
     if (-not (Test-MetraAzdoAuthenticated -MetraRoot $MetraRoot)) {
-        throw 'Azure DevOps not authenticated. Set METRA_AZDO_PAT or docs/azdo.local.json.'
+        throw 'Azure DevOps not authenticated. Set METRA_AZDO_PAT or %LOCALAPPDATA%/Metra/azdo.local.json.'
     }
 
     $cfg = Get-MetraAzdoConfig -MetraRoot $MetraRoot
@@ -827,7 +827,7 @@ function Get-MetraAzdoRepoTree {
     Get-MetraAzdoFlattenedTreeItems -Node $resp -Depth 0 -MaxDepth $maxDepth -Acc $items -MaxItems $maxItems
 
     if ($items.Count -ge $maxItems) {
-        throw "Tree exceeds maxTreeItems cap ($maxItems). Narrow -Path or raise maxTreeItems in docs/azdo.local.json."
+        throw "Tree exceeds maxTreeItems cap ($maxItems). Narrow -Path or raise maxTreeItems in %LOCALAPPDATA%/Metra/azdo.local.json."
     }
 
     return [PSCustomObject]@{
@@ -1137,7 +1137,7 @@ function Invoke-MetraAzdoIdeas {
     )
 
     if (-not (Test-MetraAzdoAuthenticated -MetraRoot $MetraRoot)) {
-        throw 'Azure DevOps not authenticated. Set METRA_AZDO_PAT or docs/azdo.local.json.'
+        throw 'Azure DevOps not authenticated. Set METRA_AZDO_PAT or %LOCALAPPDATA%/Metra/azdo.local.json.'
     }
 
     $cfg = Get-MetraAzdoConfig -MetraRoot $MetraRoot
@@ -1155,7 +1155,7 @@ function Invoke-MetraAzdoIdeas {
     )
 
     if ($ideaRepos.Count -eq 0) {
-        throw 'No idea repos matched ideaRepoNamePatterns. Adjust docs/azdo.local.json or registry azdoRepo overrides.'
+        throw 'No idea repos matched ideaRepoNamePatterns. Adjust %LOCALAPPDATA%/Metra/azdo.local.json or registry azdoRepo overrides.'
     }
 
     $evidenceLines = [System.Collections.Generic.List[string]]::new()

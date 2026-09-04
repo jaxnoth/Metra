@@ -318,14 +318,20 @@ function Get-MetraInspectPlanRoots {
     if (Test-Path -LiteralPath $userPlans) { [void]$roots.Add($userPlans) }
     $checkoutPlans = Join-Path $MetraRoot '.cursor\plans'
     if (Test-Path -LiteralPath $checkoutPlans) { [void]$roots.Add($checkoutPlans) }
-    # Formal Loom/Yarn plans live under project docs (not Cursor Build-button plans).
-    $docs = Join-Path $MetraRoot 'docs'
-    if (Test-Path -LiteralPath $docs) { [void]$roots.Add([System.IO.Path]::GetFullPath($docs)) }
+    # Repo Loom handoff copies live under plans\; docs\ is legacy + human docs (not Yarn synthesize).
+    foreach ($rel in @('plans', 'docs')) {
+        $dir = Join-Path $MetraRoot $rel
+        if (Test-Path -LiteralPath $dir) {
+            [void]$roots.Add([System.IO.Path]::GetFullPath($dir))
+        }
+    }
     if (-not [string]::IsNullOrWhiteSpace($ProjectRoot)) {
-        $projectDocs = Join-Path $ProjectRoot 'docs'
-        if (Test-Path -LiteralPath $projectDocs) {
-            $fullDocs = [System.IO.Path]::GetFullPath($projectDocs)
-            if ($roots -notcontains $fullDocs) { [void]$roots.Add($fullDocs) }
+        foreach ($rel in @('plans', 'docs')) {
+            $projectDir = Join-Path $ProjectRoot $rel
+            if (Test-Path -LiteralPath $projectDir) {
+                $full = [System.IO.Path]::GetFullPath($projectDir)
+                if ($roots -notcontains $full) { [void]$roots.Add($full) }
+            }
         }
     }
     return @($roots)
@@ -348,7 +354,7 @@ function Test-MetraInspectPlanPathAllowed {
 function Test-MetraInspectPathUnderSiblingProjectDocs {
     <#
     .SYNOPSIS
-        True when path is <parent-of-MetraRoot>\<ProjectKey>\docs\*.plan.md (Yarn formal plans).
+        True when path is <parent-of-MetraRoot>\<ProjectKey>\(plans|docs)\*.plan.md.
     #>
     [CmdletBinding()]
     param(
@@ -364,7 +370,7 @@ function Test-MetraInspectPathUnderSiblingProjectDocs {
         $rel = $full.Substring($parent.Length)
         $parts = @($rel -split '[\\/]')
         if ($parts.Count -lt 3) { return $false }
-        if ($parts[1] -ne 'docs') { return $false }
+        if ($parts[1] -notin @('plans', 'docs')) { return $false }
         if ($parts[0] -notmatch '^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$') { return $false }
         return $full.EndsWith('.plan.md', [System.StringComparison]::OrdinalIgnoreCase)
     }
@@ -5345,7 +5351,7 @@ function Invoke-MetraInspectPreCommitHook {
     }
 
     $gate = Get-MetraInspectBingGateRecord -SlotKey $slotKey
-    Write-Host ("Pre-commit: Bing gate affirmed ({0}) — commit allowed." -f [string]$gate.affirmedAtUtc) -ForegroundColor Green
+    Write-Host ("Pre-commit: Bing gate affirmed ({0}) - commit allowed." -f [string]$gate.affirmedAtUtc) -ForegroundColor Green
     return [PSCustomObject]@{
         ok              = $true
         reason          = [string]$triad.reason

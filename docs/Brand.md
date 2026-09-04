@@ -218,7 +218,7 @@ Canonical **operator-facing** words. Brand owns this glossary; installer, Metra 
 | **Files only** - Install Metra now. Choose a role later. (installer only) | Skip setup / uncheck Run setup | no postinstall setup |
 | **Main Metra address** | OpsBaseUrl, HQ Ops URL | profile `opsBaseUrl` |
 | **Pair with Main Metra** (Satellite happy path) | sync paste, paste token first | Tailscale WhoIs + `profile pair` / device token |
-| **Device token** (after pair) | sync bearer for that machine | `docs/profile-sync.local.json` `syncToken`; header `X-Metra-Profile-Sync` |
+| **Device token** (after pair) | sync bearer for that machine | `%LOCALAPPDATA%\Metra\profile-sync.local.json` `syncToken`; header `X-Metra-Profile-Sync` |
 | **Break-glass sync token** (optional override) | primary pairing secret | `profile issue-sync-token`; same header |
 | **Ask assistant** | Ask engine (operator labels) | engine APIs / Ollama under the hood |
 | **Here's where we're landing** | Setup Summary | - |

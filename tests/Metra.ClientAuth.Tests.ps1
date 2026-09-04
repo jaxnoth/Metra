@@ -35,7 +35,7 @@ Describe 'Metra ClientAuth WhoIs and allowlist' {
         $root = Join-Path $env:TEMP ("metra-client-auth-" + [guid]::NewGuid().ToString('N'))
         $null = New-Item -ItemType Directory -Path (Join-Path $root 'docs') -Force
         try {
-            $cfgPath = Join-Path $root 'docs\client-auth.local.json'
+            $cfgPath = Join-Path $root 'client-auth.local.json'
             @{
                 schemaVersion = 1
                 allowlist     = @(
@@ -257,7 +257,7 @@ Describe 'Metra ClientAuth device ledger' {
                 @{
                     schemaVersion = 1
                     allowlist     = @(@{ login = 'op@example.com'; node = ''; tag = '' })
-                } | ConvertTo-Json -Depth 5 | Set-Content -LiteralPath (Join-Path $Root 'docs\client-auth.local.json') -Encoding utf8
+                } | ConvertTo-Json -Depth 5 | Set-Content -LiteralPath (Join-Path $Root 'client-auth.local.json') -Encoding utf8
 
                 $whoOk = {
                     param($ip)
@@ -297,7 +297,7 @@ Describe 'Metra ClientAuth device ledger' {
             @{
                 schemaVersion = 1
                 allowlist     = @(@{ login = 'op@example.com'; node = ''; tag = '' })
-            } | ConvertTo-Json -Depth 5 | Set-Content -LiteralPath (Join-Path $root 'docs\client-auth.local.json') -Encoding utf8
+            } | ConvertTo-Json -Depth 5 | Set-Content -LiteralPath (Join-Path $root 'client-auth.local.json') -Encoding utf8
 
             InModuleScope Metra -Parameters @{ Root = $root } {
                 $whoBad = {
