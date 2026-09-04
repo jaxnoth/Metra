@@ -483,8 +483,8 @@ Describe 'Profile satellite check-in roster' {
 }
 
 Describe 'Export-MetraContext' {
-    It 'Path - with Quiet does not rewrite docs/context-pack.md' {
-        $packPath = Join-Path (Get-MetraRoot) 'docs\context-pack.md'
+    It 'Path - with Quiet does not rewrite default context-pack.md' {
+        $packPath = Get-MetraContextPackPath -Format md
         $before = if (Test-Path -LiteralPath $packPath) {
             (Get-Item -LiteralPath $packPath).LastWriteTimeUtc
         }
@@ -797,7 +797,7 @@ Describe 'Operator Communication Contract' {
 
     It 'ships tracked examples' {
         $root = Get-MetraRoot
-        Test-Path -LiteralPath (Join-Path $root 'docs\operator-contract.example.json') | Should -BeTrue
+        Test-Path -LiteralPath (Join-Path $root 'docs\examples\operator-contract.example.json') | Should -BeTrue
         Test-Path -LiteralPath (Join-Path $root '.cursor\rules\metra-learned.local.example.mdc') | Should -BeTrue
     }
 }
@@ -1113,8 +1113,8 @@ Describe 'Decision Registry' {
 
     It 'ships tracked example' {
         $root = Get-MetraRoot
-        Test-Path -LiteralPath (Join-Path $root 'docs\decision-registry.example.json') | Should -BeTrue
-        $ex = Get-Content -LiteralPath (Join-Path $root 'docs\decision-registry.example.json') -Raw | ConvertFrom-Json
+        Test-Path -LiteralPath (Join-Path $root 'docs\examples\decision-registry.example.json') | Should -BeTrue
+        $ex = Get-Content -LiteralPath (Join-Path $root 'docs\examples\decision-registry.example.json') -Raw | ConvertFrom-Json
         @($ex.confirmed)[0].why | Should -Not -BeNullOrEmpty
         @($ex.confirmed)[0].confidence | Should -Not -BeNullOrEmpty
         @($ex.confirmed)[0].evidence.Count | Should -BeGreaterThan 0
@@ -2311,7 +2311,7 @@ Describe 'HTML Ops desk payload' {
                     -Handoff ([PSCustomObject]@{ where = 'Metra'; kind = 'route' }) `
                     -SessionId 'sess-utf8' -Origin loopback -Client ops-web -Answered $true -MetraRoot $root
                 $entry.prompt | Should -Be $prompt
-                $path = Join-Path $root 'docs\ops-ask-log.local.json'
+                $path = Join-Path $root 'ops\ask-log.json'
                 $enc = Get-MetraUtf8NoBomEncoding
                 $disk = [System.IO.File]::ReadAllText($path, $enc)
                 $disk | Should -Match "aren't"
@@ -3913,7 +3913,7 @@ Describe 'Ask secrets scrub' {
                 $entry.prompt | Should -Match '\[REDACTED:github\]'
                 $entry.prompt | Should -Not -Match [regex]::Escape($gh)
                 $entry.message | Should -Match '\[REDACTED:bearer\]'
-                $disk = Get-Content -LiteralPath (Join-Path $root 'docs\ops-ask-log.local.json') -Raw
+                $disk = Get-Content -LiteralPath (Join-Path $root 'ops\ask-log.json') -Raw
                 $disk | Should -Not -Match [regex]::Escape($gh)
                 $disk | Should -Not -Match [regex]::Escape($jwtHdr)
             }

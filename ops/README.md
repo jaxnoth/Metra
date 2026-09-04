@@ -60,7 +60,7 @@ Motion handoffs do not merge ledgers. Attention, Ask, and Place remain separate 
 
 The primary surface stays presence-first even on loud days. Composer copy stays collaborative without slogan reuse (**Where should we start?**; quiet: toss me an idea; busy: discuss or type what you're thinking; placeholder: idea / question / rough draft). On mobile, Ask / Put somewhere always precedes a collapsed Attention count; wider screens open Attention by default. The shared text box does not merge systems: **Ask** calls the Ask API and journals a conversation; **Put somewhere** calls Place and returns a recommendation. Attachments are Place-only until Ask image intake ships. Recommendation-only trust copy remains visible beside the composer.
 
-Shared portfolio brain: `docs/canvas-snapshot.json` via `Get-MetraDeskPayload` (same snapshot as the Cursor canvas).
+Shared portfolio brain: `%LOCALAPPDATA%\Metra\desk\canvas-snapshot.json` via `Get-MetraDeskPayload` (same snapshot as the Cursor canvas).
 
 ## Ask + Capture HTTP contract (client-agnostic)
 
@@ -101,13 +101,13 @@ Accepts text, clipboard **Paste**, path references, and file **Attach** / drag-d
 
 **Keep in view** parks on Attention. **Save for portfolio** creates a Capture Inbox candidate (pointers + framing) - distinct from Attention. Promote later on affirm.
 
-Place learning lives in `docs/ops-place.local.json` (gitignored). Corrections via **This belongs in…** (Ask Where chip or Route) become Decision Registry candidates - never auto-promoted.
+Place learning lives in `%LOCALAPPDATA%\Metra\ops\place.json` (gitignored). Corrections via **This belongs in…** (Ask Where chip or Route) become Decision Registry candidates - never auto-promoted.
 
 When `bindTailscale` is on, Ops start orchestrates Tailscale Serve so the share URL is `https://` (secure context for phone clipboard). Loopback Ops stays available without Serve. Funnel is out of scope.
 
 ## Next attention (attention memory)
 
-The panel is **continuity**, not a task list. Metra remembers observations across snapshot builds in `docs/ops-attention.local.json` (local, gitignored).
+The panel is **continuity**, not a task list. Metra remembers observations across snapshot builds in `%LOCALAPPDATA%\Metra\ops\attention.json` (local, gitignored).
 
 | Concept | Meaning |
 |---------|---------|
@@ -121,7 +121,7 @@ The panel is **continuity**, not a task list. Metra remembers observations acros
 
 Settings: **Attention visible count** (1-10) controls how many waiting **summary rows** show before **Show all**. Overflow stays in a capped scroll region of compact rows; the desk always renders **exactly one** focused detail card. Preference values fail closed (default 1; clamp 1-10). Keeping in view stays the existing one-card picker and shows a quiet routing nudge toward a ticket or saved decision. On compact viewports the presence shell (mark + observation + Ask/Put composer) stays sticky above Attention so denser waiting lists do not bury Ask.
 
-**Attention actions:** **Portfolio refresh** (non-ticket `coveredKinds` only - git/drift/verify/decision/contract) and **Scan tickets** (ticket only via `POST /api/watch/tickets`). **Ticket Watch** toggle gates Scan tickets. Portfolio never covers tickets. Optional M2: set `autoAnalyze: true` in `docs/ticket-watch.local.json` so Scan tickets / `watch tickets` runs TicketTracker `analyze` (local draft) for Added/Refreshed; `-Draft` forces analyze; Unchanged never re-analyzes. Optional assess: set `autoAssess: true` (and optional `assessMaxAgeHours`) so Added/Refreshed get TicketTracker `assess -DraftRecommend` (local only; skips fresh artifacts); assess prefers over analyze for the same ticket; Attention may show assess gate / needs-clarify. Desk shows **Draft available** - not a recommendation. Optional E1: set `evidenceRouter: true` to append **Next evidence** (or **Ready for recommendation** / Evidence appears sufficient) after analyze - never a likely solution, never auto iSupport recommend. **M3:** ticket Attention detail offers **Preview recommendation** (local `recommend-draft`) and **Write recommendation** (Affirm A TT recommend; supersedes). CLI: `.\metra.ps1 watch recommend <id> -Preview|-Confirm [-Force]`. Confirm-gated assess write: `.\TicketTracker.ps1 assess <id> -Recommend -Confirm -Minutes <n>` (or `-Preview`). `autoStoreRecommend` stays false. Affirm B (resolve/close) stays out of TicketWatch. Requires TicketTracker `meFilter` (empty filter fails closed). CLI `.\metra.ps1 watch tickets` is independent of the desk preference.
+**Attention actions:** **Portfolio refresh** (non-ticket `coveredKinds` only - git/drift/verify/decision/contract) and **Scan tickets** (ticket only via `POST /api/watch/tickets`). **Ticket Watch** toggle gates Scan tickets. Portfolio never covers tickets. Optional M2: set `autoAnalyze: true` in `%LOCALAPPDATA%\Metra\ticket-watch.local.json` so Scan tickets / `watch tickets` runs TicketTracker `analyze` (local draft) for Added/Refreshed; `-Draft` forces analyze; Unchanged never re-analyzes. Optional assess: set `autoAssess: true` (and optional `assessMaxAgeHours`) so Added/Refreshed get TicketTracker `assess -DraftRecommend` (local only; skips fresh artifacts); assess prefers over analyze for the same ticket; Attention may show assess gate / needs-clarify. Desk shows **Draft available** - not a recommendation. Optional E1: set `evidenceRouter: true` to append **Next evidence** (or **Ready for recommendation** / Evidence appears sufficient) after analyze - never a likely solution, never auto iSupport recommend. **M3:** ticket Attention detail offers **Preview recommendation** (local `recommend-draft`) and **Write recommendation** (Affirm A TT recommend; supersedes). CLI: `.\metra.ps1 watch recommend <id> -Preview|-Confirm [-Force]`. Confirm-gated assess write: `.\TicketTracker.ps1 assess <id> -Recommend -Confirm -Minutes <n>` (or `-Preview`). `autoStoreRecommend` stays false. Affirm B (resolve/close) stays out of TicketWatch. Requires TicketTracker `meFilter` (empty filter fails closed). CLI `.\metra.ps1 watch tickets` is independent of the desk preference.
 
 Default card copy is plain language (what / why / what to do). Advanced desk adds the technical detail strip, CLI command, and path.
 
@@ -138,6 +138,6 @@ Settings: **Editor** picks what gets launched.
 | `code` | VS Code |
 | `system` | Windows default handler for the folder |
 
-`editorCommand` may also be a custom executable path (edit `docs/ops-preferences.local.json`). That is intentional - Open in editor can launch a non-Cursor/VS Code app the operator configured. A missing custom path falls back to the Windows default handler (Explorer) so Open still means "take me there."
+`editorCommand` may also be a custom executable path (edit `%LOCALAPPDATA%\Metra\ops\preferences.json`). That is intentional - Open in editor can launch a non-Cursor/VS Code app the operator configured. A missing custom path falls back to the Windows default handler (Explorer) so Open still means "take me there."
 
 Guardrails: only existing folders inside a configured root or the Metra home may be opened. Locality prefers loopback and a validated Host-issued `X-Metra-Local-Session` over raw IP ownership; Serve-proxied requests do not inherit loopback authority. Remote peers get a clear refusal and the path instead.

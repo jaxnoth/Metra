@@ -1,12 +1,12 @@
 # Tailscale client identity (WhoIs + allowlist) and host-minted device capability tokens.
-# Reach/identity only - never local authority. See SECURITY.md and docs/tailscale-identity-auth.plan.md.
+# Reach/identity only - never local authority. See SECURITY.md and plans/tailscale-identity-auth.plan.md.
 
 $script:MetraWhoIsCache = @{}
 $script:MetraWhoIsCacheTtlSeconds = 120
 
 function Get-MetraClientAuthConfigPath {
     param([string]$MetraRoot = (Get-MetraRoot))
-    return Join-Path $MetraRoot 'docs\client-auth.local.json'
+    return Get-MetraClientAuthLocalPath -MetraRoot $MetraRoot
 }
 
 function Get-MetraClientDevicesPath {
@@ -283,7 +283,7 @@ function Get-MetraTailscaleSelfLogin {
 function Get-MetraClientAuthConfig {
     <#
     .SYNOPSIS
-        Loads docs/client-auth.local.json allowlist (empty when missing).
+        Loads %LOCALAPPDATA%/Metra/client-auth.local.json allowlist (empty when missing).
     #>
     [CmdletBinding()]
     param([string]$MetraRoot = (Get-MetraRoot))
@@ -556,7 +556,7 @@ function New-MetraClientDeviceToken {
         TokenHash = $tokenHash
         Header    = 'X-Metra-Profile-Sync'
         Device    = $device
-        Message   = 'Store this token as syncToken in docs/profile-sync.local.json. It is shown once.'
+        Message   = 'Store this token as syncToken in %LOCALAPPDATA%/Metra/profile-sync.local.json. It is shown once.'
     }
 }
 
@@ -1059,6 +1059,6 @@ function Invoke-MetraProfileClientPair {
         Pending    = $false
         DeviceId   = [string](Get-MetraProp -Object $resp -Name 'deviceId' -Default '')
         OpsBaseUrl = $base
-        Message    = 'Paired; device token stored in docs/profile-sync.local.json.'
+        Message    = 'Paired; device token stored in %LOCALAPPDATA%/Metra/profile-sync.local.json.'
     }
 }

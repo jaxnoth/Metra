@@ -27,7 +27,7 @@ Minimal path: personal tailnet, **HTTPS** HQ Ops, one `satellite connect` comman
 ```powershell
 cd C:\Projects\_meta
 # Optional allowlist (empty = transitional open Ask; Self-login still auto-pairs)
-Copy-Item .\docs\client-auth.example.json .\docs\client-auth.local.json
+Copy-Item .\docs\examples\client-auth.example.json (Join-Path $env:LOCALAPPDATA 'Metra\client-auth.local.json')
 # Edit login/node/tag entries, then run Ops with Tailscale Serve / bindTailscale
 ```
 

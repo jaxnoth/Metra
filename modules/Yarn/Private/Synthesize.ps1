@@ -99,6 +99,87 @@ function New-YarnFormalPlanText {
     return $sb.ToString()
 }
 
+function Resolve-YarnCursorPlansDir {
+    <#
+    .SYNOPSIS
+        Cursor user plans folder (Yarn synthesize draft home for Build/preview UX).
+    #>
+    if ($script:YarnCursorPlansDirOverride) {
+        $dir = [System.IO.Path]::GetFullPath([string]$script:YarnCursorPlansDirOverride)
+        [void][System.IO.Directory]::CreateDirectory($dir)
+        return $dir
+    }
+    $dir = Join-Path $env:USERPROFILE '.cursor\plans'
+    [void][System.IO.Directory]::CreateDirectory($dir)
+    return [System.IO.Path]::GetFullPath($dir)
+}
+
+function Resolve-YarnProjectPlansPath {
+    <#
+    .SYNOPSIS
+        Repo plans folder for Loom handoff copies (<project>\plans). Not docs\.
+    #>
+    param(
+        [Parameter(Mandatory)][string]$MetraRoot,
+        [Parameter(Mandatory)][string]$ProjectKey
+    )
+    if ($ProjectKey -eq 'Metra' -or [string]::IsNullOrWhiteSpace($ProjectKey)) {
+        $plans = Join-Path $MetraRoot 'plans'
+        [void][System.IO.Directory]::CreateDirectory($plans)
+        return [System.IO.Path]::GetFullPath($plans)
+    }
+    $key = [string]$ProjectKey.Trim()
+    if ($key -match '[\\/]' -or $key -match '\.\.' -or [System.IO.Path]::IsPathRooted($key)) {
+        throw "Invalid projectKey for plans path (refusing traversal): $ProjectKey"
+    }
+    if ($key -notmatch '^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$') {
+        throw "Invalid projectKey for plans path: $ProjectKey"
+    }
+    $parent = Split-Path -Parent $MetraRoot
+    $sibling = Join-Path $parent $key
+    $siblingFull = [System.IO.Path]::GetFullPath($sibling)
+    $parentFull = [System.IO.Path]::GetFullPath($parent)
+    if (-not $parentFull.EndsWith([string][System.IO.Path]::DirectorySeparatorChar)) {
+        $parentFull = $parentFull + [System.IO.Path]::DirectorySeparatorChar
+    }
+    if (-not $siblingFull.StartsWith($parentFull, [System.StringComparison]::OrdinalIgnoreCase)) {
+        throw "Resolved project plans path escaped parent root: $ProjectKey"
+    }
+    if (Test-Path -LiteralPath $siblingFull) {
+        $plans = Join-Path $siblingFull 'plans'
+        [void][System.IO.Directory]::CreateDirectory($plans)
+        return [System.IO.Path]::GetFullPath($plans)
+    }
+    $fallback = Join-Path $MetraRoot 'plans'
+    [void][System.IO.Directory]::CreateDirectory($fallback)
+    return [System.IO.Path]::GetFullPath($fallback)
+}
+
+function Copy-YarnFormalPlanToProjectPlans {
+    <#
+    .SYNOPSIS
+        On Loom ingest: copy Cursor/docs draft into <project>\plans and return that path.
+    #>
+    param(
+        [Parameter(Mandatory)][string]$SourcePath,
+        [Parameter(Mandatory)][string]$ProjectKey,
+        [Parameter(Mandatory)][string]$MetraRoot
+    )
+    if ([string]::IsNullOrWhiteSpace($SourcePath) -or -not (Test-Path -LiteralPath $SourcePath)) {
+        throw "Cannot copy formal plan; source missing: $SourcePath"
+    }
+    $src = [System.IO.Path]::GetFullPath($SourcePath)
+    $plansDir = Resolve-YarnProjectPlansPath -MetraRoot $MetraRoot -ProjectKey $ProjectKey
+    $leaf = [System.IO.Path]::GetFileName($src)
+    if ([string]::IsNullOrWhiteSpace($leaf)) { throw "Cannot copy formal plan; empty leaf: $src" }
+    $dest = [System.IO.Path]::GetFullPath((Join-Path $plansDir $leaf))
+    if ([string]::Equals($src, $dest, [System.StringComparison]::OrdinalIgnoreCase)) {
+        return $dest
+    }
+    Copy-Item -LiteralPath $src -Destination $dest -Force
+    return $dest
+}
+
 function Resolve-YarnProjectDocsPath {
     param(
         [Parameter(Mandatory)][string]$MetraRoot,
@@ -218,9 +299,9 @@ function Invoke-MetraYarnSynthesize {
     if (-not $item) { throw 'Backlog item not found for synthesize' }
 
     $projectKey = [string](Get-YarnProp -Object $item -Name 'projectKey' -Default 'Metra')
-    $docs = Resolve-YarnProjectDocsPath -MetraRoot $MetraRoot -ProjectKey $projectKey
+    $plansDir = Resolve-YarnCursorPlansDir
     $slug = New-YarnPlanSlugFromTitle -Title ([string]$item.title)
-    $planPath = Join-Path $docs ("$slug.plan.md")
+    $planPath = Join-Path $plansDir ("$slug.plan.md")
     $existing = Test-Path -LiteralPath $planPath
     if ($existing -and -not $Force -and -not $DryRun) {
         $link = @(Get-YarnPlanLinks -Root $Root) | Where-Object { [string]$_.backlogId -eq [string]$item.id } | Select-Object -First 1

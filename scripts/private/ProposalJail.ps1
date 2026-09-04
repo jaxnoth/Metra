@@ -19,7 +19,8 @@ $script:MetraProposalJailDeniedSegments = @(
 
 $script:MetraProposalJailDeniedExactPaths = @(
     '.vscode/settings.json',
-    'ops-preferences.local.json'
+    'ops-preferences.local.json',
+    'ops/preferences.json'
 )
 
 $script:MetraProposalJailDeniedNamePatterns = @(

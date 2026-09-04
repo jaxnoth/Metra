@@ -545,9 +545,12 @@ function Get-MetraLoomPlanRoots {
     foreach ($r in @(Get-LoomInspectPlanRoots -MetraRoot $MetraRoot)) {
         [void]$roots.Add([System.IO.Path]::GetFullPath($r))
     }
-    $docs = Join-Path $MetraRoot 'docs'
-    if (Test-Path -LiteralPath $docs) {
-        [void]$roots.Add([System.IO.Path]::GetFullPath($docs))
+    # Loom handoff copies live under plans\; docs\ is legacy + human docs.
+    foreach ($rel in @('docs', 'plans')) {
+        $dir = Join-Path $MetraRoot $rel
+        if (Test-Path -LiteralPath $dir) {
+            [void]$roots.Add([System.IO.Path]::GetFullPath($dir))
+        }
     }
     return @($roots | Select-Object -Unique)
 }
@@ -555,7 +558,7 @@ function Get-MetraLoomPlanRoots {
 function Test-MetraLoomFormalPlanPathAllowed {
     <#
     .SYNOPSIS
-        True when Path is under an allowed formal plan root (inspect plan roots + Metra docs).
+        True when Path is under an allowed formal plan root (inspect plan roots + Metra plans/docs).
     #>
     [CmdletBinding()]
     param(
@@ -1059,8 +1062,14 @@ function Test-MetraLoomYarnApprovedPlanPathAllowed {
         return $false
     }
     $parent = Split-Path -Parent $MetraRoot
-    $docs = [System.IO.Path]::GetFullPath((Join-Path (Join-Path $parent $key) 'docs'))
-    return (Test-LoomPathWithinRoot -Path $full -Root $docs)
+    $projectRoot = [System.IO.Path]::GetFullPath((Join-Path $parent $key))
+    foreach ($rel in @('docs', 'plans')) {
+        $dir = [System.IO.Path]::GetFullPath((Join-Path $projectRoot $rel))
+        if (Test-LoomPathWithinRoot -Path $full -Root $dir) {
+            return $true
+        }
+    }
+    return $false
 }
 
 function Test-MetraLoomYarnRankSnapshot {

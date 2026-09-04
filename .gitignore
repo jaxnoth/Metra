@@ -38,16 +38,19 @@ docs/operator-contract.json
 
 # Decision Registry / Operational Why Memory (keep example tracked)
 docs/decision-registry.json
-!docs/decision-registry.example.json
+!docs/examples/decision-registry.example.json
 
 # MCP tool bindings (per-machine; keep the URL-only example tracked)
 .cursor/mcp.json
 !integrations/cursor/mcp.example.json
 
-# Generated canvas snapshot / context packs (machine paths)
+# Generated canvas snapshot / context packs live under %LOCALAPPDATA%\Metra\desk (not docs)
+# Legacy ignores kept so stale checkouts do not re-commit leftovers:
 docs/canvas-snapshot.json
 docs/context-pack.md
 docs/context-pack.json
+docs/selfdoc-routes.json
+docs/selfdoc-routing-examples.json
 docs/ops-preferences.local.json
 docs/ops-ask-log.local.json
 docs/ops-capture.local.json
@@ -59,9 +62,13 @@ docs/client-auth.local.json
 docs/ticket-watch.local.json
 docs/desk-familiarity.local.json
 docs/*.local.log
-!docs/client-auth.example.json
-!docs/ticket-watch.local.example.json
-!docs/desk-familiarity.local.example.json
+!docs/examples/client-auth.example.json
+!docs/examples/ticket-watch.local.example.json
+!docs/examples/desk-familiarity.local.example.json
+!docs/examples/azdo.local.example.json
+!docs/examples/notion.local.example.json
+!docs/examples/operator-contract.example.json
+!docs/examples/decision-registry.example.json
 
 # Ops desk: track dist for end users; ignore node_modules via ops/.gitignore + root rule
 ops/node_modules/

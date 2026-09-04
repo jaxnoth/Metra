@@ -50,6 +50,7 @@ Triggers: Metra home, routing, ctx, registry, inspect, profile, decisions, works
 | metra.ps1 commands | [docs/playbooks/cli-reference.md](docs/playbooks/cli-reference.md) |
 | inspect loop, pack, Bing lane, A2 pack | [docs/playbooks/inspect-loop.md](docs/playbooks/inspect-loop.md) |
 | grep scope, cloud chats, token discipline | [docs/playbooks/token-rules.md](docs/playbooks/token-rules.md) |
+| multi-root Grep echo, path scoping | [docs/playbooks/search-echo.md](docs/playbooks/search-echo.md) |
 | audit, selfdoc, verify, registry maintenance | [docs/playbooks/maintenance-audit.md](docs/playbooks/maintenance-audit.md) |
 | Tailscale, DNSFilter, campus hosts, Serve enable | [docs/playbooks/tailscale-campus.md](docs/playbooks/tailscale-campus.md) |
 | satellite connect, Mac onboarding, profile sync merge | [docs/playbooks/satellite-remote-install.md](docs/playbooks/satellite-remote-install.md) |

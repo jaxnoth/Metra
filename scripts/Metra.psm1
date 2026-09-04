@@ -41,6 +41,11 @@ $script:MetraPublicFunctions = @(
 # documented API. New scripts should use the public functions above.
 $script:MetraCompatibilityFunctions = @(
     'Get-MetraRoot',
+    'Get-MetraMachineDataRoot',
+    'Get-MetraCanvasSnapshotPath',
+    'Get-MetraContextPackPath',
+    'Get-MetraSelfDocRoutesPath',
+    'Get-MetraSelfDocRoutingExamplesPath',
     'Get-MetraConfig',
     'Get-MetraProp',
     'Get-MetraRoots',

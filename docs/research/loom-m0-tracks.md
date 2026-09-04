@@ -30,7 +30,7 @@ Product name: **Loom**. Module: `modules/Loom/`. CLI: `.\metra.ps1 loom`.
 .\metra.ps1 autoprogram status             # deprecated alias (warns)
 ```
 
-See [loom-product-boundary.plan.md](loom-product-boundary.plan.md).
+See [loom-product-boundary.plan.md](../../plans/loom-product-boundary.plan.md).
 
 ---
 

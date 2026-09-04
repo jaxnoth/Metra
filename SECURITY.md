@@ -9,8 +9,8 @@ Keep these local (gitignored). They often contain machine paths, private routing
 - `.cursor/rules/metra-persona.local.mdc` (use the example or sample pack)
 - `.cursor/rules/metra-humor.local.mdc` (optional; use the example or `profiles/addons/humor-desk`)
 - `.cursor/rules/metra-teaching-gentle.local.mdc` (optional; use the example or `profiles/addons/teaching-gentle`)
-- `docs/canvas-snapshot.json` (regenerate with `.\metra.ps1 snapshot`)
-- `docs/context-pack.md` / `docs/context-pack.json` (regenerate with `.\metra.ps1 ctx`)
+- `docs/canvas-snapshot.json` (legacy; regenerate with `.\metra.ps1 snapshot` into `%LOCALAPPDATA%\Metra\desk\`)
+- `docs/context-pack.md` / `docs/context-pack.json` (legacy; regenerate with `.\metra.ps1 ctx` into `%LOCALAPPDATA%\Metra\desk\`)
 - `docs/*.local.md` (operator-private notes)
 
 The tracked pack under `profiles/sample/` is intentional and anonymized. Do not replace it with a live export that contains real usernames, hostnames, or org-private paths.
@@ -77,9 +77,9 @@ Default Ops bind is loopback. Opt-in Tailscale (or other non-loopback) bind is f
 
 **Ask-class remote** (Tailscale reach, no local-authority gate): `POST /api/ask` (when `client-auth.local.json` allowlist is configured, remote callers need allowlisted WhoIs), GET ask journal/engine, GET/POST capture (create/dismiss/propose), `POST /api/place/upload`, `POST /api/place`, GET place/homes, GET preferences/settings/snapshot/meta.
 
-**Client identity (2026-08-29):** Satellite / remote Ask / future iOS authenticate via **Tailscale WhoIs** (login / node / tags) plus host allowlist (`docs/client-auth.local.json`; see `docs/client-auth.example.json`). Empty allowlist is transitional (no extra identity gate). Serve-injected `Tailscale-User-Login` is trusted only when `RemoteEndPoint` is loopback (Serve connects locally); direct Tailscale binds use `tailscale whois` on the peer IP and ignore client-supplied Tailscale-* headers. WhoIs results are cached in-process by IP for 120 seconds.
+**Client identity (2026-08-29):** Satellite / remote Ask / future iOS authenticate via **Tailscale WhoIs** (login / node / tags) plus host allowlist (`%LOCALAPPDATA%\Metra\client-auth.local.json`; see `docs/examples/client-auth.example.json`). Empty allowlist is transitional (no extra identity gate). Serve-injected `Tailscale-User-Login` is trusted only when `RemoteEndPoint` is loopback (Serve connects locally); direct Tailscale binds use `tailscale whois` on the peer IP and ignore client-supplied Tailscale-* headers. WhoIs results are cached in-process by IP for 120 seconds.
 
-After a Tailscale-proven first pair (`POST /api/profile/pair`), the host mints a **device capability token** (hash + identity snapshot in `%LOCALAPPDATA%\Metra\client-devices.json`). Clients store plaintext as `syncToken` in `docs/profile-sync.local.json` and send `X-Metra-Profile-Sync`. Revoke one device without rotating a global paste secret. Ops Settings lists devices (login / node / lastSeen) and pending pair approvals (local authority).
+After a Tailscale-proven first pair (`POST /api/profile/pair`), the host mints a **device capability token** (hash + identity snapshot in `%LOCALAPPDATA%\Metra\client-devices.json`). Clients store plaintext as `syncToken` in `%LOCALAPPDATA%\Metra\profile-sync.local.json` and send `X-Metra-Profile-Sync`. Revoke one device without rotating a global paste secret. Ops Settings lists devices (login / node / lastSeen) and pending pair approvals (local authority).
 
 **Bearer replay:** Device and break-glass sync tokens are long-lived bearers - **possession equals authorization** for that capability class; **replay is accepted**. There is no nonce or short TTL window. Revocation is the control plane. Do not invent a second shared secret derived from Tailscale node keys.
 
@@ -95,7 +95,7 @@ When bound non-loopback: proposal create and `request-apply` require a local Hos
 
 Static assets: `Invoke-MetraOpsStatic` requires `Test-MetraPathWithinRoot` under `ops/dist` (including SPA fallback `index.html`).
 
-Ask Session Journal (`docs/ops-ask-log.local.json`) and Capture Inbox (`docs/ops-capture.local.json`) are Ask-class local ledgers (gitignored). Remote/iOS clients may append journal turns and create/dismiss Capture candidates via `/api/ask` and `/api/capture*` - same reach class as Ask and place upload. Ask image intake reuses Place quarantine for staging (permanent rule: `%LOCALAPPDATA%\Metra\ops-place-quarantine\` only - never project trees or the Metra git checkout). The ask-log stores image pointers as `{ id, fileName }` only - never path, mime, binary, or base64. Promote into Future Development (local append) is available as Capture promote; tracked policy (`Decisions.md`), OCC render, AGENTS, and project law remain Host/CLI authority. Capture promote to ProjectBacklog or any project-tree file requires Host/CLI/local-session authority (loopback or `X-Metra-Local-Session`); remote clients may create Capture candidates but may not perform project-tree writes. Do not loosen remote Host apply so phone/iOS rewrites tracked files.
+Ask Session Journal (`%LOCALAPPDATA%\Metra\ops\ask-log.json`) and Capture Inbox (`%LOCALAPPDATA%\Metra\ops\capture.json`) are Ask-class local ledgers (gitignored). Remote/iOS clients may append journal turns and create/dismiss Capture candidates via `/api/ask` and `/api/capture*` - same reach class as Ask and place upload. Ask image intake reuses Place quarantine for staging (permanent rule: `%LOCALAPPDATA%\Metra\ops-place-quarantine\` only - never project trees or the Metra git checkout). The ask-log stores image pointers as `{ id, fileName }` only - never path, mime, binary, or base64. Promote into Future Development (local append) is available as Capture promote; tracked policy (`Decisions.md`), OCC render, AGENTS, and project law remain Host/CLI authority. Capture promote to ProjectBacklog or any project-tree file requires Host/CLI/local-session authority (loopback or `X-Metra-Local-Session`); remote clients may create Capture candidates but may not perform project-tree writes. Do not loosen remote Host apply so phone/iOS rewrites tracked files.
 
 ### Ask secrets scrub
 

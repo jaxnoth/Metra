@@ -65,6 +65,15 @@ function Invoke-YarnLoomIngest {
 
     $cmd = Get-Command Invoke-MetraLoomIngestApprovedPlan -ErrorAction SilentlyContinue
     if (-not $cmd) {
+        # Yarn is a separate module; Loom may not be imported yet on yarn-only CLI paths.
+        $hostRoot = if (-not [string]::IsNullOrWhiteSpace($MetraRoot)) { $MetraRoot } else { Get-YarnHostRoot }
+        $loomManifest = Join-Path $hostRoot 'modules\Loom\Loom.psd1'
+        if (Test-Path -LiteralPath $loomManifest) {
+            Import-Module $loomManifest -Force
+            $cmd = Get-Command Invoke-MetraLoomIngestApprovedPlan -ErrorAction SilentlyContinue
+        }
+    }
+    if (-not $cmd) {
         throw 'Loom ingest adapter unavailable (Invoke-MetraLoomIngestApprovedPlan not loaded).'
     }
 
@@ -248,6 +257,58 @@ function Invoke-YarnHandoffIngestRetry {
     $rankSnapshot = Get-YarnRankSnapshotFromItem -Item $item
     $now = (Get-Date).ToUniversalTime().ToString('o')
 
+    # Promote Cursor/docs draft into <project>\plans before Loom sees the path.
+    try {
+        $repoPlan = Copy-YarnFormalPlanToProjectPlans -SourcePath $planPath -ProjectKey $projectKey -MetraRoot $MetraRoot
+        if (-not [string]::Equals($repoPlan, [System.IO.Path]::GetFullPath($planPath), [System.StringComparison]::OrdinalIgnoreCase)) {
+            $planPath = $repoPlan
+            $items = @(Get-MetraYarnBacklog -Root $Root)
+            $map = ConvertTo-YarnPropertyMap -Object $item
+            $map['formalPlanPath'] = $planPath
+            $updatedItem = (New-YarnPsObject -Map $map)
+            $items = @($items | Where-Object { [string]$_.id -ne $BacklogId }) + @($updatedItem)
+            Save-MetraYarnBacklogItems -Root $Root -Items $items
+            $item = $updatedItem
+        }
+    }
+    catch {
+        $copyErr = ("plan-copy-to-project-plans: " + [string]$_.Exception.Message)
+        Sync-YarnPlanLink -Root $Root -Link ([PSCustomObject]@{
+                backlogId              = $BacklogId
+                formalPlanPath         = $planPath
+                planStatus             = 'Approved'
+                sourceHash             = [string](Get-YarnProp -Object $link -Name 'sourceHash' -Default '')
+                planContentHash        = [string](Get-YarnProp -Object $link -Name 'planContentHash' -Default '')
+                packInputHash          = [string](Get-YarnProp -Object $link -Name 'packInputHash' -Default '')
+                packPlanPath           = [string](Get-YarnProp -Object $link -Name 'packPlanPath' -Default '')
+                packContractVersion    = [string](Get-YarnProp -Object $link -Name 'packContractVersion' -Default '')
+                handoffContractVersion = Get-YarnHandoffContractVersion
+                packSucceeded          = [bool](Get-YarnProp -Object $link -Name 'packSucceeded' -Default $false)
+                approval               = $approval
+                loomHandoff            = [PSCustomObject]@{
+                    state       = 'failed'
+                    lastError   = $copyErr
+                    queueItemId = $null
+                    updatedAt   = $now
+                    retryable   = $true
+                }
+            })
+        Add-MetraYarnJournalEntry -Root $Root -Entry @{
+            op        = 'loom-handoff'
+            backlogId = $BacklogId
+            state     = 'failed'
+            error     = $copyErr
+        }
+        return [PSCustomObject]@{
+            outcome          = 'approved-handoff-failed'
+            backlogId        = $BacklogId
+            planPath         = $planPath
+            approvalId       = $approvalId
+            approvalRevision = $approvalRevision
+            lastError        = $copyErr
+        }
+    }
+
     try {
         $ingest = Invoke-YarnLoomIngest -PlanPath $planPath -ProjectKey $projectKey `
             -ApprovalRevision $approvalRevision -ApprovalId $approvalId `
@@ -278,6 +339,7 @@ function Invoke-YarnHandoffIngestRetry {
             backlogId   = $BacklogId
             state       = 'succeeded'
             queueItemId = $queueItemId
+            planPath    = $planPath
         }
         Invoke-YarnPlanBoardNotifyFailOpen -Root $Root -MetraRoot $MetraRoot -BacklogId $BacklogId -CursorPlan $planPath -Reason 'loom-handoff'
         return [PSCustomObject]@{

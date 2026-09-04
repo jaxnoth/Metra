@@ -123,7 +123,7 @@ Describe 'Ticket watch Attention helpers' {
                 $cfg.syncOnSnapshot | Should -BeFalse
 
                 @{ syncOnSnapshot = $true; top = 25; scope = 'team'; autoAnalyze = $true; evidenceRouter = $true; autoStoreRecommend = $true } | ConvertTo-Json |
-                    Set-Content -LiteralPath (Join-Path $root 'docs\ticket-watch.local.json')
+                    Set-Content -LiteralPath (Join-Path $root 'ticket-watch.local.json')
                 $cfg2 = Get-MetraTicketWatchConfig -MetraRoot $root
                 $cfg2.syncOnSnapshot | Should -BeTrue
                 $cfg2.top | Should -Be 25

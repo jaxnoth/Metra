@@ -5,7 +5,7 @@ function Get-MetraCaptureLedgerPath {
     [CmdletBinding()]
     param([string]$MetraRoot = (Get-MetraRoot))
 
-    return Join-Path $MetraRoot 'docs\ops-capture.local.json'
+    return Get-MetraOpsCapturePath -MetraRoot $MetraRoot
 }
 
 function Get-MetraCaptureSchemaVersion {
@@ -978,7 +978,7 @@ HQ Ask host unreachable ($base).
 
 Check:
   - Tailscale connected
-  - METRA_OPS_BASE_URL (or docs/profile-sync.local.json opsBaseUrl)
+  - METRA_OPS_BASE_URL (or %LOCALAPPDATA%/Metra/profile-sync.local.json opsBaseUrl)
   - HQ machine available
 
 For local troubleshooting:
@@ -1051,7 +1051,7 @@ function Invoke-MetraAskLogCommand {
         CLI surface: ask log|sessions|get|recall - Session Journal continuity and episodic search.
     .DESCRIPTION
         Desk Mode B (HQ Client) routes to GET /api/ask/journal on OpsBaseUrl.
-        -Local / ForceLocal reads docs/ops-ask-log.local.json. Never auto-falls back.
+        -Local / ForceLocal reads %LOCALAPPDATA%/Metra/ops/ask-log.json. Never auto-falls back.
     #>
     [CmdletBinding()]
     param(

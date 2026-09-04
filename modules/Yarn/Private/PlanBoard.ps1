@@ -159,7 +159,48 @@ function Test-YarnPlanBoardCursorPlanMatch {
     if ([string]::IsNullOrWhiteSpace($a) -or [string]::IsNullOrWhiteSpace($b)) {
         return $false
     }
-    return [string]::Equals($a, $b, [System.StringComparison]::OrdinalIgnoreCase)
+    if ([string]::Equals($a, $b, [System.StringComparison]::OrdinalIgnoreCase)) {
+        return $true
+    }
+    # Pass 1 stubs used truncated stems (ask_conversation_execution_) while inventory
+    # keep wrote full leaves (..._27fc070b.plan.md). Equal normalize stems = same plan.
+    # Use NormalizeStem (not EchoKey) so date-stamped siblings stay distinct.
+    $ea = Get-YarnPlanBoardInventoryNormalizeStem -Text $a
+    $eb = Get-YarnPlanBoardInventoryNormalizeStem -Text $b
+    if ([string]::IsNullOrWhiteSpace($ea) -or [string]::IsNullOrWhiteSpace($eb)) {
+        return $false
+    }
+    return [string]::Equals($ea, $eb, [System.StringComparison]::OrdinalIgnoreCase)
+}
+
+function Select-YarnPlanBoardPreferredCard {
+    <#
+    .SYNOPSIS
+        When multiple cards share an echo stem, pick one keeper (live > archive > Idea; full leaf wins ties).
+    #>
+    param([object[]]$Cards)
+    $list = @($Cards | Where-Object { $null -ne $_ })
+    if ($list.Count -lt 1) { return $null }
+    if ($list.Count -eq 1) { return $list[0] }
+    $boardRank = @{
+        Loom = 50; Active = 40; Shipped = 35; Parked = 30
+        Idea = 20; Backlog = 10; Inbox = 5; Drop = 0
+    }
+    $hasLive = @($list | Where-Object { [string]$_.Board -in @('Active', 'Loom') }).Count -gt 0
+    $hasArchive = @($list | Where-Object { [string]$_.Board -in @('Parked', 'Shipped') }).Count -gt 0
+    return @($list | Sort-Object @{
+            Expression = {
+                $b = [string]$_.Board
+                $r = if ($boardRank.ContainsKey($b)) { [int]$boardRank[$b] } else { 0 }
+                if ($hasLive -and $b -in @('Idea', 'Backlog', 'Inbox')) { $r -= 100 }
+                if ($hasArchive -and -not $hasLive -and $b -in @('Idea', 'Backlog', 'Inbox')) { $r -= 100 }
+                $cp = [string](Get-YarnProp -Object $_ -Name 'CursorPlan' -Default '')
+                if ($cp -like '*.plan.md') { $r += 5 }
+                $yid = [string](Get-YarnProp -Object $_ -Name 'YarnId' -Default '')
+                if (-not [string]::IsNullOrWhiteSpace($yid)) { $r += 3 }
+                $r
+            }
+        } -Descending | Select-Object -First 1)[0]
 }
 
 function Test-LoomPlanBoardActiveQueueStatus {
@@ -337,26 +378,88 @@ function Resolve-YarnPlanBoardHealProjection {
             $stage = $expected
         }
         return [PSCustomObject]@{
-            action     = $Projection.action
-            CursorPlan = $Projection.CursorPlan
-            YarnId     = $Projection.YarnId
-            Stage      = $stage
-            Board      = $board
-            Title      = $Projection.Title
-            signal     = $Projection.signal
+            action      = $Projection.action
+            CursorPlan  = $Projection.CursorPlan
+            YarnId      = $Projection.YarnId
+            Stage       = $stage
+            Board       = $board
+            Title       = $Projection.Title
+            signal      = $Projection.signal
+            Project     = (Get-YarnProp -Object $Projection -Name 'Project' -Default '')
+            Subproject  = (Get-YarnProp -Object $Projection -Name 'Subproject' -Default '')
+            Pending     = (Get-YarnProp -Object $Projection -Name 'Pending' -Default $null)
+            Done        = (Get-YarnProp -Object $Projection -Name 'Done' -Default $null)
+            Description = (Get-YarnProp -Object $Projection -Name 'Description' -Default '')
+            PlanPath    = (Get-YarnProp -Object $Projection -Name 'PlanPath' -Default '')
         }
     }
 
     # Missing/unknown Board on projection should not happen for project action; heal to Inbox if needed.
     return [PSCustomObject]@{
-        action     = 'project'
-        CursorPlan = $Projection.CursorPlan
-        YarnId     = $Projection.YarnId
-        Stage      = 1
-        Board      = [string]$labels[1]
-        Title      = $Projection.Title
-        signal     = 'heal-inbox'
+        action      = 'project'
+        CursorPlan  = $Projection.CursorPlan
+        YarnId      = $Projection.YarnId
+        Stage       = 1
+        Board       = [string]$labels[1]
+        Title       = $Projection.Title
+        signal      = 'heal-inbox'
+        Project     = (Get-YarnProp -Object $Projection -Name 'Project' -Default '')
+        Subproject  = (Get-YarnProp -Object $Projection -Name 'Subproject' -Default '')
+        Pending     = (Get-YarnProp -Object $Projection -Name 'Pending' -Default $null)
+        Done        = (Get-YarnProp -Object $Projection -Name 'Done' -Default $null)
+        Description = (Get-YarnProp -Object $Projection -Name 'Description' -Default '')
+        PlanPath    = (Get-YarnProp -Object $Projection -Name 'PlanPath' -Default '')
     }
+}
+
+function Add-YarnPlanBoardProjectionContextFields {
+    <#
+    .SYNOPSIS
+        Attach Project / Subproject / Description / PlanPath / Pending / Done from signal context.
+    #>
+    param(
+        [Parameter(Mandatory)]$Projection,
+        $Context = $null
+    )
+    if ($null -eq $Projection -or [string]$Projection.action -ne 'project') { return $Projection }
+    $project = ''
+    $subproject = ''
+    $description = ''
+    $planPath = ''
+    $pending = $null
+    $done = $null
+    if ($null -ne $Context) {
+        $project = [string](Get-YarnProp -Object $Context -Name 'Project' -Default '')
+        $subproject = [string](Get-YarnProp -Object $Context -Name 'Subproject' -Default '')
+        $description = [string](Get-YarnProp -Object $Context -Name 'Description' -Default '')
+        $planPath = [string](Get-YarnProp -Object $Context -Name 'PlanPath' -Default '')
+        $pending = Get-YarnProp -Object $Context -Name 'Pending' -Default $null
+        $done = Get-YarnProp -Object $Context -Name 'Done' -Default $null
+        $title = [string](Get-YarnProp -Object $Context -Name 'Title' -Default '')
+        if (-not [string]::IsNullOrWhiteSpace($title)) {
+            $Projection | Add-Member -NotePropertyName Title -NotePropertyValue $title -Force
+        }
+    }
+    if ([string]::IsNullOrWhiteSpace($project)) {
+        $project = Resolve-YarnPlanBoardProjectSelect `
+            -ProjectKey '' `
+            -Title ([string](Get-YarnProp -Object $Projection -Name 'Title' -Default '')) `
+            -CursorPlan ([string](Get-YarnProp -Object $Projection -Name 'CursorPlan' -Default ''))
+    }
+    if ([string]::IsNullOrWhiteSpace($subproject)) {
+        $subproject = Resolve-YarnPlanBoardSubprojectSelect `
+            -ClusterHint '' `
+            -Title ([string](Get-YarnProp -Object $Projection -Name 'Title' -Default '')) `
+            -CursorPlan ([string](Get-YarnProp -Object $Projection -Name 'CursorPlan' -Default '')) `
+            -Project $project
+    }
+    $Projection | Add-Member -NotePropertyName Project -NotePropertyValue $project -Force
+    $Projection | Add-Member -NotePropertyName Subproject -NotePropertyValue $subproject -Force
+    $Projection | Add-Member -NotePropertyName Description -NotePropertyValue $description -Force
+    $Projection | Add-Member -NotePropertyName PlanPath -NotePropertyValue $planPath -Force
+    $Projection | Add-Member -NotePropertyName Pending -NotePropertyValue $pending -Force
+    $Projection | Add-Member -NotePropertyName Done -NotePropertyValue $done -Force
+    return $Projection
 }
 
 function Write-YarnPlanBoardSyncError {
@@ -481,6 +584,195 @@ function Invoke-YarnPlanBoardNotionRest {
     return Invoke-RestMethod @params
 }
 
+function Get-YarnPlanBoardProjectSelectOptions {
+    # Notion Plan Board Project select (fixed options).
+    return @('Metra', 'TicketTracker', 'Atlas', 'Other')
+}
+
+function Get-YarnPlanBoardSubprojectSelectOptions {
+    # Notion Plan Board Subproject select — mirrors inventory clusterHint values.
+    return @(
+        'Ask', 'LoomYarn', 'Inspect', 'Installer', 'OpsDesk', 'Routing',
+        'iOS/Face', 'Persona', 'Ticket', 'AtlasMemory', 'Personal', 'Other'
+    )
+}
+
+function Resolve-YarnPlanBoardSubprojectSelect {
+    <#
+    .SYNOPSIS
+        Map inventory clusterHint (or title/path) to Notion Subproject select.
+        Intended for Metra cards; still set for other Projects when hint is clear.
+    #>
+    param(
+        [string]$ClusterHint,
+        [string]$Title,
+        [string]$CursorPlan,
+        [string]$SourcePath,
+        [string]$Project
+    )
+    $opts = Get-YarnPlanBoardSubprojectSelectOptions
+    $hint = ([string]$ClusterHint).Trim()
+    if (-not [string]::IsNullOrWhiteSpace($hint)) {
+        foreach ($o in $opts) {
+            if ([string]::Equals($hint, $o, [System.StringComparison]::OrdinalIgnoreCase)) { return $o }
+        }
+    }
+    $derived = Get-YarnPlanBoardInventoryClusterHint -Title $Title -SourcePath $(if ($SourcePath) { $SourcePath } else { $CursorPlan })
+    foreach ($o in $opts) {
+        if ([string]::Equals($derived, $o, [System.StringComparison]::OrdinalIgnoreCase)) { return $o }
+    }
+    # Non-Metra projects: leave blank unless we already matched above.
+    if (-not [string]::IsNullOrWhiteSpace($Project) -and
+        -not [string]::Equals($Project, 'Metra', [System.StringComparison]::OrdinalIgnoreCase)) {
+        return ''
+    }
+    return 'Other'
+}
+
+function Resolve-YarnPlanBoardProjectSelect {
+    <#
+    .SYNOPSIS
+        Map Yarn/registry projectKey (or title/path hint) to Notion Project select.
+    #>
+    param(
+        [string]$ProjectKey,
+        [string]$Title,
+        [string]$CursorPlan
+    )
+    $opts = Get-YarnPlanBoardProjectSelectOptions
+    $key = ([string]$ProjectKey).Trim()
+    if (-not [string]::IsNullOrWhiteSpace($key)) {
+        foreach ($o in $opts) {
+            if ([string]::Equals($key, $o, [System.StringComparison]::OrdinalIgnoreCase)) { return $o }
+        }
+        return 'Other'
+    }
+    $blob = (('{0} {1}' -f $Title, $CursorPlan)).ToLowerInvariant()
+    if ($blob -match 'tickettracker|ticket.?track') { return 'TicketTracker' }
+    if ($blob -match '\batlas\b') { return 'Atlas' }
+    if ($blob -match '\bmetra\b|_meta|plan-board|yarn|loom') { return 'Metra' }
+    # Cursor formal plans default to Metra portfolio ops unless named otherwise.
+    if (-not [string]::IsNullOrWhiteSpace($CursorPlan)) { return 'Metra' }
+    return 'Other'
+}
+
+function Get-YarnPlanBoardPlanTodoCounts {
+    <#
+    .SYNOPSIS
+        Plan frontmatter: name, overview, todo Pending/Done counts (cancelled ignored).
+    #>
+    param([string]$Path)
+    $empty = [PSCustomObject]@{ Pending = $null; Done = $null; HasTodos = $false; PlanName = ''; Overview = '' }
+    if ([string]::IsNullOrWhiteSpace($Path) -or -not (Test-Path -LiteralPath $Path)) { return $empty }
+    try {
+        $text = [System.IO.File]::ReadAllText($Path)
+    }
+    catch { return $empty }
+    if ($text -notmatch '(?s)\A---\r?\n(.+?)\r?\n---') { return $empty }
+    $fm = $Matches[1]
+    $planName = ''
+    if ($fm -match '(?m)^name\s*:\s*(.+)$') {
+        $planName = $Matches[1].Trim().Trim('"').Trim("'")
+    }
+    $overview = ''
+    if ($fm -match '(?ms)^overview\s*:\s*[>|]-?\s*\r?\n((?:[ \t]+.+\r?\n?)+)') {
+        $overview = ($Matches[1] -replace '(?m)^[ \t]+', '' -replace '\s+', ' ').Trim()
+    }
+    elseif ($fm -match '(?m)^overview\s*:\s*(.+)$') {
+        $overview = $Matches[1].Trim().Trim('"').Trim("'")
+    }
+    $todo = [regex]::Matches($fm, '(?m)^[ \t]{2,}status\s*:\s*(\w+)\s*$')
+    if ($todo.Count -lt 1) {
+        return [PSCustomObject]@{ Pending = $null; Done = $null; HasTodos = $false; PlanName = $planName; Overview = $overview }
+    }
+    $pending = 0
+    $done = 0
+    foreach ($m in $todo) {
+        $v = $m.Groups[1].Value.ToLowerInvariant()
+        if ($v -eq 'completed') { $done++ }
+        elseif ($v -eq 'pending') { $pending++ }
+        # cancelled / other: ignore for Pending/Done columns
+    }
+    return [PSCustomObject]@{ Pending = $pending; Done = $done; HasTodos = $true; PlanName = $planName; Overview = $overview }
+}
+
+function Get-YarnPlanBoardShortDescription {
+    param(
+        [string]$Text,
+        [int]$MaxLength = 280
+    )
+    $t = ([string]$Text).Trim() -replace '\s+', ' '
+    if ([string]::IsNullOrWhiteSpace($t)) { return '' }
+    if ($MaxLength -lt 16) { $MaxLength = 16 }
+    if ($t.Length -le $MaxLength) { return $t }
+    return ($t.Substring(0, $MaxLength - 1).TrimEnd() + '…')
+}
+
+function Convert-YarnPlanBoardNotionRichText {
+    param([string]$Text, [int]$MaxLength = 1900)
+    $t = [string]$Text
+    if ($null -eq $t) { $t = '' }
+    if ($t.Length -gt $MaxLength) { $t = $t.Substring(0, $MaxLength) }
+    return @{ rich_text = @(@{ text = @{ content = $t } }) }
+}
+
+function Resolve-YarnPlanBoardPlanFilePath {
+    param(
+        [string]$CursorPlan,
+        [string]$FormalPlanPath,
+        [string]$MetraRoot
+    )
+    if (-not [string]::IsNullOrWhiteSpace($FormalPlanPath) -and (Test-Path -LiteralPath $FormalPlanPath)) {
+        return $FormalPlanPath
+    }
+    $leaf = Get-YarnPlanBoardCursorPlanName -PathOrName $CursorPlan
+    if ([string]::IsNullOrWhiteSpace($leaf)) { return $null }
+    $candidates = New-Object System.Collections.Generic.List[string]
+    $searchDirs = New-Object System.Collections.Generic.List[string]
+    $cursorPlans = Join-Path $env:USERPROFILE '.cursor\plans'
+    if (-not [string]::IsNullOrWhiteSpace($cursorPlans)) {
+        $searchDirs.Add($cursorPlans)
+        $candidates.Add((Join-Path $cursorPlans $leaf))
+        if ($leaf -notlike '*.plan.md') { $candidates.Add((Join-Path $cursorPlans ($leaf + '.plan.md'))) }
+    }
+    if (-not [string]::IsNullOrWhiteSpace($MetraRoot)) {
+        foreach ($rel in @('plans', 'docs')) {
+            $dir = Join-Path $MetraRoot $rel
+            $searchDirs.Add($dir)
+            $candidates.Add((Join-Path $dir $leaf))
+            if ($leaf -notlike '*.plan.md') {
+                $candidates.Add((Join-Path $dir ($leaf + '.plan.md')))
+            }
+        }
+    }
+    foreach ($c in $candidates) {
+        if (Test-Path -LiteralPath $c) { return $c }
+    }
+
+    # Pass 1 / echo stubs often store CursorPlan as a truncated stem (e.g. ask_conversation_execution_)
+    # without the Cursor hash suffix. Resolve uniquely (or newest hash-twin) under plans/docs.
+    $prefix = $leaf -replace '\.plan\.md$', ''
+    $wantStem = Get-YarnPlanBoardInventoryNormalizeStem -Text $prefix
+    if ([string]::IsNullOrWhiteSpace($wantStem) -or $wantStem.Length -lt 6) { return $null }
+    $hits = New-Object System.Collections.Generic.List[System.IO.FileInfo]
+    foreach ($dir in $searchDirs) {
+        if ([string]::IsNullOrWhiteSpace($dir) -or -not (Test-Path -LiteralPath $dir)) { continue }
+        Get-ChildItem -LiteralPath $dir -Filter '*.plan.md' -File -ErrorAction SilentlyContinue | ForEach-Object {
+            $name = $_.Name
+            $exactPrefix = $name.StartsWith($prefix, [System.StringComparison]::OrdinalIgnoreCase)
+            $stemMatch = [string]::Equals(
+                (Get-YarnPlanBoardInventoryNormalizeStem -Text $name),
+                $wantStem,
+                [System.StringComparison]::OrdinalIgnoreCase
+            )
+            if ($exactPrefix -or $stemMatch) { $hits.Add($_) | Out-Null }
+        }
+    }
+    if ($hits.Count -lt 1) { return $null }
+    if ($hits.Count -eq 1) { return $hits[0].FullName }
+    return @($hits | Sort-Object LastWriteTime -Descending | Select-Object -First 1).FullName
+}
+
 function ConvertFrom-YarnPlanBoardNotionProps {
     param($Page)
     if ($null -eq $Page) { return $null }
@@ -509,13 +801,39 @@ function ConvertFrom-YarnPlanBoardNotionProps {
     try { $board = [string]$props.Board.select.name } catch { }
     $stage = $null
     try { $stage = $props.Stage.number } catch { }
+    $project = ''
+    try { $project = [string]$props.Project.select.name } catch { }
+    $subproject = ''
+    try { $subproject = [string]$props.Subproject.select.name } catch { }
+    $pending = $null
+    try { $pending = $props.Pending.number } catch { }
+    $done = $null
+    try { $done = $props.Done.number } catch { }
+    $description = ''
+    try {
+        $rt = $props.Description.rich_text
+        if ($rt -and $rt.Count -gt 0) { $description = [string]$rt[0].plain_text }
+    }
+    catch { }
+    $planPath = ''
+    try {
+        $rt = $props.PlanPath.rich_text
+        if ($rt -and $rt.Count -gt 0) { $planPath = [string]$rt[0].plain_text }
+    }
+    catch { }
     return [PSCustomObject]@{
-        pageId     = [string]$Page.id
-        Name       = $title
-        CursorPlan = $cursorPlan
-        YarnId     = $yarnId
-        Board      = $board
-        Stage      = $stage
+        pageId      = [string]$Page.id
+        Name        = $title
+        CursorPlan  = $cursorPlan
+        YarnId      = $yarnId
+        Board       = $board
+        Stage       = $stage
+        Project     = $project
+        Subproject  = $subproject
+        Pending     = $pending
+        Done        = $done
+        Description = $description
+        PlanPath    = $planPath
     }
 }
 
@@ -621,12 +939,36 @@ function Resolve-YarnPlanBoardCardMatch {
     }
 
     if ($byPlan.Count -gt 1) {
+        # Exact same leaf on multiple Notion pages is an identity conflict.
+        # Stem-only twins (truncated Pass 1 stub + full leaf) prefer one keeper.
+        $exactDupes = @($byPlan | Where-Object {
+                [string]::Equals(
+                    (Get-YarnPlanBoardCursorPlanName -PathOrName $_.CursorPlan),
+                    $name,
+                    [System.StringComparison]::OrdinalIgnoreCase
+                )
+            })
+        if ($exactDupes.Count -gt 1) {
+            return [PSCustomObject]@{
+                status             = 'conflict'
+                reason             = 'duplicate-cursor-plan'
+                card               = $null
+                populateCursorPlan = $false
+                conflictCards      = $exactDupes
+            }
+        }
+        $preferred = Select-YarnPlanBoardPreferredCard -Cards $byPlan
+        $populate = $false
+        if ($preferred -and -not [string]::IsNullOrWhiteSpace($name) -and ($name -like '*.plan.md')) {
+            $existingCp = [string](Get-YarnProp -Object $preferred -Name 'CursorPlan' -Default '')
+            if ($existingCp -notlike '*.plan.md') { $populate = $true }
+        }
         return [PSCustomObject]@{
-            status      = 'conflict'
-            reason      = 'duplicate-cursor-plan'
-            card        = $null
-            populateCursorPlan = $false
-            conflictCards = $byPlan
+            status             = 'matched'
+            reason             = 'cursor-plan-stem-preferred'
+            card               = $preferred
+            populateCursorPlan = $populate
+            conflictCards      = @($byPlan | Where-Object { [string]$_.pageId -ne [string]$preferred.pageId })
         }
     }
     if ($byYarn.Count -gt 1) {
@@ -749,8 +1091,32 @@ function New-YarnPlanBoardNotionProperties {
     if (-not [string]::IsNullOrWhiteSpace($yarnId)) {
         $props['YarnId'] = @{ rich_text = @(@{ text = @{ content = $yarnId } }) }
     }
+    $project = [string](Get-YarnProp -Object $Projection -Name 'Project' -Default '')
+    if (-not [string]::IsNullOrWhiteSpace($project)) {
+        $props['Project'] = @{ select = @{ name = $project } }
+    }
+    $subproject = [string](Get-YarnProp -Object $Projection -Name 'Subproject' -Default '')
+    if (-not [string]::IsNullOrWhiteSpace($subproject)) {
+        $props['Subproject'] = @{ select = @{ name = $subproject } }
+    }
+    $description = [string](Get-YarnProp -Object $Projection -Name 'Description' -Default '')
+    if (-not [string]::IsNullOrWhiteSpace($description)) {
+        $props['Description'] = Convert-YarnPlanBoardNotionRichText -Text $description -MaxLength 1900
+    }
+    $planPath = [string](Get-YarnProp -Object $Projection -Name 'PlanPath' -Default '')
+    if (-not [string]::IsNullOrWhiteSpace($planPath)) {
+        $props['PlanPath'] = Convert-YarnPlanBoardNotionRichText -Text $planPath -MaxLength 1900
+    }
+    $pending = Get-YarnProp -Object $Projection -Name 'Pending' -Default $null
+    if ($null -ne $pending -and [string]$pending -ne '') {
+        try { $props['Pending'] = @{ number = [double]$pending } } catch { }
+    }
+    $done = Get-YarnProp -Object $Projection -Name 'Done' -Default $null
+    if ($null -ne $done -and [string]$done -ne '') {
+        try { $props['Done'] = @{ number = [double]$done } } catch { }
+    }
     if (-not [string]::IsNullOrWhiteSpace($Notes)) {
-        $props['Notes'] = @{ rich_text = @(@{ text = @{ content = $Notes } }) }
+        $props['Notes'] = Convert-YarnPlanBoardNotionRichText -Text $Notes -MaxLength 1900
     }
     return $props
 }
@@ -844,14 +1210,18 @@ function Build-YarnPlanBoardSignalContext {
     $title = $name
     $handoffOk = $false
     $hasFormal = $false
+    $projectKey = ''
+    $formalPath = ''
     if ($BacklogItem) {
         $yarnStatus = [string](Get-YarnProp -Object $BacklogItem -Name 'status' -Default '')
         $yarnId = [string](Get-YarnProp -Object $BacklogItem -Name 'id' -Default '')
         $t = [string](Get-YarnProp -Object $BacklogItem -Name 'title' -Default '')
         if ($t) { $title = $t }
+        $projectKey = [string](Get-YarnProp -Object $BacklogItem -Name 'projectKey' -Default '')
         $fp = [string](Get-YarnProp -Object $BacklogItem -Name 'formalPlanPath' -Default '')
         if (-not [string]::IsNullOrWhiteSpace($fp)) {
             $hasFormal = $true
+            $formalPath = $fp
             if ([string]::IsNullOrWhiteSpace($name)) {
                 $name = Get-YarnPlanBoardCursorPlanName -PathOrName $fp
             }
@@ -868,12 +1238,35 @@ function Build-YarnPlanBoardSignalContext {
         $fp = [string](Get-YarnProp -Object $PlanLink -Name 'formalPlanPath' -Default '')
         if ($fp) {
             $hasFormal = $true
+            $formalPath = $fp
             $leaf = Get-YarnPlanBoardCursorPlanName -PathOrName $fp
             if ($leaf) { $name = $leaf }
         }
     }
     $loom = Get-YarnPlanBoardLoomSignals -MetraRoot $MetraRoot -CursorPlan $name
     if ($loom.handoffSucceeded) { $handoffOk = $true }
+    $planPath = Resolve-YarnPlanBoardPlanFilePath -CursorPlan $name -FormalPlanPath $formalPath -MetraRoot $MetraRoot
+    if ($planPath) { $hasFormal = $true }
+    $project = Resolve-YarnPlanBoardProjectSelect -ProjectKey $projectKey -Title $title -CursorPlan $name
+    $todos = Get-YarnPlanBoardPlanTodoCounts -Path $planPath
+    if (-not [string]::IsNullOrWhiteSpace($todos.PlanName)) {
+        $looksLikeLeaf = [string]::Equals($title, $name, [StringComparison]::OrdinalIgnoreCase) -or
+            ($title -like '*.plan.md') -or ($title -like '*_*' -and $title -notmatch '\s')
+        if ($looksLikeLeaf -or [string]::IsNullOrWhiteSpace($title)) {
+            $title = [string]$todos.PlanName
+        }
+    }
+    $subproject = Resolve-YarnPlanBoardSubprojectSelect `
+        -ClusterHint '' `
+        -Title $title `
+        -CursorPlan $name `
+        -SourcePath $planPath `
+        -Project $project
+    $description = Get-YarnPlanBoardShortDescription -Text $todos.Overview
+    $fullPlanPath = ''
+    if (-not [string]::IsNullOrWhiteSpace($planPath)) {
+        try { $fullPlanPath = [System.IO.Path]::GetFullPath($planPath) } catch { $fullPlanPath = [string]$planPath }
+    }
     return [PSCustomObject]@{
         CursorPlan            = $name
         YarnStatus            = $yarnStatus
@@ -885,6 +1278,12 @@ function Build-YarnPlanBoardSignalContext {
         ExistingPlanBoardCard = $ExistingPlanBoardCard
         ExistingBoard         = $ExistingBoard
         HasFormalPlan         = $hasFormal
+        Project               = $project
+        Subproject            = $subproject
+        Description           = $description
+        PlanPath              = $fullPlanPath
+        Pending               = $(if ($todos.HasTodos) { [int]$todos.Pending } else { $null })
+        Done                  = $(if ($todos.HasTodos) { [int]$todos.Done } else { $null })
     }
 }
 
@@ -946,14 +1345,38 @@ function Invoke-YarnPlanBoardUpsertProjection {
             $writeCursor = $name
         }
         $writeYarnId = $(if ($yarnId) { $yarnId } else { [string]$card.YarnId })
+        $writeProject = [string](Get-YarnProp -Object $proj -Name 'Project' -Default '')
+        if ([string]::IsNullOrWhiteSpace($writeProject)) {
+            $writeProject = [string](Get-YarnProp -Object $card -Name 'Project' -Default '')
+        }
+        $writeSubproject = [string](Get-YarnProp -Object $proj -Name 'Subproject' -Default '')
+        if ([string]::IsNullOrWhiteSpace($writeSubproject)) {
+            $writeSubproject = [string](Get-YarnProp -Object $card -Name 'Subproject' -Default '')
+        }
+        $writePending = Get-YarnProp -Object $proj -Name 'Pending' -Default $null
+        $writeDone = Get-YarnProp -Object $proj -Name 'Done' -Default $null
+        $writeDescription = [string](Get-YarnProp -Object $proj -Name 'Description' -Default '')
+        if ([string]::IsNullOrWhiteSpace($writeDescription)) {
+            $writeDescription = [string](Get-YarnProp -Object $card -Name 'Description' -Default '')
+        }
+        $writePlanPath = [string](Get-YarnProp -Object $proj -Name 'PlanPath' -Default '')
+        if ([string]::IsNullOrWhiteSpace($writePlanPath)) {
+            $writePlanPath = [string](Get-YarnProp -Object $card -Name 'PlanPath' -Default '')
+        }
         $writeProj = [PSCustomObject]@{
-            action     = $proj.action
-            CursorPlan = $writeCursor
-            YarnId     = $writeYarnId
-            Stage      = $proj.Stage
-            Board      = $proj.Board
-            Title      = $proj.Title
-            signal     = $proj.signal
+            action      = $proj.action
+            CursorPlan  = $writeCursor
+            YarnId      = $writeYarnId
+            Stage       = $proj.Stage
+            Board       = $proj.Board
+            Title       = $proj.Title
+            signal      = $proj.signal
+            Project     = $writeProject
+            Subproject  = $writeSubproject
+            Description = $writeDescription
+            PlanPath    = $writePlanPath
+            Pending     = $writePending
+            Done        = $writeDone
         }
 
         $sameBoard = [string]::Equals([string]$card.Board, [string]$writeProj.Board, [StringComparison]::OrdinalIgnoreCase)
@@ -961,7 +1384,35 @@ function Invoke-YarnPlanBoardUpsertProjection {
         $needYarnId = (-not [string]::IsNullOrWhiteSpace($writeYarnId)) -and
             (-not [string]::Equals([string]$card.YarnId, $writeYarnId, [StringComparison]::OrdinalIgnoreCase))
         $needCursor = [bool]$match.populateCursorPlan
-        if ($sameBoard -and $sameStage -and -not $needYarnId -and -not $needCursor) {
+        $cardProject = [string](Get-YarnProp -Object $card -Name 'Project' -Default '')
+        $needProject = (-not [string]::IsNullOrWhiteSpace($writeProject)) -and
+            (-not [string]::Equals($cardProject, $writeProject, [StringComparison]::OrdinalIgnoreCase))
+        $cardSubproject = [string](Get-YarnProp -Object $card -Name 'Subproject' -Default '')
+        $needSubproject = (-not [string]::IsNullOrWhiteSpace($writeSubproject)) -and
+            (-not [string]::Equals($cardSubproject, $writeSubproject, [StringComparison]::OrdinalIgnoreCase))
+        $cardDescription = [string](Get-YarnProp -Object $card -Name 'Description' -Default '')
+        $needDescription = (-not [string]::IsNullOrWhiteSpace($writeDescription)) -and
+            (-not [string]::Equals($cardDescription, $writeDescription, [StringComparison]::Ordinal))
+        $cardPlanPath = [string](Get-YarnProp -Object $card -Name 'PlanPath' -Default '')
+        $needPlanPath = (-not [string]::IsNullOrWhiteSpace($writePlanPath)) -and
+            (-not [string]::Equals($cardPlanPath, $writePlanPath, [StringComparison]::OrdinalIgnoreCase))
+        $needPending = $false
+        $needDone = $false
+        if ($null -ne $writePending) {
+            $cardPending = Get-YarnProp -Object $card -Name 'Pending' -Default $null
+            if ($null -eq $cardPending -or [int]$cardPending -ne [int]$writePending) { $needPending = $true }
+        }
+        if ($null -ne $writeDone) {
+            $cardDone = Get-YarnProp -Object $card -Name 'Done' -Default $null
+            if ($null -eq $cardDone -or [int]$cardDone -ne [int]$writeDone) { $needDone = $true }
+        }
+        $writeTitle = [string](Get-YarnProp -Object $writeProj -Name 'Title' -Default '')
+        $cardName = [string](Get-YarnProp -Object $card -Name 'Name' -Default '')
+        $needTitle = (-not [string]::IsNullOrWhiteSpace($writeTitle)) -and
+            (-not [string]::Equals($cardName, $writeTitle, [StringComparison]::OrdinalIgnoreCase)) -and
+            ($cardName -like '*.plan.md' -or $cardName -eq [string]$writeCursor -or [string]::IsNullOrWhiteSpace($cardName))
+        if ($sameBoard -and $sameStage -and -not $needYarnId -and -not $needCursor -and -not $needProject -and -not $needSubproject `
+                -and -not $needDescription -and -not $needPlanPath -and -not $needPending -and -not $needDone -and -not $needTitle) {
             return [PSCustomObject]@{ outcome = 'unchanged'; pageId = $card.pageId; projection = $writeProj }
         }
         if ($DryRun) {
@@ -1033,6 +1484,7 @@ function Invoke-YarnPlanBoardNotifyFailOpen {
             -VerifiedLoomAccepted:$ctx.VerifiedLoomAccepted -ExistingPlanBoardCard:$false `
             -HasFormalPlan:$ctx.HasFormalPlan -Title $ctx.Title
         if ($proj.action -ne 'project') { return }
+        $proj = Add-YarnPlanBoardProjectionContextFields -Projection $proj -Context $ctx
 
         $token = Get-YarnPlanBoardNotionApiKey -MetraRoot $MetraRoot
         $result = Invoke-YarnPlanBoardUpsertProjection -Root $Root -Projection $proj -Config $cfg -ApiKey $token -AllowCreate:$hasYarnOrLoom -Notes ("auto:$Reason")
@@ -1228,6 +1680,7 @@ function Invoke-MetraYarnPlanBoardSync {
                 -HandoffSucceeded:$ctx.HandoffSucceeded -HasActiveLoomQueue:$ctx.HasActiveLoomQueue `
                 -VerifiedLoomAccepted:$ctx.VerifiedLoomAccepted -ExistingPlanBoardCard:$ctx.ExistingPlanBoardCard `
                 -ExistingBoard $ctx.ExistingBoard -HasFormalPlan:$ctx.HasFormalPlan -Title $ctx.Title
+            $proj = Add-YarnPlanBoardProjectionContextFields -Projection $proj -Context $ctx
             $allowCreate = (-not [string]::IsNullOrWhiteSpace($ctx.YarnStatus)) -or $ctx.HandoffSucceeded -or $ctx.HasActiveLoomQueue -or $ctx.VerifiedLoomAccepted
             $r = Invoke-YarnPlanBoardUpsertProjection -Root $Root -Projection $proj -Config $cfg -ApiKey $(if ($token) { $token } else { 'override' }) `
                 -DryRun:$DryRun -AllowCreate:$allowCreate -ExistingCards $existingCards
@@ -1290,6 +1743,244 @@ function Get-YarnPlanBoardInventoryPaths {
     }
 }
 
+function Get-YarnPlanBoardInventoryNormalizeStem {
+    <#
+    .SYNOPSIS
+        Normalize titles/plan leaves for echo and hash-twin grouping.
+    #>
+    param([string]$Text)
+    $s = [string]$Text
+    if ([string]::IsNullOrWhiteSpace($s)) { return '' }
+    $s = $s.ToLowerInvariant().Trim()
+    $s = $s -replace '\.plan\.md$', ''
+    $s = $s -replace '_[0-9a-f]{8}$', ''
+    $s = $s -replace '[^a-z0-9]+', '-'
+    $s = $s.Trim('-')
+    return $s
+}
+
+function Get-YarnPlanBoardInventoryEchoKey {
+    <#
+    .SYNOPSIS
+        Looser stem for cross-source echo (strip trailing date tokens).
+    #>
+    param([string]$Text)
+    $s = Get-YarnPlanBoardInventoryNormalizeStem -Text $Text
+    if ([string]::IsNullOrWhiteSpace($s)) { return '' }
+    $prev = ''
+    while ($s -ne $prev) {
+        $prev = $s
+        $s = $s -replace '-(20\d{2}-\d{2}-\d{2})$', ''
+        $s = $s -replace '-(20\d{6})$', ''
+        $s = $s -replace '-(20\d{2}-\d{2})$', ''
+        $s = $s -replace '-(20\d{4})$', ''
+    }
+    return $s.Trim('-')
+}
+
+function Get-YarnPlanBoardInventoryNoiseKind {
+    <#
+    .SYNOPSIS
+        Classify fixture / test-card / index-heading / module-scrap noise. Empty = not noise.
+    .NOTES
+        Index headings are Future-Dev section titles. Short headings (ladder, verify who) match
+        exactly only so legitimate titles like "Voice Ladder" or "Verify Who Service Owns X"
+        are not proposed drop. Longer section titles may include a parenthetical suffix.
+        Prefer yarn/meta-doc without a formal plan (or Future-Dev path) for index-heading.
+    #>
+    param(
+        [string]$Title,
+        [bool]$HasFormalPlan,
+        [string]$SourceType = '',
+        [string]$SourcePath = ''
+    )
+    $raw = [string]$Title
+    if ([string]::IsNullOrWhiteSpace($raw)) { return '' }
+    $t = $raw.ToLowerInvariant().Trim()
+
+    if ($t -match 'calibrate_a13_' -or $t -match '\ba13\s+calibrate\b' -or $t -match '^calibrate[_ ]a13') {
+        return 'fixture'
+    }
+    if ($t -match '^(fail\s*test|sync\s*test|pb\s*test)$' -or $t -match '\bsmoke\s+capture\b') {
+        return 'test-card'
+    }
+
+    $st = ([string]$SourceType).Trim().ToLowerInvariant()
+    $path = ([string]$SourcePath).ToLowerInvariant()
+    $indexEligible = (-not $HasFormalPlan) -and (
+        [string]::IsNullOrWhiteSpace($st) -or
+        $st -in @('yarn', 'meta-doc') -or
+        $path -match 'future-dev'
+    )
+    if ($indexEligible) {
+        # Exact-only short Future-Dev section labels (common English words / prefixes).
+        $indexExactOnly = @(
+            'ladder',
+            'best path',
+            'verify who',
+            'explicitly last',
+            'outside polish'
+        )
+        foreach ($ix in $indexExactOnly) {
+            if ($t -eq $ix) { return 'index-heading' }
+        }
+
+        # Longer distinctive section titles: allow known parenthetical / dash suffixes only.
+        $indexPrefix = @(
+            'sequencing rules',
+            'suggested arcs',
+            'ranked prospects',
+            'agent-facing lane',
+            'shipped (archive)',
+            'open cursor plans',
+            'post-demo idea cluster'
+        )
+        foreach ($ix in $indexPrefix) {
+            if ($t -eq $ix -or $t.StartsWith($ix + ' -') -or $t.StartsWith($ix + ' (')) {
+                return 'index-heading'
+            }
+        }
+    }
+
+    if (-not $HasFormalPlan -and $t -match '[a-z0-9._-]+\.ps1') {
+        return 'module-scrap'
+    }
+    return ''
+}
+
+function Test-YarnPlanBoardInventoryRowIsNoise {
+    param($Row)
+    $codes = @((Get-YarnProp -Object $Row -Name 'reasonCodes' -Default @()))
+    foreach ($c in $codes) {
+        if ($c -in @('fixture', 'test-card', 'index-heading', 'module-scrap')) { return $true }
+    }
+    $flag = Get-YarnProp -Object $Row -Name 'isNoise' -Default $false
+    try { return [bool]$flag } catch { return $false }
+}
+
+function Get-YarnPlanBoardInventorySourceRank {
+    param(
+        [string]$SourceType,
+        [string]$CursorPlan,
+        [string]$YarnId,
+        [bool]$HasFormalPlan
+    )
+    switch ($SourceType) {
+        'loom' { return 100 }
+        'cursor-plan' { return 90 }
+        'meta-plan' { return 85 }
+        'yarn' {
+            if ($HasFormalPlan -or -not [string]::IsNullOrWhiteSpace($CursorPlan)) { return 80 }
+            return 50
+        }
+        'meta-doc' { return 40 }
+        'notion' { return 20 }
+        default { return 10 }
+    }
+}
+
+function Get-YarnPlanBoardInventoryClusterHint {
+    param([string]$Title, [string]$SourcePath)
+    $blob = (([string]$Title) + ' ' + ([string]$SourcePath)).ToLowerInvariant()
+    $blob = $blob -replace '[_\.]+', ' '
+    if ($blob -match '\b(bible|carhunt|scripture|recipe|personal)\b') { return 'Personal' }
+    if ($blob -match '\b(ask|recommend|secrets|multi-engine|markdown)\b') { return 'Ask' }
+    if ($blob -match '\b(ios|face|companion|scout|voice|presence|f0|f1|f2|f3)\b') { return 'iOS/Face' }
+    if ($blob -match '\b(routing|why.?here|compound.?intent|ctx|related)\b') { return 'Routing' }
+    if ($blob -match '\b(inspect|calibrat|token.?economy|regression)\b') { return 'Inspect' }
+    if ($blob -match '\b(installer|smartscreen|setup|satellite|wizard|onboard)\b') { return 'Installer' }
+    if ($blob -match '\b(ops.?desk|html.?ops|canvas|coherence|capture)\b') { return 'OpsDesk' }
+    if ($blob -match '\b(ticket|attention|sprint|queue.?watch|coworker)\b') { return 'Ticket' }
+    if ($blob -match '\b(loom|yarn|auto.?program)\b') { return 'LoomYarn' }
+    if ($blob -match '\b(atlas|codex|vector.?store|memory|notion.?stub)\b') { return 'AtlasMemory' }
+    if ($blob -match '\b(persona|temperament|humor|voice.?design)\b') { return 'Persona' }
+    return 'Other'
+}
+
+function Add-YarnPlanBoardInventoryReasonCode {
+    param(
+        $Row,
+        [Parameter(Mandatory)][string]$Code
+    )
+    $codes = New-Object System.Collections.Generic.List[string]
+    foreach ($c in @((Get-YarnProp -Object $Row -Name 'reasonCodes' -Default @()))) {
+        if (-not [string]::IsNullOrWhiteSpace([string]$c)) { [void]$codes.Add([string]$c) }
+    }
+    if ($codes -notcontains $Code) { [void]$codes.Add($Code) }
+    $Row | Add-Member -NotePropertyName reasonCodes -NotePropertyValue @($codes) -Force
+}
+
+function Set-YarnPlanBoardInventoryProposeDrop {
+    param(
+        $Row,
+        [Parameter(Mandatory)][string]$ReasonCode,
+        [string]$EchoOf,
+        [string]$SupersededBy
+    )
+    $Row | Add-Member -NotePropertyName proposedDecision -NotePropertyValue 'drop' -Force
+    $Row | Add-Member -NotePropertyName proposedBoard -NotePropertyValue 'Drop' -Force
+    $Row | Add-Member -NotePropertyName proposedStage -NotePropertyValue 8 -Force
+    Add-YarnPlanBoardInventoryReasonCode -Row $Row -Code $ReasonCode
+    if (-not [string]::IsNullOrWhiteSpace($EchoOf)) {
+        $Row | Add-Member -NotePropertyName echoOf -NotePropertyValue $EchoOf -Force
+    }
+    if (-not [string]::IsNullOrWhiteSpace($SupersededBy)) {
+        $Row | Add-Member -NotePropertyName supersededBy -NotePropertyValue $SupersededBy -Force
+    }
+}
+
+function Set-YarnPlanBoardInventoryProposePark {
+    param(
+        $Row,
+        [Parameter(Mandatory)][string]$ReasonCode
+    )
+    $Row | Add-Member -NotePropertyName proposedDecision -NotePropertyValue 'park' -Force
+    $Row | Add-Member -NotePropertyName proposedBoard -NotePropertyValue 'Parked' -Force
+    $Row | Add-Member -NotePropertyName proposedStage -NotePropertyValue 7 -Force
+    Add-YarnPlanBoardInventoryReasonCode -Row $Row -Code $ReasonCode
+}
+
+function Test-YarnPlanBoardInventoryCompletedMarker {
+    param([string]$Title, [string]$Blurb)
+    $blob = (([string]$Blurb) + ' ' + ([string]$Title)).ToLowerInvariant()
+    if ([string]::IsNullOrWhiteSpace($blob.Trim())) { return $false }
+    if ($blob -match '\bdone\b') { return $true }
+    if ($blob -match '\bshipped\b') { return $true }
+    if ($blob -match 'closeout') { return $true }
+    return $false
+}
+
+function Test-YarnPlanBoardInventoryPlanFileComplete {
+    <#
+    .SYNOPSIS
+        Cursor/meta plan YAML: status Shipped/Complete, shippedAt, or every todo completed.
+    #>
+    param([string]$Path)
+    if ([string]::IsNullOrWhiteSpace($Path) -or -not (Test-Path -LiteralPath $Path)) { return $false }
+    try {
+        $text = [System.IO.File]::ReadAllText($Path)
+    }
+    catch { return $false }
+    if ($text -notmatch '(?s)\A---\r?\n(.+?)\r?\n---') { return $false }
+    $fm = $Matches[1]
+    if ($fm -match '(?m)^shippedAt\s*:') { return $true }
+    if ($fm -match '(?m)^status\s*:\s*(.+)$') {
+        $st = $Matches[1].ToLowerInvariant()
+        if ($st -match 'shipped' -or $st -match '\bcomplete') { return $true }
+    }
+    if ($fm -match '(?m)^overview\s*:\s*(.+)$') {
+        $ov = $Matches[1].ToLowerInvariant()
+        if ($ov -match 'complete\.' -or $ov -match '^\s*"?complete\b' -or $ov -match 'shipped 20') { return $true }
+    }
+    $todo = [regex]::Matches($fm, '(?m)^[ \t]{2,}status\s*:\s*(\w+)\s*$')
+    if ($todo.Count -lt 1) { return $false }
+    foreach ($m in $todo) {
+        $v = $m.Groups[1].Value.ToLowerInvariant()
+        if ($v -notin @('completed', 'cancelled')) { return $false }
+    }
+    return $true
+}
+
 function Get-YarnPlanBoardInventoryHeuristic {
     param(
         [string]$Title,
@@ -1303,47 +1994,81 @@ function Get-YarnPlanBoardInventoryHeuristic {
     $proposed = 'review'
     $board = 'Inbox'
     $stage = 1
+    $isNoise = $false
 
+    # Authoritative Yarn status / park-drop language beats noise classifiers.
     if ($YarnStatus -eq 'parked' -or $t -match '\b(park|defer|later|someday)\b') {
         $proposed = 'park'
         $board = 'Parked'
         $stage = 7
         $reasons.Add('park-language') | Out-Null
     }
-    elseif ($YarnStatus -eq 'rejected' -or $t -match '\b(drop|obsolete|superseded|done|shipped leftover)\b') {
+    elseif ($YarnStatus -eq 'rejected' -or $t -match '\b(obsolete|superseded)\b' -or $t -match '(^|\s)drop(\s|$)' -or $t -match '\bas\s+done\b' -or $t -match '^done\b') {
         $proposed = 'drop'
         $board = 'Drop'
         $stage = 8
         $reasons.Add('drop-language') | Out-Null
     }
-    elseif (-not [string]::IsNullOrWhiteSpace($YarnStatus) -or $HasFormalPlan) {
-        $proposed = 'keep'
-        if ($HasFormalPlan) {
-            $board = 'Idea'
-            $stage = 3
-            $reasons.Add('formal-plan') | Out-Null
+    else {
+        $noiseKind = Get-YarnPlanBoardInventoryNoiseKind -Title $Title -HasFormalPlan:$HasFormalPlan `
+            -SourceType $SourceType
+        if ($noiseKind) {
+            $proposed = 'drop'
+            $board = 'Drop'
+            $stage = 8
+            $reasons.Add($noiseKind) | Out-Null
+            $isNoise = $true
+        }
+        elseif ($t -match 'shipped leftover' -or $t -match '(^|[^a-z0-9])shipped([^a-z0-9]|$)') {
+            # Keep shipped plan docs as Parked (useful archive), not Drop.
+            $proposed = 'park'
+            $board = 'Parked'
+            $stage = 7
+            $reasons.Add('shipped-archive') | Out-Null
+        }
+        elseif (-not [string]::IsNullOrWhiteSpace($YarnStatus) -or $HasFormalPlan) {
+            $proposed = 'keep'
+            if ($HasFormalPlan) {
+                $board = 'Idea'
+                $stage = 3
+                $reasons.Add('formal-plan') | Out-Null
+            }
+            else {
+                $board = 'Backlog'
+                $stage = 2
+                $reasons.Add('yarn-without-plan') | Out-Null
+            }
+        }
+        elseif ($SourceType -in @('cursor-plan', 'meta-plan', 'meta-doc')) {
+            # Re-check noise on discovered plan docs (fixtures live as cursor-plan files).
+            $noiseKind2 = Get-YarnPlanBoardInventoryNoiseKind -Title $Title -HasFormalPlan:$true `
+                -SourceType $SourceType
+            if ($noiseKind2 -eq 'fixture') {
+                $proposed = 'drop'
+                $board = 'Drop'
+                $stage = 8
+                $reasons.Add('fixture') | Out-Null
+                $isNoise = $true
+            }
+            else {
+                $proposed = 'keep'
+                $asIdea = $SourceType -in @('cursor-plan', 'meta-plan')
+                $board = $(if ($asIdea) { 'Idea' } else { 'Backlog' })
+                $stage = $(if ($asIdea) { 3 } else { 2 })
+                $reasons.Add('discovered-plan-doc') | Out-Null
+                if ($asIdea) { $reasons.Add('formal-plan') | Out-Null }
+            }
+        }
+        elseif ($ExistingBoard -in @('Inbox', 'Backlog', 'Drop')) {
+            $proposed = 'review'
+            $board = $ExistingBoard
+            $stage = Get-YarnPlanBoardStageForBoard -Board $ExistingBoard
+            $reasons.Add('existing-side-tab') | Out-Null
         }
         else {
-            $board = 'Backlog'
-            $stage = 2
-            $reasons.Add('yarn-without-plan') | Out-Null
+            $proposed = 'review'
+            $reasons.Add('unsure') | Out-Null
         }
-    }
-    elseif ($SourceType -in @('cursor-plan', 'meta-doc')) {
-        $proposed = 'keep'
-        $board = 'Backlog'
-        $stage = 2
-        $reasons.Add('discovered-plan-doc') | Out-Null
-    }
-    elseif ($ExistingBoard -in @('Inbox', 'Backlog', 'Drop')) {
-        $proposed = 'review'
-        $board = $ExistingBoard
-        $stage = Get-YarnPlanBoardStageForBoard -Board $ExistingBoard
-        $reasons.Add('existing-side-tab') | Out-Null
-    }
-    else {
-        $proposed = 'review'
-        $reasons.Add('unsure') | Out-Null
     }
 
     return [PSCustomObject]@{
@@ -1352,7 +2077,349 @@ function Get-YarnPlanBoardInventoryHeuristic {
         proposedBoard    = $board
         proposedStage    = $stage
         reasonCodes      = @($reasons)
+        isNoise          = $isNoise
     }
+}
+
+function Complete-YarnPlanBoardInventoryRows {
+    <#
+    .SYNOPSIS
+        Post-pass: hash twins, echo collapse (noise never wins), clusterHint. Appends reasonCodes.
+    #>
+    param([Parameter(Mandatory)][object[]]$Rows)
+
+    $list = @($Rows)
+    if ($list.Count -eq 0) { return @() }
+
+    foreach ($r in $list) {
+        $title = [string](Get-YarnProp -Object $r -Name 'title' -Default '')
+        $cp = [string](Get-YarnProp -Object $r -Name 'cursorPlan' -Default '')
+        $path = [string](Get-YarnProp -Object $r -Name 'sourcePath' -Default '')
+        $stemSrc = if (-not [string]::IsNullOrWhiteSpace($cp)) { $cp } else { $title }
+        $stem = Get-YarnPlanBoardInventoryNormalizeStem -Text $stemSrc
+        $echoKey = Get-YarnPlanBoardInventoryEchoKey -Text $stemSrc
+        $r | Add-Member -NotePropertyName normalizeStem -NotePropertyValue $stem -Force
+        $r | Add-Member -NotePropertyName echoKey -NotePropertyValue $echoKey -Force
+        if (-not (Get-YarnProp -Object $r -Name 'echoOf' -Default $null)) {
+            $r | Add-Member -NotePropertyName echoOf -NotePropertyValue $null -Force
+        }
+        if (-not (Get-YarnProp -Object $r -Name 'supersededBy' -Default $null)) {
+            $r | Add-Member -NotePropertyName supersededBy -NotePropertyValue $null -Force
+        }
+        $r | Add-Member -NotePropertyName clusterHint -NotePropertyValue (
+            Get-YarnPlanBoardInventoryClusterHint -Title $title -SourcePath $path
+        ) -Force
+        $fromFile = Get-YarnPlanBoardInventoryBlurb -Path $path -Title $title
+        $existingBlurb = [string](Get-YarnProp -Object $r -Name 'blurb' -Default '')
+        $blurb = if (-not [string]::IsNullOrWhiteSpace($fromFile)) { $fromFile } else { $existingBlurb }
+        $r | Add-Member -NotePropertyName blurb -NotePropertyValue $blurb -Force
+        if ((Test-YarnPlanBoardInventoryRowIsNoise -Row $r) -and -not (Get-YarnProp -Object $r -Name 'isNoise' -Default $false)) {
+            $r | Add-Member -NotePropertyName isNoise -NotePropertyValue $true -Force
+        }
+    }
+
+    foreach ($r in $list) {
+        $prop = ([string](Get-YarnProp -Object $r -Name 'proposedDecision' -Default '')).ToLowerInvariant()
+        if ($prop -in @('drop', 'park')) { continue }
+        if (Test-YarnPlanBoardInventoryRowIsNoise -Row $r) { continue }
+        $codes = @((Get-YarnProp -Object $r -Name 'reasonCodes' -Default @()))
+        if ($codes -contains 'echo-board-keep') { continue }
+        $title = [string](Get-YarnProp -Object $r -Name 'title' -Default '')
+        $blurb = [string](Get-YarnProp -Object $r -Name 'blurb' -Default '')
+        $path = [string](Get-YarnProp -Object $r -Name 'sourcePath' -Default '')
+        if ((Test-YarnPlanBoardInventoryCompletedMarker -Title $title -Blurb $blurb) `
+                -or (Test-YarnPlanBoardInventoryPlanFileComplete -Path $path)) {
+            Set-YarnPlanBoardInventoryProposePark -Row $r -ReasonCode 'completed-unmarked'
+        }
+    }
+
+    # Hash twins: multiple cursor-plan rows sharing stem → keep newest LastWriteTime.
+    $cursorByStem = @{}
+    foreach ($r in $list) {
+        if ([string](Get-YarnProp -Object $r -Name 'sourceType' -Default '') -ne 'cursor-plan') { continue }
+        $stem = [string](Get-YarnProp -Object $r -Name 'normalizeStem' -Default '')
+        if ([string]::IsNullOrWhiteSpace($stem)) { continue }
+        if (-not $cursorByStem.ContainsKey($stem)) {
+            $cursorByStem[$stem] = New-Object System.Collections.ArrayList
+        }
+        [void]$cursorByStem[$stem].Add($r)
+    }
+    foreach ($stem in @($cursorByStem.Keys)) {
+        $group = @($cursorByStem[$stem].ToArray())
+        if ($group.Count -lt 2) { continue }
+        $withTime = foreach ($g in $group) {
+            $p = [string](Get-YarnProp -Object $g -Name 'sourcePath' -Default '')
+            $mtime = [datetime]::MinValue
+            if ($p -and (Test-Path -LiteralPath $p)) {
+                try { $mtime = [datetime](Get-Item -LiteralPath $p).LastWriteTimeUtc } catch { $mtime = [datetime]::MinValue }
+            }
+            [PSCustomObject]@{ Row = $g; Mtime = $mtime }
+        }
+        $ranked = @($withTime | Sort-Object -Property Mtime -Descending)
+        $winner = $ranked[0].Row
+        $winId = [string](Get-YarnProp -Object $winner -Name 'rowId' -Default '')
+        for ($i = 1; $i -lt $ranked.Count; $i++) {
+            Set-YarnPlanBoardInventoryProposeDrop -Row $ranked[$i].Row -ReasonCode 'hash-twin-superseded' -SupersededBy $winId
+            $ev = @((Get-YarnProp -Object $ranked[$i].Row -Name 'evidence' -Default @())) + @("hash-twin-of:$winId")
+            $ranked[$i].Row | Add-Member -NotePropertyName evidence -NotePropertyValue $ev -Force
+        }
+    }
+
+    # Echo groups by echoKey (date-stripped stem); noise rows never win.
+    $byStem = @{}
+    foreach ($r in $list) {
+        $stem = [string](Get-YarnProp -Object $r -Name 'echoKey' -Default '')
+        if ([string]::IsNullOrWhiteSpace($stem)) {
+            $stem = [string](Get-YarnProp -Object $r -Name 'normalizeStem' -Default '')
+        }
+        if ([string]::IsNullOrWhiteSpace($stem)) { continue }
+        if (-not $byStem.ContainsKey($stem)) {
+            $byStem[$stem] = New-Object System.Collections.ArrayList
+        }
+        [void]$byStem[$stem].Add($r)
+    }
+    foreach ($stem in @($byStem.Keys)) {
+        $group = @($byStem[$stem].ToArray())
+        if ($group.Count -lt 2) { continue }
+        $eligible = @(
+            $group | Where-Object {
+                if (Test-YarnPlanBoardInventoryRowIsNoise -Row $_) { return $false }
+                $codes = @((Get-YarnProp -Object $_ -Name 'reasonCodes' -Default @()))
+                if ($codes -contains 'hash-twin-superseded') { return $false }
+                return $true
+            }
+        )
+        if ($eligible.Count -eq 0) { continue }
+
+        $scored = foreach ($e in $eligible) {
+            $st = [string](Get-YarnProp -Object $e -Name 'sourceType' -Default '')
+            $cp = [string](Get-YarnProp -Object $e -Name 'cursorPlan' -Default '')
+            $hasFormal = -not [string]::IsNullOrWhiteSpace($cp) -or $st -in @('cursor-plan', 'meta-plan', 'loom')
+            $rank = Get-YarnPlanBoardInventorySourceRank -SourceType $st -CursorPlan $cp `
+                -YarnId ([string](Get-YarnProp -Object $e -Name 'yarnId' -Default '')) -HasFormalPlan:$hasFormal
+            [PSCustomObject]@{
+                Row  = $e
+                Rank = [int]$rank
+                Id   = [string](Get-YarnProp -Object $e -Name 'rowId' -Default '')
+            }
+        }
+        $winner = @(
+            $scored | Sort-Object @{ Expression = 'Rank'; Descending = $true }, @{ Expression = 'Id' } |
+                Select-Object -First 1
+        ).Row
+
+        $winId = [string](Get-YarnProp -Object $winner -Name 'rowId' -Default '')
+        foreach ($r in $group) {
+            $rid = [string](Get-YarnProp -Object $r -Name 'rowId' -Default '')
+            if ($rid -eq $winId) { continue }
+            # Do not demote authoritative park proposals via echo.
+            $prop = ([string](Get-YarnProp -Object $r -Name 'proposedDecision' -Default '')).ToLowerInvariant()
+            if ($prop -eq 'park') { continue }
+            $src = ([string](Get-YarnProp -Object $r -Name 'sourceType' -Default '')).ToLowerInvariant()
+            $page = [string](Get-YarnProp -Object $r -Name 'notionPageId' -Default '')
+            if ($src -eq 'notion' -and -not [string]::IsNullOrWhiteSpace($page)) {
+                # Existing board card is the projection of the winner, not a Drop candidate.
+                $r | Add-Member -NotePropertyName echoOf -NotePropertyValue $winId -Force
+                Add-YarnPlanBoardInventoryReasonCode -Row $r -Code 'echo-board-keep'
+                $ev = @((Get-YarnProp -Object $r -Name 'evidence' -Default @())) + @("echo-of:$winId")
+                $r | Add-Member -NotePropertyName evidence -NotePropertyValue $ev -Force
+                continue
+            }
+            Set-YarnPlanBoardInventoryProposeDrop -Row $r -ReasonCode 'echo-duplicate' -EchoOf $winId
+            $ev = @((Get-YarnProp -Object $r -Name 'evidence' -Default @())) + @("echo-of:$winId")
+            $r | Add-Member -NotePropertyName evidence -NotePropertyValue $ev -Force
+        }
+    }
+
+    return @($list)
+}
+
+function Get-YarnPlanBoardInventoryBlurb {
+    param([string]$Path, [string]$Title)
+    if ([string]::IsNullOrWhiteSpace($Path) -or -not (Test-Path -LiteralPath $Path)) { return '' }
+    try {
+        $text = [System.IO.File]::ReadAllText($Path)
+    }
+    catch { return '' }
+    $want = ([string]$Title).Trim()
+    foreach ($line in ($text -split "`n")) {
+        $t = $line.Trim("`r").Trim()
+        if ($t -match '^#+\s+(.+)$') {
+            $h = $Matches[1].Trim()
+            if ([string]::IsNullOrWhiteSpace($h)) { continue }
+            if ($want -and [string]::Equals($h, $want, [System.StringComparison]::OrdinalIgnoreCase)) { continue }
+            if ($h.Length -gt 160) { $h = $h.Substring(0, 160).Trim() }
+            return $h
+        }
+    }
+    return ''
+}
+
+function Get-YarnPlanBoardInventoryApplyDecision {
+    <#
+    .SYNOPSIS
+        Resolve pack decision plus -AffirmNoise / -Affirm / -AffirmCluster batch gates.
+    #>
+    param(
+        $Row,
+        [switch]$AffirmNoise,
+        [string]$Affirm,
+        [string]$AffirmCluster,
+        [string]$As
+    )
+    $decision = ([string](Get-YarnProp -Object $Row -Name 'decision' -Default 'review')).ToLowerInvariant()
+    if ($decision -in @('keep', 'drop', 'park')) { return $decision }
+
+    $proposed = ([string](Get-YarnProp -Object $Row -Name 'proposedDecision' -Default '')).ToLowerInvariant()
+    $codes = @((Get-YarnProp -Object $Row -Name 'reasonCodes' -Default @()))
+    $page = [string](Get-YarnProp -Object $Row -Name 'notionPageId' -Default '')
+    $cluster = [string](Get-YarnProp -Object $Row -Name 'clusterHint' -Default '')
+    $hasPage = -not [string]::IsNullOrWhiteSpace($page)
+
+    if ($AffirmNoise) {
+        $noiseHit = $false
+        foreach ($c in $codes) {
+            if ($c -in @('fixture', 'test-card', 'index-heading', 'module-scrap')) { $noiseHit = $true; break }
+        }
+        if ($noiseHit -and $proposed -eq 'drop' -and $hasPage) { return 'drop' }
+        if ($proposed -eq 'park' -and ($codes -contains 'shipped-archive') -and $hasPage) { return 'park' }
+    }
+
+    $want = @()
+    if (-not [string]::IsNullOrWhiteSpace($Affirm)) {
+        # PowerShell treats keep,park as an array; CLI RemainingArguments often become "keep park".
+        $want = @($Affirm -split '[,;\s]+' | ForEach-Object { $_.Trim().ToLowerInvariant() } | Where-Object { $_ })
+    }
+    if ($want.Count -gt 0 -and ($want -contains $proposed)) {
+        if ($codes -contains 'echo-board-keep') { return 'review' }
+        if ($codes -contains 'echo-duplicate') { return 'review' }
+        if ($proposed -eq 'drop' -and -not $hasPage) { return 'review' }
+        if ($proposed -in @('keep', 'drop', 'park')) { return $proposed }
+    }
+
+    if (-not [string]::IsNullOrWhiteSpace($AffirmCluster) `
+            -and [string]::Equals($cluster, $AffirmCluster, [System.StringComparison]::OrdinalIgnoreCase)) {
+        if ($codes -contains 'echo-duplicate') { return 'review' }
+        $asNorm = ([string]$As).ToLowerInvariant()
+        if ($asNorm -in @('keep', 'drop', 'park')) { return $asNorm }
+        if ($proposed -in @('keep', 'drop', 'park')) { return $proposed }
+    }
+    return 'review'
+}
+
+function Format-YarnPlanBoardInventoryMarkdown {
+    param(
+        [Parameter(Mandatory)][string]$InventoryId,
+        [Parameter(Mandatory)][string]$GeneratedAt,
+        [Parameter(Mandatory)][object[]]$Rows
+    )
+    $md = New-Object System.Text.StringBuilder
+    $n = @($Rows).Count
+    $nKeep = @($Rows | Where-Object { ([string]$_.proposedDecision) -eq 'keep' }).Count
+    $nDrop = @($Rows | Where-Object { ([string]$_.proposedDecision) -eq 'drop' }).Count
+    $nPark = @($Rows | Where-Object { ([string]$_.proposedDecision) -eq 'park' }).Count
+    $nBoard = @($Rows | Where-Object {
+            $codes = @((Get-YarnProp -Object $_ -Name 'reasonCodes' -Default @()))
+            ($codes -contains 'echo-board-keep') -or -not [string]::IsNullOrWhiteSpace([string](Get-YarnProp -Object $_ -Name 'notionPageId' -Default ''))
+        }).Count
+
+    [void]$md.AppendLine('# Plan Board inventory')
+    [void]$md.AppendLine('')
+    [void]$md.AppendLine("schemaVersion: 2 · inventoryId: $InventoryId · generatedAt: $GeneratedAt · rows: $n")
+    [void]$md.AppendLine('')
+    [void]$md.AppendLine('**Review this markdown** (cluster sections below). Do not edit 197 JSON `decision` cells. Then batch-apply:')
+    [void]$md.AppendLine('')
+    [void]$md.AppendLine('```powershell')
+    [void]$md.AppendLine('# Classified drop/park that already have a Notion card (noise + parked docs)')
+    [void]$md.AppendLine('.\metra.ps1 plan-board inventory apply -Confirm -Affirm drop,park')
+    [void]$md.AppendLine('# After reading one cluster, put those keeps on the board (or park the cluster)')
+    [void]$md.AppendLine('.\metra.ps1 plan-board inventory apply -Confirm -AffirmCluster Ask')
+    [void]$md.AppendLine('.\metra.ps1 plan-board inventory apply -Confirm -AffirmCluster "iOS/Face" -As park')
+    [void]$md.AppendLine('```')
+    [void]$md.AppendLine('')
+    [void]$md.AppendLine("| proposed | count |")
+    [void]$md.AppendLine("|----------|------:|")
+    [void]$md.AppendLine("| keep | $nKeep |")
+    [void]$md.AppendLine("| drop | $nDrop |")
+    [void]$md.AppendLine("| park | $nPark |")
+    [void]$md.AppendLine("| already on board | $nBoard |")
+    [void]$md.AppendLine('')
+
+    $clusters = @($Rows | ForEach-Object { [string](Get-YarnProp -Object $_ -Name 'clusterHint' -Default 'Other') } | Sort-Object -Unique)
+    [void]$md.AppendLine('## Clusters')
+    [void]$md.AppendLine('')
+    [void]$md.AppendLine('| cluster | keep | drop | park | on board |')
+    [void]$md.AppendLine('|---------|-----:|-----:|-----:|---------:|')
+    foreach ($c in $clusters) {
+        $g = @($Rows | Where-Object { [string](Get-YarnProp -Object $_ -Name 'clusterHint' -Default 'Other') -eq $c })
+        $ck = @($g | Where-Object { ([string]$_.proposedDecision) -eq 'keep' }).Count
+        $cd = @($g | Where-Object { ([string]$_.proposedDecision) -eq 'drop' }).Count
+        $cp = @($g | Where-Object { ([string]$_.proposedDecision) -eq 'park' }).Count
+        $cb = @($g | Where-Object {
+                $codes = @((Get-YarnProp -Object $_ -Name 'reasonCodes' -Default @()))
+                ($codes -contains 'echo-board-keep') -or -not [string]::IsNullOrWhiteSpace([string](Get-YarnProp -Object $_ -Name 'notionPageId' -Default ''))
+            }).Count
+        [void]$md.AppendLine("| $c | $ck | $cd | $cp | $cb |")
+    }
+
+    foreach ($c in $clusters) {
+        $g = @($Rows | Where-Object { [string](Get-YarnProp -Object $_ -Name 'clusterHint' -Default 'Other') -eq $c } | Sort-Object title)
+        [void]$md.AppendLine('')
+        [void]$md.AppendLine("## $c")
+        [void]$md.AppendLine('')
+
+        $onBoard = @($g | Where-Object {
+                $codes = @((Get-YarnProp -Object $_ -Name 'reasonCodes' -Default @()))
+                $codes -contains 'echo-board-keep'
+            })
+        $keepNew = @($g | Where-Object {
+                ([string]$_.proposedDecision) -eq 'keep' -and
+                (@((Get-YarnProp -Object $_ -Name 'reasonCodes' -Default @())) -notcontains 'echo-board-keep')
+            })
+        $drops = @($g | Where-Object { ([string]$_.proposedDecision) -eq 'drop' })
+        $parks = @($g | Where-Object { ([string]$_.proposedDecision) -eq 'park' })
+
+        if ($onBoard.Count -gt 0) {
+            [void]$md.AppendLine('### Already on the board')
+            foreach ($r in $onBoard) {
+                $st = [string]$r.sourceType
+                [void]$md.AppendLine("- **$($r.title)** ($st)")
+            }
+            [void]$md.AppendLine('')
+        }
+        if ($keepNew.Count -gt 0) {
+            [void]$md.AppendLine("### Review to keep (-AffirmCluster $c)")
+            foreach ($r in $keepNew) {
+                $blurb = [string](Get-YarnProp -Object $r -Name 'blurb' -Default '')
+                $why = (@((Get-YarnProp -Object $r -Name 'reasonCodes' -Default @())) -join ', ')
+                $st = [string]$r.sourceType
+                $line = "- **$($r.title)** ($st"
+                if ($why) { $line += "; $why" }
+                $line += ')'
+                if ($blurb) { $line += " - $blurb" }
+                [void]$md.AppendLine($line)
+            }
+            [void]$md.AppendLine('')
+        }
+        if ($parks.Count -gt 0) {
+            [void]$md.AppendLine('### Proposed park')
+            foreach ($r in $parks) {
+                $st = [string]$r.sourceType
+                [void]$md.AppendLine("- **$($r.title)** ($st)")
+            }
+            [void]$md.AppendLine('')
+        }
+        if ($drops.Count -gt 0) {
+            [void]$md.AppendLine('### Proposed drop')
+            foreach ($r in $drops) {
+                $why = (@((Get-YarnProp -Object $r -Name 'reasonCodes' -Default @())) -join ', ')
+                $st = [string]$r.sourceType
+                [void]$md.AppendLine("- **$($r.title)** ($st; $why)")
+            }
+            [void]$md.AppendLine('')
+        }
+    }
+    return $md.ToString()
 }
 
 function Invoke-MetraYarnPlanBoardInventory {
@@ -1388,6 +2455,7 @@ function Invoke-MetraYarnPlanBoardInventory {
     $roots = @(
         'yarn-backlog',
         $(if ($cursorPlansDir) { $cursorPlansDir } else { 'cursor-plans' }),
+        (Join-Path $MetraRoot 'plans'),
         (Join-Path $MetraRoot 'docs'),
         'loom-queue',
         'notion-existing-cards'
@@ -1445,6 +2513,10 @@ function Invoke-MetraYarnPlanBoardInventory {
             reasonCodes      = $h.reasonCodes
             evidence         = @("status:$st")
             title            = $title
+            isNoise          = [bool]$h.isNoise
+            echoOf           = $null
+            supersededBy     = $null
+            clusterHint      = $null
         }
         & $addRow ([PSCustomObject]$row)
     }
@@ -1468,18 +2540,26 @@ function Invoke-MetraYarnPlanBoardInventory {
                 reasonCodes      = $h.reasonCodes
                 evidence         = @()
                 title            = $leaf
+                isNoise          = [bool]$h.isNoise
+                echoOf           = $null
+                supersededBy     = $null
+                clusterHint      = $null
             }
             & $addRow ([PSCustomObject]$row)
         }
     }
 
-    $metaDocs = Join-Path $MetraRoot 'docs'
-    if (Test-Path -LiteralPath $metaDocs) {
-        Get-ChildItem -LiteralPath $metaDocs -Filter '*.plan.md' -File -ErrorAction SilentlyContinue | ForEach-Object {
+    foreach ($scan in @(
+            @{ Rel = 'plans'; SourceType = 'meta-plan'; RowPrefix = 'meta-plan'; ExtraReasons = @('meta-plan-repo'); HasFormal = $true }
+            @{ Rel = 'docs'; SourceType = 'meta-doc'; RowPrefix = 'meta-doc'; ExtraReasons = @('meta-plan-doc'); HasFormal = $false }
+        )) {
+        $scanDir = Join-Path $MetraRoot $scan.Rel
+        if (-not (Test-Path -LiteralPath $scanDir)) { continue }
+        Get-ChildItem -LiteralPath $scanDir -Filter '*.plan.md' -File -ErrorAction SilentlyContinue | ForEach-Object {
             $leaf = $_.Name
-            $h = Get-YarnPlanBoardInventoryHeuristic -Title $leaf -SourceType 'meta-doc' -HasFormalPlan:$false
+            $h = Get-YarnPlanBoardInventoryHeuristic -Title $leaf -SourceType $scan.SourceType -HasFormalPlan:([bool]$scan.HasFormal)
             $row = [ordered]@{
-                rowId            = "meta-doc:$leaf"
+                rowId            = "$($scan.RowPrefix):$leaf"
                 proposedDecision = $h.proposedDecision
                 decision         = $h.decision
                 proposedBoard    = $h.proposedBoard
@@ -1488,11 +2568,15 @@ function Invoke-MetraYarnPlanBoardInventory {
                 cursorPlan       = $leaf
                 yarnId           = $null
                 notionPageId     = $null
-                sourceType       = 'meta-doc'
+                sourceType       = $scan.SourceType
                 sourcePath       = $_.FullName
-                reasonCodes      = @($h.reasonCodes) + @('meta-plan-doc')
+                reasonCodes      = @($h.reasonCodes) + @($scan.ExtraReasons)
                 evidence         = @()
                 title            = $leaf
+                isNoise          = [bool]$h.isNoise
+                echoOf           = $null
+                supersededBy     = $null
+                clusterHint      = $null
             }
             & $addRow ([PSCustomObject]$row)
         }
@@ -1512,9 +2596,10 @@ function Invoke-MetraYarnPlanBoardInventory {
                 $leaf = Get-YarnPlanBoardCursorPlanName -PathOrName $path
                 if ([string]::IsNullOrWhiteSpace($leaf)) { continue }
                 $h = Get-YarnPlanBoardInventoryHeuristic -Title $leaf -SourceType 'loom' -HasFormalPlan:$true
+                $loomProposed = if ($h.isNoise) { $h.proposedDecision } else { 'keep' }
                 $row = [ordered]@{
                     rowId            = "loom:$leaf"
-                    proposedDecision = 'keep'
+                    proposedDecision = $loomProposed
                     decision         = 'review'
                     proposedBoard    = $h.proposedBoard
                     proposedStage    = $h.proposedStage
@@ -1524,9 +2609,13 @@ function Invoke-MetraYarnPlanBoardInventory {
                     notionPageId     = $null
                     sourceType       = 'loom'
                     sourcePath       = $path
-                    reasonCodes      = @('loom-queue')
+                    reasonCodes      = @('loom-queue') + @($h.reasonCodes | Where-Object { $_ -ne 'loom-queue' })
                     evidence         = @("status:$((Get-YarnProp -Object $loomItem -Name 'status' -Default ''))")
                     title            = $leaf
+                    isNoise          = [bool]$h.isNoise
+                    echoOf           = $null
+                    supersededBy     = $null
+                    clusterHint      = $null
                 }
                 & $addRow ([PSCustomObject]$row)
             }
@@ -1569,6 +2658,10 @@ function Invoke-MetraYarnPlanBoardInventory {
                     reasonCodes      = $h.reasonCodes
                     evidence         = @("board:$($c.Board)", "stage:$($c.Stage)")
                     title            = $c.Name
+                    isNoise          = [bool]$h.isNoise
+                    echoOf           = $null
+                    supersededBy     = $null
+                    clusterHint      = $null
                 }
                 & $addRow ([PSCustomObject]$row)
             }
@@ -1576,7 +2669,7 @@ function Invoke-MetraYarnPlanBoardInventory {
         catch { }
     }
 
-    $rowArray = @($rows.ToArray())
+    $rowArray = @(Complete-YarnPlanBoardInventoryRows -Rows @($rows.ToArray()))
     $doc = [ordered]@{
         schemaVersion = 2
         generatedAt   = $generatedAt
@@ -1585,36 +2678,22 @@ function Invoke-MetraYarnPlanBoardInventory {
         rows          = $rowArray
     }
     Write-YarnAtomicUtf8Text -Path $paths.JsonPath -Text (($doc | ConvertTo-Json -Depth 10) + "`n")
-
-    $md = New-Object System.Text.StringBuilder
-    [void]$md.AppendLine('# Plan Board inventory pack')
-    [void]$md.AppendLine('')
-    [void]$md.AppendLine("schemaVersion: 2")
-    [void]$md.AppendLine("inventoryId: $inventoryId")
-    [void]$md.AppendLine("generatedAt: $generatedAt")
-    [void]$md.AppendLine("rows: $($rows.Count)")
-    [void]$md.AppendLine('')
-    [void]$md.AppendLine('Edit `decision` in the JSON sidecar to `keep` | `drop` | `park` (leave `review` to skip). Then:')
-    [void]$md.AppendLine('')
-    [void]$md.AppendLine('```powershell')
-    [void]$md.AppendLine('.\metra.ps1 plan-board inventory apply -Confirm')
-    [void]$md.AppendLine('```')
-    [void]$md.AppendLine('')
-    [void]$md.AppendLine('| rowId | proposed | decision | Board | Stage | source | title |')
-    [void]$md.AppendLine('|-------|----------|----------|-------|------:|--------|-------|')
-    foreach ($r in $rows) {
-        [void]$md.AppendLine("| $($r.rowId) | $($r.proposedDecision) | $($r.decision) | $($r.proposedBoard) | $($r.proposedStage) | $($r.sourceType) | $($r.title) |")
-    }
-    Write-YarnAtomicUtf8Text -Path $paths.MdPath -Text $md.ToString()
+    Write-YarnAtomicUtf8Text -Path $paths.MdPath -Text (
+        Format-YarnPlanBoardInventoryMarkdown -InventoryId $inventoryId -GeneratedAt $generatedAt -Rows $rowArray
+    )
 
     return [PSCustomObject]@{
         schemaVersion = 2
         inventoryId   = $inventoryId
         generatedAt   = $generatedAt
-        scanned       = $rows.Count
-        proposed      = $rows.Count
+        scanned       = $rowArray.Count
+        proposed      = $rowArray.Count
+        keep          = @($rowArray | Where-Object { ([string]$_.proposedDecision) -eq 'keep' }).Count
+        drop          = @($rowArray | Where-Object { ([string]$_.proposedDecision) -eq 'drop' }).Count
+        park          = @($rowArray | Where-Object { ([string]$_.proposedDecision) -eq 'park' }).Count
         jsonPath      = $paths.JsonPath
         mdPath        = $paths.MdPath
+        reviewHint    = 'Open mdPath (cluster review). Then apply -Confirm -Affirm drop,park or -AffirmCluster <name>. Do not edit JSON rows.'
         roots         = $roots
     }
 }
@@ -1640,7 +2719,11 @@ function Invoke-MetraYarnPlanBoardInventoryApply {
     param(
         [Parameter(Mandatory)][string]$Root,
         [string]$MetraRoot,
-        [switch]$Confirm
+        [switch]$Confirm,
+        [switch]$AffirmNoise,
+        [string]$Affirm,
+        [string]$AffirmCluster,
+        [string]$As
     )
     if (-not $Confirm) {
         throw 'plan-board inventory apply requires -Confirm (affirmation gate). Nothing attempted.'
@@ -1693,7 +2776,8 @@ function Invoke-MetraYarnPlanBoardInventoryApply {
 
     foreach ($row in @($pack.rows)) {
         $summary.scanned++
-        $decision = ([string](Get-YarnProp -Object $row -Name 'decision' -Default 'review')).ToLowerInvariant()
+        $decision = Get-YarnPlanBoardInventoryApplyDecision -Row $row -AffirmNoise:$AffirmNoise `
+            -Affirm $Affirm -AffirmCluster $AffirmCluster -As $As
         $rowId = [string](Get-YarnProp -Object $row -Name 'rowId' -Default '')
         try {
             if ($decision -notin @('keep', 'drop', 'park')) {
@@ -1741,6 +2825,11 @@ function Invoke-MetraYarnPlanBoardInventoryApply {
                 -BacklogItem $item -PlanLink $link -ExistingPlanBoardCard:($null -ne $matchedCard) -ExistingBoard $existingBoard
             if ($yarnId -and [string]::IsNullOrWhiteSpace($ctx.YarnId)) {
                 $ctx | Add-Member -NotePropertyName YarnId -NotePropertyValue $yarnId -Force
+            }
+            $rowHint = [string](Get-YarnProp -Object $row -Name 'clusterHint' -Default '')
+            if (-not [string]::IsNullOrWhiteSpace($rowHint)) {
+                $sp = Resolve-YarnPlanBoardSubprojectSelect -ClusterHint $rowHint -Title $ctx.Title -CursorPlan $ctx.CursorPlan -Project $ctx.Project
+                $ctx | Add-Member -NotePropertyName Subproject -NotePropertyValue $sp -Force
             }
 
             # Stale check: authoritative lifecycle without inventory decision
@@ -1828,7 +2917,8 @@ function Invoke-MetraYarnPlanBoardInventoryApply {
                 }
             }
 
-            $allowCreate = ($decision -eq 'keep')
+            $proj = Add-YarnPlanBoardProjectionContextFields -Projection $proj -Context $ctx
+            $allowCreate = ($decision -in @('keep', 'park'))
             $apiKey = if ($token) { $token } else { 'override' }
             $r = Invoke-YarnPlanBoardUpsertProjection -Root $Root -Projection $proj -Config $cfg -ApiKey $apiKey `
                 -AllowCreate:$allowCreate -ExistingCards $existingCards -Notes "inventory:$rowId"

@@ -2,6 +2,7 @@
 # Yarn must not write Loom queue/journal files.
 
 $script:YarnHostRootOverride = $null
+$script:YarnCursorPlansDirOverride = $null
 $script:YarnCaptureOverride = $null
 $script:YarnAtlasOverride = $null
 $script:YarnAtlasRootOverride = $null

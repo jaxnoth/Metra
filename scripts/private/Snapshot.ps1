@@ -767,7 +767,7 @@ function Test-MetraCanvasSnapshotStale {
 
     $metraRoot = Get-MetraRoot
     if (-not $SnapshotPath) {
-        $SnapshotPath = Join-Path $metraRoot 'docs\canvas-snapshot.json'
+        $SnapshotPath = Get-MetraCanvasSnapshotPath
     }
     if (-not (Test-Path -LiteralPath $SnapshotPath)) {
         return $true
@@ -804,7 +804,7 @@ function Test-MetraCanvasSnapshotStale {
 function Export-MetraCanvasSnapshot {
     <#
     .SYNOPSIS
-        Writes docs/canvas-snapshot.json from registry + quiet audit for the Metra Ops canvas embed.
+        Writes machine-local desk/canvas-snapshot.json from registry + quiet audit for the Metra Ops canvas embed.
     .PARAMETER Quick
         Hook-friendly refresh: registry + present/missing + AGENTS/.cursorignore/README only.
         Skips recursive large-file scan and per-project git counts.
@@ -825,7 +825,7 @@ function Export-MetraCanvasSnapshot {
 
     $metraRoot = Get-MetraRoot
     if (-not $OutPath) {
-        $OutPath = Join-Path $metraRoot 'docs\canvas-snapshot.json'
+        $OutPath = Get-MetraCanvasSnapshotPath
     }
     if (-not $CanvasPath) {
         $CanvasPath = Get-MetraOpsCanvasPath
@@ -1196,19 +1196,19 @@ $embedEnd
 function Get-MetraDeskPreferencesPath {
     <#
     .SYNOPSIS
-        Path to local HTML Ops preferences (gitignored user state).
+        Path to local HTML Ops preferences (machine-local ops state).
     #>
     [CmdletBinding()]
     param([string]$MetraRoot = (Get-MetraRoot))
 
-    return Join-Path $MetraRoot 'docs\ops-preferences.local.json'
+    return Get-MetraOpsPreferencesPath -MetraRoot $MetraRoot
 }
 
 function Get-MetraDeskAskLogPath {
     [CmdletBinding()]
     param([string]$MetraRoot = (Get-MetraRoot))
 
-    return Join-Path $MetraRoot 'docs\ops-ask-log.local.json'
+    return Get-MetraOpsAskLogPath -MetraRoot $MetraRoot
 }
 
 function Get-MetraAskJournalSchemaVersion {
@@ -2978,7 +2978,7 @@ function Get-MetraDeskPayload {
         $Request = $null
     )
 
-    $snapPath = Join-Path $MetraRoot 'docs\canvas-snapshot.json'
+    $snapPath = Get-MetraCanvasSnapshotPath
     if ($Refresh -or -not (Test-Path -LiteralPath $snapPath)) {
         $null = Export-MetraCanvasSnapshot -Quick:(-not $Full) -ScanDepth $ScanDepth
     }

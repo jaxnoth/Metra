@@ -267,7 +267,7 @@ Usage:
       inspect pre-commit: git hook — refresh prepare-bing/pack; blocks only on missing Bing gate affirm.
       Local AI-assisted inspection of git diffs or Cursor plans (Ask/Ollama). Recommend-only.
   .\metra.ps1 azdo status|repos|get|gaps|tree|search|ideas
-      Read-only Azure DevOps remote evidence (PAT: METRA_AZDO_PAT or docs/azdo.local.json). gaps maps AzDO vs registry/disk.
+      Read-only Azure DevOps remote evidence (PAT: METRA_AZDO_PAT or %LOCALAPPDATA%/Metra/azdo.local.json). gaps maps AzDO vs registry/disk.
   .\metra.ps1 atlas <Atlas.ps1 args...>
       Passthrough to sibling Atlas knowledge bus (plans/docs sync). Example: .\metra.ps1 atlas search biblequiz
   .\metra.ps1 loom status|triage|enqueue|run|review|loop|daily|migrate
@@ -328,7 +328,7 @@ Examples:
   .\metra.ps1 setup
   .\metra.ps1 watch tickets [-Draft] [-SkipSync]
       Ticket-first watch intake: sync/list open+watched -> Attention observations.
-      Default: Attention only (no iSupport writes). -Draft forces TT analyze (local draft). Opt-in autoAnalyze in docs/ticket-watch.local.json analyzes Added/Refreshed only. Opt-in evidenceRouter appends Next evidence (or Ready for recommendation) after analyze - never iSupport recommend.
+      Default: Attention only (no iSupport writes). -Draft forces TT analyze (local draft). Opt-in autoAnalyze in %LOCALAPPDATA%/Metra/ticket-watch.local.json analyzes Added/Refreshed only. Opt-in evidenceRouter appends Next evidence (or Ready for recommendation) after analyze - never iSupport recommend.
   .\metra.ps1 watch recommend <id> [-Preview] [-Confirm] [-Force]
       M3: Preview writes local recommend-draft. Confirm writes Affirm A store-as-review via TT recommend (supersedes Metra AI Recommendation). Gates on E1 recommendable unless -Force. Never resolve/close. autoStoreRecommend stays false.
   .\metra.ps1 setup -Profile .\profiles\sample -Force
@@ -744,7 +744,7 @@ switch ($Command) {
                     $base = Get-MetraProfileOpsBaseUrlOrNull
                 }
                 if ([string]::IsNullOrWhiteSpace($base)) {
-                    throw 'profile pair requires -OpsBaseUrl or opsBaseUrl in docs/profile-sync.local.json / metra.config.json.'
+                    throw 'profile pair requires -OpsBaseUrl or opsBaseUrl in %LOCALAPPDATA%/Metra/profile-sync.local.json / metra.config.json.'
                 }
                 Invoke-MetraProfileClientPair -OpsBaseUrl $base | Format-List
             }
@@ -1025,6 +1025,10 @@ switch ($Command) {
         $subArgs = @()
         if ($Rest.Count -gt 1) {
             $subArgs = @($Rest[1..($Rest.Count - 1)])
+        }
+        # Top-level -Id binds on metra.ps1 and is stripped from RemainingArguments.
+        if (-not [string]::IsNullOrWhiteSpace($Id) -and ($subArgs -notcontains '-Id')) {
+            $subArgs = @('-Id', [string]$Id) + @($subArgs)
         }
         $subArgs = Add-MetraLoomConfirmForward -Sub $sub -SubArgs $subArgs -ConfirmPresent:$Confirm.IsPresent
         $result = Invoke-MetraLoomCommand -Subcommand $sub -ArgsRest $subArgs

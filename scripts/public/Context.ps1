@@ -6,7 +6,7 @@ function Export-MetraContext {
         Exports a bounded Metra context pack for an agent.
     .DESCRIPTION
         Builds a compact map from configured roots, present routing entries, and selected
-        project guidance. Writes docs/context-pack.md by default; -AsString or Path '-'
+        project guidance. Writes machine-local desk/context-pack.md by default; -AsString or Path '-'
         returns content without writing a file. Query is optional (default pack when omitted).
     .PARAMETER Query
         Terms used to rank and limit relevant projects.

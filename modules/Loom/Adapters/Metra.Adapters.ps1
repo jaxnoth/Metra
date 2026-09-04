@@ -43,6 +43,8 @@ function Get-LoomInspectPlanRoots {
     $roots = New-Object System.Collections.Generic.List[string]
     $cursor = Join-Path $env:USERPROFILE '.cursor\plans'
     if (Test-Path -LiteralPath $cursor) { [void]$roots.Add($cursor) }
+    $plans = Join-Path $MetraRoot 'plans'
+    if (Test-Path -LiteralPath $plans) { [void]$roots.Add($plans) }
     $docs = Join-Path $MetraRoot 'docs'
     if (Test-Path -LiteralPath $docs) { [void]$roots.Add($docs) }
     return @($roots)

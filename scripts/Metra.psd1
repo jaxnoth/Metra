@@ -30,6 +30,11 @@
         'Get-MetraProfileSyncClientStatus'
         'Test-MetraInstallation'
         'Get-MetraRoot'
+        'Get-MetraMachineDataRoot'
+        'Get-MetraCanvasSnapshotPath'
+        'Get-MetraContextPackPath'
+        'Get-MetraSelfDocRoutesPath'
+        'Get-MetraSelfDocRoutingExamplesPath'
         'Get-MetraConfig'
         'Get-MetraProp'
         'Get-MetraRoots',

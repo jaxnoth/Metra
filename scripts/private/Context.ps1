@@ -319,19 +319,17 @@ function Export-MetraContextPack {
         }
     }
 
-    $docsDir = Join-Path $metraRoot 'docs'
-    if (-not (Test-Path -LiteralPath $docsDir)) {
-        # New-Item has no -LiteralPath on all hosts; path is already constructed, not user-globbed.
-        New-Item -ItemType Directory -Path $docsDir -Force | Out-Null
-    }
-
-    $defaultMd = Join-Path $docsDir 'context-pack.md'
-    $defaultJson = Join-Path $docsDir 'context-pack.json'
+    $defaultMd = Get-MetraContextPackPath -Format md
+    $defaultJson = Get-MetraContextPackPath -Format json
     $outPath = $Path
     $stdoutOnly = $false
     $writingDefault = [string]::IsNullOrWhiteSpace($Path)
     if ($writingDefault) {
         $outPath = if ($Format -eq 'json') { $defaultJson } else { $defaultMd }
+        $outParent = Split-Path -Parent $outPath
+        if ($outParent -and -not (Test-Path -LiteralPath $outParent)) {
+            [void][System.IO.Directory]::CreateDirectory($outParent)
+        }
     }
     elseif ($outPath.Trim() -eq '-') {
         $stdoutOnly = $true

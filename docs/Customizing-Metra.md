@@ -35,8 +35,8 @@ Two stores only - not a Universal Memory Engine.
 
 | Artifact | Question | Store | Authority |
 |----------|----------|-------|-----------|
-| Session Journal | What happened? | `docs/ops-ask-log.local.json` | Ask-class append on every Ask |
-| Capture Inbox | What should change? | `docs/ops-capture.local.json` | Operator Save for portfolio (never silent harvest) |
+| Session Journal | What happened? | `%LOCALAPPDATA%\Metra\ops\ask-log.json` | Ask-class append on every Ask |
+| Capture Inbox | What should change? | `%LOCALAPPDATA%\Metra\ops\capture.json` | Operator Save for portfolio (never silent harvest) |
 
 Journal is canonical evidence (prompt + chrome-stripped answer + route + origin/client + `turnIndex`). Capture is thin framing + immutable `derivedFrom` pointers - resolve full text via journal APIs. Capture is never auto-loaded into routing or Ask prompts. **Keep in view** (Attention Hold) is temporary continuity; **Save for portfolio** creates a Capture candidate. Ask continuity soft gaps (shipped): extractive **session summarization** when a journal session grows (older turns compressed, recent kept verbatim, labeled in the Ask engine prompt); **episodic recall** via `.\metra.ps1 ask recall`, Ops Recent **Recall into Ask**, and **Resume** (reload turns + sticky `sessionId`). Promote on affirm into Future Development / Decision Registry candidates / OCC candidates / etc. - observation cheap, governance deliberate. CLI: `.\metra.ps1 ask sessions|log|get|recall`, `.\metra.ps1 capture list|note|promote|from-ask`. HTTP contract: [ops/README.md](../ops/README.md). Ops desk layers (Awareness / Work surface / Motion - separate systems, handoffs as bridge): [Decisions.md](Decisions.md) (Ops desk three-layer model).
 
@@ -158,7 +158,7 @@ Numeric **working-together register** for humor-desk (session vs durable). Not O
 
 | Store | Path | Role |
 |-------|------|------|
-| Durable ledger | `docs/desk-familiarity.local.json` (gitignored) | Slow score 0-8 / Cold-Warming-Familiar; chat-analysis nudges |
+| Durable ledger | `%LOCALAPPDATA%\Metra\desk-familiarity.local.json` (gitignored) | Slow score 0-8 / Cold-Warming-Familiar; chat-analysis nudges |
 | Example | `docs/desk-familiarity.local.example.json` | Tracked defaults |
 | Prose prefs | OCC / `profile note` | Soft collaboration guidelines |
 
@@ -190,7 +190,7 @@ Single-file reference without a full pack: copy `metra-persona.local.example.mdc
 .\metra.ps1 ctx -Format json -Path $env:TEMP\metra-ctx.json
 ```
 
-Writes bounded `docs/context-pack.md` / `.json` by default (gitignored). Useful for agent handoff and Teaching Mode onboarding.
+Writes bounded `%LOCALAPPDATA%\Metra\desk\context-pack.md` / `.json` by default. Useful for agent handoff and Teaching Mode onboarding.
 
 ## Personal-root registryFile
 
@@ -208,7 +208,7 @@ Profile packs do **not** include a personal root's `registryFile` (for example `
 - [Integrations.md](Integrations.md) - core vs Cursor; ctx handoff
 - [Routing-Scenarios.md](Routing-Scenarios.md) - persona smoke + `.\metra.ps1 verify`
 - [Overview.md](Overview.md) - audience overview / leave-behind (prose twin of self-doc canvas)
-- [Search-Echo.md](Search-Echo.md) - multi-root Grep echo
+- [search-echo.md](playbooks/search-echo.md) - multi-root Grep echo
 - [SECURITY.md](../SECURITY.md) - what not to commit
 - [Context-Routing.md](Context-Routing.md) - registry and audit cadence
 - [README.md](../README.md) - public quick start, naming, versioning

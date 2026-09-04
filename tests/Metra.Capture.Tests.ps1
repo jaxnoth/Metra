@@ -33,7 +33,8 @@ Describe 'Capture ledger read/write' {
                         [PSCustomObject]@{ id = 'new'; at = '2026-08-11T12:00:00.0000000Z'; status = 'candidate'; summary = 'new' }
                     )
                 }
-                $path = Join-Path $docs 'ops-capture.local.json'
+                [void][System.IO.Directory]::CreateDirectory((Join-Path $root 'ops'))
+                $path = Join-Path $root 'ops\capture.json'
                 [System.IO.File]::WriteAllText($path, (($payload | ConvertTo-Json -Depth 6) + "`r`n"))
                 $items = @(Get-MetraCaptureLedger -MetraRoot $root -Limit 10 -Status all)
                 $items[0].id | Should -Be 'new'
@@ -70,7 +71,7 @@ Describe 'Capture ledger read/write' {
             $docs = Join-Path $root 'docs'
             New-Item -ItemType Directory -Path $docs -Force | Out-Null
             try {
-                Set-Content -LiteralPath (Join-Path $docs 'ops-capture.local.json') -Value '{ not json' -NoNewline
+                [void][System.IO.Directory]::CreateDirectory((Join-Path $root 'ops')); Set-Content -LiteralPath (Join-Path $root 'ops\capture.json') -Value '{ not json' -NoNewline
                 @(Get-MetraCaptureLedger -MetraRoot $root) | Should -HaveCount 0
             }
             finally {

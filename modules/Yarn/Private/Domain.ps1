@@ -215,7 +215,27 @@ function Invoke-YarnPlanBoardCommand {
             $apply = ($rest.Count -gt 0 -and $rest[0].ToLowerInvariant() -eq 'apply')
             if ($apply) {
                 $confirm = $rest -contains '-Confirm'
-                return Invoke-MetraYarnPlanBoardInventoryApply -Root $Root -MetraRoot $MetraRoot -Confirm:$confirm
+                $affirmNoise = $rest -contains '-AffirmNoise'
+                $affirm = $null
+                $affirmCluster = $null
+                $as = $null
+                for ($i = 0; $i -lt $rest.Count; $i++) {
+                    $tok = [string]$rest[$i]
+                    if ($tok -eq '-Affirm' -and ($i + 1) -lt $rest.Count) {
+                        $parts = [System.Collections.Generic.List[string]]::new()
+                        $i++
+                        while ($i -lt $rest.Count -and -not ([string]$rest[$i]).StartsWith('-')) {
+                            $parts.Add([string]$rest[$i])
+                            $i++
+                        }
+                        $i--
+                        $affirm = ($parts -join ',')
+                    }
+                    elseif ($tok -eq '-AffirmCluster' -and ($i + 1) -lt $rest.Count) { $affirmCluster = [string]$rest[$i + 1]; $i++ }
+                    elseif ($tok -eq '-As' -and ($i + 1) -lt $rest.Count) { $as = [string]$rest[$i + 1]; $i++ }
+                }
+                return Invoke-MetraYarnPlanBoardInventoryApply -Root $Root -MetraRoot $MetraRoot -Confirm:$confirm `
+                    -AffirmNoise:$affirmNoise -Affirm $affirm -AffirmCluster $affirmCluster -As $as
             }
             return Invoke-MetraYarnPlanBoardInventory -Root $Root -MetraRoot $MetraRoot
         }
