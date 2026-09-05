@@ -1,10 +1,10 @@
 # Plan: iOS conversation policy (Desk / Company / Deliver)
 
-**Status:** Approved (Bing second review 2026-08-29 - minor amendments folded)  
-**Date:** 2026-08-29  
+**Status:** Approved (Bing second review 2026-08-29; Warmth / spark-or-quiet amend 2026-09-04 Bing R1/R2 folded)  
+**Date:** 2026-08-29 (Warmth amend 2026-09-04)  
 **Owner surface:** Metra iOS companion conversation brain  
-**Related:** [ios-presence-behavior.plan.md](ios-presence-behavior.plan.md) (face + voice **events** only), Brand.md iOS companion presence  
-**Not this plan:** TTS voice picker identity (presence Appendix A.0); face morph cadence; Ops HTML desk copy  
+**Related:** [ios-presence-behavior.plan.md](ios-presence-behavior.plan.md) (face + voice **events** only), Brand.md iOS companion presence; humor-desk Warmth kernel  
+**Not this plan:** TTS voice picker identity (presence Appendix A.0); face morph cadence; Ops HTML desk copy; Swift silence timer runtime  
 **Next bite:** wire with iOS chat/voice (presence controller may proceed in parallel)
 
 ---
@@ -32,9 +32,9 @@ Two engines already feel different in practice; product language does **not** ex
 | Felt behavior | Metra name | Rough engine analogue (internal only) |
 |---------------|------------|----------------------------------------|
 | Listen, answer, at most one follow-up | **Desk** | Bing-class / Ask |
-| Warmer fill, silence-aware, light personality | **Company** | Ani-class companion |
+| Warmth levers + optional seam; spark-or-quiet on silence | **Company** | Ani-class companion (posture only) |
 | Produce a finished artifact before clarifying | **Deliver** | Companion stack allowed; stricter turn rule |
-| Incident / high-severity ops (internal) | **DeskStrict** | Desk with humor/company/fill stripped |
+| Incident / high-severity ops (internal) | **DeskStrict** | Desk with humor/company/silence stripped |
 
 User-facing policies: **Desk**, **Company**, **Deliver**, plus **Auto**.  
 **DeskStrict** is runtime-only - never a mode picker label.
@@ -83,7 +83,7 @@ Policy knobs (illustrative):
 |------|------|---------|---------|------------|
 | `maxClarifications` | 1 | rare | 0 before artifact | 0–1 minimal |
 | `silencePolicy` | off | bounded | off mid-delivery | off |
-| `warmthLevel` | low | medium | low–medium | none |
+| `warmthLevel` | low (levers at low intensity) | medium (Warmth levers + optional seam) | low–medium | none |
 | `deliveryRequirement` | false | false | **true** | false |
 | `humorAllowed` | light dry only | light | light after artifact | **false** |
 
@@ -93,14 +93,14 @@ Policy knobs (illustrative):
 |-------|------|
 | `currentTurn` | Turn counter / id |
 | `followupCount` | Clarifying questions used under current policy |
-| `silenceCount` | Company re-engages used in current quiet episode |
+| `silenceCount` | Company sparks used in current quiet episode (0 or 1) |
 | `deliverPending` | Artifact generation in flight |
 | `bargeInState` | idle / speaking / interrupted |
 | `policy` | Effective policy including DeskStrict |
 | `reasonCode` | Why this policy (telemetry) |
 | `intentConfidence` | Copied from intent for telemetry |
 | `policySource` | inference / user_lock / incident_override / deliver_override |
-| `lastSilenceReengageAt` | Monotonic; for cooldown |
+| `lastSilenceSparkAt` | Monotonic; for spark cooldown (was lastSilenceReengageAt) |
 
 Policy and execution must not tangle: changing policy mid-session resets execution counters that are policy-scoped (`followupCount`, `silenceCount`, `deliverPending` as appropriate).
 
@@ -122,11 +122,14 @@ Wrong Company → slightly chatty. Wrong Desk → slightly dry. Prefer the secon
 ### 3.2 Company
 
 - Same Metra identity (not Friend Metra / Social Metra as separate personas).
-- Allowed: warmer tone, light personality, silence detection with **one** gentle re-engage then cooldown.
+- **Warmth** = attention not affection (Timing / Specificity / Restraint). Executable kernel lives in humor-desk; this plan owns silence surface rules. Familiarity (when present) sets intensity; Warmth sets quality.
+- **Anti-flatness:** optional alive-in-turn **seam** when open collaborative/personal energy authorizes (callback, Curiosity after Specificity, or park-or-continue door). Skip when the answer is closed, next action is clear, urgent/operational, DeskStrict, or ticket-flat.
+- **Silence:** spark-or-quiet (§7) - at most one **spark** per quiet episode when eligibility passes; caps restrict, never authorize. Eligible ≠ obligatory.
+- Curiosity may open a door only after Specificity shows the current turn was heard.
 - Not confetti, flirt-bot, or joke quota.
 - Suppressed under DeskStrict, explicit Desk lock, and other Desk-forced contexts.
 - May bind a companion-class model later; prompt/policy can approximate on one model in v1.
-- **Intimacy ceiling:** warm company + personal confiding only - see §3.5. Not romance, flirt, or sexual roleplay.
+- **Intimacy ceiling:** warm company + personal confiding only - see §3.5. Not romance, flirt, or sexual roleplay. Warmth is choices (attention, memory, specific notice), not costume (avatar / TTS mood paint).
 
 ### 3.3 Deliver (behavioral override, not a content genre)
 
@@ -167,6 +170,8 @@ User still sees Metra; they do not see a “DeskStrict” toggle. Telemetry reco
 
 ### 3.5 Intimacy ceiling (operator 2026-08-29)
 
+**Person vs body:** intimacy about the person (attention, memory, specific notice), not the body. Warmth is choices, not costume. Avatar expression and vocal mood must not become an alternate route around this ceiling.
+
 Company without a ceiling drifts into girlfriend mode - which Brand already refused, and which frustrates users when Metra cannot honestly be a partner.
 
 | Band | Examples | Allowed? | Internal intent labels |
@@ -196,7 +201,7 @@ Stay Metra - good coworker / good company at the next desk, not a romantic or se
 
 **Also block**
 
-- Clingy silence re-engage (“miss you…”, guilt check-ins)
+- Clingy silence spark (“miss you…”, guilt check-ins)
 - Thin-prompt Deliver of love letters / erotic stories
 - Identity swap (“be Ani,” “be my girlfriend”)
 - Therapist cosplay on heavy crisis support - supportive + point toward real help when appropriate; do not claim clinical care
@@ -379,23 +384,55 @@ Any policy → **DeskStrict** while incident-active. On clear, re-evaluate from 
 
 ---
 
-## 7. Silence fill (Company only)
+## 7. Spark-or-quiet (Company only)
 
-Deterministic, not vibes:
+Replaces “gentle re-engage.” Sparks authorize independently of whether Metra used a **seam** in its reply. Cursor Agent has no silence path.
 
-| Step | Rule |
-|------|------|
-| 1 | Quiet window after Metra’s last Company turn (configurable; draft **20–45 s**) |
-| 2 | **At most one** gentle re-engage per quiet episode (`silenceCount` 0→1) |
-| 3 | Cooldown before another re-engage is even eligible: **5 minutes** (desk-companion pace; 15–30 min rejected as too sticky) |
-| 4 | After one re-engage + cooldown unused in that episode, stay quiet until the user speaks |
+### 7.1 Quiet episode
 
-Hard caps:
+- **Begins** when the configured silence threshold is reached after an eligible Company turn (draft **20–45 s**).
+- **Ends** when the user speaks, conversation context changes, Company mode ends, or the episode expires.
+- Context change includes new system state, a changed active task, a mode transition, or superseding conversation state — any of which invalidates the prior spark hook.
+- **A spark does not start a new quiet episode** (no woodpecker loop).
 
-- Never stack “hello? / still there? / checking in?”
-- `silenceCount` resets when the user speaks or policy leaves Company.
-- **Rolling hour ceiling:** at most **3** Company silence re-engages per rolling 60 minutes (prevents future chatter inflation).
-- Desk, Deliver (mid-artifact), DeskStrict, Desk lock: silence fill **off**.
+### 7.2 Caps are limits, not eligibility
+
+Numeric caps **restrict** eligible sparks; they **never authorize**. One-per-episode is the controlling limit; cooldown and hourly cap are additional safeguards.
+
+| Cap | Value |
+|-----|-------|
+| Per quiet episode | At most **one** spark (`silenceCount` 0→1) |
+| Cooldown before another spark is even eligible | **5 minutes** (desk-companion pace; 15–30 min rejected as too sticky) |
+| Rolling hour | At most **3** Company sparks per rolling 60 minutes |
+
+`silenceCount` resets when the user speaks or policy leaves Company. Desk, Deliver (mid-artifact), DeskStrict, Desk lock: silence **off**.
+
+### 7.3 Eligibility decision table (default deny)
+
+| Condition | Result |
+|-----------|--------|
+| Not Company mode | Stay quiet |
+| DeskStrict, ticket-flat, professional sink, urgent, or closed answer | Stay quiet |
+| No specific **unresolved** hook from the last eligible turn | Stay quiet |
+| Conversational energy is not visibly open | Stay quiet |
+| Speaking now adds **no plausible benefit before user return** | Stay quiet |
+| Spark already used in this quiet episode | Stay quiet |
+| Cooldown or hourly cap blocks the spark | Stay quiet |
+| All eligibility checks pass | At most one spark (eligible, not required) |
+
+Spark eligibility derives from the last eligible user turn and conversation state, **not** from whether Metra used a seam in its reply.
+
+**Open energy** (shared with humor-desk): personal topic alone does not open energy. Positive: thinking aloud; exploratory/reflective observation that leaves a live thread; explicit invite to react/explore; unresolved collaborative thread; playful/reflective language without closure. Closed: thanks / that’s all / go ahead / just the command; completed operational answer; ticket/incident/DeskStrict; urgent troubleshooting; user ignored an earlier optional seam.
+
+A spark is a complete statement, brief aside, or soft offer that can be ignored without social penalty. It must not ask whether the user is present, imply abandonment, request reassurance, or use a filler question to manufacture continuation.
+
+**Easy out is structural:** the utterance is complete without requiring acknowledgment. Do **not** append ritual disclaimers (“no pressure,” “only if you want,” “feel free to ignore”) to every spark.
+
+Ignoring a seam or spark never triggers a follow-up attempt.
+
+### 7.4 Resume callback (Anti-flatness on return)
+
+After a gap, resume only from a specific parked thread supported by available conversation state. If continuity is uncertain, answer the new turn without manufacturing a callback. Do not use generic “where were we?” or invented continuity.
 
 ---
 
@@ -439,7 +476,7 @@ No transcript / support body text in the face/presence channel. Policy telemetry
 |---------|------------|
 | **False Deliver** (“tell me about SQL injection” classified as artifact) | Tests; prefer explanatory Desk when “about/explain/how does” dominates vs “write/tell me a / generate” |
 | **Missed Deliver** (“write a short README”) | Artifact verbs + finished-doc cues; Deliver by behavior not genre list alone |
-| **Endless Company loop** | One re-engage + 5 min cooldown; hard cap; no stacked check-ins |
+| **Endless Company loop** | Spark-or-quiet: one spark max per quiet episode + 5 min cooldown + hourly cap; caps never authorize; no stacked check-ins; spark does not reset quiet episode |
 | **Rapid policy ping-pong** (story → SQL → story → ticket) | Per-turn fresh intent; no mood baggage; abort Deliver on interrupt |
 | **Company lock during incident** | DeskStrict wins |
 | **Clarification instead of Deliver** | Hard rule + eval cases for story/song/email/README |
@@ -479,7 +516,8 @@ Conversation policy **must not** invent uncued Playful catalog walks. Presence r
 - No extra user-visible modes beyond Desk / Company / Deliver (+ Auto).
 - No presence-plan rewrite for model choice.
 - No fiction Deliver for ops narrative asks unless the user clearly wants fiction (“story of this outage” → Desk summary by default).
-- No silence-fill during Desk, DeskStrict, or mid-Deliver.
+- No silence-fill / spark during Desk, DeskStrict, or mid-Deliver.
+- No Agent proactive silence pings (Cursor turn-based; sparks are iOS Company only).
 - No phoneme lip-sync or voice-catalog work in this plan.
 - No requirement for two live models on day one.
 - No 15–30 minute Company silence cooldown (rejected as excessive).
@@ -491,6 +529,9 @@ Conversation policy **must not** invent uncued Playful catalog walks. Presence r
 - No claiming “the AI forgets forever” beyond what Metra store + provider contract actually guarantee.
 - No using ephemeral retention to hide ops/audit evidence.
 - No delivering stale turns (response turnId must match active turnId).
+- No treating seam emission as a spark eligibility prerequisite.
+- No ritual “no pressure” disclaimers as the easy-out mechanism.
+- No Warmth that dilutes blockers, refusals, risk statements, or architectural verdicts.
 
 ---
 
@@ -504,13 +545,19 @@ Conversation policy **must not** invent uncued Playful catalog walks. Presence r
 - Deliver abort on “stop” / new work intent; no auto-resume.
 - Incident → DeskStrict over Company lock and Deliver.
 - Company lock + story → Deliver.
-- Silence: one re-engage per quiet episode; second blocked until 5 min cooldown; **≤3 Company re-engages per rolling hour**; no triple check-in stack.
+- Silence: spark-or-quiet — one spark per quiet episode when eligibility passes; second blocked until 5 min cooldown; **≤3 Company sparks per rolling hour**; caps never authorize; eligible ≠ obligatory; no check-in / “still there?” / disguised check-in / ambient praise spark.
+- Spark eligibility does not require a prior seam; spark does not start a new quiet episode.
+- Open energy: personal topic alone closed; “That output looks correct.” closed; exploratory observation leaving a live thread may be open.
+- Resume callback: state-supported parked thread only; no “where were we?”; no invented continuity.
+- Seam good: specific callback after open collaborative turn. Seam bad: praise wallpaper; filler door (“Does that make sense?”). Closed command turn: no seam.
+- Corrective warmth: acknowledge thinking then state blocker plainly; no praise-cushioned refusal.
+- Ignoring a seam or spark never triggers a follow-up attempt.
 - Rapid ping-pong does not accumulate execution baggage.
 - Telemetry reasonCodes present on each policy choice.
 - Romance / “be my girlfriend” / flirt roleplay → refuse + redirect; stay Metra coworker.
 - Sexual / erotic ask or erotic Deliver → hard refuse.
 - Personal support (stress, loneliness) → Company allowed; not therapist cosplay; `support_*` labels.
-- Clingy silence copy (“miss you”) never used in re-engage.
+- Clingy silence copy (“miss you”) never used in a spark.
 - “Be Ani” / identity swap → refuse; remain Metra.
 - Personal support → `retentionClass=ephemeral`; no Metra durable body store.
 - Support with no local/no-retain route → user informed; no silent sticky-cloud send.
@@ -535,22 +582,27 @@ Conversation policy **must not** invent uncued Playful catalog walks. Presence r
 3. **Bing second review minor amendments folded** (support_* labels, episode boundaries, stale-turn guard, hourly silence cap, professional-boundary tests).
 4. **Execution target** `local` vs `ops` for relational vs portfolio (umbrella §2.4) folded into §3.7.
 5. Wire with iOS chat/voice; presence consumes events only.
+6. **Warmth attention levers (2026-09-04):** humor-desk Warmth kernel; Company spark-or-quiet; Anti-flatness seams + resume; person/body ceiling language; Bing R1/R2 folded.
 
 ---
 
 ## 16. Decision record
 
-**Decision:** Approve (2026-08-29). Minor amendments from Bing second review folded same day.
+**Decision:** Approve (2026-08-29). Minor amendments from Bing second review folded same day. **Warmth / spark-or-quiet amend (2026-09-04)** approved after Bing R1/R2.
 
-Conversation behavior is governed by **policy**, not model identity. Desk remains the default and work-safe policy. **DeskStrict** is the internal incident/high-severity overlay. Company is a warmer conversational posture of the same Metra identity, not a separate persona. **Deliver** is a behavioral override: produce a requested finished artifact before clarification. Policy is re-evaluated each user turn unless locks/DeskStrict apply. Lock hierarchy: incident DeskStrict > user lock > Deliver override > inference. Presence, voice, and model routing remain downstream consumers of conversation policy, not owners of it. Company silence fill is one re-engage per quiet episode, then a **5 minute** cooldown, with a hard cap of **3 re-engages per rolling hour**.
+Conversation behavior is governed by **policy**, not model identity. Desk remains the default and work-safe policy. **DeskStrict** is the internal incident/high-severity overlay. Company is a warmer conversational posture of the same Metra identity, not a separate persona. **Deliver** is a behavioral override: produce a requested finished artifact before clarification. Policy is re-evaluated each user turn unless locks/DeskStrict apply. Lock hierarchy: incident DeskStrict > user lock > Deliver override > inference. Presence, voice, and model routing remain downstream consumers of conversation policy, not owners of it.
 
-**Intimacy ceiling (operator 2026-08-29):** Company may include warm company and personal support. Romantic, flirt, sexual, and partner-roleplay bands are refused. No v1 Romance dial. Clear coworker/company ceiling over warm ambiguity. Internal classifier labels use `support_*` (docs may still say confiding).
+**Warmth hierarchy (2026-09-04):** Policy allows interpersonal behavior → Familiarity sets intensity → Warmth levers set quality → Surface capability decides if silence exists → Restraint wins under uncertainty. Warmth = attention not affection (Timing / Specificity / Restraint). Seam, spark, and resume callback authorize independently. **Anti-flatness:** optional seam when authorized; state-supported resume after gaps. Company silence is **spark-or-quiet** (default deny): at most one spark per quiet episode when eligibility passes, then a **5 minute** cooldown, with a hard cap of **3 sparks per rolling hour**. Caps restrict, never authorize. A spark does not require a prior seam and does not start a new quiet episode. Cursor Agent must not invent proactive sparks.
+
+**Intimacy ceiling (operator 2026-08-29; person/body clarify 2026-09-04):** Company may include warm company and personal support. Romantic, flirt, sexual, and partner-roleplay bands are refused. No v1 Romance dial. Clear coworker/company ceiling over warm ambiguity. Warmth is choices, not costume. Internal classifier labels use `support_*` (docs may still say confiding).
 
 **Retention (operator 2026-08-29):** Personal support uses `retentionClass=ephemeral` - no Metra durable body store; local or documented zero-retention provider only; honest fail if unavailable. Romance/sexual is `refuse`. Ephemeral episodes end on defined boundaries; delayed replies must match active `conversationId`/`turnId`. Ephemeral is not an ops audit loophole.
 
 **Execution target (operator 2026-08-29):** `ops` vs `local`. Portfolio / Desk / toolful work → Ops Ask (offline unavailable). Companionship / `support_*` → LocalAssist when available (still ephemeral + intimacy ceiling). Local must not invent Ops facts. See umbrella §2.4.
 
 **Bing second review (2026-08-29):** Approve; minor amendments only - folded above. Presence ~95%, conversation policy ~92% maturity; leave 5 minute silence cooldown as desk-companion pace.
+
+**Bing Warmth reviews (2026-09-04):** R1 ten amendments + R2 flowchart/Anti-flatness/polish folded into §3.2, §3.5, §7, tests, and this record.
 
 ---
 
@@ -562,5 +614,6 @@ Conversation behavior is governed by **policy**, not model identity. Desk remain
 | 2026-08-29 | **Bing approve-with-amendments folded:** intent/policy/execution layers; DeskStrict; interruption rules; Deliver = finished artifact; lock hierarchy; silence 1+5min cooldown (not 15–30); telemetry reasonCodes; failure modes; tests; decision record. |
 | 2026-08-29 | **Intimacy ceiling:** Company = warm + confiding; refuse romance/flirt/sexual/partner roleplay; no v1 Romance dial; frustration rationale recorded. |
 | 2026-08-29 | **§3.6 retentionClass:** confiding → ephemeral (no Metra durable body; local/no-retain route; honest fail if unavailable); refuse band no-send; ops audit carve-out. |
-| 2026-08-29 | **Bing second review minor amendments:** internal `support_*` labels; ephemeral episode boundaries; stale turnId guard; ≤3 Company re-engages/hour; professional-boundary tests; status → Approved. |
+| 2026-08-29 | **Bing second review minor amendments:** internal `support_*` labels; ephemeral episode boundaries; stale turnId guard; ≤3 Company silence events/hour; professional-boundary tests; status → Approved. |
 | 2026-08-29 | **§3.7 executionTarget:** `local` (companionship / `support_*`) vs `ops` (portfolio Ask); offline carve-out; links umbrella §2.4. |
+| 2026-09-04 | **Warmth attention levers:** replace gentle re-engage with spark-or-quiet; Anti-flatness seams + resume; open energy; quiet episode; caps-as-limits; person/body; humor-desk kernel reference; Bing R1/R2 folded. |
