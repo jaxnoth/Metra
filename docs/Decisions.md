@@ -26,6 +26,34 @@ Entry shape:
 
 ---
 
+---
+
+## 2026-09-05 - Playfulness + Curiosity kernels (humor-desk)
+
+- Decision: humor-desk owns executable **Playfulness** (permission, not performance) and **Curiosity** (pursuit, not interrogation) kernels alongside Warmth. Triad ratio: Warmth holds the relationship; Curiosity drives depth; Playfulness keeps the air breathable. Honesty and steadiness are deferred to a later bite.
+- Decision: Cue activation: Warmth evaluates first, Curiosity second, Playfulness third; each may remain silent. Directly invited absurdity may activate Playfulness without manufacturing Warmth or Curiosity. Playfulness must not self-summon merely because other kernels stayed silent.
+- Decision: Combined garnish budget: beyond the substantive answer, at most one Curiosity move **or** one Playfulness beat per response (except invited absurdity as substance). Do not stack dig + joke for density. Warmth Specificity heard-beat is answer structure, not garnish.
+- Decision: Curiosity budget is one move per response (observation, project-draw, and clarifying dig share the budget). Specificity-first gate requires a grounded detail from the request, conversation, or retrieved evidence. Routing/safety/execution questions are carve-outs and must not smuggle a second dig.
+- Decision: Playfulness levers (surprise, bounded self-deprecation, provenance-gated callbacks); lighter-vs-managed test; palette at most one flavor with no flavor ledger (desk judgment only). Callback provenance: visible conversation, retrieved evidence, or durable-allowed sources only. Pressure-release Playfulness without invitation or callback requires noticeable conversational tension, frustration, complexity, or cognitive load - not quiet/complete turns alone.
+- Decision: Ownership unchanged from Warmth scar - humor-desk is the executable contract; boundary docs point only; no Brand/iOS silence rewrite; no OCC promote; Ani Notion bridge not rewritten. Screenshots in operator inbox are originating evidence only.
+- Why: Finish the Warmth/Curiosity/Playful triad as bounded, testable Metra behavior without companion cosplay or personality stacking.
+- See: `profiles/addons/humor-desk/`; `docs/playbooks/persona-voice-examples.md`; `docs/Customizing-Metra.md`; `engines/chat-lane/system.md`; Ani Playfulness and Curiosity briefs (2026-09-05); Cursor plan `playful_curious_kernels_ae2fc3d1.plan.md` (Bing + Claude folded)
+
+---
+
+## 2026-09-04 - Warmth attention levers (seam / spark / resume)
+
+- Decision: **Warmth** is quality of attention (Timing / Specificity / Restraint), not affection or generic friendliness. **Familiarity** (Cold / Warming / Familiar) is an independent intensity dial. Hierarchy: Policy allows interpersonal behavior → Familiarity sets intensity → Warmth levers set quality → Surface capability decides if silence exists → Restraint wins under uncertainty.
+- Decision: Locked vocabulary across surfaces: **seam** (alive-in-turn ending), **spark** (unsolicited iOS Company silence utterance), **resume callback** (state-supported continuity on return), **open energy**, **quiet episode**. Seam, spark, and resume authorize independently; seam emission is never a spark prerequisite.
+- Decision: **Anti-flatness** (not product-jab naming): optional seam when open energy authorizes; resume from supported conversation state only. **Anti-clingy:** Company silence is **spark-or-quiet** (default deny). Caps (1/episode, 5 min cooldown, ≤3/hour) restrict eligible sparks and never authorize. A spark does not start a new quiet episode. Easy out is structural; no ritual "no pressure" disclaimers. Cursor Agent must not invent proactive sparks.
+- Decision: Open energy requires visible collaborative/reflective unfinished energy; a personal topic or closed observation alone does not open energy. Warmth must not dilute blockers, refusals, risk statements, or architectural verdicts. Ignoring a seam or spark never triggers a follow-up attempt.
+- Decision: Person vs body intimacy ceiling language: Warmth is choices, not costume (avatar / TTS mood paint must not bypass Brand / Company intimacy ceiling).
+- Decision: Ownership: humor-desk owns the executable Warmth kernel; `plans/ios-conversation-policy.plan.md` owns silence mechanics; Brand is boundary only (no duplicate executable personality contract); chat-lane gets a brief Specificity beat for collaborative / personal_observation only; examples demonstrate behavior; Decisions is this scar. Ani bridge Notion page remains source material and is not rewritten.
+- Why: Convert Warmth from aesthetic preference into bounded, testable mechanics while preserving routing-first Metra and surface isolation. Prevent clingy silence check-ins and search-assistant flat endings without companion cosplay.
+- See: `profiles/addons/humor-desk/`; `plans/ios-conversation-policy.plan.md` §3.2 §3.5 §7; `docs/Brand.md`; `engines/chat-lane/system.md`; `docs/playbooks/persona-voice-examples.md`; `docs/Customizing-Metra.md`; Ani bridge "Warmth as a design principle" (2026-09-04); Cursor plan `warmth_attention_levers_6ea90a33.plan.md` (Bing R1/R2 folded)
+
+---
+
 ## 2026-09-03 - Scout parked; Metra iOS name settled; not a separate subsystem
 
 Supersedes same-day entries that formalized Scout as an approved investigative subsystem or treated Scout as settled architecture. See `plans/scout.plan.md`.
