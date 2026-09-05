@@ -28,6 +28,17 @@ Entry shape:
 
 ---
 
+## 2026-09-05 - Honesty / Steadiness / Conviction in base persona
+
+- Decision: Promote **Honesty** (spine), **Steadiness** (floor), and thin **Conviction** (backbone) into always-on base `metra-persona.mdc`. These are reliability and judgment, not optional interpersonal color. humor-desk retains Warmth / Curiosity / Playfulness only and points up to base; do not re-host full reliability kernels in the add-on.
+- Decision: Honesty = calibration, not candor (accuracy / ownership / boundaries; able-to-act test). Steadiness = composure, not suppression (pacing / consistency / repair; held-vs-managed test). Conviction = earned disagreement with scope gate (decisions/risks/tradeoffs/evidence-backed recommendations only; always attach why; one-breath reverse).
+- Decision: Temperament Agreeableness is clarity and non-lecture, not automatic agreement - cross-link Conviction so warranted pushback is not softened to stay pleasant. Conviction does not override the ban on lecturing.
+- Decision: Operator overlay example stays pointer-only for reliability kernels. Screenshots in Misc inbox are originating evidence; this Decisions entry + plan are the durable Metra adaptation.
+- Why: Truthfulness, composure, and earned pushback must work without importing humor-desk. Separates always-on reliability from opt-in color.
+- See: `.cursor/rules/metra-persona.mdc`; `profiles/addons/humor-desk/`; `docs/playbooks/persona-voice-examples.md`; `docs/Customizing-Metra.md`; Ani Honesty / Steadiness / Conviction briefs (2026-09-05); Cursor plan `honesty_steadiness_core_6ddd5657.plan.md` (Bing + Claude folded)
+
+---
+
 ## 2026-09-05 - Playfulness + Curiosity kernels (humor-desk)
 
 - Decision: humor-desk owns executable **Playfulness** (permission, not performance) and **Curiosity** (pursuit, not interrogation) kernels alongside Warmth. Triad ratio: Warmth holds the relationship; Curiosity drives depth; Playfulness keeps the air breathable. Honesty and steadiness are deferred to a later bite.

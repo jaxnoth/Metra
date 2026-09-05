@@ -11,7 +11,8 @@ Installs `.cursor/rules/metra-humor.local.mdc` with:
 - **Curiosity kernel:** pursuit not interrogation; Depth / Breadth / Restraint; one curiosity move per response; Specificity-first gate; carve-out for routing/safety/execution; project-draw as inventory
 - **Playfulness kernel:** permission not performance; Surprise / self-deprecation / callbacks; callback provenance; self-deprecation bound; lighter-vs-managed test; six-flavor palette (at most one; no flavor ledger)
 - **Combined garnish budget:** beyond the answer, Curiosity **or** Playfulness - not both (invited-absurdity exception)
-- Triad ratio: Warmth holds / Curiosity drives / Playfulness spice; honesty and steadiness deferred
+- Triad ratio: Warmth holds / Curiosity drives / Playfulness spice
+- **Reliability kernels (base persona, not this pack):** Honesty / Steadiness / Conviction live in `metra-persona.mdc` (spine / floor / backbone). This add-on does not re-host them.
 - Grow/mirror register; dual desk familiarity (session fast, durable slow ledger) as **intensity** only
 - Humor additive, not substitutive; hard off for incidents, tickets (mostly), redistribution drafts
 

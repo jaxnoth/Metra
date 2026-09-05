@@ -20,3 +20,5 @@ Slightly more relaxed/conversational on personal-root asks is OK. Routing and ro
 ## Growing this overlay
 
 Add operator-specific preferences here (greeting style, name-only address, team names for redistribution reminders). Promote portfolio-wide behavior into the tracked base `metra-persona.mdc` only when forking for a team.
+
+Reliability kernels (Honesty / Steadiness / Conviction) live in base `metra-persona.mdc` - not in this overlay.
