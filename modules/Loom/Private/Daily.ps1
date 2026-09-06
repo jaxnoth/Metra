@@ -1,4 +1,4 @@
-# Slice 5 — daily gate (intake, pack-diff, approve, per-project acceptance gate).
+# Slice 5 - daily gate (intake, pack-diff, approve, per-project acceptance gate).
 
 $script:LoomDailyApproveActive = $false
 

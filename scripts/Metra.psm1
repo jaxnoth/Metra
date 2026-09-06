@@ -106,6 +106,7 @@ $script:MetraCompatibilityFunctions = @(
     'Start-MetraOpsDeskIfDown',
     'Test-MetraOpsDeskAlive',
     'Resolve-MetraOpsDeskBinding',
+    'Resolve-MetraOpsChildShellExe',
     'Initialize-MetraOpsDeskBinding',
     'Get-MetraOpsDeskUrl',
     'Test-MetraTcpPortFree',

@@ -1,4 +1,4 @@
-# Slice 3 — branch runner (clean tree, isolated run dir, implementer, path enforcement; no commit).
+# Slice 3 - branch runner (clean tree, isolated run dir, implementer, path enforcement; no commit).
 
 function Get-LoomActiveTransitionMap {
     [CmdletBinding()]
@@ -549,7 +549,7 @@ function Invoke-MetraLoomRun {
         $impl = [PSCustomObject]@{
             schemaVersion = 1
             status        = 'dry-run'
-            message       = 'Dry run — no git branch or implementer invocation.'
+            message       = 'Dry run - no git branch or implementer invocation.'
             exitCode      = 0
         }
         Save-LoomImplementationResult -RunDir $runDir -Result $impl | Out-Null

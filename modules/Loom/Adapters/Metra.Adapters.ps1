@@ -1,4 +1,4 @@
-# Metra host adapters for Loom. Domain code calls these only — never scripts/private/*.ps1.
+# Metra host adapters for Loom. Domain code calls these only - never scripts/private/*.ps1.
 
 $script:LoomHostRootOverride = $null
 $script:LoomAtlasPutOverride = $null
@@ -195,7 +195,7 @@ function ConvertTo-LoomInspectOutcomeFromEngine {
 function Invoke-LoomInspectAdapter {
     <#
     .SYNOPSIS
-        Slice 4 inspect adapter — evidence only; returns discriminated outcome.
+        Slice 4 inspect adapter - evidence only; returns discriminated outcome.
     #>
     [CmdletBinding()]
     param(
@@ -277,7 +277,7 @@ function Invoke-LoomInspectAdapter {
 function Invoke-LoomImplementerAdapter {
     <#
     .SYNOPSIS
-        Slice 3 implementer — Metra host delegate or test scriptblock. No direct scripts/private imports.
+        Slice 3 implementer - Metra host delegate or test scriptblock. No direct scripts/private imports.
     #>
     [CmdletBinding()]
     param(
@@ -322,7 +322,7 @@ function Stop-LoomVerifyProcess {
 function Invoke-LoomVerifyAdapter {
     <#
     .SYNOPSIS
-        Slice 4 verify adapter — structured contract commands from project root.
+        Slice 4 verify adapter - structured contract commands from project root.
     #>
     [CmdletBinding()]
     param(
