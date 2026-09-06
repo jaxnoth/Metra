@@ -1,4 +1,4 @@
-# Slice 4 — review orchestrator (sole owner of reviewing exits).
+# Slice 4 - review orchestrator (sole owner of reviewing exits).
 
 function Get-LoomReviewDefaultLimits {
     [CmdletBinding()]
@@ -372,7 +372,7 @@ function Invoke-MetraLoomReview {
             schemaVersion = 1
             outcome       = 'dry-run'
             dryRun        = $true
-            message       = 'Review assess only — use -Confirm for live inspect, verify, commit, and transitions.'
+            message       = 'Review assess only - use -Confirm for live inspect, verify, commit, and transitions.'
             reviewRunId   = [string]$identity.reviewRunId
         }
         return $dry
@@ -431,7 +431,7 @@ function Invoke-MetraLoomReview {
                 $counters.reviewCycleCount++
                 Save-LoomReviewState -RunDir $runDir -State ([PSCustomObject]$reviewState) | Out-Null
                 Invoke-MetraLoomStateChange -Root $Root -ItemId $ItemId -From 'reviewing' -To 'implementing' -Reason 'inspect-regression-reverted' -Actor 'harness' | Out-Null
-                throw 'Inspect regression reverted — item returned to implementing.'
+                throw 'Inspect regression reverted - item returned to implementing.'
             }
             'code-findings' {
                 if ($counters.reviewCycleCount -ge $MaxReviewCycles) {
@@ -444,7 +444,7 @@ function Invoke-MetraLoomReview {
                 if ($ImplementerScript) {
                     Invoke-LoomImplementerAdapter -Request $pkg -ProjectRoot $projectRoot -RunDir $runDir -ImplementerScript $ImplementerScript | Out-Null
                 }
-                throw 'Inspect code findings — item returned to implementing.'
+                throw 'Inspect code findings - item returned to implementing.'
             }
             'transient-engine-failure' {
                 if ($counters.inspectRecoveryAttemptCount -ge $MaxInspectRecoveryAttempts) {
@@ -459,7 +459,7 @@ function Invoke-MetraLoomReview {
                     Invoke-MetraLoomStateChange -Root $Root -ItemId $ItemId -From 'reviewing' -To 'blocked' -Reason 'inspect-recovery-failed' -Actor 'harness' | Out-Null
                     throw 'Inspect engine recovery failed.'
                 }
-                throw 'Transient inspect failure — retry review after recovery.'
+                throw 'Transient inspect failure - retry review after recovery.'
             }
             default {
                 Invoke-MetraLoomStateChange -Root $Root -ItemId $ItemId -From 'reviewing' -To 'blocked' -Reason "inspect-$inspectOutcome" -Actor 'harness' | Out-Null

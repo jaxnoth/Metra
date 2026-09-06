@@ -1820,11 +1820,14 @@ function Get-MetraScoredRoutingProjects {
         }
 
         # Multi-word / distinctive triggers beat scattered word noise when the query names them.
+        # Word-boundary match only - raw Contains lets "checkin" steal "Checking in from my phone".
         foreach ($tr in $triggers) {
             $trLower = ([string]$tr).ToLowerInvariant().Trim()
             if ([string]::IsNullOrWhiteSpace($trLower)) { continue }
             if ($trLower.Length -lt 3) { continue }
-            if ($qLower.Contains($trLower)) {
+            $escaped = [regex]::Escape($trLower) -replace '\\ ', '\s+'
+            $boundary = '(?<!\w)' + $escaped + '(?!\w)'
+            if ([regex]::IsMatch($qLower, $boundary)) {
                 $score += 3
                 [void]$matchedTokens.Add("phrase:$trLower")
             }

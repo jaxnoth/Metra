@@ -612,6 +612,25 @@ function Start-MetraOpsDesk {
     }
 }
 
+function Resolve-MetraOpsChildShellExe {
+    <#
+    .SYNOPSIS
+        Shell exe for Ops child process. Prefers pwsh when available.
+    .NOTES
+        Windows PowerShell 5.1 mis-parses UTF-8 (no BOM) sources with em dashes when importing
+        Loom/Yarn, which made ask-key recycle look like a bad API key.
+    #>
+    [CmdletBinding()]
+    param()
+
+    $shellExe = 'powershell.exe'
+    $pwshCmd = Get-Command pwsh -ErrorAction SilentlyContinue
+    if ($pwshCmd -and -not [string]::IsNullOrWhiteSpace($pwshCmd.Source)) {
+        $shellExe = $pwshCmd.Source
+    }
+    return $shellExe
+}
+
 function Start-MetraOpsChildProcess {
     <#
     .SYNOPSIS
@@ -652,7 +671,8 @@ function Start-MetraOpsChildProcess {
         $argList += '-ForceLocal'
     }
 
-    $proc = Start-Process -FilePath 'powershell.exe' -ArgumentList $argList `
+    $shellExe = Resolve-MetraOpsChildShellExe
+    $proc = Start-Process -FilePath $shellExe -ArgumentList $argList `
         -WorkingDirectory $MetraRoot -PassThru -WindowStyle Hidden
 
     $deadline = [datetime]::UtcNow.AddSeconds(45)

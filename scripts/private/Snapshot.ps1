@@ -957,7 +957,7 @@ function Export-MetraCanvasSnapshot {
             gitBehind       = [int]$git.behind
             gitBranch       = [string]$git.branch
             gitSummary      = [string]$git.summary
-            gitRepoPath     = [string]$git.repoPath
+            gitRepoPath     = [string](Get-MetraProp -Object $git -Name 'repoPath' -Default '')
             gitChecked      = (-not $Quick)
         }
     }
@@ -986,12 +986,14 @@ function Export-MetraCanvasSnapshot {
             }
             if ($Quick) {
                 $git = [PSCustomObject]@{
-                    isGit   = $false
-                    dirty   = 0
-                    ahead   = 0
-                    behind  = 0
-                    branch  = ''
-                    summary = 'skipped'
+                    isGit     = $false
+                    dirty     = 0
+                    ahead     = 0
+                    behind    = 0
+                    branch    = ''
+                    summary   = 'skipped'
+                    repoPath  = ''
+                    repoCount = 0
                 }
             }
             else {
@@ -1037,7 +1039,7 @@ function Export-MetraCanvasSnapshot {
                     gitBehind       = [int]$git.behind
                     gitBranch       = [string]$git.branch
                     gitSummary      = [string]$git.summary
-                    gitRepoPath     = [string]$git.repoPath
+                    gitRepoPath     = [string](Get-MetraProp -Object $git -Name 'repoPath' -Default '')
                     gitChecked      = (-not $Quick)
                 }
             )

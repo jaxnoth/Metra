@@ -1,4 +1,4 @@
-# Lightweight JSON Schema (draft-07 subset) validation for Contracts/v1 — no external engine.
+# Lightweight JSON Schema (draft-07 subset) validation for Contracts/v1 - no external engine.
 
 function Get-LoomContractSchemaPath {
     [CmdletBinding()]

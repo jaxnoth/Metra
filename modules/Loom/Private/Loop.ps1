@@ -1,4 +1,4 @@
-# Slice 6 — unattended loop (-UntilDailyGate): one eligible dequeue, run→review, stop at daily gate.
+# Slice 6 - unattended loop (-UntilDailyGate): one eligible dequeue, run->review, stop at daily gate.
 
 function Get-LoomItemCreatedUtc {
     param([Parameter(Mandatory)]$Item)

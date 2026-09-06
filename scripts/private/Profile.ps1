@@ -986,6 +986,19 @@ function Get-MetraDeskMode {
     }
     if ($force) { return 'ForceLocal' }
 
+    # HQ jumpbox hosts Ops locally. Honor durable machineRole even when MagicDNS
+    # self-detection fails (Tailscale CLI/path blip) so the desk does not refuse
+    # as a false satellite client while opsBaseUrl still points at this machine.
+    try {
+        if (Get-Command Get-MetraDeskPreferences -ErrorAction SilentlyContinue) {
+            $prefs = Get-MetraDeskPreferences -MetraRoot $MetraRoot
+            if ([string](Get-MetraProp -Object $prefs -Name 'machineRole' -Default '') -eq 'Hq') {
+                return 'Standalone'
+            }
+        }
+    }
+    catch { }
+
     $resolved = Get-MetraProfileOpsBaseUrlOrNull -OpsBaseUrl $OpsBaseUrl -MetraRoot $MetraRoot
     if ([string]::IsNullOrWhiteSpace($resolved)) {
         return 'Standalone'

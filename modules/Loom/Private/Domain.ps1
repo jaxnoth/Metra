@@ -1,4 +1,4 @@
-# Loom harness — queue, journal, triage, runner.
+# Loom harness - queue, journal, triage, runner.
 # Queue authority: %LOCALAPPDATA%\Metra\loom\ (mutable item files + append-only journal).
 
 function Get-MetraLoomSchemaVersion {
@@ -1111,7 +1111,7 @@ function Find-MetraLoomQueueItemByYarnHandoff {
 function Invoke-MetraLoomIngestApprovedPlan {
     <#
     .SYNOPSIS
-        Yarn→Loom handoff: ingest an Approved formal plan with idempotent identity (A3).
+        Yarn->Loom handoff: ingest an Approved formal plan with idempotent identity (A3).
         Does not change lane scheduling or Capture triage semantics.
     #>
     [CmdletBinding()]
@@ -1298,10 +1298,10 @@ function Invoke-MetraLoomEnqueueFromPlan {
     if ($TodoId) {
         $todo = @($plan.todos | Where-Object { $_.id -eq $TodoId } | Select-Object -First 1)
         if (-not $todo) { throw "Todo id not found in plan: $TodoId" }
-        $summary = "$($plan.name) — $($todo.content)"
+        $summary = "$($plan.name) - $($todo.content)"
     }
     elseif ($Slice) {
-        $summary = "$($plan.name) — slice $Slice"
+        $summary = "$($plan.name) - slice $Slice"
     }
 
     $classification = @{
