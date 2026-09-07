@@ -1,0 +1,33 @@
+{
+  "name": "IWU-coworker",
+  "displayName": "IWU Coworker",
+  "owner": {
+    "name": "IWU Metra",
+    "email": ""
+  },
+  "metadata": {
+    "description": "IWU Coworker desk onboarding plus portfolio companion plugins (TicketTracker, Codex first; more later). Default Off satellites. Does not replace metra.ps1 routing.",
+    "version": "0.1.0",
+    "pluginRoot": "plugins"
+  },
+  "plugins": [
+    {
+      "name": "coworker-desk",
+      "source": "coworker-desk",
+      "description": "IWU thin onboarding: Metra install/routing pointer, Overview, companion honesty, ticket-ops vs investigate hop",
+      "logo": "coworker-desk/assets/logo.svg"
+    },
+    {
+      "name": "tickets",
+      "source": "tickets",
+      "description": "IWU TicketTracker desk skill: brief, assess, Recommend Preview, durable text shape",
+      "logo": "tickets/assets/logo.svg"
+    },
+    {
+      "name": "codex",
+      "source": "codex",
+      "description": "IWU Codex KB search/cite path with provider/mode honesty; no ticket writes",
+      "logo": "codex/assets/logo.svg"
+    }
+  ]
+}

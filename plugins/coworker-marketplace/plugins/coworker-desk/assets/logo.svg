@@ -1,0 +1,13 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 128 128" role="img" aria-labelledby="title desc">
+  <title id="title">IWU Coworker Desk</title>
+  <desc id="desc">Teal route mark: ask hub routing to the matching place</desc>
+  <rect width="128" height="128" rx="24" fill="#0f766e"/>
+  <circle cx="64" cy="78" r="14" fill="#ffffff"/>
+  <text x="64" y="83" text-anchor="middle" fill="#0f766e" font-family="Segoe UI, Arial, sans-serif" font-size="14" font-weight="700">Ask</text>
+  <rect x="18" y="28" width="36" height="22" rx="6" fill="#e6f4f1"/>
+  <rect x="46" y="28" width="36" height="22" rx="6" fill="#ffffff" opacity="0.85"/>
+  <rect x="74" y="28" width="36" height="22" rx="6" fill="#ffffff" opacity="0.55"/>
+  <path d="M52 50 L40 50" stroke="#ffffff" stroke-width="3" stroke-linecap="round"/>
+  <path d="M64 64 V50" stroke="#ffffff" stroke-width="3" stroke-linecap="round" stroke-dasharray="4 4" opacity="0.5"/>
+  <path d="M76 50 L88 50" stroke="#ffffff" stroke-width="3" stroke-linecap="round" stroke-dasharray="4 4" opacity="0.5"/>
+</svg>

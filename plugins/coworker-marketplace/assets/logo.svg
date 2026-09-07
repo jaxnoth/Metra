@@ -1,0 +1,10 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 128 128" role="img" aria-labelledby="title desc">
+  <title id="title">IWU Coworker</title>
+  <desc id="desc">Marketplace mark: Metra-style route hub for IWU coworker plugins</desc>
+  <rect width="128" height="128" rx="24" fill="#0f766e"/>
+  <path d="M24 64h80" stroke="#e6f4f1" stroke-width="4" stroke-linecap="round"/>
+  <circle cx="24" cy="64" r="8" fill="#e6f4f1"/>
+  <circle cx="64" cy="64" r="10" fill="#ffffff" stroke="#e6f4f1" stroke-width="3"/>
+  <circle cx="104" cy="64" r="8" fill="#e6f4f1"/>
+  <text x="64" y="100" text-anchor="middle" fill="#e6f4f1" font-family="Segoe UI, Arial, sans-serif" font-size="18" font-weight="700">IWU</text>
+</svg>

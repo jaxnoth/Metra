@@ -1,0 +1,15 @@
+# Ignore local/dev noise for marketplace publish
+.DS_Store
+Thumbs.db
+*.log
+*.tmp
+.env
+.env.*
+*.local.json
+*.local.md
+secrets/
+credentials/
+tokens/
+cache/
+.vscode/
+.idea/

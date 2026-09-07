@@ -1,0 +1,12 @@
+{
+  "name": "tickets",
+  "displayName": "IWU Tickets",
+  "version": "0.1.0",
+  "description": "IWU TicketTracker desk skill: brief, assess, Recommend Preview, durable text shape. Zero write authority in the skill; CLI owns gates.",
+  "logo": "assets/logo.svg",
+  "license": "UNLICENSED",
+  "keywords": ["iwu", "tickettracker", "isupport", "helpdesk", "assess"],
+  "author": {
+    "name": "IWU Metra"
+  }
+}

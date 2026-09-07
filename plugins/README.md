@@ -1,29 +1,28 @@
-# Metra Agent Plugins (standards pilot)
+# Metra Agent Plugins
 
-Portable [Agent Plugins](https://agent-plugins.org) bundles for local Cursor testing. Metra routing, persona, inspect policy, and ticket writes stay in `_meta` - these plugins add skills and MCP only.
+Portable plugins for local Cursor testing and Team Marketplace packs. Metra routing, persona, inspect policy, and ticket writes stay in `_meta` - plugins add skills (and MCP only when needed).
 
-## Layout
+## Packs
 
-| Path | Id | Status |
-|------|----|--------|
-| [api-readiness-postman/](api-readiness-postman/) | P1 | Readiness scan + doc-site to Postman setup (minimal MCP) |
+| Path | Status |
+|------|--------|
+| [coworker-marketplace/](coworker-marketplace/) | **v1 scaffold** - desk + tickets + Codex; Team Marketplace manifest |
+| [api-readiness-postman/](api-readiness-postman/) | P1 readiness scan + Postman MCP (Agent Plugins single plugin) |
 
-## Install (local)
-
-From the plugin folder:
+## Coworker marketplace (preferred for dry-runs)
 
 ```powershell
-cd C:\Projects\_meta\plugins\api-readiness-postman
-.\scripts\Install-LocalPlugin.ps1
+cd C:\Projects\_meta\plugins\coworker-marketplace
+.\scripts\Install-LocalMarketplace.ps1 -Force
+.\scripts\Sync-TicketsSkill.ps1
 ```
 
-Then **Developer: Reload Window** in Cursor. Verify under **Customize** (skills + Postman MCP).
+Then **Developer: Reload Window**. Team import: publish **`coworker-marketplace/` as its own GitHub repo root** (see that folder's README + SECURITY.md), point **IWU SDT Market** (or similar) at that repo, Refresh. Run `.\scripts\Assert-PublishSafe.ps1` before push.
 
 ## Hard offs (all plugins)
 
-- No Metra routing or registry in a plugin
-- No iSupport `post` / `recommend` / `resolve`
-- No secrets in tracked files (operator sets `POSTMAN_API_KEY` locally)
-- Team marketplace / Required install only after a local smoke pass
-
-See [Future-Development.local.md](../docs/Future-Development.local.md) (**A15**, prospect **P1**).
+- No Metra routing or registry as plugin authority
+- No auto iSupport `post` / `recommend` / `resolve`
+- No secrets in tracked files
+- Team **Required** only after coworker dry-run 2
+- One mega portfolio plugin is out of scope - use satellites (tickets, codex, later m365 / solarwinds / …)

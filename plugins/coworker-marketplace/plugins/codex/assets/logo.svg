@@ -1,0 +1,10 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 128 128" role="img" aria-labelledby="title desc">
+  <title id="title">IWU Codex</title>
+  <desc id="desc">Open book icon for knowledge base search and cites</desc>
+  <rect width="128" height="128" rx="24" fill="#5b21b6"/>
+  <path d="M30 36c14 0 26 4 34 10v54c-8-6-20-10-34-10V36z" fill="#ede9fe"/>
+  <path d="M98 36c-14 0-26 4-34 10v54c8-6 20-10 34-10V36z" fill="#ddd6fe"/>
+  <path d="M64 46v54" stroke="#5b21b6" stroke-width="3" stroke-linecap="round"/>
+  <path d="M40 52h16M40 62h16M40 72h12" stroke="#5b21b6" stroke-width="3" stroke-linecap="round" opacity="0.7"/>
+  <path d="M72 52h16M72 62h16M72 72h12" stroke="#5b21b6" stroke-width="3" stroke-linecap="round" opacity="0.7"/>
+</svg>

@@ -1,0 +1,8 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 128 128" role="img" aria-labelledby="title desc">
+  <title id="title">IWU Tickets</title>
+  <desc id="desc">Ticket stub icon for TicketTracker helpdesk work</desc>
+  <rect width="128" height="128" rx="24" fill="#1e3a5f"/>
+  <path d="M28 40h72a8 8 0 0 1 8 8v12c-6 0-10 4-10 10s4 10 10 10v12a8 8 0 0 1-8 8H28a8 8 0 0 1-8-8V80c6 0 10-4 10-10s-4-10-10-10V48a8 8 0 0 1 8-8z" fill="#e8eef5"/>
+  <circle cx="48" cy="64" r="6" fill="#1e3a5f"/>
+  <path d="M64 52h28M64 64h28M64 76h20" stroke="#1e3a5f" stroke-width="4" stroke-linecap="round"/>
+</svg>

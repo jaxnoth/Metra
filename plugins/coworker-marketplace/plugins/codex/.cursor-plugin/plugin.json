@@ -1,0 +1,12 @@
+{
+  "name": "codex",
+  "displayName": "IWU Codex",
+  "version": "0.1.0",
+  "description": "IWU Metra Codex KB search and cite procedures with provider/mode honesty. No ticket writes.",
+  "logo": "assets/logo.svg",
+  "license": "UNLICENSED",
+  "keywords": ["iwu", "codex", "kb", "knowledge-base", "cite"],
+  "author": {
+    "name": "IWU Metra"
+  }
+}
