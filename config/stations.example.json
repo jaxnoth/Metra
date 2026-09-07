@@ -1,0 +1,21 @@
+{
+  "schemaVersion": 1,
+  "stations": [
+    {
+      "id": "tickettracker",
+      "label": "TicketTracker",
+      "registryName": "TicketTracker",
+      "githubRepo": "jaxnoth/TicketTracker",
+      "assetNamePattern": "TicketTracker-*.zip",
+      "enabled": true
+    },
+    {
+      "id": "codex",
+      "label": "Codex",
+      "registryName": "Codex",
+      "githubRepo": "jaxnoth/Codex",
+      "assetNamePattern": "Codex-*.zip",
+      "enabled": true
+    }
+  ]
+}

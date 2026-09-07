@@ -49,9 +49,10 @@ Ticket cite shape (operator pastes into TicketTracker `note` / `post`):
 Stub example honesty: `Provider: stub` / `Mode: stub` / `Source: local corpus` -
 do not present stub as production institutional KB.
 
-## Missing companion
+## Missing station
 
 If Codex is not on disk, say so (Metra `routing -MissingOnly` / `whenMissing`).
+Prefer Metra Ops **Station Updates** to install the Codex Station when available.
 Ask the operator to paste KB text/URL. Do not invent articles or claim KB writes.
 
 ## Hard offs

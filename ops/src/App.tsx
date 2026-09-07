@@ -38,6 +38,7 @@ import {
   approveProfilePair,
   revokeProfileDevice,
   postProductUpdate,
+  postStationAutoUpdatePref,
 } from './api'
 import { AskMarkdown } from './AskMarkdown'
 import { formatAskTabTitle, getMetraBridge } from './bridge'
@@ -1802,7 +1803,7 @@ export default function App() {
     }
   }
 
-  async function onUpdateProduct(target: 'metra' | 'ollama') {
+  async function onUpdateProduct(target: string) {
     if (isApplyRunning) return
     setError(null)
     setSettingsStatus(null)
@@ -1825,6 +1826,23 @@ export default function App() {
             : 'Update started...'),
       )
       await loadProductUpdates(false)
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e))
+    }
+  }
+
+  async function onToggleAutoUpdateStations(next: boolean) {
+    setError(null)
+    try {
+      const pref = await postStationAutoUpdatePref(next)
+      setProductUpdates((prev) =>
+        prev ? { ...prev, autoUpdateStations: pref.autoUpdateStations } : prev,
+      )
+      setSettingsStatus(
+        pref.autoUpdateStations
+          ? 'Station auto-update enabled (still never overwrites Git checkouts).'
+          : 'Station auto-update disabled.',
+      )
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e))
     }
@@ -3873,11 +3891,70 @@ export default function App() {
                   </li>
                 </ul>
               ) : (
-                <p className="muted">Checking…</p>
+                <p className="muted">Checking...</p>
               )}
               <button type="button" disabled={isApplyRunning} onClick={() => void onCheckUpdates()}>
                 Check for updates
               </button>
+            </div>
+          </div>
+          <div className="settings-row">
+            <div>
+              <strong>Station Updates</strong>
+              <p className="muted">
+                Install or update Stations (capability destinations such as TicketTracker and Codex)
+                under the work root. Metra is the conductor; Stations are where the train stops.
+                Git checkouts are never overwritten.
+              </p>
+              {productUpdates ? (
+                <ul className="muted" style={{ marginTop: '0.5rem' }}>
+                  {(productUpdates.stations ?? []).length === 0 ? (
+                    <li style={{ marginBottom: '0.5rem' }}>No stations configured.</li>
+                  ) : null}
+                  {(productUpdates.stations ?? []).map((station) => (
+                    <li key={station.id} style={{ marginBottom: '0.5rem' }}>
+                      {station.label}: {station.message || station.status || '-'}
+                      {station.canInstall ? (
+                        <>
+                          {' '}
+                          <button
+                            type="button"
+                            disabled={isApplyRunning}
+                            onClick={() => void onUpdateProduct(station.id)}
+                          >
+                            Install {station.label} Station
+                          </button>
+                        </>
+                      ) : null}
+                      {station.canUpdate ? (
+                        <>
+                          {' '}
+                          <button
+                            type="button"
+                            disabled={isApplyRunning}
+                            onClick={() => void onUpdateProduct(station.id)}
+                          >
+                            Update {station.label} Station
+                          </button>
+                        </>
+                      ) : null}
+                    </li>
+                  ))}
+                  <li style={{ marginBottom: '0.5rem' }}>
+                    <label>
+                      <input
+                        type="checkbox"
+                        checked={Boolean(productUpdates.autoUpdateStations)}
+                        disabled={isApplyRunning}
+                        onChange={(e) => void onToggleAutoUpdateStations(e.target.checked)}
+                      />{' '}
+                      Auto-update installed Stations (default Off; never overwrites Git checkouts)
+                    </label>
+                  </li>
+                </ul>
+              ) : (
+                <p className="muted">Checking...</p>
+              )}
             </div>
           </div>
           <div className="settings-row">

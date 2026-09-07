@@ -272,6 +272,26 @@ export type SettingsSaveResult = {
   cursorKeyStatus?: string
 }
 
+export type StationUpdateItem = {
+  id: string
+  label: string
+  registryName?: string
+  installPath?: string | null
+  installed: boolean
+  installedVersion?: string | null
+  releaseAvailable?: boolean
+  availableVersion?: string | null
+  updateAvailable: boolean
+  canInstall: boolean
+  canUpdate: boolean
+  status: string
+  reason?: string | null
+  message?: string | null
+  channel?: string
+  downloadUrl?: string | null
+  releaseUrl?: string | null
+}
+
 export type ProductUpdateItem = {
   id: string
   label: string
@@ -321,11 +341,15 @@ export type ProductUpdateApplyJob = {
 export type ProductUpdates = {
   checkedAt: string
   anyUpdate: boolean
+  anyInstallAvailable?: boolean
+  autoUpdateStations?: boolean
   lastUpdatedAt?: string | null
   lastMetraVersion?: string | null
   lastOllamaVersion?: string | null
   metra: ProductUpdateItem
   ollama: ProductUpdateItem
+  stations?: StationUpdateItem[]
+  stationErrors?: string[]
   applyJob?: ProductUpdateApplyJob | null
 }
 

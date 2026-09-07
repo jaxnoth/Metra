@@ -1078,6 +1078,11 @@ function Start-MetraOpsHost {
                         $bits = @()
                         if ($upd.metra.updateAvailable) { $bits += "Metra $($upd.metra.available)" }
                         if ($upd.ollama.updateAvailable) { $bits += "Ollama $($upd.ollama.available)" }
+                        foreach ($st in @((Get-MetraProp -Object $upd -Name 'stations' -Default @()))) {
+                            if ([bool](Get-MetraProp -Object $st -Name 'canUpdate' -Default $false)) {
+                                $bits += ("{0} {1}" -f [string]$st.label, [string]$st.availableVersion)
+                            }
+                        }
                         $key = ($bits -join '|')
                         if ($key -and $key -ne $script:MetraOpsUpdateNotifiedKey) {
                             $script:MetraOpsUpdateNotifiedKey = $key
@@ -1087,6 +1092,25 @@ function Start-MetraOpsHost {
                                 ("Update available: {0}. Open Settings to update." -f ($bits -join ', ')),
                                 [System.Windows.Forms.ToolTipIcon]::Info
                             )
+                        }
+                    }
+
+                    # Phase 2: opt-in station auto-update (never install-missing; never .git).
+                    $autoStations = [bool](Get-MetraProp -Object $upd -Name 'autoUpdateStations' -Default $false)
+                    if ($autoStations -and $upd -and -not (Test-MetraUpdateApplyRunning)) {
+                        foreach ($st in @((Get-MetraProp -Object $upd -Name 'stations' -Default @()))) {
+                            if (-not [bool](Get-MetraProp -Object $st -Name 'canUpdate' -Default $false)) { continue }
+                            if ([string](Get-MetraProp -Object $st -Name 'status' -Default '') -eq 'dev_checkout') { continue }
+                            $sid = [string](Get-MetraProp -Object $st -Name 'id' -Default '')
+                            if ([string]::IsNullOrWhiteSpace($sid)) { continue }
+                            try {
+                                $null = Start-MetraProductUpdateApplyJob -Target $sid -MetraRoot $script:MetraOpsHostRoot
+                                Write-MetraOpsHostLog "Auto-started station update for $sid"
+                                break
+                            }
+                            catch {
+                                Write-MetraOpsHostLog "Station auto-update failed for $sid - $($_.Exception.Message)" 'warn'
+                            }
                         }
                     }
                 }
