@@ -27,7 +27,7 @@ function New-MetraAskEvidenceItem {
     #>
     [CmdletBinding()]
     param(
-        [Parameter(Mandatory)][ValidateSet('project', 'file', 'cmdlet', 'ticket', 'brief', 'journal', 'route', 'image', 'azdo')]
+        [Parameter(Mandatory)][ValidateSet('project', 'file', 'cmdlet', 'ticket', 'brief', 'journal', 'route', 'image', 'azdo', 'capability', 'health')]
         [string]$Kind,
         [Parameter(Mandatory)][string]$Label,
         [string]$Source = '',
@@ -224,14 +224,103 @@ function New-MetraAskEvidencePack {
         [object[]]$Images = @(),
         [switch]$Remote,
         [string]$Repo = '',
-        [string]$MetraRoot = (Get-MetraRoot)
+        [string]$MetraRoot = (Get-MetraRoot),
+        [ValidateSet('none', 'capability_only', 'route_summary', 'full')]
+        [string]$Depth = 'full'
     )
 
     $limits = Get-MetraAskEvidenceLimits
-    $items = [System.Collections.Generic.List[object]]::new()
     $where = [string](Get-MetraProp -Object $Handoff -Name 'where' -Default '')
     $home = Get-MetraHomeDestinationName
     $cwd = Get-MetraAskRouteCwd -Where $where -MetraRoot $MetraRoot
+    $liveIntent = Test-MetraAskLiveSystemIntent -Prompt $Prompt
+
+    if ($Depth -eq 'none') {
+        return [PSCustomObject]@{
+            context          = @{ prompt = $Prompt; evidenceDepth = 'none' }
+            quality          = 'none'
+            items            = @()
+            limits           = [hashtable]$limits
+            liveSystemIntent = $liveIntent
+            evidenceDepth    = 'none'
+        }
+    }
+
+    if ($Depth -eq 'capability_only') {
+        $items = [System.Collections.Generic.List[object]]::new()
+        $capStatus = 'normal'
+        $capReason = $null
+        $healthBlock = $null
+        if ($Capability) {
+            $avail = [bool](Get-MetraProp -Object $Capability -Name 'available' -Default $false)
+            $eng = [string](Get-MetraProp -Object $Capability -Name 'engine' -Default '')
+            $items.Add((New-MetraAskEvidenceItem -Kind 'capability' -Label 'Ask capability' `
+                    -Source 'ask-capability' -Excerpt "engine=$eng; available=$avail" -Confidence 'high'))
+            if (-not $avail) {
+                $capStatus = 'degraded'
+                $capReason = [string](Get-MetraProp -Object $Capability -Name 'reason' -Default 'engine_unavailable')
+            }
+            $health = Get-MetraProp -Object $Capability -Name 'runtimeHealthSnapshot' -Default $null
+            if ($null -eq $health) { $health = Get-MetraProp -Object $Capability -Name 'health' -Default $null }
+            if ($null -ne $health) {
+                $healthBlock = $health
+                $fresh = Test-MetraAskHealthObservationCurrent -Health $health
+                $items.Add((New-MetraAskEvidenceItem -Kind 'health' -Label 'Runtime health summary' `
+                        -Source 'health-source' -Excerpt "fresh=$fresh; observation present" -Confidence $(if ($fresh) { 'high' } else { 'low' })))
+            }
+        }
+        $quality = if ($items.Count -gt 0) { 'thin' } else { 'none' }
+        return [PSCustomObject]@{
+            context          = @{
+                prompt            = $Prompt
+                evidenceDepth     = 'capability_only'
+                capabilityStatus  = $capStatus
+                capabilityReason  = $capReason
+                health            = $healthBlock
+            }
+            quality          = $quality
+            items            = @($items)
+            limits           = [hashtable]$limits
+            liveSystemIntent = $liveIntent
+            evidenceDepth    = 'capability_only'
+        }
+    }
+
+    if ($Depth -eq 'route_summary') {
+        $items = [System.Collections.Generic.List[object]]::new()
+        $purpose = [string](Get-MetraProp -Object $Handoff -Name 'what' -Default '')
+        $score = [int](Get-MetraProp -Object $Handoff -Name 'score' -Default 0)
+        if (-not [string]::IsNullOrWhiteSpace($where)) {
+            $excerpt = "Routed home $where (score=$score). $purpose".Trim()
+            $items.Add((New-MetraAskEvidenceItem -Kind 'route' -Label "Route $where" -Source 'handoff' `
+                    -Excerpt $excerpt -Confidence 'high' -FactualSupport))
+        }
+        $next = [string](Get-MetraProp -Object $Handoff -Name 'next' -Default '')
+        if ($next) {
+            $items.Add((New-MetraAskEvidenceItem -Kind 'route' -Label 'Next step' -Source 'handoff' `
+                    -Excerpt $next -Confidence 'medium'))
+        }
+        $quality = Get-MetraAskEvidenceQuality -Handoff $Handoff -Items @($items)
+        return [PSCustomObject]@{
+            context          = @{
+                prompt        = $Prompt
+                evidenceDepth = 'route_summary'
+                route         = @{
+                    where = $where
+                    what  = $purpose
+                    score = $score
+                    next  = $next
+                }
+            }
+            quality          = $quality
+            items            = @($items)
+            limits           = [hashtable]$limits
+            liveSystemIntent = $liveIntent
+            evidenceDepth    = 'route_summary'
+        }
+    }
+
+    $items = [System.Collections.Generic.List[object]]::new()
 
     # 0) Image vision-read evidence (observations only - never factualSupport for live status)
     foreach ($img in @($Images)) {
@@ -446,6 +535,7 @@ function New-MetraAskEvidencePack {
         items            = @($bounded)
         limits           = [hashtable]$limits
         liveSystemIntent = $liveIntent
+        evidenceDepth    = 'full'
     }
 }
 

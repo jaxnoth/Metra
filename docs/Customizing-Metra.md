@@ -44,6 +44,20 @@ Journal is canonical evidence (prompt + chrome-stripped answer + route + origin/
 
 Operator-private operational why-we-chose memory - not product policy and not collaboration rhythm. Ledger: gitignored `docs/decision-registry.json`. Flow: `note` / `harvest` -> `promote` (requires `why`, `confidence`, `evidence`). Cap 50 active confirmed. Retrieved via `.\metra.ps1 decisions search|get`, `routing -Name` / `routing -Query` **Why Here?**, and `ctx -Query` - never an always-on rule. Boundary test: would every Metra clone benefit? If yes, use `docs/Decisions.md` instead. Every portfolio fact should have a home - see [Decisions.md](Decisions.md) (Portfolio Operations Principles). Project **For whom?** is registry `serves` (not Decision Registry).
 
+### Partner Identity (portfolio)
+
+One Metra across conversational surfaces - not a personality feature or second subsystem. Normative scar: [Decisions.md](Decisions.md) (Partner Identity Contract). Implementation: `scripts/private/PartnerIdentity.ps1`.
+
+| Term | Meaning |
+|------|---------|
+| **Surface** | Conversational environment (Ask, Cursor, Vision, iOS, Ops presence). Owns modality, capability wiring, and default posture when unset. |
+| **Posture** | Desk, Company, Deliver, DeskStrict. Owns expression intensity and factual-policy knobs. |
+| **Portfolio-shaped turn** | Server-side intent/evidence classification - not "feels like work." Work/route intents, portfolio vocabulary, continuity-bound work thread, or explicit portfolio status ask. Vision / Company / relational tone / vocative Metra alone do not qualify. |
+
+Composition: Posture drives expression; Surface does not invent a second personality dial. Vision may default to Company when posture is unset - elevated personality remains a posture effect. Portfolio grounding is available when portfolio-shaped (same evidence standards as Ask); non-portfolio turns stay allowed. Continuity only from typed ContinuityEvidence. Identity does not grant Host / Capture / Ticket execution authority. Partner-voice strip for durable output happens at the execution boundary (`ConvertTo-MetraPartnerNeutralArtifact`).
+
+**AppliesTo:** Ask/CE, Cursor Agent body, iOS via CE, Ops presence acknowledgement, Vision. **DoesNotApplyTo:** Inspect reviewer job, durable artifact bodies, logs, telemetry, machine envelopes.
+
 Import only **installs** listed files. Cursor loads base + local overlay + any opt-in add-on rules when those local files are present. Operators on other harnesses still use profile packs for config/registry; persona auto-load is Cursor-shaped - see [Integrations.md](Integrations.md).
 
 ## Ops partner vs Teaching Mode

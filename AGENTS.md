@@ -13,8 +13,8 @@ Do not duplicate these in playbooks or durable writes - link and obey:
 | [`.cursor/rules/metra-persona.mdc`](.cursor/rules/metra-persona.mdc) | Persona, Teaching Mode, Humor Policy, OCC promote rules |
 | [`.cursor/rules/project-routing.mdc`](.cursor/rules/project-routing.mdc) | Route-first, root isolation, TicketTracker precedence |
 | [docs/Context-Routing.md](docs/Context-Routing.md) | Desk model, registry, ctx |
-| [docs/Decisions.md](docs/Decisions.md) | Portfolio Operations Principles, durable scar home |
-| [`.cursor/rules/metra-inspect-loop.mdc`](.cursor/rules/metra-inspect-loop.mdc) | Inspect coding loop gate |
+| [docs/Decisions.md](docs/Decisions.md) | Portfolio Operations Principles, durable scar home; Partner Identity Contract |
+| [`.cursor/rules/metra-inspect-loop.mdc`](.cursor/rules/metra-inspect-loop.mdc) | Inspect coding loop gate (DoesNotApplyTo Partner Identity expression) |
 
 Optional overlays: `metra-persona.local.mdc`, `metra-learned.local.mdc`, `metra-humor.local.mdc`. See [docs/Customizing-Metra.md](docs/Customizing-Metra.md).
 
@@ -45,6 +45,7 @@ Triggers: Metra home, routing, ctx, registry, inspect, profile, decisions, works
 | --- | --- |
 | route precedence, sticky primary, ticket handoff | [docs/playbooks/route-first.md](docs/playbooks/route-first.md) |
 | persona chat examples, maintainer notes | [docs/playbooks/persona-voice-examples.md](docs/playbooks/persona-voice-examples.md) |
+| partner identity, Surface/Posture, portfolio-shaped, Vision self | [docs/Customizing-Metra.md](docs/Customizing-Metra.md) (Partner Identity); `scripts/private/PartnerIdentity.ps1` |
 | OCC, decisions, ask/capture, memory homes | [docs/playbooks/portfolio-memory-governance.md](docs/playbooks/portfolio-memory-governance.md) |
 | projects.json, profiles, import-profile | [docs/playbooks/registry-profiles.md](docs/playbooks/registry-profiles.md) |
 | metra.ps1 commands | [docs/playbooks/cli-reference.md](docs/playbooks/cli-reference.md) |

@@ -35,8 +35,15 @@ struct OpsAskClient: AskClient {
             guard let json = try JSONSerialization.jsonObject(with: data) as? [String: Any] else {
                 throw AskClientError.decoding
             }
-            let messageText = (json["message"] as? String)?
-                .trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+            var messageText = ""
+            if let voice = json["voice"] as? [String: Any],
+               let display = voice["display"] as? String {
+                messageText = display.trimmingCharacters(in: .whitespacesAndNewlines)
+            }
+            if messageText.isEmpty {
+                messageText = (json["message"] as? String)?
+                    .trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+            }
             guard !messageText.isEmpty else {
                 throw AskClientError.emptyMessage
             }

@@ -26,21 +26,29 @@ function Get-MetraAskLaneThresholds {
 function Get-MetraChatLaneSystemPrompt {
     <#
     .SYNOPSIS
-        Load engines/chat-lane/system.md (secretary posture for Chat lane).
+        Partner Identity preamble + chat-lane secretary overlay (engines/chat-lane/system.md).
     #>
     [CmdletBinding()]
     param([string]$MetraRoot = (Get-MetraRoot))
 
+    $partner = if (Get-Command New-MetraPartnerIdentityPreamble -ErrorAction SilentlyContinue) {
+        New-MetraPartnerIdentityPreamble -Surface Ask -Posture Desk
+    }
+    else {
+        'You are Metra - portfolio operations partner. Speak in first person.'
+    }
+
     $path = Join-Path $MetraRoot 'engines\chat-lane\system.md'
-    if (-not (Test-Path -LiteralPath $path)) {
-        return 'You are Metra Chat lane: brief, human, no ticket ids or invented system state.'
+    $lane = 'Chat lane: brief, human, no ticket ids or invented system state.'
+    if (Test-Path -LiteralPath $path) {
+        try {
+            $lane = [System.IO.File]::ReadAllText($path).Trim()
+        }
+        catch {
+            $lane = 'Chat lane: brief, human, no ticket ids or invented system state.'
+        }
     }
-    try {
-        return [System.IO.File]::ReadAllText($path).Trim()
-    }
-    catch {
-        return 'You are Metra Chat lane: brief, human, no ticket ids or invented system state.'
-    }
+    return "$partner`n`n$lane"
 }
 
 function New-MetraAskChatLaneTemplateMessage {

@@ -28,6 +28,30 @@ Entry shape:
 
 ---
 
+## 2026-09-06 - Partner Identity Contract (portfolio)
+
+- Decision: Metra is one stable portfolio operations partner on every conversational surface that speaks as Metra - Bounded Ask, Cursor Agent, iOS Desk/Company (via Conversation Execution), Ops presence acknowledgement, and Vision. **Postures** (Desk, Company, Deliver, DeskStrict) own expression intensity and factual-policy knobs. **Surfaces** own modality, capability wiring, and default posture when unset. Neither creates a second self.
+- Decision: A turn is **portfolio-shaped** only from server-side intent/evidence signals: work / component_status / authority_write (or equivalent); registry project / ticket id / known ops system / Metra CLI cues; continuity-bound work thread; or explicit portfolio/ops status ask. Surface=Vision, Posture=Company, relational tone, or vocative "Metra" alone do not make a turn portfolio-shaped. Non-portfolio turns remain allowed on every surface (available grounding is not mandatory).
+- Decision: **Portfolio-aware invariant** - no conversational surface may be intentionally deprived of portfolio grounding solely to manufacture a different identity. When portfolio-shaped, grounding stays available under the same evidence standards as Ask. Expression changes style only (Honesty, evidence, execution authority, and continuity standards stay identical given the same evidence and posture).
+- Decision: Continuity claims require typed ContinuityEvidence / claim-scope. Vocative Metra is partner talk / check-in when no work remains - strip before route scoring; not a route cue. First person on conversational surfaces and presence acknowledgement. Durable artifacts use neutral artifact voice; partner-voice strip happens at the Host / Capture / Ticket execution output boundary. Partner identity does not grant execution authority.
+- Decision: **AppliesTo** Ask/CE, Cursor Agent body, iOS via CE, Ops presence acknowledgement, Vision. **DoesNotApplyTo** Inspect reviewer job, durable artifact bodies, logs, telemetry, machine envelopes.
+- Decision (Vision OPEN defaults for ship): Vision uses a thin wrapper over shared Partner Identity + evidence helpers (not a forked companion contract). When posture is unset, Vision defaults to Company. Image modality stays; identity does not fork.
+- Why: Same work-partner sense of self across surfaces without a personality subsystem, without Vision grounding blackout, and without identity implying Host writes.
+- See: `scripts/private/PartnerIdentity.ps1`; `docs/Customizing-Metra.md` (Partner Identity); `engines/vision-ask/system.md`; `.cursor/rules/metra-persona.mdc`
+
+---
+
+## 2026-09-06 - Ask Conversation Execution (Bounded Ops)
+
+- Decision: Bounded Ops/phone Ask gains Conversation Execution behind `ask.conversationExecution.enabled` (default false until fixtures pass). Order is secrets preflight, then intent, server-side policy trust hierarchy, evidence depth ceiling, engine, filled voice (`message = voice.display`).
+- Decision: Policy overrides require server-established trusted-client context or validated loopback. `X-Metra-Client` / body `client` are descriptive claims; header/body mismatch rejects overrides (`policy_override_client_mismatch`) and does not pick either as authenticated identity.
+- Decision: Affirmative current-health claims use source-owned freshness only (`Test-MetraAskHealthObservationCurrent`). Missing freshness metadata is unverifiable. No universal timeout in AskConversation.
+- Decision: AskLane remains lane/reason metadata when Conversation Execution is on; clients prefer `voice.display` with message fallback.
+- Why: Replace regex chat/ops-status primary fork with plain-English secretary path without inventing health, leaking secrets, or letting clients weaken DeskStrict.
+- See: `plans/ask-conversation-execution.plan.md`; `scripts/private/AskConversation.ps1`; `scripts/private/AskConversation.Intent.ps1`; `scripts/private/AskConversation.Policy.ps1`; `scripts/private/AskConversation.Engine.ps1`; `scripts/private/AskConversation.Execution.ps1`; `Get-MetraDeskAskResult`
+
+---
+
 ## 2026-09-05 - Honesty / Steadiness / Conviction in base persona
 
 - Decision: Promote **Honesty** (spine), **Steadiness** (floor), and thin **Conviction** (backbone) into always-on base `metra-persona.mdc`. These are reliability and judgment, not optional interpersonal color. humor-desk retains Warmth / Curiosity / Playfulness only and points up to base; do not re-host full reliability kernels in the add-on.

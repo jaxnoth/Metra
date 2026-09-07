@@ -3,7 +3,7 @@ name: Ask Conversation Execution
 overview: "Replace AskLane regex template/ops-status fork with Conversation Execution (secrets preflight → intent → policy → depth → engine → voice) for Bounded Ops/phone Ask. Bing Conditional Affirm 2026-09-06 closed into locked contract."
 status: Approved with amendments (Bing baseline review 2026-09-06)
 bingReviewed: true
-implementationHold: baseline-separation-required
+implementationHold: cleared-baselines-shipped-2026-09-06
 phase: ask-conversation-execution
 relatedPlans:
   - plans/ios-conversation-policy.plan.md
@@ -11,36 +11,36 @@ relatedPlans:
 todos:
   - id: preflight-voice-contracts
     content: Secrets preflight + filled voice envelope on every return path (incl. refuse)
-    status: pending
+    status: completed
   - id: ask-conversation-pure
     content: "AskConversation.ps1 pure functions - intent, policy hierarchy, knobs, depth budget"
-    status: pending
+    status: completed
   - id: evidence-depth
     content: Extend AskEvidence depth ceiling (capability+health, route_summary, full)
-    status: pending
+    status: completed
   - id: engine-result-overlay
     content: Typed engine result + reason codes; policy-aware buildPrompt
-    status: pending
+    status: completed
   - id: rewire-desk-ask
     content: Rewire Get-MetraDeskAskResult behind flag; demote AskLane to telemetry
-    status: pending
+    status: completed
   - id: api-clients-voice
     content: Ops + iOS render voice.display; normalize voice in both flag modes
-    status: pending
+    status: completed
   - id: tests-eval-docs
     content: Boundary/output/policy/migration Pester + Decisions scar + Ask eval
-    status: pending
+    status: completed
 ---
 
 # Ask Conversation Execution
 
-**Status: Approved with amendments** (Conditional Affirm + baseline review 2026-09-06 folded below). Implement behind `ask.conversationExecution.enabled` only after the working-tree baseline is separated/committed. Not shipped.
+**Status: Approved with amendments** (Conditional Affirm + baseline review 2026-09-06 folded below). Implement behind `ask.conversationExecution.enabled` only after the working-tree baseline is separated/committed. Implemented behind flag (default false). Not enabled in production config until operator flips ask.conversationExecution.enabled.
 
 **Bite:** Server-side Conversation Execution for **Bounded Ops / phone Ask** only. Normative posture: [ios-conversation-policy.plan.md](ios-conversation-policy.plan.md). Presence/TTS separate ([ios-presence-behavior.plan.md](ios-presence-behavior.plan.md)).
 
 **Verified current (2026-09-06):** `AskConversation.ps1` absent. `Get-MetraDeskAskResult` still early-returns via `Resolve-MetraAskLane` → chat templates / `New-MetraAskOpsStatusResult`.
 
-**Implementation hold (Bing baseline review 2026-09-06):** Do not start code from a mixed pack of host/Loom/routing-plan + Ask-plan docs. Ship OpsHost/Profile/Routing/Snapshot (+ Loom hyphen scrub if kept) and routing ledger plans as separate baselines first; then begin Ask bite 1 (preflight + voice envelope).
+**Implementation hold (Bing baseline review 2026-09-06):** Cleared after baseline commits `6ed25d2` / `0d9b07c` / `7514647`. Batch 1 (preflight + voice) landed in `AskConversation.ps1`; later bites remain behind the flag.
 
 ## Bing-affirmed amendments (2026-09-06)
 
@@ -106,17 +106,15 @@ Refuse returns a **filled voice** (example shape):
 | `message` / `voice.spoken` / `voice.display` | Short refuse (no secret text) |
 | `voice.durable` | Disposition only (e.g. secrets boundary) - **never** the detected secret |
 
-### 1. Module `scripts/private/AskConversation.ps1`
+### 1. Module layout (`scripts/private/AskConversation*.ps1`)
 
-| Function | Role |
-|----------|------|
-| `Resolve-MetraAskIntent` | Intent classes + confidence/source; local deterministic; no raw-prompt persist |
-| `Resolve-MetraConversationPolicy` | Applies **trust hierarchy** below |
-| `Get-MetraConversationPolicyKnobs` | warmth/humor/clarifications/silence/plainEnglish/retentionClass |
-| `Resolve-MetraAskEvidenceDepth` | Depth **ceiling** (may return less; never more) |
-| `New-MetraConversationPrompt` | Policy overlay + objective |
-| `Invoke-MetraAskConversationEngine` | Returns typed envelope (Succeeded, ReasonCode, Text, …) |
-| `Format-MetraAskVoiceFromEngine` | Always filled scrubbed voice; semantic preservation |
+| File | Functions / role |
+|------|------------------|
+| `AskConversation.ps1` | Batch 1 voice/secrets: `Normalize-MetraAskInput`, secrets preflight, `Format-MetraAskVoiceFromEngine`, voice contract |
+| `AskConversation.Intent.ps1` | `Resolve-MetraAskIntent` - intent classes + confidence/source; local deterministic; no raw-prompt persist |
+| `AskConversation.Policy.ps1` | `Resolve-MetraConversationPolicy`, `Get-MetraConversationPolicyKnobs`, `Resolve-MetraAskEvidenceDepth`, `Test-MetraAskHealthObservationCurrent` |
+| `AskConversation.Engine.ps1` | `New-MetraConversationPrompt`, `Invoke-MetraAskConversationEngine` (typed envelope) |
+| `AskConversation.Execution.ps1` | `Add-MetraAskVoiceNormalization`, `Invoke-MetraAskConversationExecution` orchestrator |
 
 Intent confidence may increase clarification or constrain depth; it **must not** suppress secrets, authority, incident, or Vision isolation.
 
@@ -284,7 +282,7 @@ Behind `ask.conversationExecution.enabled`:
 
 | Item | Location |
 |------|----------|
-| NEW | `scripts/private/AskConversation.ps1` |
+| NEW | `scripts/private/AskConversation.ps1` (+ `.Intent` / `.Policy` / `.Engine` / `.Execution`) |
 | NEW | `tests/Metra.AskConversation.Tests.ps1` |
 | Rewire | `Snapshot.ps1`, `AskEvidence.ps1`, `AskLane.ps1` |
 | Sidecar | `engines/cursor/server.mjs` |
