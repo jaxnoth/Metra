@@ -28,6 +28,16 @@ Entry shape:
 
 ---
 
+---
+
+## 2026-09-07 - Stations use independent GitHub Release channels via Metra Ops
+
+- Decision: Stations use independent GitHub Release channels and are installed or updated through Metra Ops. Metra is the conductor: it routes conversation to stations (destinations). TicketTracker and Codex are stations installed as sibling folders under the configured work root. Metra discovers station releases, reports install or update availability, and applies a release only after explicit operator action (or opt-in auto-update for already-installed stations). Station updates use validated release archives (identity + checksum), preserve station-declared machine-local state via `station.package.json`, refuse to overwrite Git checkouts at the installer layer, activate via staged directory swap with rollback, and refresh the Metra workspace after successful activation. Station source is not vendored into the Metra installer as the update mechanism. Automatic station updates remain opt-in (`autoUpdateStations`, default Off) and may never overwrite a development checkout. Do not call them portfolio stations, companion products, or satellites in durable Updates language.
+- Why: Coworkers need real TicketTracker and Codex trees after Metra install without cloning. Cursor marketplace skills are procedure garnish only - they cannot replace station CLIs. Railway metaphor (conductor / train / station) matches routing-first Metra better than companion or product language (the latter collides with Loom's platform-product set).
+- See: `config/stations.example.json`; `scripts/private/StationUpdates.ps1`; `scripts/private/Updates.ps1`; `docs/playbooks/station-updates.md`; Ops Settings **Station Updates**
+
+---
+
 ## 2026-09-06 - Partner Identity Contract (portfolio)
 
 - Decision: Metra is one stable portfolio operations partner on every conversational surface that speaks as Metra - Bounded Ask, Cursor Agent, iOS Desk/Company (via Conversation Execution), Ops presence acknowledgement, and Vision. **Postures** (Desk, Company, Deliver, DeskStrict) own expression intensity and factual-policy knobs. **Surfaces** own modality, capability wiring, and default posture when unset. Neither creates a second self.
@@ -315,6 +325,14 @@ Withdraws the same-day draft that renamed the iOS app to Metra Scout or styled t
 - Decision: Phase 5 Review derives pending edge proposals from ambiguous telemetry (`routing edges propose`) when compound cue evidence disagrees with the ambiguous primary (MinCount default 2). Operator **affirm** applies via `Add-MetraRoutingAcceptedEdge`; **reject** dismisses without graph write. Rejected fingerprints are not re-proposed; manual `accept` remains valid.
 - Why: Closes Observe → Recommend → Approve → Apply without silent learning or LLM routing.
 - See: [plans/routing-graph-phase5-review.plan.md](../plans/routing-graph-phase5-review.plan.md)
+
+---
+
+## 2026-09-07 - Routing graph concept lexicon and bounded multi-hop
+
+- Decision: Phase 6 adds a loadable concept lexicon (`concepts.json` machine-local or repo `config/routing-concepts.json`) scored after haystack, compound Ops|Sql, and accepted edges. Concept boost is +3 with `concept:<id>` and never invents a project or wins alone without haystack/edge/compound support. Accepted edges may carry optional `via` for depth-2 multi-hop; affirm rejects cycles fail-loud without rewriting the graph. Propose remains `proposals.json` until operator affirm.
+- Why: Capability language and one-hop cross-stem bridges without an LLM/embedding router or silent Apply.
+- See: [plans/routing-graph-phase6-concept.plan.md](../plans/routing-graph-phase6-concept.plan.md); `Get-MetraRoutingConceptLexicon` / `Update-MetraScoredRoutingWithConceptCues` / `Update-MetraScoredRoutingWithAcceptedEdges`
 
 ---
 

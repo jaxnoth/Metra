@@ -337,7 +337,7 @@ export function fetchUpdates(force = false): Promise<import('./types').ProductUp
 }
 
 export async function postProductUpdate(
-  target: 'metra' | 'ollama',
+  target: string,
 ): Promise<import('./types').ProductUpdateApplyResponse> {
   const token = await ensureLocalSessionToken()
   const res = await fetch(
@@ -381,6 +381,31 @@ export async function postProductUpdate(
     message: body.message ?? null,
     job: body.job ?? null,
     statusCode: res.status,
+  }
+}
+
+export async function postStationAutoUpdatePref(
+  autoUpdateStations: boolean,
+): Promise<{ ok: boolean; autoUpdateStations: boolean }> {
+  const token = await ensureLocalSessionToken()
+  const res = await fetch(
+    '/api/updates',
+    withSessionHeaders(
+      {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ autoUpdateStations }),
+      },
+      token,
+    ),
+  )
+  const body = (await parseJson(res)) as { ok?: boolean; autoUpdateStations?: boolean; error?: string }
+  if (!res.ok) {
+    throw new Error(body.error || res.statusText || `HTTP ${res.status}`)
+  }
+  return {
+    ok: Boolean(body.ok),
+    autoUpdateStations: Boolean(body.autoUpdateStations),
   }
 }
 

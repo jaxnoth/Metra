@@ -24,6 +24,19 @@ Or set `METRA_ISCC` to the full path of `ISCC.exe`.
 
 `packaging/stage/` is temporary (deleted after a successful compile unless `-KeepStage`).
 
+## Station releases (sibling projects)
+
+TicketTracker and Codex ship as **Stations** (zip + `.sha256`), not via MetraSetup.exe.
+
+```powershell
+.\packaging\Pack-MetraStationRelease.ps1 -StationRoot C:\Projects\TicketTracker -Label TicketTracker -OutDir C:\Projects\TicketTracker\build\out
+# Or thin wrappers:
+pwsh -File C:\Projects\TicketTracker\build\Pack-Release.ps1
+pwsh -File C:\Projects\Codex\build\Pack-Release.ps1
+```
+
+Ops discovery/install: [docs/playbooks/station-updates.md](../docs/playbooks/station-updates.md).
+
 ## Architecture
 
 - Installer replaces **product** files; never stages user state (`metra.config.json`, local registries, `*.local.mdc`, generated packs).

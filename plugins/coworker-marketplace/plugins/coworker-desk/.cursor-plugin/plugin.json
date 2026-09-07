@@ -2,7 +2,7 @@
   "name": "coworker-desk",
   "displayName": "IWU Coworker Desk",
   "version": "0.1.0",
-  "description": "Thin IWU coworker onboarding for Metra: routing pointer, Overview, companion honesty, ticket-ops vs investigate hop. Does not replace metra.ps1.",
+  "description": "Thin IWU coworker onboarding for Metra: routing pointer, Overview, missing-station honesty, ticket-ops vs investigate hop. Does not replace metra.ps1 or Station Updates.",
   "logo": "assets/logo.svg",
   "license": "UNLICENSED",
   "keywords": ["iwu", "metra", "coworker", "onboarding", "routing"],

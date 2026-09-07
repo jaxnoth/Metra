@@ -1,0 +1,18 @@
+{
+  "version": 1,
+  "concepts": [
+    {
+      "id": "print-queue",
+      "tokens": ["print", "queue", "printer", "spooler"],
+      "preferProject": "Solarwinds",
+      "notes": "Print queue / printer monitoring symptoms"
+    },
+    {
+      "id": "payroll-run",
+      "tokens": ["payroll", "payrun", "paycheck"],
+      "stem": "IWUDATA",
+      "preferProject": "IWUDATA-Automation",
+      "notes": "Payroll-style batch run language toward automation stem"
+    }
+  ]
+}

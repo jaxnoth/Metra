@@ -1039,11 +1039,32 @@ function Invoke-MetraOpsApi {
             try {
                 $parsed = ConvertFrom-MetraOpsJsonBody -Body $body -AllowEmpty
                 $target = [string](Get-MetraProp -Object $parsed -Name 'target' -Default '').Trim().ToLowerInvariant()
-                if ($target -notin @('metra', 'ollama')) {
-                    Write-MetraOpsJsonResponse -Response $Response -StatusCode 400 -Object ([PSCustomObject]@{
-                            error = 'target must be metra or ollama'
+                if ([string]::IsNullOrWhiteSpace($target) -and $null -ne (Get-MetraProp -Object $parsed -Name 'autoUpdateStations' -Default $null)) {
+                    $pref = Write-MetraStationUpdatesPrefs -AutoUpdateStations:([bool]$parsed.autoUpdateStations)
+                    Write-MetraOpsJsonResponse -Response $Response -Object ([PSCustomObject]@{
+                            ok                 = $true
+                            autoUpdateStations = [bool]$pref.autoUpdateStations
                         })
                     return
+                }
+                if ([string]::IsNullOrWhiteSpace($target)) {
+                    Write-MetraOpsJsonResponse -Response $Response -StatusCode 400 -Object ([PSCustomObject]@{
+                            error = 'target is required'
+                        })
+                    return
+                }
+                if ($target -notin @('metra', 'ollama')) {
+                    $knownStation = $false
+                    if (Get-Command Get-MetraStationsManifest -ErrorAction SilentlyContinue) {
+                        $man = Get-MetraStationsManifest -MetraRoot $MetraRoot
+                        $knownStation = @($man.stations | Where-Object { $_.id -eq $target }).Count -gt 0
+                    }
+                    if (-not $knownStation) {
+                        Write-MetraOpsJsonResponse -Response $Response -StatusCode 400 -Object ([PSCustomObject]@{
+                                error = 'target must be metra, ollama, or a known station id'
+                            })
+                        return
+                    }
                 }
                 $started = Start-MetraProductUpdateApplyJob -Target $target -MetraRoot $MetraRoot
                 $statusCode = [int](Get-MetraProp -Object $started -Name 'StatusCode' -Default 500)

@@ -2,15 +2,20 @@
 
 Standalone Cursor Team Marketplace pack for IWU coworker dry-runs (desk + tickets + Codex).
 
-**Does not replace** Metra `.\metra.ps1 routing`, persona, inspect, or ticket write gates.
+**Does not replace** Metra `.\metra.ps1 routing`, persona, inspect, ticket write gates, or **Station** installs (TicketTracker / Codex trees via Ops **Station Updates**). Skills are procedure garnish only.
+
+**Glossary:** In Metra Ops Updates language, TicketTracker and Codex are **Stations** (destinations). This marketplace still uses Cursor's "plugin" / "satellite plugin" words for skill packs - that is not the Station release channel.
 
 Import this repository into the Cursor team marketplace (e.g. **IWU SDT Market**). The GitHub repo **root must be this folder** so `.cursor-plugin/marketplace.json` is at the repo root.
+
+**Published repo (private):** https://github.com/jaxnoth/iwu-coworker-marketplace
+
 
 ## Plugins (v1)
 
 | Plugin | Purpose | Install mode |
 |--------|---------|--------------|
-| `coworker-desk` | Onboarding + companion honesty | Default Off |
+| `coworker-desk` | Onboarding + missing-station honesty | Default Off |
 | `tickets` | TicketTracker procedures | Default Off |
 | `codex` | KB search / cite | Default Off |
 

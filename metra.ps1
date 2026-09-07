@@ -106,7 +106,8 @@ param(
     [string]$CueClass,
     [string]$Target,
     [string]$Note,
-    [string]$Id
+    [string]$Id,
+    [string]$Via
 )
 
 $ErrorActionPreference = 'Stop'
@@ -375,7 +376,7 @@ switch ($Command) {
             $n = if ($Last -ge 1) { $Last } else { 200 }
             $min = if ($MinCount -ge 1) { $MinCount } else { 2 }
             $reviewStatus = if ([string]::IsNullOrWhiteSpace($Status)) { 'pending' } else { $Status.Trim().ToLowerInvariant() }
-            Show-MetraRoutingEdgesCli -SubCommand $edgeRest -Last $n -MinCount $min -Status $reviewStatus -Stem $Stem -CueClass $CueClass -Target $Target -Note $Note -Id $Id
+            Show-MetraRoutingEdgesCli -SubCommand $edgeRest -Last $n -MinCount $min -Status $reviewStatus -Stem $Stem -CueClass $CueClass -Target $Target -Via $Via -Note $Note -Id $Id
         }
         else {
             Show-MetraRoutingCli -Query $Query -Name $Name -SharedOnly:$SharedOnly -MissingOnly:$MissingOnly

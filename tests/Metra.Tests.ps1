@@ -108,6 +108,20 @@ Describe 'Get-MetraRouting' {
             { Write-MetraForWhom -Serves @('Helpdesk') } | Should -Not -Throw
         }
     }
+
+    It 'MissingOnly without -Name does not throw and returns only absent rows' {
+        { Get-MetraRouting -MissingOnly } | Should -Not -Throw
+        $rows = @(Get-MetraRouting -MissingOnly)
+        foreach ($row in $rows) {
+            $row.Present | Should -BeFalse
+        }
+    }
+
+    It 'Show-MetraRoutingCli -MissingOnly does not bind empty -Name' {
+        InModuleScope Metra {
+            { Show-MetraRoutingCli -MissingOnly } | Should -Not -Throw
+        }
+    }
 }
 
 Describe 'Import-MetraProfile' {
@@ -3267,6 +3281,166 @@ Describe 'Metra routing review' {
             $out = Show-MetraRoutingEdgesCli -SubCommand @('review') -Status 'pending' *>&1 | Out-String
             $out | Should -Match 'IWUDATA'
             $out | Should -Match 'IWUDATA-Automation'
+        }
+    }
+}
+
+Describe 'Metra routing concept and multi-hop' {
+    BeforeEach {
+        $script:originalLocalAppData = $env:LOCALAPPDATA
+        $env:LOCALAPPDATA = Join-Path $TestDrive ([guid]::NewGuid().ToString('N'))
+    }
+
+    AfterEach {
+        $env:LOCALAPPDATA = $script:originalLocalAppData
+    }
+
+    It 'concept token + stem prefers project and tags concept:id' {
+        InModuleScope Metra {
+            $lexPath = Join-Path $env:LOCALAPPDATA 'concepts-test.json'
+            $null = New-Item -ItemType Directory -Path (Split-Path -Parent $lexPath) -Force
+            @{
+                version = 1
+                concepts = @(
+                    @{
+                        id = 'payroll-run'
+                        tokens = @('payroll', 'payrun')
+                        stem = 'IWUDATA'
+                        preferProject = 'IWUDATA-Automation'
+                        notes = 'test'
+                    }
+                )
+            } | ConvertTo-Json -Depth 6 | Set-Content -LiteralPath $lexPath -Encoding utf8
+
+            $auto = [PSCustomObject]@{
+                Name = 'IWUDATA-Automation'; Root = 'work'; Path = 'y'; Purpose = 'auto'
+                Triggers = @('iwudata'); Serves = @(); Score = 2
+                MatchedTokens = @('iwudata'); HayLower = 'iwudata-automation iwudata automation'
+            }
+            $sql = [PSCustomObject]@{
+                Name = 'IWUDATA-SQL'; Root = 'work'; Path = 'x'; Purpose = 'sql'
+                Triggers = @('iwudata'); Serves = @(); Score = 2
+                MatchedTokens = @('iwudata'); HayLower = 'iwudata-sql iwudata sql'
+            }
+            $out = @(Update-MetraScoredRoutingWithConceptCues `
+                    -Query 'iwudata payroll status' `
+                    -Scored @($auto, $sql) `
+                    -LexiconPath $lexPath)
+            $autoOut = $out | Where-Object Name -eq 'IWUDATA-Automation' | Select-Object -First 1
+            $sqlOut = $out | Where-Object Name -eq 'IWUDATA-SQL' | Select-Object -First 1
+            [int]$autoOut.Score | Should -Be 5
+            [int]$sqlOut.Score | Should -Be 2
+            $autoOut.MatchedTokens | Should -Contain 'concept:payroll-run'
+            @($sqlOut.MatchedTokens | Where-Object { $_ -like 'concept:*' }).Count | Should -Be 0
+        }
+    }
+
+    It 'concept alone does not invent a project absent from scored/registry support' {
+        InModuleScope Metra {
+            $lexPath = Join-Path $env:LOCALAPPDATA 'concepts-alone.json'
+            $null = New-Item -ItemType Directory -Path (Split-Path -Parent $lexPath) -Force
+            @{
+                version = 1
+                concepts = @(
+                    @{
+                        id = 'ghost-payroll'
+                        tokens = @('zzqxpayrollonly')
+                        preferProject = 'NotARealProject-ZZQX'
+                        notes = 'must not invent'
+                    },
+                    @{
+                        id = 'metra-payroll'
+                        tokens = @('zzqxpayrollonly')
+                        preferProject = 'Metra'
+                        notes = 'registry exists but no haystack row'
+                    }
+                )
+            } | ConvertTo-Json -Depth 6 | Set-Content -LiteralPath $lexPath -Encoding utf8
+
+            $out = @(Update-MetraScoredRoutingWithConceptCues `
+                    -Query 'zzqxpayrollonly please' `
+                    -Scored @() `
+                    -LexiconPath $lexPath)
+            $out.Count | Should -Be 0
+
+            $hay = [PSCustomObject]@{
+                Name = 'Trivia'; Root = 'work'; Path = 't'; Purpose = 'fun'
+                Triggers = @('trivia'); Serves = @(); Score = 1
+                MatchedTokens = @('trivia'); HayLower = 'trivia fun'
+            }
+            $out2 = @(Update-MetraScoredRoutingWithConceptCues `
+                    -Query 'zzqxpayrollonly trivia' `
+                    -Scored @($hay) `
+                    -LexiconPath $lexPath)
+            @($out2 | Where-Object Name -eq 'Metra').Count | Should -Be 0
+            @($out2 | Where-Object { $_.MatchedTokens -like 'concept:*' }).Count | Should -Be 0
+            ($out2 | Where-Object Name -eq 'Trivia' | Select-Object -First 1).Score | Should -Be 1
+        }
+    }
+
+    It 'multi-hop depth 2 tags both edge ids on hop target' {
+        InModuleScope Metra {
+            $e1 = Add-MetraRoutingAcceptedEdge -Stem 'IWUDATA' -CueClass ops -Target 'Metra' -Note 'mid'
+            $e2 = Add-MetraRoutingAcceptedEdge -Stem 'MISC' -CueClass ops -Target 'TicketTracker' -Via 'Metra' -Note 'hop'
+            $sql = [PSCustomObject]@{
+                Name = 'IWUDATA-SQL'; Root = 'work'; Path = 'x'; Purpose = 'sql'
+                Triggers = @('iwudata'); Serves = @(); Score = 4
+                MatchedTokens = @('iwudata'); HayLower = 'iwudata-sql iwudata sql'
+            }
+            $out = @(Update-MetraScoredRoutingWithAcceptedEdges -Query 'How did IWUDATA run today?' -Scored @($sql))
+            $mid = $out | Where-Object Name -eq 'Metra' | Select-Object -First 1
+            $hop = $out | Where-Object Name -eq 'TicketTracker' | Select-Object -First 1
+            $mid | Should -Not -BeNullOrEmpty
+            $hop | Should -Not -BeNullOrEmpty
+            $mid.MatchedTokens | Should -Contain ("edge:{0}" -f $e1.id)
+            $hop.MatchedTokens | Should -Contain ("edge:{0}" -f $e1.id)
+            $hop.MatchedTokens | Should -Contain ("edge:{0}" -f $e2.id)
+            [int]$hop.Score | Should -BeGreaterOrEqual 4
+        }
+    }
+
+    It 'cycle edge affirm is rejected and graph unchanged' {
+        InModuleScope Metra {
+            $null = Add-MetraRoutingAcceptedEdge -Stem 'IWUDATA' -CueClass ops -Target 'Metra' -Via 'TicketTracker'
+            $before = Get-MetraRoutingDurableGraph
+            @($before.edges).Count | Should -Be 1
+            $beforeHash = (Get-FileHash -LiteralPath (Get-MetraRoutingDurableGraphPath) -Algorithm SHA256).Hash
+
+            {
+                Add-MetraRoutingAcceptedEdge -Stem 'SOLARWINDS' -CueClass ops -Target 'TicketTracker' -Via 'Metra'
+            } | Should -Throw '*cycle*'
+
+            (Get-FileHash -LiteralPath (Get-MetraRoutingDurableGraphPath) -Algorithm SHA256).Hash | Should -Be $beforeHash
+            @((Get-MetraRoutingDurableGraph).edges).Count | Should -Be 1
+        }
+    }
+
+    It 'missing lexicon soft-fails and leaves P2-P5 scoring intact' {
+        InModuleScope Metra {
+            $missing = Join-Path $env:LOCALAPPDATA 'no-such-concepts.json'
+            $lex = Get-MetraRoutingConceptLexicon -Path $missing
+            $lex.version | Should -Be 1
+            @($lex.concepts).Count | Should -Be 0
+
+            $sql = [PSCustomObject]@{
+                Name = 'IWUDATA-SQL'; Root = 'work'; Path = 'x'; Purpose = 'sql'
+                Triggers = @('iwudata'); Serves = @(); Score = 4
+                MatchedTokens = @('phrase:iwudata'); HayLower = 'iwudata-sql iwudata sql'
+            }
+            $auto = [PSCustomObject]@{
+                Name = 'IWUDATA-Automation'; Root = 'work'; Path = 'y'; Purpose = 'auto'
+                Triggers = @('iwudata'); Serves = @(); Score = 2
+                MatchedTokens = @('iwudata'); HayLower = 'iwudata-automation iwudata automation'
+            }
+            $compound = @(Update-MetraScoredRoutingWithCompoundCues -Query 'How did IWUDATA run today?' -Scored @($sql, $auto))
+            $afterConcept = @(Update-MetraScoredRoutingWithConceptCues `
+                    -Query 'How did IWUDATA run today?' `
+                    -Scored $compound `
+                    -LexiconPath $missing)
+            $autoRow = $afterConcept | Where-Object Name -eq 'IWUDATA-Automation' | Select-Object -First 1
+            [int]$autoRow.Score | Should -Be 6
+            $autoRow.MatchedTokens | Should -Contain 'compound:ops'
+            @($autoRow.MatchedTokens | Where-Object { $_ -like 'concept:*' }).Count | Should -Be 0
         }
     }
 }

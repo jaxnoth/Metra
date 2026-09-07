@@ -12,7 +12,7 @@ Metra + TicketTracker = desk entry. Correct analysis often needs one investigate
 2. With TicketTracker: routing -> brief -> assess -> Recommend -Preview -> one plain customer ask (S1a contract).
 3. Without TicketTracker: missing companion pointer + fail-closed; no fake live analysis (S4a + S5a).
 4. S1b: five-ticket portfolio (>=1 investigate hop); failures -> sanitized fixtures.
-5. S2b: two skills published (Default Off) with publish checklist + verified rollback.
+5. S2b: one TicketTracker skill (`tickets`) published (Default Off) with publish checklist + verified rollback.
 6. Two coworker dry-runs without operator coaching.
 
 ## Sprint rank (one active bite at a time)
@@ -20,7 +20,7 @@ Metra + TicketTracker = desk entry. Correct analysis often needs one investigate
 | Sprint | Bite |
 | ------ | ---- |
 | **S1a** | Sparse-ticket safety gate + frozen fixture (gate for S2b publish) |
-| **S2a** | Draft + locally smoke `ticket-assess`, `isupport-recommend-format` |
+| **S2a** | Draft + locally smoke `tickets` (format folded in) |
 | **S4a** | Missing companion discovery (`routing -MissingOnly`) |
 | **S5a** | Fail-closed honesty when TT/iSupport absent |
 | **S1b** | Five-ticket product proof + fixture capture |
@@ -52,7 +52,7 @@ Fresh shell; no Metra state; no TT clone first (then repeat with TT). Capture PS
 
 ## Cursor team skills
 
-**Publish Aug 31 (S2b) if S1a passes:** `ticket-assess`, `isupport-recommend-format`
+**Publish (S2b) if S1a passes:** IWU Coworker marketplace (`coworker-desk`, `tickets`, `codex`) Default Off - see `_meta/plugins/coworker-marketplace/`
 
 **Draft only / post-ship:** `metra-routing-bridge` (_meta)
 

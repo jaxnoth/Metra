@@ -247,6 +247,33 @@ Common `metra.ps1` equivalents:
 
 In Cursor, Metra's persona auto-loads from `.cursor/rules` - route first, stay in one project, Teaching Mode when exploring, professional sink for anything that leaves chat. Set your display name in `.cursor\rules\metra-persona.local.mdc` after importing a profile. Prefer a different coding agent? Same `routing` / `ctx` / `AGENTS.md` story still applies; follow `AGENTS.md` for Metra voice when your harness loads project guidance.
 
+### Stations (TicketTracker / Codex) - coworker install path
+
+After Metra is installed, coworkers install real **Station** trees (TicketTracker, Codex) from Ops **Settings → Station Updates**. Metra is the conductor; a Station is the destination. Releases are private GitHub zips with SHA-256 sidecars - not bundled inside MetraSetup.exe.
+
+**When a station ships:** in that station repo, bump `station.package.json` version, run `build/Pack-Release.ps1`, publish zip + `.sha256` to GitHub Releases (see that project's `AGENTS.md` / `docs/Station-Release.md`). Metra Ops discovers those releases; it does not pack them.
+
+See [docs/playbooks/station-updates.md](docs/playbooks/station-updates.md) and Decision **2026-09-07 - Stations use independent GitHub Release channels via Metra Ops**.
+
+### Cursor coworker plugins (IWU)
+
+Optional Cursor **Team Marketplace** skills for IWU coworkers. They do **not** replace Station installs, `.\metra.ps1 routing`, Metra persona, or TicketTracker write gates. Skills are procedure garnish only - TicketTracker and Codex CLIs still require Station (or Git) checkouts. Install only what you need; leave plugins **Default Off** / opt-in until your team promotes them.
+
+| Plugin | Use when |
+|--------|----------|
+| **IWU Coworker Desk** (`coworker-desk`) | First Metra onboarding, missing-station honesty, ticket-ops vs one investigate hop |
+| **IWU Tickets** (`tickets`) | TicketTracker `brief` / `assess` / Recommend Preview / durable text shape |
+| **IWU Codex** (`codex`) | Codex KB search and cite; surfaces Provider/Mode; no ticket writes |
+
+**Team import (preferred for coworkers):**
+
+1. Open Cursor **Dashboard → Plugins** (team marketplace - e.g. **IWU SDT Market**).
+2. Point **Plugin Repository** at [jaxnoth/iwu-coworker-marketplace](https://github.com/jaxnoth/iwu-coworker-marketplace) (private; team-readable) and **Refresh**.
+3. **Add** `coworker-desk`, `tickets`, and/or `codex` as needed. Do not set **Required** until dry-run 2 passes.
+4. Reload the Cursor window. Skills stay procedure-only; CLIs still own Live writes.
+
+**Local smoke (maintainers):** from a Metra checkout, `plugins/coworker-marketplace/scripts/Install-LocalMarketplace.ps1 -Force`, then reload. Pack source and security notes: [plugins/coworker-marketplace/README.md](plugins/coworker-marketplace/README.md).
+
 ## Communication model (Metra persona)
 
 Routing gets you to the right folder. Context loads what matters. The communication model is how Metra *talks* once you are there - a workflow capability, not a character feature.

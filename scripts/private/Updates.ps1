@@ -72,7 +72,7 @@ function Set-MetraUpdatesCacheApplyStamp {
     #>
     [CmdletBinding()]
     param(
-        [Parameter(Mandatory)][ValidateSet('metra', 'ollama')][string]$Target,
+        [Parameter(Mandatory)][string]$Target,
         [string]$Version,
         [string]$CachePath = (Get-MetraUpdatesCachePath)
     )
@@ -98,9 +98,12 @@ function Set-MetraUpdatesCacheApplyStamp {
         if ($payload.PSObject.Properties['lastMetraVersion']) { $payload.lastMetraVersion = $Version }
         else { $payload | Add-Member -NotePropertyName lastMetraVersion -NotePropertyValue $Version -Force }
     }
-    else {
+    elseif ($Target -eq 'ollama') {
         if ($payload.PSObject.Properties['lastOllamaVersion']) { $payload.lastOllamaVersion = $Version }
         else { $payload | Add-Member -NotePropertyName lastOllamaVersion -NotePropertyValue $Version -Force }
+    }
+    else {
+        # Station apply stamp lives on the station row / receipt; keep lastUpdatedAt only.
     }
 
     try {
@@ -332,14 +335,40 @@ function Get-MetraProductUpdates {
         }
     }
 
+    $stationBundle = [PSCustomObject]@{ stations = @(); errors = @() }
+    if (Get-Command Get-MetraStationUpdateStatuses -ErrorAction SilentlyContinue) {
+        try {
+            $stationBundle = Get-MetraStationUpdateStatuses -MetraRoot $MetraRoot
+        }
+        catch {
+            $stationBundle = [PSCustomObject]@{
+                stations = @()
+                errors   = @("station check failed: $($_.Exception.Message)")
+            }
+        }
+    }
+    $stations = @($stationBundle.stations)
+    $anyStationUpdate = [bool](@($stations | Where-Object { $_.canUpdate }).Count -gt 0)
+    $anyInstallAvailable = [bool](@($stations | Where-Object { $_.canInstall }).Count -gt 0)
+    $prefs = if (Get-Command Read-MetraStationUpdatesPrefs -ErrorAction SilentlyContinue) {
+        Read-MetraStationUpdatesPrefs
+    }
+    else {
+        [PSCustomObject]@{ autoUpdateStations = $false }
+    }
+
     $payload = [PSCustomObject]@{
-        checkedAt         = [datetime]::UtcNow.ToString('o')
-        lastUpdatedAt     = $applyStamp.lastUpdatedAt
-        lastMetraVersion  = $applyStamp.lastMetraVersion
-        lastOllamaVersion = $applyStamp.lastOllamaVersion
-        metra             = $metra
-        ollama            = $ollama
-        anyUpdate         = [bool]($metra.updateAvailable -or $ollama.updateAvailable)
+        checkedAt            = [datetime]::UtcNow.ToString('o')
+        lastUpdatedAt        = $applyStamp.lastUpdatedAt
+        lastMetraVersion     = $applyStamp.lastMetraVersion
+        lastOllamaVersion    = $applyStamp.lastOllamaVersion
+        metra                = $metra
+        ollama               = $ollama
+        stations             = $stations
+        stationErrors        = @($stationBundle.errors)
+        anyUpdate            = [bool]($metra.updateAvailable -or $ollama.updateAvailable -or $anyStationUpdate)
+        anyInstallAvailable  = $anyInstallAvailable
+        autoUpdateStations   = [bool]$prefs.autoUpdateStations
     }
 
     try {
@@ -642,16 +671,28 @@ function Update-MetraOllamaProduct {
 function Invoke-MetraProductUpdate {
     [CmdletBinding()]
     param(
-        [Parameter(Mandatory)][ValidateSet('metra', 'ollama')][string]$Target,
+        [Parameter(Mandatory)][string]$Target,
         [string]$MetraRoot = (Get-MetraRoot),
         [switch]$WhatIf,
         [string]$ApplyJobId
     )
 
-    if ($Target -eq 'metra') {
+    $t = $Target.Trim().ToLowerInvariant()
+    if ($t -eq 'metra') {
         return Update-MetraProduct -MetraRoot $MetraRoot -WhatIf:$WhatIf -ApplyJobId $ApplyJobId
     }
-    return Update-MetraOllamaProduct -MetraRoot $MetraRoot -WhatIf:$WhatIf -ApplyJobId $ApplyJobId
+    if ($t -eq 'ollama') {
+        return Update-MetraOllamaProduct -MetraRoot $MetraRoot -WhatIf:$WhatIf -ApplyJobId $ApplyJobId
+    }
+    if (Get-Command Invoke-MetraStationProductUpdate -ErrorAction SilentlyContinue) {
+        return Invoke-MetraStationProductUpdate -StationId $t -MetraRoot $MetraRoot -WhatIf:$WhatIf -ApplyJobId $ApplyJobId
+    }
+    return [PSCustomObject]@{
+        ok      = $false
+        target  = $t
+        status  = 'unknown_target'
+        message = "Unknown update target '$Target'."
+    }
 }
 
 # --- Async apply job (Ops Settings; single-flight; status poll) ---
@@ -810,6 +851,14 @@ function Clear-MetraUpdateApplyKnownTemps {
             ForEach-Object {
                 try { Remove-Item -LiteralPath $_.FullName -Force -ErrorAction SilentlyContinue } catch { }
             }
+        Get-ChildItem -LiteralPath $tempRoot -Filter 'MetraStation-*.zip' -File -ErrorAction SilentlyContinue |
+            ForEach-Object {
+                try { Remove-Item -LiteralPath $_.FullName -Force -ErrorAction SilentlyContinue } catch { }
+            }
+        Get-ChildItem -LiteralPath $tempRoot -Filter 'MetraStation-*.zip.sha256' -File -ErrorAction SilentlyContinue |
+            ForEach-Object {
+                try { Remove-Item -LiteralPath $_.FullName -Force -ErrorAction SilentlyContinue } catch { }
+            }
     }
     catch { }
 }
@@ -908,6 +957,16 @@ function New-MetraUpdateApplyResultFromInvoke {
         $slice = Get-MetraProp -Object $updates -Name $Target -Default $null
         if ($slice) {
             $versionAfter = Get-MetraProp -Object $slice -Name 'installed' -Default $null
+            if (-not $versionAfter) {
+                $versionAfter = Get-MetraProp -Object $slice -Name 'installedVersion' -Default $null
+            }
+        }
+        if (-not $versionAfter) {
+            $stationRows = @(Get-MetraProp -Object $updates -Name 'stations' -Default @())
+            $match = @($stationRows | Where-Object { [string]$_.id -eq $Target } | Select-Object -First 1)
+            if ($match) {
+                $versionAfter = Get-MetraProp -Object $match[0] -Name 'installedVersion' -Default $null
+            }
         }
     }
     if (-not $versionAfter) {
@@ -934,40 +993,57 @@ function New-MetraUpdateApplyResultFromInvoke {
 function Complete-MetraProductUpdateApplyJob {
     <#
     .SYNOPSIS
-        Child-runspace entry: run product update and write terminal applyJob status.
+        Child-runspace entry: run product/station update and write terminal applyJob status.
     #>
     [CmdletBinding()]
     param(
-        [Parameter(Mandatory)][ValidateSet('metra', 'ollama')][string]$Target,
+        [Parameter(Mandatory)][string]$Target,
         [string]$MetraRoot = (Get-MetraRoot),
         [Parameter(Mandatory)][string]$JobId
     )
 
     $versionBefore = $null
     try {
-        if ($Target -eq 'metra') {
+        $t = $Target.Trim().ToLowerInvariant()
+        if ($t -eq 'metra') {
             $versionBefore = Get-MetraInstalledModuleVersion -MetraRoot $MetraRoot
         }
-        else {
+        elseif ($t -eq 'ollama') {
             $versionBefore = Get-MetraOllamaInstalledVersion
+        }
+        elseif (Get-Command Get-MetraStationsManifest -ErrorAction SilentlyContinue) {
+            $manifest = Get-MetraStationsManifest -MetraRoot $MetraRoot
+            $st = @($manifest.stations) | Where-Object { $_.id -eq $t } | Select-Object -First 1
+            if ($st) {
+                $path = Get-MetraStationInstallPath -Station $st -MetraRoot $MetraRoot
+                if (Test-Path -LiteralPath $path) {
+                    $versionBefore = Get-MetraStationInstalledVersion -InstallPath $path
+                }
+            }
         }
 
         Set-MetraUpdateApplyPhase -JobId $JobId -Phase starting -Message $(
-            if ($Target -eq 'metra') {
+            if ($t -eq 'metra') {
                 'Starting Metra update (Ops may restart or interrupt during install)...'
             }
-            else {
+            elseif ($t -eq 'ollama') {
                 'Starting Ollama update...'
+            }
+            else {
+                "Starting station update ($t)..."
             }
         )
 
-        $invoke = Invoke-MetraProductUpdate -Target $Target -MetraRoot $MetraRoot -ApplyJobId $JobId
-        $rich = New-MetraUpdateApplyResultFromInvoke -InvokeResult $invoke -Target $Target -VersionBefore $versionBefore
+        $invoke = Invoke-MetraProductUpdate -Target $t -MetraRoot $MetraRoot -ApplyJobId $JobId
+        if ($invoke.ok -and $invoke.status -in @('updated', 'installed') -and $t -notin @('metra', 'ollama')) {
+            Set-MetraUpdatesCacheApplyStamp -Target $t -Version ([string](Get-MetraProp -Object $invoke -Name 'versionAfter' -Default $null))
+        }
+        $rich = New-MetraUpdateApplyResultFromInvoke -InvokeResult $invoke -Target $t -VersionBefore $versionBefore
         $finishedAt = [datetime]::UtcNow.ToString('o')
         $terminalState = $(if ($rich.ok) { 'succeeded' } else { 'failed' })
         $job = [PSCustomObject]@{
             jobId      = $JobId
-            target     = $Target
+            target     = $t
             state      = $terminalState
             phase      = 'done'
             message    = $rich.message
@@ -985,9 +1061,10 @@ function Complete-MetraProductUpdateApplyJob {
     catch {
         $finishedAt = [datetime]::UtcNow.ToString('o')
         $msg = $_.Exception.Message
+        $failTarget = if ($t) { $t } else { $Target }
         $job = [PSCustomObject]@{
             jobId      = $JobId
-            target     = $Target
+            target     = $failTarget
             state      = 'failed'
             phase      = 'done'
             message    = $msg
@@ -998,7 +1075,7 @@ function Complete-MetraProductUpdateApplyJob {
             )
             finishedAt = $finishedAt
             result     = [PSCustomObject]@{
-                target          = $Target
+                target          = $failTarget
                 changed         = $false
                 versionBefore   = $versionBefore
                 versionAfter    = $null
@@ -1019,16 +1096,17 @@ function Complete-MetraProductUpdateApplyJob {
 function Start-MetraProductUpdateApplyJob {
     <#
     .SYNOPSIS
-        Accept or refuse an async product update apply (single-flight).
+        Accept or refuse an async product/station update apply (single-flight).
     .OUTPUTS
         PSCustomObject with StatusCode (202/409/422), Accepted, Error, Message, Job.
     #>
     [CmdletBinding()]
     param(
-        [Parameter(Mandatory)][ValidateSet('metra', 'ollama')][string]$Target,
+        [Parameter(Mandatory)][string]$Target,
         [string]$MetraRoot = (Get-MetraRoot)
     )
 
+    $t = $Target.Trim().ToLowerInvariant()
     $null = Sync-MetraUpdateApplyInterrupted
 
     if (Test-MetraUpdateApplyRunning) {
@@ -1044,11 +1122,31 @@ function Start-MetraProductUpdateApplyJob {
 
     # Preflight from cache/fresh check - do not create a job when not applicable.
     $status = Get-MetraProductUpdates -MetraRoot $MetraRoot
-    $slice = Get-MetraProp -Object $status -Name $Target -Default $null
-    $canUpdate = $false
-    if ($slice) { $canUpdate = [bool](Get-MetraProp -Object $slice -Name 'canUpdate' -Default $false) }
-    if (-not $canUpdate) {
-        $msg = if ($slice) { [string](Get-MetraProp -Object $slice -Name 'message' -Default 'Update is not applicable.') } else { 'Update is not applicable.' }
+    $canApply = $false
+    $msg = 'Update is not applicable.'
+    if ($t -eq 'metra' -or $t -eq 'ollama') {
+        $slice = Get-MetraProp -Object $status -Name $t -Default $null
+        if ($slice) {
+            $canApply = [bool](Get-MetraProp -Object $slice -Name 'canUpdate' -Default $false)
+            $msg = [string](Get-MetraProp -Object $slice -Name 'message' -Default $msg)
+        }
+    }
+    else {
+        $stationRows = @(Get-MetraProp -Object $status -Name 'stations' -Default @())
+        $row = @($stationRows | Where-Object { [string]$_.id -eq $t } | Select-Object -First 1)
+        if ($row) {
+            $canApply = [bool]$row[0].canUpdate -or [bool]$row[0].canInstall
+            $msg = [string](Get-MetraProp -Object $row[0] -Name 'message' -Default $msg)
+            if ([string](Get-MetraProp -Object $row[0] -Name 'status' -Default '') -eq 'dev_checkout') {
+                $canApply = $false
+                $msg = [string]$row[0].message
+            }
+        }
+        else {
+            $msg = "Unknown station target '$t'."
+        }
+    }
+    if (-not $canApply) {
         return [PSCustomObject]@{
             StatusCode = 422
             Accepted   = $false
@@ -1060,15 +1158,18 @@ function Start-MetraProductUpdateApplyJob {
 
     $jobId = New-MetraUpdateApplyJobId
     $startedAt = [datetime]::UtcNow.ToString('o')
-    $startMessage = if ($Target -eq 'metra') {
+    $startMessage = if ($t -eq 'metra') {
         'Starting Metra update. Metra may restart or interrupt Ops during install.'
     }
-    else {
+    elseif ($t -eq 'ollama') {
         'Starting Ollama update...'
+    }
+    else {
+        "Starting station apply ($t)..."
     }
     $job = [PSCustomObject]@{
         jobId      = $jobId
-        target     = $Target
+        target     = $t
         state      = 'running'
         phase      = 'starting'
         message    = $startMessage
@@ -1091,7 +1192,7 @@ function Start-MetraProductUpdateApplyJob {
     # Test seam: when set, invoke instead of spawning a child runspace (no live download).
     if ($script:MetraUpdateApplyJobRunner) {
         try {
-            & $script:MetraUpdateApplyJobRunner -Target $Target -MetraRoot $MetraRoot -JobId $jobId
+            & $script:MetraUpdateApplyJobRunner -Target $t -MetraRoot $MetraRoot -JobId $jobId
             # Keep single-flight honest for conflict tests unless the runner cleared the handle.
             if (-not $script:MetraUpdateApplyHandles.ContainsKey($jobId)) {
                 $script:MetraUpdateApplyHandles[$jobId] = @{
@@ -1103,7 +1204,7 @@ function Start-MetraProductUpdateApplyJob {
         catch {
             $failJob = [PSCustomObject]@{
                 jobId      = $jobId
-                target     = $Target
+                target     = $t
                 state      = 'failed'
                 phase      = 'done'
                 message    = "Could not start apply job: $($_.Exception.Message)"
@@ -1142,7 +1243,7 @@ function Start-MetraProductUpdateApplyJob {
                 param($ModulePath, $TargetName, $Root, $ApplyJobId)
                 Import-Module $ModulePath -Force
                 Complete-MetraProductUpdateApplyJob -Target $TargetName -MetraRoot $Root -JobId $ApplyJobId
-            }).AddArgument($modulePath).AddArgument($Target).AddArgument($MetraRoot).AddArgument($jobId)
+            }).AddArgument($modulePath).AddArgument($t).AddArgument($MetraRoot).AddArgument($jobId)
 
         $async = $ps.BeginInvoke()
         $script:MetraUpdateApplyHandles[$jobId] = @{
@@ -1154,7 +1255,7 @@ function Start-MetraProductUpdateApplyJob {
         if ($ps) { try { $ps.Dispose() } catch { } }
         $failJob = [PSCustomObject]@{
             jobId      = $jobId
-            target     = $Target
+            target     = $t
             state      = 'failed'
             phase      = 'done'
             message    = "Could not start apply job: $($_.Exception.Message)"

@@ -675,8 +675,9 @@ function Get-MetraRoutingGraph {
         Registry-derived routing graph slice (stem + Ops|Sql members + concepts).
     .DESCRIPTION
         Phase 2 in-memory builder only. Families require mutual related + equal stem and
-        fail-closed Ops and Sql roles. Concepts are harvested; not scored in Phase 2.
-        Persistence / learned edges are later phases - scorer consumes this shape either way.
+        fail-closed Ops and Sql roles. Concepts bag is harvested for family display; Phase 6
+        scores a separate loadable concept lexicon (see Get-MetraRoutingConceptLexicon).
+        Persistence / learned edges apply on the scorer path.
     #>
     [CmdletBinding()]
     param(
@@ -913,12 +914,252 @@ function Get-MetraRoutingDurableGraphPath {
     Join-Path (Get-MetraRoutingTelemetryRoot) 'graph.json'
 }
 
+function Get-MetraRoutingConceptsPath {
+    <#
+    .SYNOPSIS
+        Concept lexicon path: machine-local first, else repo config (may be missing).
+    #>
+    [CmdletBinding()]
+    param()
+
+    $local = Join-Path (Get-MetraRoutingTelemetryRoot) 'concepts.json'
+    if (Test-Path -LiteralPath $local -PathType Leaf) {
+        return $local
+    }
+
+    $repo = Join-Path (Get-MetraRoot) 'config\routing-concepts.json'
+    if (Test-Path -LiteralPath $repo -PathType Leaf) {
+        return $repo
+    }
+
+    return $local
+}
+
+function Get-MetraRoutingConceptLexicon {
+    <#
+    .SYNOPSIS
+        Loads concept lexicon (fail-soft empty; never invents concepts).
+    #>
+    [CmdletBinding()]
+    param(
+        [string]$Path
+    )
+
+    $empty = [PSCustomObject]@{ version = 1; concepts = @() }
+    $path = if (-not [string]::IsNullOrWhiteSpace($Path)) { [string]$Path } else { Get-MetraRoutingConceptsPath }
+    if (-not (Test-Path -LiteralPath $path -PathType Leaf)) {
+        return $empty
+    }
+
+    try {
+        $raw = [System.IO.File]::ReadAllText($path)
+    }
+    catch {
+        return $empty
+    }
+
+    if ([string]::IsNullOrWhiteSpace($raw)) { return $empty }
+
+    try {
+        $doc = $raw | ConvertFrom-Json -ErrorAction Stop
+    }
+    catch {
+        return $empty
+    }
+
+    $version = [int](Get-MetraProp -Object $doc -Name 'version' -Default 0)
+    if ($version -lt 1) { return $empty }
+
+    $conceptRaw = Get-MetraProp -Object $doc -Name 'concepts' -Default $null
+    if ($null -eq $conceptRaw) { return $empty }
+
+    $valid = New-Object System.Collections.Generic.List[object]
+    foreach ($concept in @($conceptRaw)) {
+        $id = [string](Get-MetraProp -Object $concept -Name 'id' -Default '').Trim()
+        if ([string]::IsNullOrWhiteSpace($id)) { continue }
+        $tokenList = New-Object System.Collections.Generic.List[string]
+        foreach ($tok in @(Get-MetraProp -Object $concept -Name 'tokens' -Default @())) {
+            $s = [string]$tok
+            if (-not [string]::IsNullOrWhiteSpace($s)) {
+                [void]$tokenList.Add($s.Trim())
+            }
+        }
+        if ($tokenList.Count -eq 0) { continue }
+        $tokens = [string[]]@($tokenList.ToArray())
+        $stem = [string](Get-MetraProp -Object $concept -Name 'stem' -Default '').Trim()
+        $prefer = [string](Get-MetraProp -Object $concept -Name 'preferProject' -Default '').Trim()
+        $notes = [string](Get-MetraProp -Object $concept -Name 'notes' -Default '')
+        [void]$valid.Add([PSCustomObject]@{
+                id            = $id
+                tokens        = $tokens
+                stem          = $stem
+                preferProject = $prefer
+                notes         = $notes
+            })
+    }
+
+    return [PSCustomObject]@{
+        version  = $version
+        concepts = @($valid.ToArray())
+    }
+}
+
+function Get-MetraRoutingConceptHits {
+    <#
+    .SYNOPSIS
+        Concept lexicon rows whose tokens overlap the query (deterministic).
+    #>
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory)]
+        [AllowEmptyString()]
+        [string]$Query,
+        $Lexicon
+    )
+
+    if (-not $Lexicon) {
+        $Lexicon = Get-MetraRoutingConceptLexicon
+    }
+
+    $hits = New-Object System.Collections.Generic.List[object]
+    foreach ($concept in @($Lexicon.concepts)) {
+        $matched = $false
+        foreach ($tok in @($concept.tokens)) {
+            if (Test-MetraRoutingQueryHasTerm -Query $Query -Term $tok) {
+                $matched = $true
+                break
+            }
+        }
+        if (-not $matched) { continue }
+
+        $stem = [string](Get-MetraProp -Object $concept -Name 'stem' -Default '')
+        if (-not [string]::IsNullOrWhiteSpace($stem)) {
+            if (-not (Test-MetraRoutingQueryHasTerm -Query $Query -Term $stem)) {
+                continue
+            }
+        }
+
+        [void]$hits.Add($concept)
+    }
+
+    return @($hits.ToArray())
+}
+
+function Test-MetraRoutingRowHasRouteSupport {
+    <#
+    .SYNOPSIS
+        True when a scored row has haystack / compound / edge evidence (not concept-only).
+    #>
+    [CmdletBinding()]
+    param([Parameter(Mandatory)]$Row)
+
+    foreach ($t in @($Row.MatchedTokens)) {
+        $s = [string]$t
+        if ([string]::IsNullOrWhiteSpace($s)) { continue }
+        if ($s -like 'concept:*') { continue }
+        return $true
+    }
+    return $false
+}
+
+function Update-MetraScoredRoutingWithConceptCues {
+    <#
+    .SYNOPSIS
+        Applies concept lexicon boost (+3 once via concept:id). Never invents projects.
+    .DESCRIPTION
+        Runs after haystack, compound, and accepted edges. Boost only when the preferred
+        (or stem-matching) project is already scored with non-concept support. Soft-fail
+        empty lexicon leaves scores unchanged.
+    #>
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory)]
+        [AllowEmptyString()]
+        [string]$Query,
+        [Parameter(Mandatory)][AllowEmptyCollection()][object[]]$Scored,
+        [object]$Registry,
+        [string]$LexiconPath
+    )
+
+    if (-not $Registry) {
+        $Registry = Get-MetraProjectRegistry
+    }
+
+    $lexicon = if (-not [string]::IsNullOrWhiteSpace($LexiconPath)) {
+        Get-MetraRoutingConceptLexicon -Path $LexiconPath
+    }
+    else {
+        Get-MetraRoutingConceptLexicon
+    }
+
+    $hits = @(Get-MetraRoutingConceptHits -Query $Query -Lexicon $lexicon)
+    if ($hits.Count -eq 0) {
+        return @($Scored)
+    }
+
+    $regByName = @{}
+    foreach ($reg in @($Registry.projects)) {
+        $n = [string]$reg.name
+        if (-not [string]::IsNullOrWhiteSpace($n)) {
+            $regByName[$n.ToLowerInvariant()] = $reg
+        }
+    }
+
+    $list = New-Object System.Collections.Generic.List[object]
+    $byName = @{}
+    foreach ($row in @($Scored)) {
+        if (-not $row) { continue }
+        [void]$list.Add($row)
+        $byName[$row.Name.ToLowerInvariant()] = $row
+    }
+
+    foreach ($concept in $hits) {
+        $conceptId = [string]$concept.id
+        $tag = "concept:$conceptId"
+        $prefer = [string](Get-MetraProp -Object $concept -Name 'preferProject' -Default '').Trim()
+        $stem = [string](Get-MetraProp -Object $concept -Name 'stem' -Default '').Trim()
+
+        $targets = New-Object System.Collections.Generic.List[string]
+        if (-not [string]::IsNullOrWhiteSpace($prefer)) {
+            $reg = $regByName[$prefer.ToLowerInvariant()]
+            if ($reg) {
+                [void]$targets.Add([string]$reg.name)
+            }
+        }
+        elseif (-not [string]::IsNullOrWhiteSpace($stem)) {
+            $stemNorm = $stem.ToUpperInvariant()
+            foreach ($row in @($list)) {
+                $rowStem = Get-MetraRoutingStemFromName -Name $row.Name
+                if ($rowStem -and $rowStem.ToUpperInvariant() -eq $stemNorm) {
+                    [void]$targets.Add([string]$row.Name)
+                }
+            }
+        }
+
+        foreach ($targetName in @($targets | Select-Object -Unique)) {
+            $existing = $byName[$targetName.ToLowerInvariant()]
+            if (-not $existing) { continue }
+            if (-not (Test-MetraRoutingRowHasRouteSupport -Row $existing)) { continue }
+
+            $tokens = New-Object System.Collections.Generic.List[string]
+            foreach ($t in @($existing.MatchedTokens)) { [void]$tokens.Add([string]$t) }
+            if ($tokens -contains $tag) { continue }
+            [void]$tokens.Add($tag)
+            $existing.Score = [int]$existing.Score + 3
+            $existing.MatchedTokens = [string[]]@($tokens.ToArray())
+        }
+    }
+
+    return @($list.ToArray())
+}
+
 function Get-MetraRoutingAcceptedEdgeId {
     [CmdletBinding()]
     param(
         [Parameter(Mandatory)][string]$Stem,
         [Parameter(Mandatory)][string]$CueClass,
-        [Parameter(Mandatory)][string]$Target
+        [Parameter(Mandatory)][string]$Target,
+        [string]$Via = ''
     )
 
     $stemNorm = ([string]$Stem).Trim().ToUpperInvariant()
@@ -926,7 +1167,30 @@ function Get-MetraRoutingAcceptedEdgeId {
     $targetSlug = ([string]$Target).Trim().ToLowerInvariant() -replace '[^a-z0-9]+', '_'
     $targetSlug = $targetSlug.Trim('_')
     if ([string]::IsNullOrWhiteSpace($targetSlug)) { $targetSlug = 'unknown' }
+
+    $viaRaw = ([string]$Via).Trim()
+    if (-not [string]::IsNullOrWhiteSpace($viaRaw)) {
+        $viaSlug = $viaRaw.ToLowerInvariant() -replace '[^a-z0-9]+', '_'
+        $viaSlug = $viaSlug.Trim('_')
+        if ([string]::IsNullOrWhiteSpace($viaSlug)) { $viaSlug = 'unknown' }
+        return "e_${stemNorm}_${cueNorm}_via_${viaSlug}_${targetSlug}"
+    }
+
     return "e_${stemNorm}_${cueNorm}_${targetSlug}"
+}
+
+function Get-MetraRoutingEdgeVia {
+    [CmdletBinding()]
+    param($Edge)
+
+    $viaRaw = Get-MetraProp -Object $Edge -Name 'via' -Default $null
+    if ($null -eq $viaRaw) { return '' }
+    if ($viaRaw -is [System.Array]) {
+        $first = @($viaRaw | ForEach-Object { [string]$_ } | Where-Object { -not [string]::IsNullOrWhiteSpace($_) } | Select-Object -First 1)
+        if ($first.Count -eq 0) { return '' }
+        return [string]$first[0].Trim()
+    }
+    return ([string]$viaRaw).Trim()
 }
 
 function Test-MetraRoutingAcceptedEdgeRecord {
@@ -961,7 +1225,68 @@ function Test-MetraRoutingAcceptedEdgeRecord {
         return $false
     }
 
+    # Optional via / hop: string or single-element list; empty is fine.
+    $via = Get-MetraRoutingEdgeVia -Edge $Edge
+    if (-not [string]::IsNullOrWhiteSpace($via)) {
+        if ($via.Equals($target, [StringComparison]::OrdinalIgnoreCase)) { return $false }
+    }
+
     return $true
+}
+
+function Test-MetraRoutingAcceptedEdgeWouldCycle {
+    <#
+    .SYNOPSIS
+        True when adding Via -> Target would cycle the via/target digraph (depth walk).
+    #>
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory)]$Graph,
+        [string]$Via,
+        [Parameter(Mandatory)][string]$Target
+    )
+
+    $viaName = ([string]$Via).Trim()
+    $targetName = ([string]$Target).Trim()
+    if ([string]::IsNullOrWhiteSpace($viaName)) { return $false }
+    if ([string]::IsNullOrWhiteSpace($targetName)) { return $false }
+    if ($viaName.Equals($targetName, [StringComparison]::OrdinalIgnoreCase)) { return $true }
+
+    $adj = @{}
+    foreach ($edge in @($Graph.edges)) {
+        $v = Get-MetraRoutingEdgeVia -Edge $edge
+        if ([string]::IsNullOrWhiteSpace($v)) { continue }
+        $t = [string]$edge.target
+        if ([string]::IsNullOrWhiteSpace($t)) { continue }
+        $vk = $v.ToLowerInvariant()
+        $tk = $t.ToLowerInvariant()
+        if (-not $adj.ContainsKey($vk)) {
+            $adj[$vk] = New-Object System.Collections.Generic.List[string]
+        }
+        if (-not ($adj[$vk] -contains $tk)) {
+            [void]$adj[$vk].Add($tk)
+        }
+    }
+
+    # Would Target already reach Via? Then Via -> Target closes a cycle.
+    $start = $targetName.ToLowerInvariant()
+    $goal = $viaName.ToLowerInvariant()
+    $seen = [System.Collections.Generic.HashSet[string]]::new([StringComparer]::OrdinalIgnoreCase)
+    $queue = New-Object System.Collections.Generic.Queue[string]
+    $queue.Enqueue($start)
+    [void]$seen.Add($start)
+    while ($queue.Count -gt 0) {
+        $node = $queue.Dequeue()
+        if ($node -eq $goal) { return $true }
+        if (-not $adj.ContainsKey($node)) { continue }
+        foreach ($next in @($adj[$node])) {
+            if ($seen.Add($next)) {
+                $queue.Enqueue($next)
+            }
+        }
+    }
+
+    return $false
 }
 
 function Get-MetraRoutingDurableGraph {
@@ -1040,7 +1365,8 @@ function Save-MetraRoutingDurableGraph {
         version = 1
         edges   = @(
             foreach ($edge in $edges) {
-                [ordered]@{
+                $via = Get-MetraRoutingEdgeVia -Edge $edge
+                $row = [ordered]@{
                     id            = [string]$edge.id
                     stem          = ([string]$edge.stem).Trim().ToUpperInvariant()
                     cueClass      = ([string]$edge.cueClass).Trim().ToLowerInvariant()
@@ -1049,6 +1375,10 @@ function Save-MetraRoutingDurableGraph {
                     source        = 'operator'
                     note          = [string](Get-MetraProp -Object $edge -Name 'note' -Default '')
                 }
+                if (-not [string]::IsNullOrWhiteSpace($via)) {
+                    $row['via'] = $via
+                }
+                $row
             }
         )
     }
@@ -1069,6 +1399,9 @@ function Add-MetraRoutingAcceptedEdge {
     <#
     .SYNOPSIS
         Operator accept: replace same stem+cueClass; save once; return resulting edge.
+    .DESCRIPTION
+        Optional Via enables bounded multi-hop explainability. Cycle detection is fail-loud
+        (graph unchanged). CueClass remains ops|sql only.
     #>
     [CmdletBinding()]
     param(
@@ -1077,20 +1410,34 @@ function Add-MetraRoutingAcceptedEdge {
         [ValidateSet('ops', 'sql')]
         [string]$CueClass,
         [Parameter(Mandatory)][string]$Target,
+        [string]$Via = '',
         [string]$Note = ''
     )
 
     $stemNorm = ([string]$Stem).Trim().ToUpperInvariant()
     $cueNorm = ([string]$CueClass).Trim().ToLowerInvariant()
     $targetName = ([string]$Target).Trim()
+    $viaName = ([string]$Via).Trim()
     if ([string]::IsNullOrWhiteSpace($stemNorm)) { throw 'Stem required' }
     if ([string]::IsNullOrWhiteSpace($targetName)) { throw 'Target required' }
 
-    $reg = Get-MetraRegistryProject -Registry (Get-MetraProjectRegistry) -Name $targetName
+    $registry = Get-MetraProjectRegistry
+    $reg = Get-MetraRegistryProject -Registry $registry -Name $targetName
     if (-not $reg) { throw "Unknown registry target: $targetName" }
 
     $canonicalTarget = [string]$reg.name
+    $canonicalVia = ''
+    if (-not [string]::IsNullOrWhiteSpace($viaName)) {
+        $viaReg = Get-MetraRegistryProject -Registry $registry -Name $viaName
+        if (-not $viaReg) { throw "Unknown registry via: $viaName" }
+        $canonicalVia = [string]$viaReg.name
+        if ($canonicalVia.Equals($canonicalTarget, [StringComparison]::OrdinalIgnoreCase)) {
+            throw 'Via cannot equal Target (cycle)'
+        }
+    }
+
     $graph = Get-MetraRoutingDurableGraph
+
     $remaining = New-Object System.Collections.Generic.List[object]
     $replaced = $false
     foreach ($edge in @($graph.edges)) {
@@ -1103,8 +1450,14 @@ function Add-MetraRoutingAcceptedEdge {
         [void]$remaining.Add($edge)
     }
 
+    # Cycle check against remaining graph (after replace remove) so reverse/replace is not a false positive.
+    $probeGraph = [PSCustomObject]@{ version = 1; edges = @($remaining.ToArray()) }
+    if (Test-MetraRoutingAcceptedEdgeWouldCycle -Graph $probeGraph -Via $canonicalVia -Target $canonicalTarget) {
+        throw 'Accepted edge would create a cycle'
+    }
+
     $newEdge = [PSCustomObject]@{
-        id            = (Get-MetraRoutingAcceptedEdgeId -Stem $stemNorm -CueClass $cueNorm -Target $canonicalTarget)
+        id            = (Get-MetraRoutingAcceptedEdgeId -Stem $stemNorm -CueClass $cueNorm -Target $canonicalTarget -Via $canonicalVia)
         stem          = $stemNorm
         cueClass      = $cueNorm
         target        = $canonicalTarget
@@ -1112,6 +1465,9 @@ function Add-MetraRoutingAcceptedEdge {
         source        = 'operator'
         note          = [string]$Note
         replaced      = $replaced
+    }
+    if (-not [string]::IsNullOrWhiteSpace($canonicalVia)) {
+        $newEdge | Add-Member -NotePropertyName via -NotePropertyValue $canonicalVia -Force
     }
 
     [void]$remaining.Add($newEdge)
@@ -1151,10 +1507,62 @@ function Remove-MetraRoutingAcceptedEdge {
     return [PSCustomObject]@{ removed = $true; edge = $removed }
 }
 
+function Add-MetraScoredRoutingEdgeTokens {
+    <#
+    .SYNOPSIS
+        Internal: boost or insert a scored row for accepted-edge tokens (mutates list/map).
+    #>
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory)][string]$TargetName,
+        [Parameter(Mandatory)][string[]]$EdgeTokens,
+        [int]$Boost = 4,
+        [Parameter(Mandatory)][hashtable]$ByName,
+        [Parameter(Mandatory)]$List,
+        [Parameter(Mandatory)][hashtable]$RegByName,
+        [Parameter(Mandatory)][hashtable]$DiskByName
+    )
+
+    $key = $TargetName.ToLowerInvariant()
+    $existing = $ByName[$key]
+    if ($existing) {
+        $tokens = New-Object System.Collections.Generic.List[string]
+        foreach ($t in @($existing.MatchedTokens)) { [void]$tokens.Add([string]$t) }
+        $added = $false
+        foreach ($token in @($EdgeTokens)) {
+            if ([string]::IsNullOrWhiteSpace($token)) { continue }
+            if ($tokens -contains $token) { continue }
+            [void]$tokens.Add([string]$token)
+            $added = $true
+        }
+        if (-not $added) { return }
+        $existing.Score = [int]$existing.Score + $Boost
+        $existing.MatchedTokens = [string[]]@($tokens.ToArray())
+        return
+    }
+
+    $regRow = $RegByName[$key]
+    $onDisk = $DiskByName[$key]
+    if (-not $regRow -or -not $onDisk) { return }
+
+    $inserted = New-MetraCompoundScoredRoutingRow `
+        -Name $TargetName `
+        -RegistryRow $regRow `
+        -OnDisk $onDisk `
+        -Score $Boost `
+        -MatchedTokens ([string[]]@($EdgeTokens))
+    [void]$List.Add($inserted)
+    $ByName[$key] = $inserted
+}
+
 function Update-MetraScoredRoutingWithAcceptedEdges {
     <#
     .SYNOPSIS
         Applies operator-accepted durable edges after compound cues (+4 once via edge:id token).
+    .DESCRIPTION
+        Direct stem+cue matches apply first. Bounded multi-hop (depth <= 2): when a direct
+        edge lands on mid, a second edge whose via equals mid may boost its target; Why-here
+        tokens list both edge ids. No further hops.
     #>
     [CmdletBinding()]
     param(
@@ -1201,6 +1609,7 @@ function Update-MetraScoredRoutingWithAcceptedEdges {
         $byName[$row.Name.ToLowerInvariant()] = $row
     }
 
+    $directMids = New-Object System.Collections.Generic.List[object]
     foreach ($edge in @($graph.edges)) {
         $stem = ([string]$edge.stem).Trim()
         $cueClass = ([string]$edge.cueClass).Trim().ToLowerInvariant()
@@ -1212,29 +1621,50 @@ function Update-MetraScoredRoutingWithAcceptedEdges {
         if ($cueClass -eq 'ops' -and -not $hasOps) { continue }
         if ($cueClass -eq 'sql' -and -not $hasSql) { continue }
 
-        $existing = $byName[$targetName.ToLowerInvariant()]
-        if ($existing) {
-            $tokens = New-Object System.Collections.Generic.List[string]
-            foreach ($t in @($existing.MatchedTokens)) { [void]$tokens.Add([string]$t) }
-            if ($tokens -contains $token) { continue }
-            [void]$tokens.Add($token)
-            $existing.Score = [int]$existing.Score + 4
-            $existing.MatchedTokens = [string[]]@($tokens.ToArray())
-            continue
+        Add-MetraScoredRoutingEdgeTokens `
+            -TargetName $targetName `
+            -EdgeTokens @($token) `
+            -Boost 4 `
+            -ByName $byName `
+            -List $list `
+            -RegByName $regByName `
+            -DiskByName $DiskByName
+        [void]$directMids.Add([PSCustomObject]@{
+                EdgeId   = $edgeId
+                Mid      = $targetName
+                CueClass = $cueClass
+            })
+    }
+
+    # Bounded multi-hop: depth 2 only (one intermediate).
+    foreach ($direct in @($directMids.ToArray())) {
+        $mid = [string]$direct.Mid
+        foreach ($hop in @($graph.edges)) {
+            $via = Get-MetraRoutingEdgeVia -Edge $hop
+            if ([string]::IsNullOrWhiteSpace($via)) { continue }
+            if (-not $via.Equals($mid, [StringComparison]::OrdinalIgnoreCase)) { continue }
+
+            $hopCue = ([string]$hop.cueClass).Trim().ToLowerInvariant()
+            if ($hopCue -eq 'ops' -and -not $hasOps) { continue }
+            if ($hopCue -eq 'sql' -and -not $hasSql) { continue }
+
+            $hopTarget = [string]$hop.target
+            if ([string]::IsNullOrWhiteSpace($hopTarget)) { continue }
+            if ($hopTarget.Equals($mid, [StringComparison]::OrdinalIgnoreCase)) { continue }
+
+            $pathTokens = [string[]]@(
+                ("edge:{0}" -f [string]$direct.EdgeId),
+                ("edge:{0}" -f [string]$hop.id)
+            )
+            Add-MetraScoredRoutingEdgeTokens `
+                -TargetName $hopTarget `
+                -EdgeTokens $pathTokens `
+                -Boost 4 `
+                -ByName $byName `
+                -List $list `
+                -RegByName $regByName `
+                -DiskByName $DiskByName
         }
-
-        $regRow = $regByName[$targetName.ToLowerInvariant()]
-        $onDisk = $DiskByName[$targetName.ToLowerInvariant()]
-        if (-not $regRow -or -not $onDisk) { continue }
-
-        $inserted = New-MetraCompoundScoredRoutingRow `
-            -Name $targetName `
-            -RegistryRow $regRow `
-            -OnDisk $onDisk `
-            -Score 4 `
-            -MatchedTokens @($token)
-        [void]$list.Add($inserted)
-        $byName[$targetName.ToLowerInvariant()] = $inserted
     }
 
     return @($list.ToArray())
@@ -1313,10 +1743,11 @@ function Get-MetraRoutingProposalId {
     param(
         [Parameter(Mandatory)][string]$Stem,
         [Parameter(Mandatory)][string]$CueClass,
-        [Parameter(Mandatory)][string]$Target
+        [Parameter(Mandatory)][string]$Target,
+        [string]$Via = ''
     )
 
-    $edgeId = Get-MetraRoutingAcceptedEdgeId -Stem $Stem -CueClass $CueClass -Target $Target
+    $edgeId = Get-MetraRoutingAcceptedEdgeId -Stem $Stem -CueClass $CueClass -Target $Target -Via $Via
     return 'p' + $edgeId.Substring(1)
 }
 
@@ -1452,7 +1883,8 @@ function Save-MetraRoutingProposals {
                 $status = ([string]$proposal.status).Trim().ToLowerInvariant()
                 $resolved = Get-MetraProp -Object $proposal -Name 'resolvedAtUtc' -Default $null
                 $evidence = Get-MetraProp -Object $proposal -Name 'evidence' -Default @{}
-                [ordered]@{
+                $via = Get-MetraRoutingEdgeVia -Edge $proposal
+                $row = [ordered]@{
                     id            = [string]$proposal.id
                     stem          = ([string]$proposal.stem).Trim().ToUpperInvariant()
                     cueClass      = ([string]$proposal.cueClass).Trim().ToLowerInvariant()
@@ -1464,6 +1896,10 @@ function Save-MetraRoutingProposals {
                     resolvedAtUtc = if ($status -eq 'pending') { $null } else { [string]$resolved }
                     source        = 'review'
                 }
+                if (-not [string]::IsNullOrWhiteSpace($via)) {
+                    $row['via'] = $via
+                }
+                $row
             }
         )
     }
@@ -1523,19 +1959,30 @@ function Test-MetraRoutingProposalFingerprintExists {
         [Parameter(Mandatory)][string]$CueClass,
         [Parameter(Mandatory)][string]$Target,
         [Parameter(Mandatory)][string[]]$Statuses,
-        [object[]]$Proposals
+        [object[]]$Proposals,
+        [string]$Via = ''
     )
 
     $stemNorm = ([string]$Stem).Trim().ToUpperInvariant()
     $cueNorm = ([string]$CueClass).Trim().ToLowerInvariant()
     $targetNorm = ([string]$Target).Trim()
+    $viaNorm = ([string]$Via).Trim()
 
     foreach ($proposal in @($Proposals)) {
         $pStem = ([string]$proposal.stem).Trim().ToUpperInvariant()
         $pCue = ([string]$proposal.cueClass).Trim().ToLowerInvariant()
         $pTarget = ([string]$proposal.target).Trim()
         $pStatus = ([string]$proposal.status).Trim().ToLowerInvariant()
-        if ($pStem -eq $stemNorm -and $pCue -eq $cueNorm -and $pTarget -eq $targetNorm -and ($Statuses -contains $pStatus)) {
+        $pVia = Get-MetraRoutingEdgeVia -Edge $proposal
+        $viaMatch = (
+            ([string]::IsNullOrWhiteSpace($viaNorm) -and [string]::IsNullOrWhiteSpace($pVia)) -or
+            (
+                -not [string]::IsNullOrWhiteSpace($viaNorm) -and
+                -not [string]::IsNullOrWhiteSpace($pVia) -and
+                $viaNorm.Equals($pVia, [StringComparison]::OrdinalIgnoreCase)
+            )
+        )
+        if ($pStem -eq $stemNorm -and $pCue -eq $cueNorm -and $pTarget -eq $targetNorm -and $viaMatch -and ($Statuses -contains $pStatus)) {
             return $true
         }
     }
@@ -1686,7 +2133,8 @@ function Invoke-MetraRoutingEdgeAffirm {
     if (-not $found) { throw "Proposal not found: $want" }
     if ([string]$found.status -ne 'pending') { throw "Proposal is not pending: $want" }
 
-    $edge = Add-MetraRoutingAcceptedEdge -Stem $found.stem -CueClass $found.cueClass -Target $found.target -Note $Note
+    $via = Get-MetraRoutingEdgeVia -Edge $found
+    $edge = Add-MetraRoutingAcceptedEdge -Stem $found.stem -CueClass $found.cueClass -Target $found.target -Via $via -Note $Note
     $resolved = [datetime]::UtcNow.ToString('o')
     $affirmed = [PSCustomObject]@{
         id            = [string]$found.id
@@ -1699,6 +2147,9 @@ function Invoke-MetraRoutingEdgeAffirm {
         proposedAtUtc = [string]$found.proposedAtUtc
         resolvedAtUtc = $resolved
         source        = 'review'
+    }
+    if (-not [string]::IsNullOrWhiteSpace($via)) {
+        $affirmed | Add-Member -NotePropertyName via -NotePropertyValue $via -Force
     }
 
     [void]$rest.Add($affirmed)
@@ -1744,6 +2195,7 @@ function Invoke-MetraRoutingEdgeReject {
     }
 
     $resolved = [datetime]::UtcNow.ToString('o')
+    $via = Get-MetraRoutingEdgeVia -Edge $found
     $rejected = [PSCustomObject]@{
         id            = [string]$found.id
         stem          = [string]$found.stem
@@ -1755,6 +2207,9 @@ function Invoke-MetraRoutingEdgeReject {
         proposedAtUtc = [string]$found.proposedAtUtc
         resolvedAtUtc = $resolved
         source        = 'review'
+    }
+    if (-not [string]::IsNullOrWhiteSpace($via)) {
+        $rejected | Add-Member -NotePropertyName via -NotePropertyValue $via -Force
     }
 
     [void]$rest.Add($rejected)
@@ -1771,8 +2226,8 @@ function Get-MetraScoredRoutingProjects {
         Tokens match whole words in the project name / triggers / purpose haystack - not
         substrings. Stop words are dropped first so "to" / "in" / "the" / "or" cannot steal
         the primary route from noise inside purpose text (e.g. "get-together", "authority").
-        After haystack scoring, a compound cue pass may boost Ops|Sql siblings from the
-        registry-derived routing graph (Phase 2).
+        After haystack scoring: compound Ops|Sql (P2), accepted edges with optional multi-hop
+        (P4/P6), then concept lexicon boost (P6; never sole winner without prior support).
     #>
     [CmdletBinding()]
     param(
@@ -1850,10 +2305,11 @@ function Get-MetraScoredRoutingProjects {
 
     $withCompound = @(Update-MetraScoredRoutingWithCompoundCues -Query $Query -Scored @($scored.ToArray()) -Registry $registry -DiskByName $disk)
     $withEdges = @(Update-MetraScoredRoutingWithAcceptedEdges -Query $Query -Scored $withCompound -Registry $registry -DiskByName $disk)
+    $withConcepts = @(Update-MetraScoredRoutingWithConceptCues -Query $Query -Scored $withEdges -Registry $registry)
 
     # Prefer compound:sql over compound:ops on equal scores (mixed-cue SQL precedence).
     return @(
-        $withEdges |
+        $withConcepts |
             Sort-Object `
                 @{ Expression = 'Score'; Descending = $true },
                 @{ Expression = {
@@ -2386,22 +2842,39 @@ function Show-MetraRoutingCli {
             Write-MetraRelatedProjects -Related $relatedTopo
         }
         $compoundTag = @($primary.MatchedTokens | Where-Object { $_ -like 'compound:*' } | Select-Object -First 1)
+        $edgeTags = @($primary.MatchedTokens | Where-Object { $_ -like 'edge:*' } | Select-Object -Unique)
+        $conceptTags = @($primary.MatchedTokens | Where-Object { $_ -like 'concept:*' } | Select-Object -Unique)
         $cueLabel = $null
         if ($compoundTag.Count -gt 0) {
             $cueLabel = if ($compoundTag[0] -eq 'compound:sql') { 'product+sql' } else { 'product+ops' }
         }
         $why = @(Get-MetraWhyHere -Project $primary.Name -Query $Query -Limit 3)
+        $hasGraphWhy = ($cueLabel -or $edgeTags.Count -gt 0 -or $conceptTags.Count -gt 0)
         if ($why.Count -gt 0) {
             Write-Host ''
             Write-MetraWhyHere -Project $primary.Name -Decisions $why
             if ($cueLabel) {
                 Write-Host ("  Compound cue: {0}" -f $cueLabel)
             }
+            foreach ($et in $edgeTags) {
+                Write-Host ("  Edge: {0}" -f $et)
+            }
+            foreach ($ct in $conceptTags) {
+                Write-Host ("  Concept: {0}" -f $ct)
+            }
         }
-        elseif ($cueLabel) {
+        elseif ($hasGraphWhy) {
             Write-Host ''
             Write-Host ("Why here? {0}" -f $primary.Name)
-            Write-Host ("  Compound cue: {0}" -f $cueLabel)
+            if ($cueLabel) {
+                Write-Host ("  Compound cue: {0}" -f $cueLabel)
+            }
+            foreach ($et in $edgeTags) {
+                Write-Host ("  Edge: {0}" -f $et)
+            }
+            foreach ($ct in $conceptTags) {
+                Write-Host ("  Concept: {0}" -f $ct)
+            }
         }
         if ($amb.IsAmbiguous -and $amb.RunnerUp) {
             $runner = $amb.RunnerUp
@@ -2417,7 +2890,13 @@ function Show-MetraRoutingCli {
         return
     }
 
-    $rows = @(Get-MetraRoutingTable -Name $Name -SharedOnly:$SharedOnly -MissingOnly:$MissingOnly)
+    # -Name is optional; do not bind an empty Name (ValidateNotNullOrEmpty rejects it).
+    # Needed for -MissingOnly / full-table dumps (same splat pattern as Get-MetraRouting).
+    $tableParams = @{}
+    if ($Name -and $Name.Count -gt 0) { $tableParams.Name = $Name }
+    if ($SharedOnly) { $tableParams.SharedOnly = $true }
+    if ($MissingOnly) { $tableParams.MissingOnly = $true }
+    $rows = @(Get-MetraRoutingTable @tableParams)
     if ($rows.Count -eq 0) {
         Write-Host 'No registry entries matched.' -ForegroundColor Yellow
         return
@@ -2473,6 +2952,7 @@ function Show-MetraRoutingEdgesCli {
         [string]$Stem,
         [string]$CueClass,
         [string]$Target,
+        [string]$Via,
         [string]$Note,
         [string]$Id
     )
@@ -2494,6 +2974,7 @@ function Show-MetraRoutingEdgesCli {
                         Stem          = [string]$e.stem
                         CueClass      = [string]$e.cueClass
                         Target        = [string]$e.target
+                        Via           = Get-MetraRoutingEdgeVia -Edge $e
                         AcceptedAtUtc = [string]$e.acceptedAtUtc
                         Note          = [string](Get-MetraProp -Object $e -Name 'note' -Default '')
                     }
@@ -2542,7 +3023,7 @@ function Show-MetraRoutingEdgesCli {
             if ([string]::IsNullOrWhiteSpace($Target)) { throw 'accept requires -Target' }
             $cue = $CueClass.Trim().ToLowerInvariant()
             if ($cue -notin @('ops', 'sql')) { throw 'CueClass must be ops or sql' }
-            $edge = Add-MetraRoutingAcceptedEdge -Stem $Stem -CueClass $cue -Target $Target -Note $Note
+            $edge = Add-MetraRoutingAcceptedEdge -Stem $Stem -CueClass $cue -Target $Target -Via $Via -Note $Note
             if ($edge.replaced) {
                 Write-Host ("Replaced prior {0}+{1} edge -> {2} ({3})" -f $edge.stem, $edge.cueClass, $edge.target, $edge.id) -ForegroundColor Cyan
             }

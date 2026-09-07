@@ -44,12 +44,12 @@ AI at work usually lands in one of two bad places:
 | IWUDATA-Automation | iwudata automation | trigger-phrase | PowerShell automation that populates IWUDATA warehouse databases. |
 | Reporting | reporting | trigger-phrase | Reporting assets, SSRS/related report work, and ops scripts. |
 | Jitterbit | jitterbit | trigger-phrase | Harmony Studio exports, private agents, and IWU.Jitterbit operation-log monitoring module. |
-| AutoHotkey | autohotkey | trigger-phrase | AutoHotkey scripts and helpers. |
+| Atlas | atlas | trigger-phrase | Metra Atlas - portfolio knowledge bus (Stub + Notion); document exchange, two-way sync, StableIds; not institutional KB (Codex) and not OCC/Decision authority. |
 
 Precedence (live engine): ticket id > helpdesk vocabulary > solutions keywords > registry score; weak signals stay at Metra.
 Example: ask `1035666` -> TicketTracker (ticket-id), even when no project name appears in the ask.
 
-Generated 2026-08-12T15:13:42.1062244-04:00 by `.\metra.ps1 selfdoc` from live `Get-MetraRoutingAmbiguity` (present projects only).
+Generated 2026-09-07T13:27:35.4305532-04:00 by `.\metra.ps1 selfdoc` from live `Get-MetraRoutingAmbiguity` (present projects only).
 <!-- metra-selfdoc-routes-end -->
 
 Metra picks the matching place before work starts. It does not replace judgment, Cursor, iSupport, or Orion. After routing, it keeps help useful for the person doing the work, and keeps durable writing (tickets, commits, emails to others) ordinary and professional.
@@ -176,3 +176,4 @@ Fine. Optional stubs give advice when a folder is missing instead of pretending 
 - Visual primary (in Cursor): open the **Metra self-documentation** canvas beside chat
 - Public overview: [https://jaxnoth.github.io/Metra/](https://jaxnoth.github.io/Metra/)
 - Product repo and operator docs: ask the Metra steward for the current clone or installer path
+- Cursor coworker plugins (IWU desk / tickets / Codex): see [README Quick start - Cursor coworker plugins](../README.md#cursor-coworker-plugins-iwu) and the team marketplace (**IWU SDT Market**)
