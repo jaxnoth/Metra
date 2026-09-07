@@ -12,6 +12,9 @@ $ErrorActionPreference = 'Stop'
 if (-not $Root) {
     $Root = (Resolve-Path (Join-Path $PSScriptRoot '..')).Path
 }
+else {
+    $Root = (Resolve-Path -LiteralPath $Root).Path
+}
 $failed = $false
 
 function Write-Finding {

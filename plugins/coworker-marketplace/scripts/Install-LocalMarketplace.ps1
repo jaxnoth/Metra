@@ -19,19 +19,30 @@ if (-not (Test-Path -LiteralPath $localRoot)) {
         New-Item -ItemType Directory -Path $localRoot -Force | Out-Null
     }
     elseif (-not (Test-Path -LiteralPath $localRoot)) {
-        return
+        # -WhatIf: still simulate link targets without creating the directory
+        Write-Host "WhatIf: would create $localRoot"
     }
 }
-$localRootResolved = (Resolve-Path -LiteralPath $localRoot).Path
+
+if (Test-Path -LiteralPath $localRoot) {
+    $localRootResolved = (Resolve-Path -LiteralPath $localRoot).Path
+}
+else {
+    $localRootResolved = [System.IO.Path]::GetFullPath($localRoot)
+}
+$localRootPrefix = $localRootResolved.TrimEnd('\') + '\'
 
 foreach ($name in @($Plugin)) {
+    if ([string]::IsNullOrWhiteSpace($name) -or $name -match '[\\/]' -or $name -in @('.', '..')) {
+        throw "Invalid plugin name: '$name' (must be a non-empty single path segment)."
+    }
     $src = Join-Path $pluginsRoot $name
     if (-not (Test-Path -LiteralPath $src)) {
         throw "Plugin folder missing: $src"
     }
     $linkPath = Join-Path $localRoot $name
     $linkPathResolved = [System.IO.Path]::GetFullPath($linkPath)
-    if (-not $linkPathResolved.StartsWith($localRootResolved, [System.StringComparison]::OrdinalIgnoreCase)) {
+    if (-not $linkPathResolved.StartsWith($localRootPrefix, [System.StringComparison]::OrdinalIgnoreCase)) {
         throw "Plugin name resolves outside local plugins root: $linkPathResolved"
     }
 
@@ -42,7 +53,20 @@ foreach ($name in @($Plugin)) {
         if (-not $PSCmdlet.ShouldProcess($linkPath, 'Replace plugin symbolic link')) {
             continue
         }
-        Remove-Item -LiteralPath $linkPath -Force -Recurse
+        $existing = Get-Item -LiteralPath $linkPath -Force
+        $isReparse = [bool]($existing.Attributes -band [System.IO.FileAttributes]::ReparsePoint)
+        if ($isReparse) {
+            # Never Remove-Item -Recurse on a directory symlink (can delete the target tree).
+            if ($existing.PSIsContainer) {
+                [System.IO.Directory]::Delete($linkPath)
+            }
+            else {
+                [System.IO.File]::Delete($linkPath)
+            }
+        }
+        else {
+            Remove-Item -LiteralPath $linkPath -Force -Recurse
+        }
     }
     elseif (-not $PSCmdlet.ShouldProcess($linkPath, 'Create symbolic link')) {
         continue
