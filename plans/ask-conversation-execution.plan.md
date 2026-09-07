@@ -1,9 +1,10 @@
 ---
 name: Ask Conversation Execution
-overview: "Replace AskLane regex template/ops-status fork with Conversation Execution (secrets preflight → intent → policy → depth → engine → voice) for Bounded Ops/phone Ask. Bing Conditional Affirm 2026-09-06 closed into locked contract."
-status: Approved with amendments (Bing baseline review 2026-09-06)
+overview: "Replace AskLane regex template/ops-status fork with Conversation Execution (secrets preflight → intent → policy → depth → engine → voice) for Bounded Ops/phone Ask. Bing Conditional Affirm 2026-09-06 closed into locked contract. Shipped 0.1.19 behind flag."
+status: Complete (shipped 0.1.19)
 bingReviewed: true
 implementationHold: cleared-baselines-shipped-2026-09-06
+shippedIn: v0.1.19
 phase: ask-conversation-execution
 relatedPlans:
   - plans/ios-conversation-policy.plan.md
@@ -34,13 +35,13 @@ todos:
 
 # Ask Conversation Execution
 
-**Status: Approved with amendments** (Conditional Affirm + baseline review 2026-09-06 folded below). Implement behind `ask.conversationExecution.enabled` only after the working-tree baseline is separated/committed. Implemented behind flag (default false). Not enabled in production config until operator flips ask.conversationExecution.enabled.
+**Status: Complete (shipped 0.1.19)** - Conditional Affirm + baseline review 2026-09-06 folded below. Implemented behind `ask.conversationExecution.enabled` (default **false** in example config). Release: https://github.com/jaxnoth/Metra/releases/tag/v0.1.19
 
 **Bite:** Server-side Conversation Execution for **Bounded Ops / phone Ask** only. Normative posture: [ios-conversation-policy.plan.md](ios-conversation-policy.plan.md). Presence/TTS separate ([ios-presence-behavior.plan.md](ios-presence-behavior.plan.md)).
 
-**Verified current (2026-09-06):** `AskConversation.ps1` absent. `Get-MetraDeskAskResult` still early-returns via `Resolve-MetraAskLane` → chat templates / `New-MetraAskOpsStatusResult`.
+**Verified shipped (2026-09-06):** `AskConversation*.ps1` module split; `Get-MetraDeskAskResult` uses Conversation Execution when the flag is on; AskLane is lane/reason telemetry. Partner Identity Contract shares continuity/authority/check-in semantics.
 
-**Implementation hold (Bing baseline review 2026-09-06):** Cleared after baseline commits `6ed25d2` / `0d9b07c` / `7514647`. Batch 1 (preflight + voice) landed in `AskConversation.ps1`; later bites remain behind the flag.
+**Implementation hold (Bing baseline review 2026-09-06):** Cleared after baseline commits `6ed25d2` / `0d9b07c` / `7514647`. Full CE path shipped in `b086f65` / v0.1.19 behind the flag.
 
 ## Bing-affirmed amendments (2026-09-06)
 
@@ -58,7 +59,7 @@ Baseline review locked two more contract edits: trusted-client policy authority 
 
 Phone and Ops Ask answer check-ins and status asks in **plain English**, use **intent-gated evidence depth** for work turns, and **always** return a filled **`voice`** (`spoken` / `display` / `durable`) with `message = voice.display` - without leaking secrets, inventing health, letting client policy bypass authority, or breaking Vision / TicketTracker ownership.
 
-## Problem (still live)
+## Problem (was live; replaced by Conversation Execution when flag on)
 
 ```text
 prompt → handoff → Resolve-MetraAskLane (regex)
