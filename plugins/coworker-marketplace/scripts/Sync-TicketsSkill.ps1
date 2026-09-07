@@ -11,8 +11,7 @@ param(
             (Resolve-Path (Join-Path $PSScriptRoot '..\..\..\TicketTracker')).Path
         }
         else { '' }
-    ),
-    [switch]$WhatIf
+    )
 )
 
 $ErrorActionPreference = 'Stop'
@@ -31,11 +30,11 @@ if (-not (Test-Path -LiteralPath $src)) {
 
 $destDir = Join-Path $PSScriptRoot '..\plugins\tickets\skills\tickets'
 $dest = Join-Path $destDir 'SKILL.md'
-if (-not (Test-Path -LiteralPath $destDir)) {
-    New-Item -ItemType Directory -Path $destDir -Force | Out-Null
-}
 
 if ($PSCmdlet.ShouldProcess($dest, "Copy from $src")) {
+    if (-not (Test-Path -LiteralPath $destDir)) {
+        New-Item -ItemType Directory -Path $destDir -Force | Out-Null
+    }
     Copy-Item -LiteralPath $src -Destination $dest -Force
     Write-Host "Synced tickets skill:"
     Write-Host "  From: $src"
