@@ -1,0 +1,12 @@
+{
+  "name": "coworker-desk",
+  "displayName": "OrgBrand Coworker Desk",
+  "version": "0.1.0",
+  "description": "Thin OrgBrand coworker onboarding for Metra: routing pointer, Overview, companion honesty, ticket-ops vs investigate hop. Does not replace metra.ps1.",
+  "logo": "assets/logo.svg",
+  "license": "UNLICENSED",
+  "keywords": ["OrgBrand", "metra", "coworker", "onboarding", "routing"],
+  "author": {
+    "name": "OrgBrand Metra"
+  }
+}
