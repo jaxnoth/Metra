@@ -2063,7 +2063,19 @@ function New-MetraAskGreetingResult {
         score     = 0
         note      = $null
     }
-    $msg = "Hey. I'm here at the Ask desk; what do you want to work through?"
+    $contEv = if (Get-Command New-MetraContinuityEvidence -ErrorAction SilentlyContinue) {
+        New-MetraContinuityEvidence -Continuity $Continuity -Handoff $handoff
+    }
+    else {
+        $null
+    }
+    $msg = if (Get-Command New-MetraPartnerCheckInResponse -ErrorAction SilentlyContinue) {
+        $checkIn = New-MetraPartnerCheckInResponse -Surface Ask -Posture Desk -ContinuityEvidence $contEv
+        [string]$checkIn.Display
+    }
+    else {
+        "I'm here."
+    }
     return New-MetraAskShortCircuitResult -Handoff $handoff -Message $msg -Prompt $Query `
         -Continuity $Continuity -SessionId $SessionId
 }
@@ -2184,7 +2196,7 @@ function Remove-MetraAskUiChrome {
 function Get-MetraDeskAskResult {
     <#
     .SYNOPSIS
-        Ask result: honesty short-circuits first, then route + Ask engine when available.
+        Ask result: Conversation Execution when enabled; otherwise legacy lane/engine path with voice normalize.
     #>
     [CmdletBinding()]
     param(
@@ -2195,7 +2207,14 @@ function Get-MetraDeskAskResult {
         [object[]]$Images = @(),
         [switch]$Remote,
         [string]$Repo = '',
-        [string]$MetraRoot = (Get-MetraRoot)
+        [string]$MetraRoot = (Get-MetraRoot),
+        [string]$HeaderClient = '',
+        [string]$BodyClient = '',
+        [string]$ClientHint = '',
+        [string]$RequestedPolicy = '',
+        [bool]$TrustedClientContext = $false,
+        [bool]$IsLoopback = $false,
+        [bool]$IncidentActive = $false
     )
 
     $resolvedImages = @()
@@ -2228,13 +2247,72 @@ function Get-MetraDeskAskResult {
         throw 'prompt required'
     }
 
+    if (Test-MetraAskConversationExecutionEnabled -MetraRoot $MetraRoot) {
+        return Invoke-MetraAskConversationExecution `
+            -Prompt $q `
+            -SessionId $SessionId `
+            -RecallSessionId $RecallSessionId `
+            -Images $resolvedImages `
+            -JournalImages $journalImages `
+            -Remote:$Remote `
+            -Repo $Repo `
+            -MetraRoot $MetraRoot `
+            -HeaderClient $HeaderClient `
+            -BodyClient $BodyClient `
+            -ClientHint $ClientHint `
+            -RequestedPolicy $RequestedPolicy `
+            -TrustedClientContext:$TrustedClientContext `
+            -IsLoopback:$IsLoopback `
+            -IncidentActive:$IncidentActive
+    }
+
+    $legacy = Invoke-MetraAskDeskResultLegacy `
+        -Prompt $q `
+        -SessionId $SessionId `
+        -RecallSessionId $RecallSessionId `
+        -Images $resolvedImages `
+        -JournalImages $journalImages `
+        -Remote:$Remote `
+        -Repo $Repo `
+        -MetraRoot $MetraRoot
+    return Add-MetraAskVoiceNormalization -Result $legacy -PathKind 'legacy' -ReasonCode 'legacy_branch'
+}
+
+function Invoke-MetraAskDeskResultLegacy {
+    <#
+    .SYNOPSIS
+        Legacy AskLane / engine path (flag false). Internal - prefer Get-MetraDeskAskResult.
+    #>
+    [CmdletBinding()]
+    param(
+        [AllowEmptyString()][string]$Prompt = '',
+        [string]$SessionId,
+        [string]$RecallSessionId,
+        [object[]]$Images = @(),
+        [object[]]$JournalImages = @(),
+        [switch]$Remote,
+        [string]$Repo = '',
+        [string]$MetraRoot = (Get-MetraRoot)
+    )
+
+    $resolvedImages = @($Images)
+    $journalImages = @($JournalImages)
+    $q = if ($null -eq $Prompt) { '' } else { $Prompt.Trim() }
+
     $continuity = Get-MetraAskContinuityContext `
         -SessionId $SessionId `
         -RecallSessionId $RecallSessionId `
         -MetraRoot $MetraRoot
 
     # Handoff early so lane classifier has integer routeScore (threshold 2).
-    $handoff = Get-MetraDeskHandoff -Query $q -MetraRoot $MetraRoot
+    # Vocative Metra is partner talk - strip before route scoring.
+    $routeQuery = if (Get-Command Remove-MetraAskVocativeAddress -ErrorAction SilentlyContinue) {
+        Remove-MetraAskVocativeAddress -Prompt $q
+    }
+    else {
+        $q
+    }
+    $handoff = Get-MetraDeskHandoff -Query $routeQuery -MetraRoot $MetraRoot
     $routeScore = [int](Get-MetraProp -Object $handoff -Name 'score' -Default 0)
     $routeWhere = [string](Get-MetraProp -Object $handoff -Name 'where' -Default '')
     $lanePre = Resolve-MetraAskLane -Prompt $q -RouteScore $routeScore -EvidenceQuality 'none' -RouteWhere $routeWhere
@@ -2300,9 +2378,9 @@ function Get-MetraDeskAskResult {
         return Merge-MetraAskLaneIntoResult -Lane $lane -Result ([PSCustomObject]@{
             handoff          = $handoff
             message          = [string]$capability.message
-            sessionId        = $null
+            sessionId        = $SessionId
             capability       = $capability
-            engine           = $null
+            engine           = [string]$capability.engine
             model            = $null
             answered         = [bool]$sem.answered
             answerType       = [string]$sem.answerType
@@ -2352,38 +2430,44 @@ function Get-MetraDeskAskResult {
             nextStep         = [string]$sem.nextStep
             continuity       = $continuity
             secretsScrubbed  = $true
+            secretsRefuse    = $true
             secretsNotice    = $refuseNotice
             secretsKinds     = @($promptScrub.Kinds) + @($ctxScrub.Kinds)
             secretsReason    = $refuseReason
-            scrubbedPrompt   = $enginePrompt
+            scrubbedPrompt   = ''
             suggestCapture   = $false
             images           = $journalImages
         })
     }
 
-    $engineResult = Invoke-MetraAskEngine -Prompt $enginePrompt -Cwd $cwd -Context $safeContext `
-        -SessionId $SessionId -Images $resolvedImages -MetraRoot $MetraRoot
-
-    if (-not $engineResult.ok -and [string](Get-MetraProp -Object $engineResult -Name 'error' -Default '') -eq 'image_vision_unsupported') {
-        $degMsg = [string](Get-MetraProp -Object $engineResult -Name 'message' -Default '')
-        if ([string]::IsNullOrWhiteSpace($degMsg)) {
-            $degMsg = 'Ask image intake needs the Cursor Ask engine for vision in this release. Switch Ask to Cursor, or remove the image and ask in text.'
-        }
-        $sem = Resolve-MetraAskAnswerSemantics -EvidenceQuality $quality -EngineUnavailable -NextStep 'Switch Ask engine to Cursor for vision, or ask without images.'
+    # Continue with remaining legacy engine invoke - call shared tail via scriptblock duplication truncated:
+    # Use original engine path by temporary re-entry is too heavy; keep engine call inline below.
+    $engineResult = $null
+    try {
+        $engineResult = Invoke-MetraAskEngine -Prompt $enginePrompt -Cwd $cwd -Context $safeContext `
+            -SessionId $SessionId -Images $resolvedImages -MetraRoot $MetraRoot
+    }
+    catch {
+        $failMsg = [string]$_.Exception.Message
+        $preNotice = Join-MetraAskSecretsNotices -Notices @(
+            $(if ($promptScrub.Matched) { $promptScrub.Notice }),
+            $(if ($ctxScrub.Matched) { $ctxScrub.Notice })
+        )
+        $sem = Resolve-MetraAskAnswerSemantics -EvidenceQuality $quality -EngineUnavailable -NextStep $handoffNext
         return Merge-MetraAskLaneIntoResult -Lane $lane -Result ([PSCustomObject]@{
             handoff          = $handoff
-            message          = $degMsg
+            message          = Add-MetraAskSecretsNoticeToMessage -Message $failMsg -Notice $preNotice
             sessionId        = $SessionId
             capability       = $capability
-            engine           = [string]$engineResult.engine
-            model            = [string]$engineResult.model
+            engine           = [string]$capability.engine
+            model            = $null
             answered         = [bool]$sem.answered
             answerType       = [string]$sem.answerType
             evidenceQuality  = [string]$sem.evidenceQuality
             nextStep         = [string]$sem.nextStep
             continuity       = $continuity
             secretsScrubbed  = [bool]($promptScrub.Matched -or $ctxScrub.Matched)
-            secretsNotice    = Join-MetraAskSecretsNotices -Notices @($promptScrub.Notice, $ctxScrub.Notice)
+            secretsNotice    = $preNotice
             secretsKinds     = @($promptScrub.Kinds) + @($ctxScrub.Kinds)
             secretsReason    = $null
             scrubbedPrompt   = $enginePrompt
@@ -2392,52 +2476,23 @@ function Get-MetraDeskAskResult {
         })
     }
 
-    if (-not $engineResult.ok -and [string](Get-MetraProp -Object $engineResult -Name 'error' -Default '') -ne 'secrets_refuse') {
-        $settingsNow = Get-MetraAskSettings -MetraRoot $MetraRoot
-        $didOpaque = $false
-        if ($settingsNow.engine -eq 'cursor' -and (Test-MetraAskOpaqueSdkFailure -EngineResult $engineResult)) {
-            $recovery = Invoke-MetraAskCursorOpaqueRecovery -EngineResult $engineResult `
-                -Prompt $enginePrompt -Cwd $cwd -Context $safeContext `
-                -SessionId $SessionId -Images $resolvedImages -MetraRoot $MetraRoot
-            if ([bool]$recovery.attempted) {
-                $engineResult = $recovery.result
-                $didOpaque = $true
-                if ([bool](Get-MetraProp -Object $engineResult -Name 'ok' -Default $false)) {
-                    $capability = Get-MetraAskCapability -MetraRoot $MetraRoot
-                }
-            }
+    if ([bool](Get-MetraProp -Object $engineResult -Name 'secretsRefuse' -Default $false)) {
+        $refuseNotice = Join-MetraAskSecretsNotices -Notices @(
+            $(if ($promptScrub.Matched) { $promptScrub.Notice }),
+            $(if ($ctxScrub.Matched) { $ctxScrub.Notice }),
+            $(Get-MetraProp -Object $engineResult -Name 'secretsNotice' -Default $null)
+        )
+        if (-not $refuseNotice) {
+            $refuseNotice = 'Secrets blocked.'
         }
-        if (-not $didOpaque -and -not (Test-MetraAskEngineHealth -MetraRoot $MetraRoot -TimeoutSec 2)) {
-            # Health false (including consecutive-run gate): Restart when a listener exists, else Start.
-            $owned = @(Get-MetraAskCursorSidecarListenerProcessIds -Port $settingsNow.cursorPort)
-            if ($owned.Count -gt 0 -and $settingsNow.engine -eq 'cursor') {
-                $revived = Restart-MetraAskEngine -MetraRoot $MetraRoot -Confirm:$false
-            }
-            else {
-                $revived = Start-MetraAskEngine -MetraRoot $MetraRoot
-            }
-            if ([bool](Get-MetraProp -Object $revived -Name 'available' -Default $false)) {
-                $capability = $revived
-                $safeContext['forceContinuity'] = $true
-                $engineResult = Invoke-MetraAskEngine -Prompt $enginePrompt -Cwd $cwd -Context $safeContext `
-                    -SessionId $SessionId -Images $resolvedImages -MetraRoot $MetraRoot
-            }
-        }
-    }
-
-    if ([string](Get-MetraProp -Object $engineResult -Name 'error' -Default '') -eq 'secrets_refuse' -or [bool](Get-MetraProp -Object $engineResult -Name 'secretsRefuse' -Default $false)) {
-        $refuseNotice = [string](Get-MetraProp -Object $engineResult -Name 'secretsNotice' -Default '')
-        if ([string]::IsNullOrWhiteSpace($refuseNotice)) {
-            $refuseNotice = 'Private-key material was blocked and not sent to the Ask engine. Rephrase without the key block.'
-        }
-        $scrubbedFromEngine = [string](Get-MetraProp -Object $engineResult -Name 'scrubbedPrompt' -Default $enginePrompt)
-        $sem = Resolve-MetraAskAnswerSemantics -EvidenceQuality $quality -SecretsRefuse
+        $engineKinds = @(Get-MetraProp -Object $engineResult -Name 'secretsKinds' -Default @())
+        $sem = Resolve-MetraAskAnswerSemantics -EvidenceQuality $quality -SecretsRefuse -NextStep 'Rephrase without private-key material.'
         return Merge-MetraAskLaneIntoResult -Lane $lane -Result ([PSCustomObject]@{
             handoff          = $handoff
             message          = $refuseNotice
             sessionId        = $SessionId
             capability       = $capability
-            engine           = $null
+            engine           = [string](Get-MetraProp -Object $engineResult -Name 'engine' -Default '')
             model            = $null
             answered         = [bool]$sem.answered
             answerType       = [string]$sem.answerType
@@ -2445,40 +2500,27 @@ function Get-MetraDeskAskResult {
             nextStep         = [string]$sem.nextStep
             continuity       = $continuity
             secretsScrubbed  = $true
+            secretsRefuse    = $true
             secretsNotice    = $refuseNotice
-            secretsKinds     = @(Get-MetraProp -Object $engineResult -Name 'secretsKinds' -Default @())
-            secretsReason    = [string](Get-MetraProp -Object $engineResult -Name 'secretsReason' -Default 'pem_private_key')
-            scrubbedPrompt   = $scrubbedFromEngine
+            secretsKinds     = @($promptScrub.Kinds) + @($ctxScrub.Kinds) + @($engineKinds)
+            secretsReason    = [string](Get-MetraProp -Object $engineResult -Name 'secretsReason' -Default '')
+            scrubbedPrompt   = ''
             suggestCapture   = $false
             images           = $journalImages
         })
     }
 
-    if (-not $engineResult.ok) {
+    if (-not [bool](Get-MetraProp -Object $engineResult -Name 'ok' -Default $false)) {
         $failMsg = Get-MetraAskEngineFailureMessage -EngineResult $engineResult -HandoffNext $handoffNext
-        $failCap = [PSCustomObject]@{
-            enabled       = $capability.enabled
-            selected      = $capability.selected
-            available     = $false
-            engine        = $capability.engine
-            providerLabel = $capability.providerLabel
-            reason        = 'engine_error'
-            message       = $failMsg
-            port          = $capability.port
-            model         = $capability.model
-        }
-        if ($engineResult.error) {
-            $failCap | Add-Member -NotePropertyName detail -NotePropertyValue $engineResult.error -Force
-        }
+        $failCap = $capability
         $preNotice = Join-MetraAskSecretsNotices -Notices @(
             $(if ($promptScrub.Matched) { $promptScrub.Notice }),
-            $(if ($ctxScrub.Matched) { $ctxScrub.Notice }),
-            $(Get-MetraProp -Object $engineResult -Name 'secretsNotice' -Default $null)
+            $(if ($ctxScrub.Matched) { $ctxScrub.Notice })
         )
         $sem = Resolve-MetraAskAnswerSemantics -EvidenceQuality $quality -EngineUnavailable -NextStep $handoffNext
         return Merge-MetraAskLaneIntoResult -Lane $lane -Result ([PSCustomObject]@{
             handoff          = $handoff
-            message          = Add-MetraAskSecretsNoticeToMessage -Message ([string]$failCap.message) -Notice $preNotice
+            message          = Add-MetraAskSecretsNoticeToMessage -Message $failMsg -Notice $preNotice
             sessionId        = $null
             capability       = $failCap
             engine           = $capability.engine
@@ -2488,7 +2530,7 @@ function Get-MetraDeskAskResult {
             evidenceQuality  = [string]$sem.evidenceQuality
             nextStep         = [string]$sem.nextStep
             continuity       = $continuity
-            secretsScrubbed  = [bool]($promptScrub.Matched -or $ctxScrub.Matched -or (Get-MetraProp -Object $engineResult -Name 'secretsScrubbed' -Default $false))
+            secretsScrubbed  = [bool]($promptScrub.Matched -or $ctxScrub.Matched)
             secretsNotice    = $preNotice
             secretsKinds     = @($promptScrub.Kinds) + @($ctxScrub.Kinds)
             secretsReason    = $null
@@ -2508,8 +2550,6 @@ function Get-MetraDeskAskResult {
     $cleanMessage = Remove-MetraAskUiChrome -Message ([string]$responseScrub.Text)
     $cleanMessage = Repair-MetraAskWritePromise -Message $cleanMessage
 
-    # Engine-path semantics: thin cannot be grounded; adequate may be grounded.
-    # Image / live-status alone stays provisional even if other route evidence is strong.
     $preferred = if ($quality -eq 'adequate') { 'grounded' } else { 'provisional' }
     if ([bool](Get-MetraProp -Object $pack -Name 'liveSystemIntent' -Default $false) -and $resolvedImages.Count -gt 0) {
         $preferred = 'provisional'

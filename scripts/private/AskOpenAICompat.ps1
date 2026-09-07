@@ -312,8 +312,22 @@ function Invoke-MetraAskOpenAICompatComplete {
         )
     }
     else {
+        $askPosture = 'Desk'
+        $askPortfolio = $false
+        $askCont = $null
+        if ($Context -is [hashtable] -or $Context -is [PSCustomObject]) {
+            $askPosture = [string](Get-MetraProp -Object $Context -Name 'posture' -Default 'Desk')
+            $askPortfolio = [bool](Get-MetraProp -Object $Context -Name 'portfolioShaped' -Default $false)
+            $askCont = Get-MetraProp -Object $Context -Name 'continuityEvidence' -Default $null
+        }
+        $partnerPreamble = if (Get-Command New-MetraPartnerIdentityPreamble -ErrorAction SilentlyContinue) {
+            New-MetraPartnerIdentityPreamble -Surface Ask -Posture $askPosture -PortfolioShaped:$askPortfolio -ContinuityEvidence $askCont
+        }
+        else {
+            'You are Metra - portfolio operations partner. Speak in first person.'
+        }
         $systemParts = @(
-            'You are Metra Ask - answer-only portfolio ops assistant.',
+            $partnerPreamble
             'Follow route-first context. Do not invent live system state without evidence.',
             'DESK HONESTY: Be brief. Do not paste routing furniture (Where / What / Why / Next).',
             'Do not invent operator biography or personal observations - journal is continuity, not personal memory.',

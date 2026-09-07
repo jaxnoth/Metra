@@ -1,6 +1,6 @@
 @{
     RootModule        = 'Metra.psm1'
-    ModuleVersion     = '0.1.18'
+    ModuleVersion     = '0.1.19'
     GUID              = 'afe44c63-0346-4acf-b723-164fb28c585d'
     Author            = 'Metra contributors'
     CompanyName       = 'Community'
@@ -107,6 +107,40 @@
         'Get-MetraDeskHandoff',
         'Get-MetraDeskPlaceRecommendation',
         'Get-MetraDeskAskResult',
+        'Normalize-MetraAskInput',
+        'Test-MetraAskConversationExecutionEnabled',
+        'Invoke-MetraAskConversationSecretsPreflight',
+        'Format-MetraAskVoiceFromEngine',
+        'New-MetraAskConversationResult',
+        'New-MetraAskConversationBatch1Result',
+        'Test-MetraAskVoiceContract',
+        'Resolve-MetraAskIntent',
+        'Resolve-MetraConversationPolicy',
+        'Get-MetraConversationPolicyKnobs',
+        'Resolve-MetraAskEvidenceDepth',
+        'Test-MetraAskHealthObservationCurrent',
+        'New-MetraAskEvidenceItem',
+        'New-MetraAskEvidencePack',
+        'Get-MetraAskEvidenceQuality',
+        'Resolve-MetraAskAnswerSemantics',
+        'New-MetraConversationPrompt',
+        'Invoke-MetraAskConversationEngine',
+        'Invoke-MetraAskConversationExecution',
+        'Get-MetraPartnerIdentityContract',
+        'Resolve-MetraPartnerPosture',
+        'Get-MetraPartnerResolvedPostureName',
+        'Get-MetraPartnerIdentitySelfDescription',
+        'New-MetraPartnerIdentityPreamble',
+        'Remove-MetraAskVocativeAddress',
+        'Test-MetraAskPortfolioVocabulary',
+        'Test-MetraAskPortfolioShapedTurn',
+        'New-MetraContinuityEvidence',
+        'Test-MetraContinuityClaimAllowed',
+        'New-MetraPartnerCheckInResponse',
+        'Get-MetraPartnerPresenceLines',
+        'ConvertTo-MetraPartnerNeutralArtifact',
+        'Test-MetraPartnerIdentityAuthorityGate',
+        'Add-MetraAskVoiceNormalization',
         'New-MetraTicketAssessDraft',
         'Test-MetraDeskGreeting',
         'Test-MetraAskShowWhere',

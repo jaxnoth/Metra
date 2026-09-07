@@ -26,6 +26,9 @@
   "ask": {
     "enabled": true,
     "engine": "ollama",
+    "conversationExecution": {
+      "enabled": false
+    },
     "ollama": {
       "baseUrl": "http://127.0.0.1:11434",
       "model": "qwen2.5:7b",

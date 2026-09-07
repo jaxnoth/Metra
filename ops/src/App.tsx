@@ -215,20 +215,22 @@ function awarenessNarration(
   emptyHint: string | null | undefined,
   gitChecked: boolean | undefined,
 ): string {
+  // Partner Identity: Ops presence acknowledgement vs evidence-backed observation.
+  // Empty Attention => ack only (no invented "all clear").
+  const ack = "I'm here."
   if (waiting > 1) {
-    return `I see ${waiting} items ready for review - discuss one, or type what you're thinking.`
+    return `${ack} ${waiting} items ready for review.`
   }
   if (waiting === 1) {
-    return 'One item ready for review - discuss it, or type what you\'re thinking.'
+    return `${ack} One item ready for review.`
   }
-  const quiet = 'Clear for now. Toss me an idea whenever.'
   if (emptyHint && /not reviewed|quick check|light check|recheck|full refresh|Portfolio refresh/i.test(emptyHint)) {
-    return `${quiet} ${emptyHint}`
+    return `${ack} ${emptyHint}`
   }
   if (gitChecked === false) {
-    return `${quiet} Some areas were not reviewed - run Portfolio refresh to confirm.`
+    return `${ack} Some areas were not reviewed - run Portfolio refresh to confirm.`
   }
-  return quiet
+  return ack
 }
 
 async function copyText(text: string): Promise<boolean> {
@@ -2151,7 +2153,9 @@ export default function App() {
         {
           id: nextChatId(),
           role: 'metra',
-          text: stripAskUiChrome(result.message || ''),
+          text: stripAskUiChrome(
+            (result.voice && result.voice.display) || result.message || '',
+          ),
           answered: Boolean(result.answered),
           answerType: result.answerType || null,
           evidenceQuality: result.evidenceQuality || null,

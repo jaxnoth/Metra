@@ -1418,9 +1418,18 @@ function Invoke-MetraOpsApi {
             $hasLocalSession = Test-MetraOpsLocalSessionToken -SessionToken $sessionToken
             $origin = Resolve-MetraAskOrigin -IsLoopback $isLoopback -HasLocalSession $hasLocalSession
 
+            $requestedPolicy = [string](Get-MetraProp -Object $parsed -Name 'policy' -Default '')
+            if (-not $requestedPolicy) {
+                $requestedPolicy = [string](Get-MetraProp -Object $parsed -Name 'requestedPolicy' -Default '')
+            }
+            $trustedClient = $isLoopback -or $hasLocalSession
+
             try {
                 $ask = Get-MetraDeskAskResult -Prompt $prompt -SessionId $sessionId -RecallSessionId $recallSessionId `
-                    -Images $resolvedImages -MetraRoot $MetraRoot
+                    -Images $resolvedImages -MetraRoot $MetraRoot `
+                    -HeaderClient $headerClient -BodyClient $bodyClient -ClientHint $clientHint `
+                    -RequestedPolicy $requestedPolicy `
+                    -TrustedClientContext:$trustedClient -IsLoopback:$isLoopback
             }
             catch {
                 Write-MetraOpsJsonResponse -Response $Response -StatusCode 400 -Object ([PSCustomObject]@{ error = $_.Exception.Message })
@@ -1428,8 +1437,17 @@ function Invoke-MetraOpsApi {
             }
             $journalSession = [string]$ask.sessionId
             if ([string]::IsNullOrWhiteSpace($journalSession)) { $journalSession = $sessionId }
-            $journalPrompt = [string](Get-MetraProp -Object $ask -Name 'scrubbedPrompt' -Default $prompt)
-            if ([string]::IsNullOrWhiteSpace($journalPrompt)) { $journalPrompt = $prompt }
+            $journalPrompt = [string](Get-MetraProp -Object $ask -Name 'scrubbedPrompt' -Default '')
+            if ([string]::IsNullOrWhiteSpace($journalPrompt)) {
+                $secretsGate = [bool](Get-MetraProp -Object $ask -Name 'secretsRefuse' -Default $false) -or `
+                    [bool](Get-MetraProp -Object $ask -Name 'secretsScrubbed' -Default $false)
+                if ($secretsGate) {
+                    $journalPrompt = ''
+                }
+                else {
+                    $journalPrompt = $prompt
+                }
+            }
             $askJournalImages = @(Get-MetraProp -Object $ask -Name 'images' -Default $journalImages)
             $entry = Add-MetraDeskAskEntry `
                 -Prompt $journalPrompt `
@@ -1470,6 +1488,12 @@ function Invoke-MetraOpsApi {
                     turnMode          = [string](Get-MetraProp -Object $ask -Name 'turnMode' -Default '')
                     voice             = $(Get-MetraProp -Object $ask -Name 'voice' -Default $null)
                     continuity        = $ask.continuity
+                    intentClass       = $(Get-MetraProp -Object $ask -Name 'intentClass' -Default $null)
+                    policy            = $(Get-MetraProp -Object $ask -Name 'policy' -Default $null)
+                    policySource      = $(Get-MetraProp -Object $ask -Name 'policySource' -Default $null)
+                    reasonCode        = $(Get-MetraProp -Object $ask -Name 'reasonCode' -Default $null)
+                    evidenceDepth     = $(Get-MetraProp -Object $ask -Name 'evidenceDepth' -Default $null)
+                    conversationExecutionEnabled = [bool](Get-MetraProp -Object $ask -Name 'conversationExecutionEnabled' -Default $false)
                     secretsScrubbed   = [bool](Get-MetraProp -Object $ask -Name 'secretsScrubbed' -Default $false)
                     secretsNotice     = $(Get-MetraProp -Object $ask -Name 'secretsNotice' -Default $null)
                     secretsKinds      = @(Get-MetraProp -Object $ask -Name 'secretsKinds' -Default @())

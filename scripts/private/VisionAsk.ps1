@@ -22,21 +22,42 @@ function Test-MetraVisionAskHandlerRegistered {
 function Get-MetraVisionAskSystemPrompt {
     <#
     .SYNOPSIS
-        Load engines/vision-ask/system.md (Vision handler ownership - not AskLane).
+        Load engines/vision-ask/system.md (Vision handler ownership - Partner Identity surface).
     #>
     [CmdletBinding()]
-    param([string]$MetraRoot = (Get-MetraRoot))
+    param(
+        [string]$MetraRoot = (Get-MetraRoot),
+        [ValidateSet('Desk', 'Company', 'Deliver', 'DeskStrict', '')]
+        [string]$Posture = '',
+        [switch]$PortfolioShaped,
+        $ContinuityEvidence
+    )
+
+    $partner = if (Get-Command New-MetraPartnerIdentityPreamble -ErrorAction SilentlyContinue) {
+        New-MetraPartnerIdentityPreamble `
+            -Surface Vision `
+            -Posture $Posture `
+            -PortfolioShaped:$PortfolioShaped `
+            -ContinuityEvidence $ContinuityEvidence
+    }
+    else {
+        "I'm Metra, the portfolio operations partner. Surface=Vision."
+    }
 
     $path = Join-Path $MetraRoot 'engines\vision-ask\system.md'
-    if (-not (Test-Path -LiteralPath $path)) {
-        return 'You are Metra Vision: relational companion only. No portfolio grounding, no Capture chrome, no durable writes.'
+    $body = ''
+    if (Test-Path -LiteralPath $path) {
+        try {
+            $body = [System.IO.File]::ReadAllText($path).Trim()
+        }
+        catch {
+            $body = ''
+        }
     }
-    try {
-        return [System.IO.File]::ReadAllText($path).Trim()
+    if ([string]::IsNullOrWhiteSpace($body)) {
+        $body = 'Vision surface: same Metra partner. Portfolio grounding when portfolio-shaped. Confirm before durable writes.'
     }
-    catch {
-        return 'You are Metra Vision: relational companion only. No portfolio grounding, no Capture chrome, no durable writes.'
-    }
+    return "$partner`n`n$body"
 }
 
 function Get-MetraAskRoutedTelemetryRoot {
@@ -350,10 +371,14 @@ function New-MetraVisionAskAnsweredResponse {
         [bool]$OpsReached = $false,
         [bool]$PortfolioGrounded = $false,
         [bool]$EngineInvoked = $false,
+        [switch]$PartnerIdentityShortCircuit,
         $Correlation = @{}
     )
 
-    if ($Source -eq 'ops-vision' -and ($AskLaneUsed -or -not $EngineInvoked)) {
+    if ($Source -eq 'ops-vision' -and $AskLaneUsed) {
+        throw 'route_boundary_violation: ops-vision requires askLaneUsed=false'
+    }
+    if ($Source -eq 'ops-vision' -and -not $EngineInvoked -and -not $PartnerIdentityShortCircuit) {
         throw 'route_boundary_violation: ops-vision requires engineInvoked=true and askLaneUsed=false'
     }
 
@@ -378,6 +403,7 @@ function New-MetraVisionAskAnsweredResponse {
             askLaneUsed      = $AskLaneUsed
             captureSuggested = $CaptureSuggested
             engineInvoked    = $EngineInvoked
+            partnerIdentityShortCircuit = [bool]$PartnerIdentityShortCircuit
         }
         writes          = [ordered]@{
             attempted    = $false
@@ -568,10 +594,134 @@ function Invoke-MetraVisionAskHandler {
         return $err
     }
 
-    $systemPrompt = Get-MetraVisionAskSystemPrompt -MetraRoot $MetraRoot
     $userMessage = [string]$normalized.message
+    $requestedPosture = [string](Get-MetraProp -Object $normalized -Name 'posture' -Default '')
+    $resolvedPosture = 'Company'
+    $postureRes = $null
+    if (Get-Command Resolve-MetraPartnerPosture -ErrorAction SilentlyContinue) {
+        $postureRes = Resolve-MetraPartnerPosture -Surface Vision -Posture $requestedPosture
+        $resolvedPosture = Get-MetraPartnerResolvedPostureName -Resolution $postureRes
+    }
+    else {
+        if (-not [string]::IsNullOrWhiteSpace($requestedPosture)) { $resolvedPosture = $requestedPosture }
+    }
+
+    $routePrompt = if (Get-Command Remove-MetraAskVocativeAddress -ErrorAction SilentlyContinue) {
+        Remove-MetraAskVocativeAddress -Prompt $userMessage
+    }
+    else {
+        $userMessage
+    }
+    $handoff = $null
+    $routeScore = 0
+    if (Get-Command Get-MetraDeskHandoff -ErrorAction SilentlyContinue) {
+        try {
+            $handoff = Get-MetraDeskHandoff -Query $routePrompt -MetraRoot $MetraRoot
+            $routeScore = [int](Get-MetraProp -Object $handoff -Name 'score' -Default 0)
+        }
+        catch {
+            $handoff = $null
+        }
+    }
+    $intent = if (Get-Command Resolve-MetraAskIntent -ErrorAction SilentlyContinue) {
+        Resolve-MetraAskIntent -Prompt $userMessage -RouteScore $routeScore
+    }
+    else {
+        [PSCustomObject]@{ IntentClass = 'work'; Confidence = 0.5; Source = 'vision'; Notes = @() }
+    }
+    $continuityEvidence = if (Get-Command New-MetraContinuityEvidence -ErrorAction SilentlyContinue) {
+        New-MetraContinuityEvidence -Continuity $null -Handoff $handoff
+    }
+    else {
+        $null
+    }
+    $portfolioShaped = $false
+    if (Get-Command Test-MetraAskPortfolioShapedTurn -ErrorAction SilentlyContinue) {
+        $portfolioShaped = [bool](Test-MetraAskPortfolioShapedTurn `
+                -Prompt $userMessage `
+                -Intent $intent `
+                -Handoff $handoff `
+                -ContinuityEvidence $continuityEvidence `
+                -RouteScore $routeScore)
+    }
+
+    # Who-are-you / vocative-only Metra: deterministic Partner Identity (parity with Ask check-in).
+    # Ordinary "hi" / "How are you?" still use the engine with Company posture expression.
+    $who = ($userMessage -match '(?i)\b(who are you|what are you)\b')
+    $vocativeOnly = ($userMessage -match '(?i)^\s*(hi|hello|hey)\b[,!]?\s*metra\b[.!?\s]*$' `
+            -or $userMessage -match '(?i)^\s*metra\b[,!]?\s*(hi|hello|hey)\b[.!?\s]*$')
+    if ($who -or $vocativeOnly) {
+        $checkIn = New-MetraPartnerCheckInResponse -Surface Vision -Posture $resolvedPosture -ContinuityEvidence $continuityEvidence -WhoAreYou:$who
+        $answered = New-MetraVisionAskAnsweredResponse `
+            -Text ([string]$checkIn.Display) `
+            -Source 'ops-vision' `
+            -Mode 'vision' `
+            -Intent 'relational' `
+            -Handler $script:MetraVisionAskHandlerName `
+            -AskLaneUsed:$false `
+            -CaptureSuggested:$false `
+            -OpsReached:$true `
+            -PortfolioGrounded:$false `
+            -EngineInvoked:$false `
+            -PartnerIdentityShortCircuit `
+            -Correlation $corr
+        if (-not $SkipTelemetry) {
+            Add-MetraAskRoutedTelemetryEvent -Envelope $answered -Result 'answered' -Surface $surface -EngineInvoked:$false
+        }
+        return $answered
+    }
+
+    # Authority gate - identity never grants execution.
+    $authGate = if (Get-Command Test-MetraPartnerIdentityAuthorityGate -ErrorAction SilentlyContinue) {
+        Test-MetraPartnerIdentityAuthorityGate -Intent $intent -Prompt $userMessage
+    }
+    else {
+        [PSCustomObject]@{ RequiresConfirm = $false; Message = ''; ReasonCode = '' }
+    }
+    if ([bool]$authGate.RequiresConfirm) {
+        $answered = New-MetraVisionAskAnsweredResponse `
+            -Text ([string]$authGate.Message) `
+            -Source 'ops-vision' `
+            -Mode 'vision' `
+            -Intent 'relational' `
+            -Handler $script:MetraVisionAskHandlerName `
+            -AskLaneUsed:$false `
+            -CaptureSuggested:$false `
+            -OpsReached:$true `
+            -PortfolioGrounded:$portfolioShaped `
+            -EngineInvoked:$false `
+            -PartnerIdentityShortCircuit `
+            -Correlation $corr
+        if (-not $SkipTelemetry) {
+            Add-MetraAskRoutedTelemetryEvent -Envelope $answered -Result 'answered' -Surface $surface -EngineInvoked:$false
+        }
+        return $answered
+    }
+
+    $systemPrompt = Get-MetraVisionAskSystemPrompt `
+        -MetraRoot $MetraRoot `
+        -Posture $resolvedPosture `
+        -PortfolioShaped:$portfolioShaped `
+        -ContinuityEvidence $continuityEvidence
+
+    $groundingBlock = ''
+    if ($portfolioShaped -and $null -ne $handoff) {
+        $where = [string](Get-MetraProp -Object $handoff -Name 'where' -Default '')
+        $what = [string](Get-MetraProp -Object $handoff -Name 'what' -Default '')
+        $groundingBlock = @"
+
+---
+Portfolio grounding (portfolio-shaped turn; evidence standards same as Ask):
+where=$where
+what=$what
+routeScore=$routeScore
+Do not invent live status beyond this handoff. Thin evidence => provisional answer.
+"@
+    }
+
     $enginePrompt = @"
 $systemPrompt
+$groundingBlock
 
 ---
 User turn:
@@ -584,11 +734,14 @@ $userMessage
             param($Prompt, $Root)
             if (Get-Command -Name Invoke-MetraAskEngine -ErrorAction SilentlyContinue) {
                 $engine = Invoke-MetraAskEngine -Prompt $Prompt -Cwd $Root -Context @{
-                    surface       = 'ios'
-                    mode          = 'vision'
-                    intent        = 'relational'
-                    askLaneUsed   = $false
-                    visionHandler = $true
+                    surface             = 'ios'
+                    mode                = 'vision'
+                    intent              = 'relational'
+                    posture             = $resolvedPosture
+                    portfolioShaped     = $portfolioShaped
+                    continuityEvidence  = $continuityEvidence
+                    askLaneUsed         = $false
+                    visionHandler       = $true
                 } -MetraRoot $Root
                 return [pscustomobject]@{
                     ok      = [bool](Get-MetraProp -Object $engine -Name 'ok' -Default $false)
@@ -664,7 +817,7 @@ $userMessage
         -AskLaneUsed:$false `
         -CaptureSuggested:$false `
         -OpsReached:$true `
-        -PortfolioGrounded:$false `
+        -PortfolioGrounded:$portfolioShaped `
         -EngineInvoked:$true `
         -Correlation $corr
 
