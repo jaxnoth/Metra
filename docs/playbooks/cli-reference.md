@@ -48,6 +48,13 @@ Entry: `.\metra.ps1`. Inspect detail: [inspect-loop.md](inspect-loop.md).
 .\metra.ps1 ask get <sessionId>
 .\metra.ps1 ask recall "gateway msal"
 .\metra.ps1 capture list
+.\metra.ps1 narrative packs
+.\metra.ps1 narrative start derelict_station -Seed 42
+.\metra.ps1 narrative status
+.\metra.ps1 narrative move enter_corridor
+.\metra.ps1 narrative narrate -FallbackOnly
+.\metra.ps1 narrative end
+.\metra.ps1 narrative expire -WhatIf
 .\metra.ps1 coverage
 .\metra.ps1 inspect
 .\metra.ps1 inspect -Name Metra

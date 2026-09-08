@@ -37,7 +37,7 @@ param(
     [ValidateSet(
         'list', 'status', 'pull', 'fetch', 'run', 'new', 'apply', 'workspace',
         'audit', 'snapshot', 'selfdoc', 'ops', 'host', 'chats', 'roots', 'routing',
-        'export-profile', 'import-profile', 'ctx', 'setup', 'verify', 'unblock', 'tailscale', 'satellite', 'desk', 'profile', 'decisions', 'coverage', 'ask', 'capture', 'watch', 'inspect', 'azdo', 'atlas', 'loom', 'yarn', 'plan-board', 'autoprogram', 'help'
+        'export-profile', 'import-profile', 'ctx', 'setup', 'verify', 'unblock', 'tailscale', 'satellite', 'desk', 'profile', 'decisions', 'coverage', 'ask', 'capture', 'narrative', 'watch', 'inspect', 'azdo', 'atlas', 'loom', 'yarn', 'plan-board', 'autoprogram', 'help'
     )]
     [string]$Command = 'help',
 
@@ -248,6 +248,8 @@ Usage:
       Ask engine: Ollama recommended path; Cursor premium; enterprise when configured.
   .\metra.ps1 capture list|get|note|dismiss|promote|from-ask
       Capture Inbox (thin portfolio intake; promote on affirm - never auto).
+  .\metra.ps1 narrative packs|start|status|moves|move|narrate|end|list|expire|forget|lifecycle
+      Narrative Engine (state-first lessons/sims/adventures; Ask narrates only).
   .\metra.ps1 coverage
       Knowledge coverage visibility (AGENTS / serves / decisions / uncovered) - counts and gap lists, not a score.
   .\metra.ps1 inspect [-Name Metra] [-Base <rev>] [-WhatIf]
@@ -958,6 +960,27 @@ switch ($Command) {
         }
         $result = Invoke-MetraCaptureCommand -Subcommand $sub -ArgsRest $subArgs
         $result | Format-List
+    }
+
+    'narrative' {
+        if (-not $Rest -or $Rest.Count -eq 0) {
+            throw "narrative requires a subcommand. Example: .\metra.ps1 narrative packs"
+        }
+        $sub = $Rest[0]
+        $subArgs = @()
+        if ($Rest.Count -gt 1) {
+            $subArgs = @($Rest[1..($Rest.Count - 1)])
+        }
+        if ($WhatIf -and $sub -eq 'expire' -and ($subArgs -notcontains '-WhatIf')) {
+            $subArgs = @($subArgs + '-WhatIf')
+        }
+        $result = Invoke-MetraNarrativeCommand -Subcommand $sub -ArgsRest $subArgs
+        if ($sub -in @('packs', 'list', 'moves')) {
+            $result | Format-Table -AutoSize
+        }
+        else {
+            $result | Format-List
+        }
     }
 
     'watch' {
