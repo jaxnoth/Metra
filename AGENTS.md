@@ -59,6 +59,7 @@ Triggers: Metra home, routing, ctx, registry, inspect, profile, decisions, works
 | satellite connect, Mac onboarding, profile sync merge | [docs/playbooks/satellite-remote-install.md](docs/playbooks/satellite-remote-install.md) |
 | yarn intake, backlog, synthesize, pack freshness | [docs/playbooks/yarn.md](docs/playbooks/yarn.md) |
 | loom queue, triage, run, review, daily, loop | [docs/playbooks/loom.md](docs/playbooks/loom.md) |
+| narrative engine, scenario packs, lessons/sims | [docs/playbooks/narrative.md](docs/playbooks/narrative.md) |
 
 ## On-demand patterns
 
