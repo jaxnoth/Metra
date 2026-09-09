@@ -248,8 +248,8 @@ Usage:
       Ask engine: Ollama recommended path; Cursor premium; enterprise when configured.
   .\metra.ps1 capture list|get|note|dismiss|promote|from-ask
       Capture Inbox (thin portfolio intake; promote on affirm - never auto).
-  .\metra.ps1 narrative packs|start|status|moves|move|narrate|end|list|expire|forget|lifecycle
-      Narrative Engine (state-first lessons/sims/adventures; Ask narrates only).
+  .\metra.ps1 narrative packs|start|status|moves|move|narrate|end|list|expire|forget|lifecycle|compile
+      Narrative Engine (Ink packs; state-first; Ask narrates only).
   .\metra.ps1 coverage
       Knowledge coverage visibility (AGENTS / serves / decisions / uncovered) - counts and gap lists, not a score.
   .\metra.ps1 inspect [-Name Metra] [-Base <rev>] [-WhatIf]

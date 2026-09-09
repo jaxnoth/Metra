@@ -18,15 +18,26 @@ Entry shape:
 
 ---
 
----
+## 2026-09-08 - Narrative packs are Ink (Windows runtime)
 
----
+- Decision: Narrative pack format is **Ink**, not hand-authored `moves`/`when`/`effects` JSON-as-YAML. Each pack is `pack.json` (Metra metadata) + `story.ink` (source) + committed `story.json` (runtime) + compile-emitted `story.graph.json` (Inspect/tooling only). The YAML/`scenario.yaml` pack loader is retired.
+- Decision: Windows host is vendored **inklecate** + **ink-engine-runtime** under `narrative/vendor/ink/` loaded in-process (`Add-Type`). Ink stays on the Narrative capability car - never under Ask `engines/`.
+- Decision: Capability contracts are unchanged: allowed moves expose `{ id, label, description }` via `# move:<id>` choice tags; Metra-visible runtime tags `# terminal:success|fail` set session terminal; Ask narrates only; bind/leave/inertia unchanged.
+- Decision: `narrative compile` runs inklecate plus Metra validation (required move tags, no duplicates, valid terminal tags, pack id match) and writes `story.graph.json`. Play must not require a compile step when `story.json` is committed.
+- Why: Authors should write experiences, not state machines. Ink preserves state ownership outside the LLM while enabling richer training content. Graph artifact keeps Inspectability after leaving flat when/effects.
+- See: `scripts/private/InkRuntime.ps1`; `scripts/private/Narrative.ps1`; `docs/playbooks/narrative.md`; `narrative/packs/`
 
----
+## 2026-09-08 - Capability bind and route inertia (faces, conductor, cars)
 
----
-
----
+- Decision: **Faces present. Metra routes. Capability runtimes execute. Routes have inertia until leave evidence.** Faces (Ops Ask, CLI, later iOS) never own capability-runtime state. Capability runtimes (e.g. Narrative under `Narrative.ps1` + `narrative/packs/`) never assume a face. Metra is the only binder of user intent to a capability. Product marketing may still say "Narrative Engine"; architecture prefers **capability runtime** / **capability car** so it does not collide with Ask's `engines/` folder (Ask engines / sidecars are locomotives for prose only - Cursor, Ollama, lane prompts).
+- Decision: Portfolio routing and capability routing are separate. The **portfolio router** decides what to **start** (project / stem scoring). The **capability router** decides what to **continue** (active bind). **Active capability bind beats fresh portfolio stem scoring.**
+- Decision: Bind key is Ask `sessionId`. Ledger lives under machine data `capability-bind/` (generic `CapabilityBind.ps1`, not Narrative-specific). Record fields include `capability`, `runtimeSessionId` (session on the capability car - not an Ask locomotive id; formerly `engineSessionId`), optional `packId`, `boundAt`, `lastTouchedAt`.
+- Decision: **Crossing capability boundaries requires explicit confirmation unless the current capability is terminal.** Mid-bind cues such as "check SQL replication" must not leave the car or run portfolio route; Metra asks confirm and keeps the bind. Explicit exit, operator-affirmed leave, or accepted terminal/forgotten clears the bind.
+- Decision: **A capability may nominate leave hints; Metra decides whether a leave occurs.** Runtimes suggest (Narrative terminal, later ticket closed); Metra remains authority.
+- Decision: Train metaphor (locked vocabulary): **station/terminal** = face; **line** = capability type; **car** = active bound session; **conductor** = Metra dispatch + bind; **locomotive** = Ask inference under `engines/`. Narrative is a car on the Narrative line, not another terminal.
+- Decision: AI never owns Narrative success/fail (Narrative Engine ownership Decision Registry `dd9105a2d71` stays). Move mapping is Allowed moves → intent mapping → move id; never invent moves.
+- Why: Without inertia, mid-scenario Ask re-scores the portfolio and breaks the face contract. Confirm-to-cross keeps operator authority. Separating Ask locomotives from capability cars prevents folder and naming spaghetti as more capabilities appear.
+- See: `scripts/private/CapabilityBind.ps1`; `scripts/private/CapabilityDispatch.ps1`; `scripts/private/NarrativeCapability.ps1`; `docs/playbooks/narrative.md`; Cursor plan `capability_routing_inertia_2c6d3897`
 
 ---
 

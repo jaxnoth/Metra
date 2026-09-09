@@ -1,0 +1,50 @@
+{
+  "packId": "pbi_gateway_ha_prep",
+  "generated": "2026-09-08T20:23:32.7524331Z",
+  "knots": [
+    "intake",
+    "checks",
+    "ready"
+  ],
+  "moves": [
+    {
+      "line": 16,
+      "id": "check_nodes",
+      "label": "Verify both gateway nodes are online"
+    },
+    {
+      "line": 20,
+      "id": "skip_node_check",
+      "label": "Skip node health and jump to update"
+    },
+    {
+      "line": 27,
+      "id": "validate_spn",
+      "label": "Validate gateway service account / SPN"
+    },
+    {
+      "line": 31,
+      "id": "confirm_backup",
+      "label": "Confirm recovery / backup path"
+    },
+    {
+      "line": 35,
+      "id": "force_update_early",
+      "label": "Force update before backup confirmation"
+    },
+    {
+      "line": 38,
+      "id": "open_window",
+      "label": "Confirm change window is open"
+    },
+    {
+      "line": 47,
+      "id": "begin_update",
+      "label": "Begin gateway cluster update"
+    }
+  ],
+  "terminals": [
+    "success",
+    "fail"
+  ]
+}
