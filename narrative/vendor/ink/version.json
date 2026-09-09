@@ -1,0 +1,15 @@
+{
+  "inkVersion": "1.2.1",
+  "source": "https://github.com/inkle/ink/releases/tag/v1.2.1",
+  "asset": "inklecate_windows.zip",
+  "inklecateSha256": "fe28fd3cbc6c1ade1ec3fbd76afac1daac09e2101e699142e2051b838411c608",
+  "tracked": [
+    "ink-engine-runtime.dll"
+  ],
+  "gitignored": [
+    "inklecate.exe"
+  ],
+  "optionalLocal": [
+    "ink_compiler.dll"
+  ]
+}

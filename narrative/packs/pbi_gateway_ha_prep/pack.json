@@ -1,0 +1,24 @@
+{
+  "id": "pbi_gateway_ha_prep",
+  "version": 2,
+  "mode": "lesson",
+  "title": "Power BI Gateway HA Prep",
+  "source": {
+    "kind": "project",
+    "project": "PBI",
+    "note": "Thin Knowledge to Experience lesson for gateway HA cluster update prep"
+  },
+  "setting": {
+    "location": "operations desk",
+    "context": "planned Power BI Gateway high-availability cluster update"
+  },
+  "objectives": [
+    "verify cluster health before change",
+    "confirm recovery path",
+    "begin update only when checks pass"
+  ],
+  "actors": [
+    "operator",
+    "gateway cluster"
+  ]
+}

@@ -1,0 +1,67 @@
+{
+  "packId": "derelict_station",
+  "generated": "2026-09-08T20:23:31.9341825Z",
+  "knots": [
+    "station_dock",
+    "station_corridor",
+    "archive_room_quiet",
+    "archive_room_hot",
+    "archive_room_escape"
+  ],
+  "moves": [
+    {
+      "line": 23,
+      "id": "enter_corridor",
+      "label": "Enter the dark corridor"
+    },
+    {
+      "line": 25,
+      "id": "abandon_mission",
+      "label": "Abandon the archive and flee"
+    },
+    {
+      "line": 28,
+      "id": "escape_success",
+      "label": "Cast off and leave with the archive"
+    },
+    {
+      "line": 31,
+      "id": "limp_home",
+      "label": "Limp away with the archive"
+    },
+    {
+      "line": 41,
+      "id": "search_lockers",
+      "label": "Search crew lockers"
+    },
+    {
+      "line": 45,
+      "id": "trip_alarm",
+      "label": "Force the sealed hatch"
+    },
+    {
+      "line": 50,
+      "id": "open_archive",
+      "label": "Use the keycard on the archive door"
+    },
+    {
+      "line": 58,
+      "id": "grab_archive_quiet",
+      "label": "Recover the archive quietly"
+    },
+    {
+      "line": 65,
+      "id": "grab_archive_hot",
+      "label": "Grab the archive under fire"
+    },
+    {
+      "line": 74,
+      "id": "escape_damaged",
+      "label": "Run the gauntlet to the ship"
+    }
+  ],
+  "terminals": [
+    "success",
+    "fail"
+  ]
+}

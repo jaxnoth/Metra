@@ -6,7 +6,7 @@ BeforeAll {
     Import-Module (Join-Path $metraRoot 'scripts\Metra.psd1') -Force
 }
 
-Describe 'Narrative packs and state machine' {
+Describe 'Narrative packs and Ink runtime' {
     It 'lists tracked packs including derelict_station and pbi_gateway_ha_prep' {
         InModuleScope Metra {
             $packs = @(Get-MetraNarrativePacks -MetraRoot (Get-MetraRoot))
@@ -25,13 +25,14 @@ Describe 'Narrative packs and state machine' {
                 $st = Start-MetraNarrativeSession -PackId 'derelict_station' -Seed 42
                 $st.packId | Should -Be 'derelict_station'
                 $st.lifecycle | Should -Be 'active'
+                @($st.allowedMoves | ForEach-Object { $_.id }) | Should -Contain 'enter_corridor'
                 $st = Invoke-MetraNarrativeMove -MoveId 'enter_corridor' -SessionId $st.sessionId
                 $st = Invoke-MetraNarrativeMove -MoveId 'search_lockers' -SessionId $st.sessionId
                 $st = Invoke-MetraNarrativeMove -MoveId 'open_archive' -SessionId $st.sessionId
                 $st = Invoke-MetraNarrativeMove -MoveId 'grab_archive_quiet' -SessionId $st.sessionId
                 $st = Invoke-MetraNarrativeMove -MoveId 'escape_success' -SessionId $st.sessionId
                 $st.terminal | Should -Be 'success'
-                $st.state.archive_found | Should -BeTrue
+                [bool]$st.state.archive_found | Should -BeTrue
                 $events = @(Get-MetraNarrativeEvents -SessionId $st.sessionId)
                 ($events | Where-Object { $_.type -eq 'move_accepted' }).Count | Should -Be 5
             }
@@ -43,7 +44,7 @@ Describe 'Narrative packs and state machine' {
         }
     }
 
-    It 'rejects unavailable moves without mutating state' {
+    It 'rejects unavailable moves without mutating ink state' {
         InModuleScope Metra {
             $sandbox = Join-Path ([IO.Path]::GetTempPath()) ("metra-nar3-" + [guid]::NewGuid().ToString('n'))
             New-Item -ItemType Directory -Path $sandbox -Force | Out-Null
@@ -51,10 +52,11 @@ Describe 'Narrative packs and state machine' {
             $env:METRA_DATA_ROOT = $sandbox
             try {
                 $st = Start-MetraNarrativeSession -PackId 'derelict_station' -Seed 7
-                $before = ($st.state | ConvertTo-Json -Compress)
+                $beforeDoc = Read-MetraNarrativeSessionState -SessionId $st.sessionId
+                $beforeInk = [string]$beforeDoc.inkState
                 { Invoke-MetraNarrativeMove -MoveId 'escape_success' -SessionId $st.sessionId } | Should -Throw '*not available*'
                 $afterDoc = Read-MetraNarrativeSessionState -SessionId $st.sessionId
-                ($afterDoc.state | ConvertTo-Json -Compress) | Should -Be $before
+                [string]$afterDoc.inkState | Should -Be $beforeInk
                 $rejected = @(Get-MetraNarrativeEvents -SessionId $st.sessionId | Where-Object { $_.type -eq 'move_rejected' })
                 $rejected.Count | Should -Be 1
             }
@@ -103,10 +105,9 @@ Describe 'Narrative packs and state machine' {
                 $force = Start-MetraNarrativeSession -PackId 'pbi_gateway_ha_prep' -Seed 12
                 $force = Invoke-MetraNarrativeMove -MoveId 'check_nodes' -SessionId $force.sessionId
                 $force = Invoke-MetraNarrativeMove -MoveId 'validate_spn' -SessionId $force.sessionId
-                $before = ($force.state | ConvertTo-Json -Compress)
+                $beforeInk = [string](Read-MetraNarrativeSessionState -SessionId $force.sessionId).inkState
                 { Invoke-MetraNarrativeMove -MoveId 'begin_update' -SessionId $force.sessionId } | Should -Throw '*not available*'
-                $after = Read-MetraNarrativeSessionState -SessionId $force.sessionId
-                ($after.state | ConvertTo-Json -Compress) | Should -Be $before
+                [string](Read-MetraNarrativeSessionState -SessionId $force.sessionId).inkState | Should -Be $beforeInk
                 $force = Invoke-MetraNarrativeMove -MoveId 'force_update_early' -SessionId $force.sessionId
                 $force.terminal | Should -Be 'fail'
             }
@@ -151,6 +152,36 @@ Describe 'Narrative packs and state machine' {
         }
     }
 
+    It 'compile validation requires move tags' {
+        InModuleScope Metra {
+            $tmp = Join-Path ([IO.Path]::GetTempPath()) ("metra-ink-bad-" + [guid]::NewGuid().ToString('n'))
+            $packDir = Join-Path $tmp 'bad_pack'
+            New-Item -ItemType Directory -Path $packDir -Force | Out-Null
+            @'
+{ "id": "bad_pack", "version": 1, "mode": "adventure", "title": "Bad" }
+'@ | Set-Content (Join-Path $packDir 'pack.json') -Encoding utf8
+            @'
+-> start
+=== start ===
+Hello.
+* [No tag choice]
+    -> END
+'@ | Set-Content (Join-Path $packDir 'story.ink') -Encoding utf8
+            $root = Get-MetraRoot
+            $packsRoot = Join-Path $root 'narrative\packs'
+            $dest = Join-Path $packsRoot 'bad_pack'
+            try {
+                if (Test-Path $dest) { Remove-Item $dest -Recurse -Force }
+                Copy-Item $packDir $dest -Recurse
+                { Invoke-MetraInkCompilePack -PackId 'bad_pack' -MetraRoot $root } | Should -Throw '*missing # move:*'
+            }
+            finally {
+                if (Test-Path $dest) { Remove-Item $dest -Recurse -Force }
+                Remove-Item $tmp -Recurse -Force -ErrorAction SilentlyContinue
+            }
+        }
+    }
+
     It 'whitelists session ids as n plus 12 hex' {
         InModuleScope Metra {
             Test-MetraNarrativeSessionId -SessionId 'n0123456789ab' | Should -BeTrue
@@ -175,9 +206,10 @@ Describe 'Narrative narrator and lifecycle' {
                 Mock Invoke-MetraAskEngine { throw 'ask down' }
                 $nar = Invoke-MetraNarrativeNarrate -SessionId $st.sessionId
                 $nar.source | Should -Be 'fallback'
-                $nar.text | Should -Match 'derelict_station'
+                $nar.text | Should -Match 'Derelict Station'
+                $nar.text | Should -Match 'Your choices:'
                 $st2 = Invoke-MetraNarrativeMove -MoveId 'enter_corridor' -SessionId $st.sessionId
-                $st2.state.location | Should -Be 'station_corridor'
+                @($st2.allowedMoves | ForEach-Object { $_.id }) | Should -Contain 'search_lockers'
             }
             finally {
                 if ($null -eq $prev) { Remove-Item Env:METRA_DATA_ROOT -ErrorAction SilentlyContinue }

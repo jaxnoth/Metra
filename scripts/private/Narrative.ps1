@@ -1,7 +1,7 @@
-# Metra Narrative Engine v0 - state is truth; AI is narrator only.
+# Metra Narrative Engine - Ink story state is truth; AI is narrator only.
 
 function Get-MetraNarrativeSchemaVersion {
-    return 1
+    return 2
 }
 
 function Get-MetraNarrativePacksRoot {
@@ -42,30 +42,7 @@ function Get-MetraNarrativeContentHash {
     }
 }
 
-function ConvertFrom-MetraNarrativeYaml {
-    <#
-    .SYNOPSIS
-        Load a narrative scenario document. v0 accepts JSON (YAML 1.2 JSON subset) for reliable parsing without a YAML dependency.
-    #>
-    [CmdletBinding()]
-    param([Parameter(Mandatory)][string]$Text)
-
-    $trimmed = $Text.Trim()
-    if ([string]::IsNullOrWhiteSpace($trimmed)) {
-        throw 'scenario document is empty'
-    }
-    if ($trimmed.StartsWith('{') -or $trimmed.StartsWith('[')) {
-        try {
-            return ($trimmed | ConvertFrom-Json -Depth 40)
-        }
-        catch {
-            throw "scenario JSON/YAML parse failed: $($_.Exception.Message)"
-        }
-    }
-    throw 'v0 narrative packs must use JSON-syntax scenario.yaml (YAML 1.2 JSON subset). Block-style YAML is deferred.'
-}
-
-function Get-MetraNarrativePackPath {
+function Get-MetraNarrativePackDir {
     [CmdletBinding()]
     param(
         [Parameter(Mandatory)][string]$PackId,
@@ -74,7 +51,48 @@ function Get-MetraNarrativePackPath {
     if ([string]::IsNullOrWhiteSpace($PackId) -or $PackId -eq '.' -or $PackId -eq '..' -or $PackId -match '[\\/]|(\.\.)') {
         throw "Invalid pack id: $PackId"
     }
-    return (Join-Path (Get-MetraNarrativePacksRoot -MetraRoot $MetraRoot) "$PackId\scenario.yaml")
+    return (Join-Path (Get-MetraNarrativePacksRoot -MetraRoot $MetraRoot) $PackId)
+}
+
+function Get-MetraNarrativePackPath {
+    <#
+    .SYNOPSIS
+        Path to pack.json (Metra metadata). Prefer Get-MetraNarrativePackStoryJsonPath for Ink runtime.
+    #>
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory)][string]$PackId,
+        [string]$MetraRoot = (Get-MetraRoot)
+    )
+    return (Join-Path (Get-MetraNarrativePackDir -PackId $PackId -MetraRoot $MetraRoot) 'pack.json')
+}
+
+function Get-MetraNarrativePackStoryJsonPath {
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory)][string]$PackId,
+        [string]$MetraRoot = (Get-MetraRoot)
+    )
+    return (Join-Path (Get-MetraNarrativePackDir -PackId $PackId -MetraRoot $MetraRoot) 'story.json')
+}
+
+function Get-MetraNarrativePackFingerprint {
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory)][string]$PackJsonPath,
+        [Parameter(Mandatory)][string]$StoryJsonPath
+    )
+    $a = Get-MetraNarrativeContentHash -Path $PackJsonPath
+    $b = Get-MetraNarrativeContentHash -Path $StoryJsonPath
+    $combined = [System.Text.Encoding]::UTF8.GetBytes("${a}:${b}")
+    $sha = [System.Security.Cryptography.SHA256]::Create()
+    try {
+        $hash = $sha.ComputeHash($combined)
+        return ([BitConverter]::ToString($hash) -replace '-', '').ToLowerInvariant()
+    }
+    finally {
+        $sha.Dispose()
+    }
 }
 
 function Import-MetraNarrativePack {
@@ -84,16 +102,25 @@ function Import-MetraNarrativePack {
         [string]$MetraRoot = (Get-MetraRoot)
     )
 
-    $path = Get-MetraNarrativePackPath -PackId $PackId -MetraRoot $MetraRoot
-    if (-not (Test-Path -LiteralPath $path)) {
-        throw "Narrative pack not found: $PackId ($path)"
+    $packPath = Get-MetraNarrativePackPath -PackId $PackId -MetraRoot $MetraRoot
+    $storyPath = Get-MetraNarrativePackStoryJsonPath -PackId $PackId -MetraRoot $MetraRoot
+    if (-not (Test-Path -LiteralPath $packPath)) {
+        throw "Narrative pack not found: $PackId ($packPath)"
     }
-    $raw = [System.IO.File]::ReadAllText($path, [System.Text.Encoding]::UTF8)
-    $doc = ConvertFrom-MetraNarrativeYaml -Text $raw
+    if (-not (Test-Path -LiteralPath $storyPath)) {
+        throw "Narrative pack story.json missing: $PackId ($storyPath). Run: .\metra.ps1 narrative compile $PackId"
+    }
+    $raw = [System.IO.File]::ReadAllText($packPath, [System.Text.Encoding]::UTF8)
+    try {
+        $doc = $raw | ConvertFrom-Json -Depth 40
+    }
+    catch {
+        throw "pack.json parse failed for ${PackId}: $($_.Exception.Message)"
+    }
     $id = [string](Get-MetraProp -Object $doc -Name 'id' -Default '')
     if ([string]::IsNullOrWhiteSpace($id)) { throw "Pack $PackId missing id" }
     if (-not [string]::Equals($id, $PackId, [StringComparison]::OrdinalIgnoreCase)) {
-        throw "Pack folder '$PackId' does not match scenario id '$id'"
+        throw "Pack folder '$PackId' does not match pack.json id '$id'"
     }
     $mode = [string](Get-MetraProp -Object $doc -Name 'mode' -Default '')
     if ($mode -notin @('adventure', 'lesson', 'simulation')) {
@@ -102,13 +129,16 @@ function Import-MetraNarrativePack {
     $version = 1
     $verObj = Get-MetraProp -Object $doc -Name 'version' -Default 1
     if ($null -ne $verObj) { $version = [int]$verObj }
-    $fingerprint = Get-MetraNarrativeContentHash -Path $path
+    $storyJson = [System.IO.File]::ReadAllText($storyPath, [System.Text.Encoding]::UTF8)
+    $fingerprint = Get-MetraNarrativePackFingerprint -PackJsonPath $packPath -StoryJsonPath $storyPath
     return [PSCustomObject]@{
         PackId      = $PackId
-        Path        = $path
+        Path        = $packPath
+        StoryPath   = $storyPath
         Version     = $version
         Fingerprint = $fingerprint
         Document    = $doc
+        StoryJson   = $storyJson
         Mode        = $mode
     }
 }
@@ -121,8 +151,8 @@ function Get-MetraNarrativePacks {
     if (-not (Test-Path -LiteralPath $root)) { return @() }
     $list = New-Object System.Collections.Generic.List[object]
     foreach ($dir in @(Get-ChildItem -LiteralPath $root -Directory -ErrorAction SilentlyContinue | Sort-Object Name)) {
-        $scenario = Join-Path $dir.FullName 'scenario.yaml'
-        if (-not (Test-Path -LiteralPath $scenario)) { continue }
+        $packJson = Join-Path $dir.FullName 'pack.json'
+        if (-not (Test-Path -LiteralPath $packJson)) { continue }
         try {
             $pack = Import-MetraNarrativePack -PackId $dir.Name -MetraRoot $MetraRoot
             $title = [string](Get-MetraProp -Object $pack.Document -Name 'title' -Default $pack.PackId)
@@ -144,6 +174,84 @@ function Get-MetraNarrativePacks {
         }
     }
     return [object[]]$list.ToArray()
+}
+
+function Get-MetraNarrativeAllowedMovesFromInk {
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory)][AllowEmptyCollection()][object[]]$Choices,
+        [string]$Terminal = ''
+    )
+    if (-not [string]::IsNullOrWhiteSpace($Terminal)) { return @() }
+    $allowed = New-Object System.Collections.Generic.List[object]
+    foreach ($c in @($Choices)) {
+        $mid = [string](Get-MetraProp -Object $c -Name 'id' -Default '')
+        if ([string]::IsNullOrWhiteSpace($mid)) { continue }
+        [void]$allowed.Add([PSCustomObject]@{
+                id          = $mid
+                label       = [string](Get-MetraProp -Object $c -Name 'label' -Default $mid)
+                description = [string](Get-MetraProp -Object $c -Name 'description' -Default '')
+                outcome     = 'continue'
+            })
+    }
+    return [object[]]$allowed.ToArray()
+}
+
+function New-MetraInkStoryForPack {
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory)]$Pack,
+        [string]$InkStateJson = '',
+        [string]$MetraRoot = (Get-MetraRoot)
+    )
+    $story = New-MetraInkStoryFromJson -StoryJson ([string]$Pack.StoryJson) -MetraRoot $MetraRoot
+    if (-not [string]::IsNullOrWhiteSpace($InkStateJson)) {
+        Restore-MetraInkStoryState -Story $story -InkStateJson $InkStateJson
+    }
+    return $story
+}
+
+function Get-MetraInkBeatFromSavedState {
+    <#
+    .SYNOPSIS
+        Load Ink story JSON + saved inkState and snapshot text/choices without inventing moves.
+    #>
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory)]$Pack,
+        [string]$InkStateJson = '',
+        [string]$MetraRoot = (Get-MetraRoot)
+    )
+    $story = New-MetraInkStoryForPack -Pack $Pack -InkStateJson $InkStateJson -MetraRoot $MetraRoot
+    if ($story.canContinue) {
+        return (Invoke-MetraInkContinue -Story $story -MetraRoot $MetraRoot)
+    }
+    $choices = New-Object System.Collections.Generic.List[object]
+    $idx = 0
+    foreach ($c in @($story.currentChoices)) {
+        $moveId = Get-MetraInkChoiceMoveId -Choice $c
+        [void]$choices.Add([PSCustomObject]@{
+                index       = $idx
+                inkIndex    = [int]$c.index
+                id          = $(if ($moveId) { $moveId } else { '' })
+                label       = ([string]$c.text).Trim()
+                description = ''
+                tags        = @($c.tags)
+            })
+        $idx++
+    }
+    $tagList = New-Object System.Collections.Generic.List[string]
+    foreach ($t in @($story.currentTags)) { [void]$tagList.Add([string]$t) }
+    $terminal = ''
+    try { $terminal = Get-MetraInkTerminalFromTags -Tags @($tagList.ToArray()) } catch { }
+    return [PSCustomObject]@{
+        text        = ''
+        terminal    = $terminal
+        choices     = [object[]]$choices.ToArray()
+        inkState    = [string]$story.state.ToJson()
+        variables   = (Get-MetraInkVariablesObject -Story $story)
+        canContinue = [bool]$story.canContinue
+    }
 }
 
 function ConvertTo-MetraNarrativeHashtable {
@@ -457,13 +565,16 @@ function Start-MetraNarrativeSession {
 
     $pack = Import-MetraNarrativePack -PackId $PackId -MetraRoot $MetraRoot
     $doc = $pack.Document
-    $initial = ConvertTo-MetraNarrativeHashtable -InputObject (Get-MetraProp -Object $doc -Name 'state' -Default @{})
     if ($Seed -le 0) {
         $Seed = Get-Random -Minimum 1 -Maximum 2147483647
     }
     $sessionId = New-MetraNarrativeSessionId
     $now = (Get-Date).ToUniversalTime().ToString('o')
     $title = [string](Get-MetraProp -Object $doc -Name 'title' -Default $PackId)
+
+    $story = New-MetraInkStoryForPack -Pack $pack -MetraRoot $MetraRoot
+    $beat = Invoke-MetraInkContinue -Story $story -MetraRoot $MetraRoot
+
     $stateDoc = [PSCustomObject]@{
         schemaVersion   = (Get-MetraNarrativeSchemaVersion)
         sessionId       = $sessionId
@@ -474,10 +585,12 @@ function Start-MetraNarrativeSession {
         title           = $title
         seed            = $Seed
         lifecycle       = 'active'
-        terminal        = ''
+        terminal        = [string]$beat.terminal
         createdAt       = $now
         updatedAt       = $now
-        state           = ConvertTo-MetraNarrativeStateObject -State $initial
+        inkState        = [string]$beat.inkState
+        lastText        = [string]$beat.text
+        state           = $beat.variables
     }
     $dir = Get-MetraNarrativeSessionDir -SessionId $sessionId -MetraRoot $MetraRoot
     [void][System.IO.Directory]::CreateDirectory($dir)
@@ -493,7 +606,7 @@ function Start-MetraNarrativeSession {
         title     = $title
         mode      = $pack.Mode
         lifecycle = 'active'
-        terminal  = ''
+        terminal  = [string]$stateDoc.terminal
         createdAt = $now
         updatedAt = $now
         seed      = $Seed
@@ -518,7 +631,7 @@ function Assert-MetraNarrativePackBinding {
 function Get-MetraNarrativeSessionStatus {
     [CmdletBinding()]
     param(
-        [string]$SessionId,
+        [AllowEmptyString()][string]$SessionId = '',
         [string]$MetraRoot = (Get-MetraRoot)
     )
 
@@ -536,11 +649,16 @@ function Get-MetraNarrativeSessionStatus {
     $pack = $null
     $allowed = @()
     $doc = $null
+    $lastText = [string](Get-MetraProp -Object $stateDoc -Name 'lastText' -Default '')
     try {
         $pack = Assert-MetraNarrativePackBinding -StateDoc $stateDoc -MetraRoot $MetraRoot
         $doc = $pack.Document
-        $stateHt = ConvertTo-MetraNarrativeHashtable -InputObject $stateDoc.state
-        $allowed = @(Get-MetraNarrativeAllowedMoves -Document $doc -State $stateHt -Terminal ([string]$stateDoc.terminal))
+        if ([string]::IsNullOrWhiteSpace([string]$stateDoc.terminal)) {
+            $beat = Get-MetraInkBeatFromSavedState -Pack $pack -InkStateJson ([string](Get-MetraProp -Object $stateDoc -Name 'inkState' -Default '')) -MetraRoot $MetraRoot
+            if ([string]::IsNullOrWhiteSpace($lastText) -and $beat.text) { $lastText = [string]$beat.text }
+            $allowed = @(Get-MetraNarrativeAllowedMovesFromInk -Choices @($beat.choices) -Terminal ([string]$stateDoc.terminal))
+            $stateDoc.state = $beat.variables
+        }
     }
     catch {
         $allowed = @()
@@ -557,6 +675,7 @@ function Get-MetraNarrativeSessionStatus {
         packVersion     = $stateDoc.packVersion
         packFingerprint = $stateDoc.packFingerprint
         state           = $stateDoc.state
+        lastText        = $lastText
         allowedMoves    = $allowed
         objectives      = @(Get-MetraProp -Object $doc -Name 'objectives' -Default @())
         updatedAt       = $stateDoc.updatedAt
@@ -567,7 +686,7 @@ function Invoke-MetraNarrativeMove {
     [CmdletBinding()]
     param(
         [Parameter(Mandatory)][string]$MoveId,
-        [string]$SessionId,
+        [AllowEmptyString()][string]$SessionId = '',
         [string]$MetraRoot = (Get-MetraRoot)
     )
 
@@ -582,52 +701,32 @@ function Invoke-MetraNarrativeMove {
     }
 
     $pack = Assert-MetraNarrativePackBinding -StateDoc $stateDoc -MetraRoot $MetraRoot
-    $doc = $pack.Document
-    $stateHt = ConvertTo-MetraNarrativeHashtable -InputObject $stateDoc.state
     $now = (Get-Date).ToUniversalTime().ToString('o')
-
-    $moves = @(Get-MetraProp -Object $doc -Name 'moves' -Default @())
-    $move = $moves | Where-Object { [string](Get-MetraProp -Object $_ -Name 'id' -Default '') -eq $MoveId } | Select-Object -First 1
-    if ($null -eq $move) {
-        Add-MetraNarrativeEvent -SessionId $SessionId -MetraRoot $MetraRoot -Event ([PSCustomObject]@{
-                at     = $now
-                type   = 'move_rejected'
-                moveId = $MoveId
-                reason = 'unknown_move'
-            })
-        throw "Unknown move: $MoveId"
+    $story = New-MetraInkStoryForPack -Pack $pack -InkStateJson ([string](Get-MetraProp -Object $stateDoc -Name 'inkState' -Default '')) -MetraRoot $MetraRoot
+    if ($story.canContinue) {
+        [void](Invoke-MetraInkContinue -Story $story -MetraRoot $MetraRoot)
     }
 
-    $when = Get-MetraProp -Object $move -Name 'when' -Default $null
-    if (-not (Test-MetraNarrativeStatePredicate -State $stateHt -When $when)) {
+    $chosen = Invoke-MetraInkChooseMove -Story $story -MoveId $MoveId
+    if ($null -eq $chosen) {
         Add-MetraNarrativeEvent -SessionId $SessionId -MetraRoot $MetraRoot -Event ([PSCustomObject]@{
                 at     = $now
                 type   = 'move_rejected'
                 moveId = $MoveId
-                reason = 'predicate_failed'
+                reason = 'not_available'
             })
         throw "Move '$MoveId' is not available in the current state"
     }
 
-    $effects = Get-MetraProp -Object $move -Name 'effects' -Default $null
-    $schema = Get-MetraProp -Object $doc -Name 'stateSchema' -Default $null
-    $newState = Invoke-MetraNarrativeApplyEffects -State $stateHt -Effects $effects -StateSchema $schema
-    $outcome = [string](Get-MetraProp -Object $move -Name 'outcome' -Default 'continue')
-    if ($outcome -notin @('success', 'fail', 'continue')) {
-        throw "Move '$MoveId' has invalid outcome '$outcome'"
-    }
+    $beat = Invoke-MetraInkContinue -Story $story -MetraRoot $MetraRoot
+    $terminal = [string]$beat.terminal
+    $outcome = if ($terminal) { $terminal } else { 'continue' }
 
-    $terminal = ''
-    if ($outcome -eq 'success' -or $outcome -eq 'fail') {
-        $terminal = $outcome
-    }
-
-    $stateDoc.state = ConvertTo-MetraNarrativeStateObject -State $newState
+    $stateDoc.inkState = [string]$beat.inkState
+    $stateDoc.lastText = [string]$beat.text
+    $stateDoc.state = $beat.variables
     $stateDoc.terminal = $terminal
     $stateDoc.updatedAt = $now
-    if ($terminal) {
-        $stateDoc.lifecycle = 'active'
-    }
     Write-MetraNarrativeSessionState -SessionId $SessionId -StateDoc $stateDoc -MetraRoot $MetraRoot
     Add-MetraNarrativeEvent -SessionId $SessionId -MetraRoot $MetraRoot -Event ([PSCustomObject]@{
             at       = $now
@@ -635,7 +734,7 @@ function Invoke-MetraNarrativeMove {
             moveId   = $MoveId
             outcome  = $outcome
             terminal = $terminal
-            state    = ConvertTo-MetraNarrativeStateObject -State $newState
+            state    = $beat.variables
         })
     Update-MetraNarrativeIndexEntry -SessionId $SessionId -MetraRoot $MetraRoot -Fields @{
         lifecycle = [string]$stateDoc.lifecycle
@@ -649,25 +748,96 @@ function Invoke-MetraNarrativeMove {
     return Get-MetraNarrativeSessionStatus -SessionId $SessionId -MetraRoot $MetraRoot
 }
 
-function New-MetraNarrativeFallbackText {
+function Format-MetraNarrativeChoiceBlock {
     [CmdletBinding()]
-    param([Parameter(Mandatory)]$Status)
+    param([object[]]$AllowedMoves = @())
+    $moves = @($AllowedMoves)
+    if ($moves.Count -eq 0) { return '' }
+    $lines = New-Object System.Collections.Generic.List[string]
+    [void]$lines.Add('Your choices:')
+    $i = 1
+    foreach ($m in $moves) {
+        $id = [string](Get-MetraProp -Object $m -Name 'id' -Default '')
+        $label = [string](Get-MetraProp -Object $m -Name 'label' -Default $id)
+        $desc = [string](Get-MetraProp -Object $m -Name 'description' -Default '')
+        $line = "$i. $label"
+        if (-not [string]::IsNullOrWhiteSpace($desc)) { $line = "$line - $desc" }
+        $line = "$line ($id)"
+        [void]$lines.Add($line)
+        $i++
+    }
+    return ($lines -join [Environment]::NewLine)
+}
+
+function New-MetraNarrativeFallbackText {
+    <#
+    .SYNOPSIS
+        Training-facing fallback when Ask locomotive is unavailable.
+        Uses Ink lastText when present, plus title/setting and choices. Outcomes stay tag-driven.
+    #>
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory)]$Status,
+        [string]$MetraRoot = (Get-MetraRoot)
+    )
+
+    $title = [string](Get-MetraProp -Object $Status -Name 'title' -Default 'Scenario')
+    $mode = [string](Get-MetraProp -Object $Status -Name 'mode' -Default '')
+    $terminal = [string](Get-MetraProp -Object $Status -Name 'terminal' -Default '')
+    $lastText = [string](Get-MetraProp -Object $Status -Name 'lastText' -Default '')
+
+    $settingLine = ''
+    try {
+        $pack = Import-MetraNarrativePack -PackId ([string]$Status.packId) -MetraRoot $MetraRoot
+        $setting = Get-MetraProp -Object $pack.Document -Name 'setting' -Default $null
+        if ($null -ne $setting) {
+            $loc = [string](Get-MetraProp -Object $setting -Name 'location' -Default '')
+            $threat = [string](Get-MetraProp -Object $setting -Name 'threat' -Default '')
+            $context = [string](Get-MetraProp -Object $setting -Name 'context' -Default '')
+            if ($loc -or $threat -or $context) {
+                $settingLine = $(
+                    if ($threat) { "$loc. Threat: $threat." }
+                    elseif ($context) { "$loc. $context." }
+                    else { "$loc." }
+                ).Trim()
+            }
+        }
+    }
+    catch { }
 
     $lines = New-Object System.Collections.Generic.List[string]
-    [void]$lines.Add("Scenario: $($Status.title) [$($Status.packId)]")
-    [void]$lines.Add("Lifecycle: $($Status.lifecycle); terminal: $(if ($Status.terminal) { $Status.terminal } else { 'none' })")
-    $stateHt = ConvertTo-MetraNarrativeHashtable -InputObject $Status.state
-    $pairs = @($stateHt.Keys | Sort-Object | ForEach-Object { "$_=$($stateHt[$_])" })
-    [void]$lines.Add('State: ' + ($pairs -join ', '))
-    if (@($Status.allowedMoves).Count -gt 0) {
-        $moveLabels = @($Status.allowedMoves | ForEach-Object { $_.id })
-        [void]$lines.Add('Allowed moves: ' + ($moveLabels -join ', '))
+    $modeTag = if ($mode) { " ($mode)" } else { '' }
+    [void]$lines.Add("$title$modeTag")
+    if ($settingLine) { [void]$lines.Add($settingLine) }
+    if (-not [string]::IsNullOrWhiteSpace($lastText)) {
+        [void]$lines.Add('')
+        [void]$lines.Add($lastText)
     }
-    elseif ($Status.terminal) {
-        [void]$lines.Add("Scenario ended with '$($Status.terminal)'.")
+
+    if ($terminal -eq 'fail') {
+        [void]$lines.Add('')
+        [void]$lines.Add("The scenario ends without meeting the objective. ($title)")
+        [void]$lines.Add('Session complete (fail). Say "play <pack>" to try again, or pick another scenario.')
+        return ($lines -join [Environment]::NewLine)
+    }
+    if ($terminal -eq 'success') {
+        [void]$lines.Add('')
+        [void]$lines.Add("Objective met. $title ends successfully.")
+        [void]$lines.Add('Session complete (success). Say "play <pack>" for another run, or start a different scenario.')
+        return ($lines -join [Environment]::NewLine)
+    }
+
+    [void]$lines.Add('')
+    [void]$lines.Add('Choose your next step.')
+
+    $choice = Format-MetraNarrativeChoiceBlock -AllowedMoves @($Status.allowedMoves)
+    if ($choice) {
+        [void]$lines.Add('')
+        [void]$lines.Add($choice)
     }
     else {
-        [void]$lines.Add('No moves available.')
+        [void]$lines.Add('')
+        [void]$lines.Add('No moves available right now.')
     }
     return ($lines -join [Environment]::NewLine)
 }
@@ -675,13 +845,13 @@ function New-MetraNarrativeFallbackText {
 function Invoke-MetraNarrativeNarrate {
     [CmdletBinding()]
     param(
-        [string]$SessionId,
+        [AllowEmptyString()][string]$SessionId = '',
         [string]$MetraRoot = (Get-MetraRoot),
         [switch]$FallbackOnly
     )
 
     $status = Get-MetraNarrativeSessionStatus -SessionId $SessionId -MetraRoot $MetraRoot
-    $fallback = New-MetraNarrativeFallbackText -Status $status
+    $fallback = New-MetraNarrativeFallbackText -Status $status -MetraRoot $MetraRoot
     if ($FallbackOnly) {
         return [PSCustomObject]@{
             sessionId = $status.sessionId
@@ -697,7 +867,7 @@ function Invoke-MetraNarrativeNarrate {
         })
     $stateJson = ($status.state | ConvertTo-Json -Depth 10 -Compress)
     $prompt = @"
-You are the narrator for a Metra Narrative session. State is authoritative. Do not invent new facts, items, locations, or outcomes. Do not decide success or failure. Describe the current situation briefly and list the allowed moves as options the player may take. Keep it under 180 words.
+You are the narrator for a Metra Narrative training session. State is authoritative. Do not invent new facts, items, locations, or outcomes. Do not decide success or failure. Write a short responsive scene (under 120 words) the operator can act on, then list the allowed moves as numbered choices using each move's label. Keep a calm training coach tone - not a status dump and not purple prose.
 
 Pack: $($status.packId) ($($status.mode))
 Title: $($status.title)
@@ -737,10 +907,11 @@ $($moveLines -join [Environment]::NewLine)
     }
 }
 
+
 function Stop-MetraNarrativeSession {
     [CmdletBinding()]
     param(
-        [string]$SessionId,
+        [AllowEmptyString()][string]$SessionId = '',
         [string]$Summary = '',
         [string]$MetraRoot = (Get-MetraRoot)
     )
@@ -887,9 +1058,8 @@ function Invoke-MetraNarrativeExpire {
         [string]$MetraRoot = (Get-MetraRoot)
     )
 
-    $whatIf = [bool]$WhatIfPreference
     $tmpCleared = 0
-    if (-not $whatIf) {
+    if ($PSCmdlet.ShouldProcess('narrative temp files under machine data', 'Clear temporary narrative files')) {
         $tmpCleared = Clear-MetraNarrativeTempFiles -MetraRoot $MetraRoot
     }
 
@@ -924,7 +1094,7 @@ function Invoke-MetraNarrativeExpire {
         }
     }
     return [PSCustomObject]@{
-        whatIf     = $whatIf
+        whatIf     = [bool]$WhatIfPreference
         actions    = @($actions.ToArray())
         count      = @($actions.ToArray()).Count
         tmpCleared = $tmpCleared
@@ -948,7 +1118,7 @@ function Get-MetraNarrativeSessions {
 function Invoke-MetraNarrativeCommand {
     <#
     .SYNOPSIS
-        CLI: narrative packs|start|status|moves|move|narrate|end|list|expire|forget|lifecycle
+        CLI: narrative packs|start|status|moves|move|narrate|end|list|expire|forget|lifecycle|compile
     #>
     [CmdletBinding()]
     param(
@@ -960,6 +1130,13 @@ function Invoke-MetraNarrativeCommand {
     switch ($Subcommand.ToLowerInvariant()) {
         'packs' {
             return [object[]]@(Get-MetraNarrativePacks -MetraRoot $MetraRoot)
+        }
+        'compile' {
+            $packId = if ($ArgsRest.Count -gt 0) { [string]$ArgsRest[0] } else { '' }
+            if ([string]::IsNullOrWhiteSpace($packId) -or $packId -eq '-All') {
+                return [object[]]@(Invoke-MetraInkCompileAllPacks -MetraRoot $MetraRoot)
+            }
+            return Invoke-MetraInkCompilePack -PackId $packId -MetraRoot $MetraRoot
         }
         'list' {
             $life = 'all'

@@ -2247,6 +2247,47 @@ function Get-MetraDeskAskResult {
         throw 'prompt required'
     }
 
+    # Capability car inertia: active bind beats portfolio / CE routing (conductor).
+    if (Get-Command Invoke-MetraCapabilityDispatchTurn -ErrorAction SilentlyContinue) {
+        $capTurn = Invoke-MetraCapabilityDispatchTurn -Prompt $q -SessionId $SessionId -MetraRoot $MetraRoot
+        if ($null -ne $capTurn) {
+            if ([bool](Get-MetraProp -Object $capTurn -Name '__capabilityLeaveAffirmed' -Default $false)) {
+                $prior = [string](Get-MetraProp -Object $capTurn -Name 'priorPrompt' -Default $q)
+                $resumeSession = [string](Get-MetraProp -Object $capTurn -Name 'sessionId' -Default $SessionId)
+                if ([string]::IsNullOrWhiteSpace($prior)) { $prior = $q }
+                if (Test-MetraAskConversationExecutionEnabled -MetraRoot $MetraRoot) {
+                    return Invoke-MetraAskConversationExecution `
+                        -Prompt $prior `
+                        -SessionId $resumeSession `
+                        -RecallSessionId $RecallSessionId `
+                        -Images $resolvedImages `
+                        -JournalImages $journalImages `
+                        -Remote:$Remote `
+                        -Repo $Repo `
+                        -MetraRoot $MetraRoot `
+                        -HeaderClient $HeaderClient `
+                        -BodyClient $BodyClient `
+                        -ClientHint $ClientHint `
+                        -RequestedPolicy $RequestedPolicy `
+                        -TrustedClientContext:$TrustedClientContext `
+                        -IsLoopback:$IsLoopback `
+                        -IncidentActive:$IncidentActive
+                }
+                $legacyResume = Invoke-MetraAskDeskResultLegacy `
+                    -Prompt $prior `
+                    -SessionId $resumeSession `
+                    -RecallSessionId $RecallSessionId `
+                    -Images $resolvedImages `
+                    -JournalImages $journalImages `
+                    -Remote:$Remote `
+                    -Repo $Repo `
+                    -MetraRoot $MetraRoot
+                return Add-MetraAskVoiceNormalization -Result $legacyResume -PathKind 'legacy' -ReasonCode 'capability_leave_resume'
+            }
+            return Add-MetraAskVoiceNormalization -Result $capTurn -PathKind 'success' -ReasonCode 'capability_bind'
+        }
+    }
+
     if (Test-MetraAskConversationExecutionEnabled -MetraRoot $MetraRoot) {
         return Invoke-MetraAskConversationExecution `
             -Prompt $q `

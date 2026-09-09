@@ -1,0 +1,18 @@
+{
+  "id": "derelict_station",
+  "version": 2,
+  "mode": "adventure",
+  "title": "Derelict Station",
+  "setting": {
+    "location": "abandoned research station",
+    "threat": "pirates"
+  },
+  "objectives": [
+    "recover archive",
+    "escape safely"
+  ],
+  "actors": [
+    "pirate captain",
+    "station AI"
+  ]
+}

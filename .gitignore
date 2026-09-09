@@ -92,3 +92,6 @@ docs/*.local.md
 packaging/out/
 packaging/stage/
 
+# Ink compiler (large self-contained Windows build; fetch on narrative compile)
+narrative/vendor/ink/inklecate.exe
+
