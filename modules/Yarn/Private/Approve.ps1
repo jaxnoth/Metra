@@ -120,6 +120,10 @@ function Set-YarnPlanApproved {
     if ([string]::IsNullOrWhiteSpace($planPath)) {
         $planPath = [string](Get-YarnProp -Object $BacklogItem -Name 'formalPlanPath' -Default '')
     }
+    $projectKeyForRead = [string](Get-YarnProp -Object $BacklogItem -Name 'projectKey' -Default 'Metra')
+    if (-not [string]::IsNullOrWhiteSpace($planPath)) {
+        $planPath = Resolve-YarnFormalPlanReadPath -FormalPlanPath $planPath -ProjectKey $projectKeyForRead -MetraRoot $MetraRoot
+    }
     if ([string]::IsNullOrWhiteSpace($planPath) -or -not (Test-Path -LiteralPath $planPath)) {
         throw "Formal plan missing for backlog $backlogId"
     }
@@ -257,22 +261,16 @@ function Invoke-YarnHandoffIngestRetry {
     $rankSnapshot = Get-YarnRankSnapshotFromItem -Item $item
     $now = (Get-Date).ToUniversalTime().ToString('o')
 
-    # Promote Cursor/docs draft into <project>\plans before Loom sees the path.
+    # Upsert project plans/index.yaml; keep formalPlanPath as Cursor absolute path (no body copy).
     try {
-        $repoPlan = Copy-YarnFormalPlanToProjectPlans -SourcePath $planPath -ProjectKey $projectKey -MetraRoot $MetraRoot
-        if (-not [string]::Equals($repoPlan, [System.IO.Path]::GetFullPath($planPath), [System.StringComparison]::OrdinalIgnoreCase)) {
-            $planPath = $repoPlan
-            $items = @(Get-MetraYarnBacklog -Root $Root)
-            $map = ConvertTo-YarnPropertyMap -Object $item
-            $map['formalPlanPath'] = $planPath
-            $updatedItem = (New-YarnPsObject -Map $map)
-            $items = @($items | Where-Object { [string]$_.id -ne $BacklogId }) + @($updatedItem)
-            Save-MetraYarnBacklogItems -Root $Root -Items $items
-            $item = $updatedItem
+        $indexed = Copy-YarnFormalPlanToProjectPlans -SourcePath $planPath -ProjectKey $projectKey -MetraRoot $MetraRoot
+        if (-not [string]::Equals($indexed, [System.IO.Path]::GetFullPath($planPath), [System.StringComparison]::OrdinalIgnoreCase)) {
+            # Shim must return Cursor path; if not, refuse rewriting formalPlanPath to a repo body.
+            throw "plan-index shim returned non-Cursor path: $indexed"
         }
     }
     catch {
-        $copyErr = ("plan-copy-to-project-plans: " + [string]$_.Exception.Message)
+        $copyErr = ("plan-index-upsert: " + [string]$_.Exception.Message)
         Sync-YarnPlanLink -Root $Root -Link ([PSCustomObject]@{
                 backlogId              = $BacklogId
                 formalPlanPath         = $planPath

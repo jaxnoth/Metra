@@ -92,7 +92,7 @@ Parallel products: each `-Name <Project>` owns its slot - serial or concurrent w
 
 ## Plan progress ledger
 
-Formal plans (`.cursor/plans/*.plan.md`, `plans/*.plan.md` with frontmatter todos) are editable artifacts. Two edit classes:
+Formal plans (`.cursor/plans/*.plan.md` working bodies; `plans/*.plan.md` scars via `plans/index.yaml` authority) are editable artifacts with two edit classes. Prefer `Resolve-MetraPlanWorkingPath` for Cursor edits and `Resolve-MetraPlanPath` when authority selects the repo scar.
 
 | Edit | When | Gate |
 |------|------|------|

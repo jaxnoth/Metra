@@ -59,6 +59,14 @@ function Measure-YarnRank {
         [void]$reasons.Add('projectResolved')
     }
     $planPath = [string](Get-YarnProp -Object $Item -Name 'formalPlanPath' -Default '')
+    if (-not [string]::IsNullOrWhiteSpace($planPath)) {
+        $pk = [string](Get-YarnProp -Object $Item -Name 'projectKey' -Default 'Metra')
+        $metra = $null
+        try { $metra = Get-YarnHostRoot } catch { $metra = $null }
+        if ($metra) {
+            $planPath = Resolve-YarnFormalPlanReadPath -FormalPlanPath $planPath -ProjectKey $pk -MetraRoot $metra
+        }
+    }
     if (-not [string]::IsNullOrWhiteSpace($planPath) -and (Test-Path -LiteralPath $planPath)) {
         $ready += 0.20
         [void]$reasons.Add('formalDraftPresent')

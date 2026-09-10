@@ -117,7 +117,7 @@ function Resolve-YarnCursorPlansDir {
 function Resolve-YarnProjectPlansPath {
     <#
     .SYNOPSIS
-        Repo plans folder for Loom handoff copies (<project>\plans). Not docs\.
+        Repo plans/ folder for plans/index.yaml and authority:repo scars (not Cursor working bodies).
     #>
     param(
         [Parameter(Mandatory)][string]$MetraRoot,
@@ -158,7 +158,9 @@ function Resolve-YarnProjectPlansPath {
 function Copy-YarnFormalPlanToProjectPlans {
     <#
     .SYNOPSIS
-        On Loom ingest: copy Cursor/docs draft into <project>\plans and return that path.
+        Compatibility shim: upsert plans/index.yaml; do not copy plan bodies.
+        Returns the Cursor source path unchanged (formalPlanPath stays Cursor abs).
+        Always persists SourcePath leaf as cursorLeaf (Resolved or AmbiguousSelected stabilize to exact-leaf).
     #>
     param(
         [Parameter(Mandatory)][string]$SourcePath,
@@ -166,18 +168,40 @@ function Copy-YarnFormalPlanToProjectPlans {
         [Parameter(Mandatory)][string]$MetraRoot
     )
     if ([string]::IsNullOrWhiteSpace($SourcePath) -or -not (Test-Path -LiteralPath $SourcePath)) {
-        throw "Cannot copy formal plan; source missing: $SourcePath"
+        throw "Cannot index formal plan; source missing: $SourcePath"
     }
     $src = [System.IO.Path]::GetFullPath($SourcePath)
-    $plansDir = Resolve-YarnProjectPlansPath -MetraRoot $MetraRoot -ProjectKey $ProjectKey
     $leaf = [System.IO.Path]::GetFileName($src)
-    if ([string]::IsNullOrWhiteSpace($leaf)) { throw "Cannot copy formal plan; empty leaf: $src" }
-    $dest = [System.IO.Path]::GetFullPath((Join-Path $plansDir $leaf))
-    if ([string]::Equals($src, $dest, [System.StringComparison]::OrdinalIgnoreCase)) {
-        return $dest
+    $stem = Get-YarnPlanBoardInventoryNormalizeStem -Text $leaf
+    if ([string]::IsNullOrWhiteSpace($stem)) {
+        throw "Cannot index formal plan; empty stem from: $leaf"
     }
-    Copy-Item -LiteralPath $src -Destination $dest -Force
-    return $dest
+    $plansDir = Resolve-YarnProjectPlansPath -MetraRoot $MetraRoot -ProjectKey $ProjectKey
+    $project = if ([string]::IsNullOrWhiteSpace($ProjectKey)) { 'Metra' } else { [string]$ProjectKey.Trim() }
+    $existing = $null
+    if (Test-Path -LiteralPath (Get-MetraPlanIndexPath -PlansDir $plansDir)) {
+        try {
+            $idx = Read-MetraPlanIndex -PlansDir $plansDir
+            if ($null -ne $idx) {
+                $existing = @($idx.plans) | Where-Object { [string]$_.stem -eq $stem } | Select-Object -First 1
+            }
+        }
+        catch {
+            throw ("plan-index-read-failed: " + [string]$_.Exception.Message)
+        }
+    }
+    if ($null -eq $existing) {
+        [void](Set-MetraPlanIndexEntry -PlansDir $plansDir -Project $project -Stem $stem -CursorLeaf $leaf -Authority cursor -RepoPath $null)
+    }
+    elseif ([string]$existing.authority -eq 'repo') {
+        # Never silently convert repo scars to cursor authority.
+        [void](Set-MetraPlanIndexEntry -PlansDir $plansDir -Project $project -Stem $stem `
+                -CursorLeaf $leaf -Authority repo -RepoPath ([string]$existing.repoPath))
+    }
+    else {
+        [void](Set-MetraPlanIndexEntry -PlansDir $plansDir -Project $project -Stem $stem -CursorLeaf $leaf -Authority cursor -RepoPath $null)
+    }
+    return $src
 }
 
 function Resolve-YarnProjectDocsPath {

@@ -18,6 +18,14 @@ Entry shape:
 
 ---
 
+## 2026-09-10 - Plan index affiliation (project + stem, authority body)
+
+- Decision: Plan affiliation identity is **project + normalized stem** (path hash remains Surveyor's browser cache key only). Each project may keep `plans/index.yaml` (`schemaVersion: 1`) with `cursorLeaf` / `repoPath` locators and required `authority: cursor|repo`.
+- Decision: **authority selects the canonical body**; Surveyor emits one body per claim (suppress Cursor twin when `authority: repo`). Yarn `plan approve` upserts the index and keeps `formalPlanPath` as the Cursor absolute path - no plan body copy into `plans/`.
+- Decision: `Resolve-MetraPlanPath` honors authority; `Resolve-MetraPlanWorkingPath` / `Resolve-YarnFormalPlanReadPath` never return a repo scar for working edits. Existing `plans/*.plan.md` scars seed as `authority: repo`. Successful resolve/approve pins `cursorLeaf` (including after `AmbiguousSelected`) so later reads use exact-leaf instead of re-racing timestamps.
+- Why: Twin bodies from Loom-approve copies broke Surveyor identity and risked editing Decision-grade scars. Index affiliation separates discovery origin from project claim and canonical body.
+- See: `modules/Yarn/Private/PlanIndex.ps1`; `plans/README.md`; `docs/playbooks/yarn.md`; Surveyor `apps/extension/src/host/planIndex.ts`; Cursor plan `plan_index_per_project_c9041b0e`
+
 ## 2026-09-08 - Narrative packs are Ink (Windows runtime)
 
 - Decision: Narrative pack format is **Ink**, not hand-authored `moves`/`when`/`effects` JSON-as-YAML. Each pack is `pack.json` (Metra metadata) + `story.ink` (source) + committed `story.json` (runtime) + compile-emitted `story.graph.json` (Inspect/tooling only). The YAML/`scenario.yaml` pack loader is retired.

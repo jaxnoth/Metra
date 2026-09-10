@@ -1,0 +1,18 @@
+# Shared stem-normalization fixtures.
+# Metra: Metra.Yarn.PlanIndex.Tests.ps1
+# Surveyor: packages/shared (normalizePlanStem) - keep identical cases.
+cases:
+  - leaf: loom_product_boundary_abcd1234.plan.md
+    stem: loom-product-boundary
+  - leaf: loom-product-boundary-ABCD1234.plan.md
+    stem: loom-product-boundary
+  - leaf: fiscal-year-2026.plan.md
+    stem: fiscal-year-2026
+  - leaf: Commit Then Knowledge Coverage
+    stem: commit-then-knowledge-coverage
+  - leaf: commit_then_knowledge_coverage_2b8f30d2.plan.md
+    stem: commit-then-knowledge-coverage
+  - leaf: routing-graph-phase4-persistence.plan.md
+    stem: routing-graph-phase4-persistence
+  - leaf: ""
+    stem: ""

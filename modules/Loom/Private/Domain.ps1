@@ -545,7 +545,7 @@ function Get-MetraLoomPlanRoots {
     foreach ($r in @(Get-LoomInspectPlanRoots -MetraRoot $MetraRoot)) {
         [void]$roots.Add([System.IO.Path]::GetFullPath($r))
     }
-    # Loom handoff copies live under plans\; docs\ is legacy + human docs.
+    # Repo plans/ holds index.yaml + authority:repo scars; Cursor ~/.cursor/plans holds working bodies.
     foreach ($rel in @('docs', 'plans')) {
         $dir = Join-Path $MetraRoot $rel
         if (Test-Path -LiteralPath $dir) {
@@ -1138,6 +1138,16 @@ function Invoke-MetraLoomIngestApprovedPlan {
     [void](Test-MetraLoomYarnRankSnapshot -RankSnapshot $RankSnapshot)
 
     $full = ConvertTo-MetraLoomNormalizedPlanPath -Path $PlanPath
+    $mapCmd = Get-Command Resolve-YarnFormalPlanReadPath -ErrorAction SilentlyContinue
+    if ($mapCmd) {
+        try {
+            $mapped = Resolve-YarnFormalPlanReadPath -FormalPlanPath $full -ProjectKey $ProjectKey -MetraRoot $MetraRoot
+            if (-not [string]::IsNullOrWhiteSpace([string]$mapped) -and (Test-Path -LiteralPath $mapped)) {
+                $full = [System.IO.Path]::GetFullPath($mapped)
+            }
+        }
+        catch { }
+    }
     if (-not (Test-Path -LiteralPath $full)) {
         throw "Plan not found: $full"
     }
@@ -1285,6 +1295,42 @@ function Invoke-MetraLoomEnqueueFromPlan {
     )
 
     $full = $ExecutionContext.SessionState.Path.GetUnresolvedProviderPathFromPSPath($Path)
+    $mapCmd = Get-Command Resolve-YarnFormalPlanReadPath -ErrorAction SilentlyContinue
+    if ($mapCmd) {
+        try {
+            $pk = 'Metra'
+            if (Get-Command Get-MetraInspectProjectKeyFromPlanPath -ErrorAction SilentlyContinue) {
+                $pk = Get-MetraInspectProjectKeyFromPlanPath -Path $full -MetraRoot $MetraRoot
+            }
+            else {
+                try {
+                    $parent = [System.IO.Path]::GetFullPath((Split-Path -Parent $MetraRoot))
+                    $fullN = [System.IO.Path]::GetFullPath($full)
+                    $sep = [string][System.IO.Path]::DirectorySeparatorChar
+                    if (-not $parent.EndsWith($sep)) { $parent = $parent + $sep }
+                    if ($fullN.StartsWith($parent, [System.StringComparison]::OrdinalIgnoreCase)) {
+                        $parts = @($fullN.Substring($parent.Length) -split '[\\/]')
+                        if ($parts.Count -ge 2 -and $parts[1] -in @('plans', 'docs')) {
+                            $candidate = [string]$parts[0]
+                            $metraLeaf = Split-Path -Leaf $MetraRoot
+                            if ($candidate -eq $metraLeaf -or $candidate -in @('Metra', '_meta', '_metra')) {
+                                $pk = 'Metra'
+                            }
+                            else {
+                                $pk = $candidate
+                            }
+                        }
+                    }
+                }
+                catch { }
+            }
+            $mapped = Resolve-YarnFormalPlanReadPath -FormalPlanPath $full -ProjectKey $pk -MetraRoot $MetraRoot
+            if (-not [string]::IsNullOrWhiteSpace([string]$mapped) -and (Test-Path -LiteralPath $mapped)) {
+                $full = [System.IO.Path]::GetFullPath($mapped)
+            }
+        }
+        catch { }
+    }
     if (-not (Test-MetraLoomFormalPlanPathAllowed -Path $full -MetraRoot $MetraRoot)) {
         throw "Plan path is not under an allowed formal plan root: $full"
     }

@@ -55,6 +55,15 @@
         'Get-YarnPlanBoardCursorPlanName'
         'Test-YarnPlanBoardCursorPlanMatch'
         'Invoke-YarnPlanBoardCommand'
+        'Get-YarnPlanBoardInventoryNormalizeStem'
+        'Get-MetraPlanIndexPath'
+        'Read-MetraPlanIndex'
+        'Set-MetraPlanIndexEntry'
+        'Resolve-MetraPlanPath'
+        'Resolve-MetraPlanWorkingPath'
+        'Initialize-MetraPlanIndexSeed'
+        'Find-MetraPlanCursorLeaf'
+        'Resolve-YarnFormalPlanReadPath'
     )
     AliasesToExport   = @()
     CmdletsToExport   = @()

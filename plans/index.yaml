@@ -1,0 +1,93 @@
+schemaVersion: 1
+project: Metra
+plans:
+  - stem: ask-conversation-execution
+    cursorLeaf: ask_conversation_execution_27fc070b.plan.md
+    authority: repo
+    repoPath: ask-conversation-execution.plan.md
+    updatedAt: '2026-09-10T14:49:04.5532469Z'
+  - stem: ios-companion-app
+    cursorLeaf: null
+    authority: repo
+    repoPath: ios-companion-app.plan.md
+    updatedAt: '2026-09-10T14:49:04.7155323Z'
+  - stem: ios-conversation-policy
+    cursorLeaf: null
+    authority: repo
+    repoPath: ios-conversation-policy.plan.md
+    updatedAt: '2026-09-10T14:49:04.8310317Z'
+  - stem: ios-phase1-spike
+    cursorLeaf: null
+    authority: repo
+    repoPath: ios-phase1-spike.plan.md
+    updatedAt: '2026-09-10T14:49:04.8849409Z'
+  - stem: ios-presence-behavior
+    cursorLeaf: null
+    authority: repo
+    repoPath: ios-presence-behavior.plan.md
+    updatedAt: '2026-09-10T14:49:04.9753662Z'
+  - stem: ios-presence-face-transitions
+    cursorLeaf: null
+    authority: repo
+    repoPath: ios-presence-face-transitions.plan.md
+    updatedAt: '2026-09-10T14:49:05.0292552Z'
+  - stem: ios-voice-identity
+    cursorLeaf: null
+    authority: repo
+    repoPath: ios-voice-identity.plan.md
+    updatedAt: '2026-09-10T14:49:05.0885404Z'
+  - stem: loom-product-boundary
+    cursorLeaf: null
+    authority: repo
+    repoPath: loom-product-boundary.plan.md
+    updatedAt: '2026-09-10T14:49:05.1646420Z'
+  - stem: new-use-case-for-metra-sort-of-dedicated-server
+    cursorLeaf: null
+    authority: repo
+    repoPath: new-use-case-for-metra-sort-of-dedicated-server.plan.md
+    updatedAt: '2026-09-10T14:49:05.2327366Z'
+  - stem: routing-graph-evolution
+    cursorLeaf: null
+    authority: repo
+    repoPath: routing-graph-evolution.plan.md
+    updatedAt: '2026-09-10T14:49:05.2991130Z'
+  - stem: routing-graph-phase2-foundation
+    cursorLeaf: null
+    authority: repo
+    repoPath: routing-graph-phase2-foundation.plan.md
+    updatedAt: '2026-09-10T14:49:05.3661071Z'
+  - stem: routing-graph-phase3-telemetry
+    cursorLeaf: null
+    authority: repo
+    repoPath: routing-graph-phase3-telemetry.plan.md
+    updatedAt: '2026-09-10T14:49:05.4338026Z'
+  - stem: routing-graph-phase4-persistence
+    cursorLeaf: null
+    authority: repo
+    repoPath: routing-graph-phase4-persistence.plan.md
+    updatedAt: '2026-09-10T14:49:05.5101083Z'
+  - stem: routing-graph-phase5-review
+    cursorLeaf: null
+    authority: repo
+    repoPath: routing-graph-phase5-review.plan.md
+    updatedAt: '2026-09-10T14:49:05.6147650Z'
+  - stem: routing-graph-phase6-concept
+    cursorLeaf: null
+    authority: repo
+    repoPath: routing-graph-phase6-concept.plan.md
+    updatedAt: '2026-09-10T14:49:05.6888154Z'
+  - stem: scout
+    cursorLeaf: scout_split_cleanup_9fee1551.plan.md
+    authority: repo
+    repoPath: scout.plan.md
+    updatedAt: '2026-09-10T14:49:05.7652399Z'
+  - stem: sprint-coworker-ticket-analysis-2026-09
+    cursorLeaf: null
+    authority: repo
+    repoPath: sprint-coworker-ticket-analysis-2026-09.plan.md
+    updatedAt: '2026-09-10T14:49:05.8479845Z'
+  - stem: tailscale-identity-auth
+    cursorLeaf: tailscale_identity_auth_db5d86b4.plan.md
+    authority: repo
+    repoPath: tailscale-identity-auth.plan.md
+    updatedAt: '2026-09-10T14:49:05.9372058Z'
