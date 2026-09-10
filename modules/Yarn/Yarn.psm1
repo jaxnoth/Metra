@@ -18,6 +18,7 @@ $script:YarnModuleRoot = $PSScriptRoot
 . (Join-Path $PSScriptRoot 'Private\Pack.ps1')
 . (Join-Path $PSScriptRoot 'Private\Approve.ps1')
 . (Join-Path $PSScriptRoot 'Private\PlanBoard.ps1')
+. (Join-Path $PSScriptRoot 'Private\PlanIndex.ps1')
 . (Join-Path $PSScriptRoot 'Private\Daily.ps1')
 . (Join-Path $PSScriptRoot 'Private\Domain.ps1')
 
@@ -78,6 +79,15 @@ $export = @(
     'Get-YarnPlanBoardCursorPlanName'
     'Test-YarnPlanBoardCursorPlanMatch'
     'Invoke-YarnPlanBoardCommand'
+    'Get-YarnPlanBoardInventoryNormalizeStem'
+    'Get-MetraPlanIndexPath'
+    'Read-MetraPlanIndex'
+    'Set-MetraPlanIndexEntry'
+    'Resolve-MetraPlanPath'
+    'Resolve-MetraPlanWorkingPath'
+    'Initialize-MetraPlanIndexSeed'
+    'Find-MetraPlanCursorLeaf'
+    'Resolve-YarnFormalPlanReadPath'
 )
 
 Export-ModuleMember -Function $export

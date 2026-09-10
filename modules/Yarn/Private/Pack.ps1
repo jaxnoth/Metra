@@ -103,6 +103,11 @@ function Invoke-MetraYarnPack {
         if (-not $item) { throw "Backlog id not found: $BacklogId" }
         $planPath = [string](Get-YarnProp -Object $item -Name 'formalPlanPath' -Default '')
     }
+    $projectKeyEarly = if ($item) { [string]$item.projectKey } else { 'Metra' }
+    if ([string]::IsNullOrWhiteSpace($projectKeyEarly)) { $projectKeyEarly = 'Metra' }
+    if (-not [string]::IsNullOrWhiteSpace($planPath)) {
+        $planPath = Resolve-YarnFormalPlanReadPath -FormalPlanPath $planPath -ProjectKey $projectKeyEarly -MetraRoot $MetraRoot
+    }
     if ([string]::IsNullOrWhiteSpace($planPath) -or -not (Test-Path -LiteralPath $planPath)) {
         throw "Plan path missing for pack: $planPath"
     }

@@ -720,8 +720,34 @@ function Resolve-YarnPlanBoardPlanFilePath {
     param(
         [string]$CursorPlan,
         [string]$FormalPlanPath,
-        [string]$MetraRoot
+        [string]$MetraRoot,
+        [string]$ProjectKey = 'Metra'
     )
+    # Prefer plan-index canonical body when MetraRoot + stem are known.
+    if (-not [string]::IsNullOrWhiteSpace($MetraRoot)) {
+        $leafHint = Get-YarnPlanBoardCursorPlanName -PathOrName $(
+            if (-not [string]::IsNullOrWhiteSpace($FormalPlanPath)) { $FormalPlanPath } else { $CursorPlan }
+        )
+        $stem = Get-YarnPlanBoardInventoryNormalizeStem -Text $leafHint
+        if (-not [string]::IsNullOrWhiteSpace($stem)) {
+            try {
+                $plansDir = Resolve-YarnProjectPlansPath -MetraRoot $MetraRoot -ProjectKey $(
+                    if ([string]::IsNullOrWhiteSpace($ProjectKey)) { 'Metra' } else { $ProjectKey }
+                )
+                if (Test-Path -LiteralPath (Get-MetraPlanIndexPath -PlansDir $plansDir)) {
+                    $resolved = Resolve-MetraPlanPath -PlansDir $plansDir -Stem $stem
+                    if (($resolved.status -eq 'Resolved' -or $resolved.status -eq 'AmbiguousSelected') -and
+                        -not [string]::IsNullOrWhiteSpace([string]$resolved.path) -and
+                        (Test-Path -LiteralPath $resolved.path)) {
+                        return [string]$resolved.path
+                    }
+                }
+            }
+            catch {
+                # Fall through to legacy dual-home search.
+            }
+        }
+    }
     if (-not [string]::IsNullOrWhiteSpace($FormalPlanPath) -and (Test-Path -LiteralPath $FormalPlanPath)) {
         return $FormalPlanPath
     }
@@ -729,7 +755,7 @@ function Resolve-YarnPlanBoardPlanFilePath {
     if ([string]::IsNullOrWhiteSpace($leaf)) { return $null }
     $candidates = New-Object System.Collections.Generic.List[string]
     $searchDirs = New-Object System.Collections.Generic.List[string]
-    $cursorPlans = Join-Path $env:USERPROFILE '.cursor\plans'
+    $cursorPlans = Resolve-YarnCursorPlansDir
     if (-not [string]::IsNullOrWhiteSpace($cursorPlans)) {
         $searchDirs.Add($cursorPlans)
         $candidates.Add((Join-Path $cursorPlans $leaf))
@@ -771,6 +797,44 @@ function Resolve-YarnPlanBoardPlanFilePath {
     if ($hits.Count -lt 1) { return $null }
     if ($hits.Count -eq 1) { return $hits[0].FullName }
     return @($hits | Sort-Object LastWriteTime -Descending | Select-Object -First 1).FullName
+}
+
+function Resolve-YarnFormalPlanReadPath {
+    <#
+    .SYNOPSIS
+        Path for Yarn pack/approve/rank reads: prefer Cursor working body over repo scars.
+    #>
+    param(
+        [string]$FormalPlanPath,
+        [string]$ProjectKey = 'Metra',
+        [string]$MetraRoot = (Get-YarnHostRoot)
+    )
+    if ([string]::IsNullOrWhiteSpace($FormalPlanPath)) { return $null }
+    $full = $null
+    try { $full = [System.IO.Path]::GetFullPath($FormalPlanPath) } catch { return $null }
+    if (-not (Test-Path -LiteralPath $full)) { return $null }
+
+    try {
+        $plansDir = Resolve-YarnProjectPlansPath -MetraRoot $MetraRoot -ProjectKey $(
+            if ([string]::IsNullOrWhiteSpace($ProjectKey)) { 'Metra' } else { $ProjectKey }
+        )
+        $plansFull = [System.IO.Path]::GetFullPath($plansDir)
+        $prefix = $plansFull.TrimEnd('\', '/') + [System.IO.Path]::DirectorySeparatorChar
+        if ($full.StartsWith($prefix, [System.StringComparison]::OrdinalIgnoreCase)) {
+            $stem = Get-YarnPlanBoardInventoryNormalizeStem -Text ([System.IO.Path]::GetFileName($full))
+            $working = Resolve-MetraPlanWorkingPath -PlansDir $plansDir -Stem $stem
+            if (($working.status -eq 'Resolved' -or $working.status -eq 'AmbiguousSelected') -and
+                -not [string]::IsNullOrWhiteSpace([string]$working.path) -and
+                (Test-Path -LiteralPath $working.path)) {
+                return [string]$working.path
+            }
+            # Repo-only scar: callers may still read canonical body, but WorkingPath is Missing.
+        }
+    }
+    catch {
+        # Fall through to formal path.
+    }
+    return $full
 }
 
 function ConvertFrom-YarnPlanBoardNotionProps {
@@ -1245,7 +1309,7 @@ function Build-YarnPlanBoardSignalContext {
     }
     $loom = Get-YarnPlanBoardLoomSignals -MetraRoot $MetraRoot -CursorPlan $name
     if ($loom.handoffSucceeded) { $handoffOk = $true }
-    $planPath = Resolve-YarnPlanBoardPlanFilePath -CursorPlan $name -FormalPlanPath $formalPath -MetraRoot $MetraRoot
+    $planPath = Resolve-YarnPlanBoardPlanFilePath -CursorPlan $name -FormalPlanPath $formalPath -MetraRoot $MetraRoot -ProjectKey $projectKey
     if ($planPath) { $hasFormal = $true }
     $project = Resolve-YarnPlanBoardProjectSelect -ProjectKey $projectKey -Title $title -CursorPlan $name
     $todos = Get-YarnPlanBoardPlanTodoCounts -Path $planPath
@@ -1746,14 +1810,19 @@ function Get-YarnPlanBoardInventoryPaths {
 function Get-YarnPlanBoardInventoryNormalizeStem {
     <#
     .SYNOPSIS
-        Normalize titles/plan leaves for echo and hash-twin grouping.
+        Normalize titles/plan leaves for echo, hash-twin grouping, and plan-index stems.
+    .NOTES
+        Contract shared with Surveyor TypeScript (packages/shared normalizePlanStem).
+        Fixtures: tests/fixtures/plan-index/stem-cases.yaml
     #>
     param([string]$Text)
     $s = [string]$Text
     if ([string]::IsNullOrWhiteSpace($s)) { return '' }
     $s = $s.ToLowerInvariant().Trim()
     $s = $s -replace '\.plan\.md$', ''
+    # Cursor leaves use _xxxxxxxx; also accept -xxxxxxxx hash suffixes.
     $s = $s -replace '_[0-9a-f]{8}$', ''
+    $s = $s -replace '-[0-9a-f]{8}$', ''
     $s = $s -replace '[^a-z0-9]+', '-'
     $s = $s.Trim('-')
     return $s

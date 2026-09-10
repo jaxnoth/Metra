@@ -8,11 +8,12 @@
 
 | Stage | Location |
 |-------|----------|
-| Yarn `synthesize` / Bing draft | `%USERPROFILE%\.cursor\plans\` (Cursor Build/preview UX) |
-| Successful Loom ingest (after `yarn plan approve` handoff) | **Copy** to `<project>\plans\` + rewrite backlog/plan-link `formalPlanPath` |
-| Human docs | `<project>\docs\` only — not a Yarn synthesize writer |
+| Yarn `synthesize` / Bing draft | `%USERPROFILE%\.cursor\plans\` (Cursor working body) |
+| Yarn `plan approve` (successful) | Upserts `<project>\plans\index.yaml` (affiliation). Does **not** copy the plan body. `formalPlanPath` stays the Cursor absolute path. |
+| Existing scars | `<project>\plans\*.plan.md` with `authority: repo` in the index |
+| Human docs | `<project>\docs\` only - not a Yarn synthesize writer |
 
-Copy runs on successful Loom ingest (including reconcile retry that succeeds). `-SkipIngest` leaves the draft in `.cursor\plans`. Legacy `docs\*.plan.md` remain readable for inventory/allowlists.
+Helpers: `Resolve-MetraPlanPath` (canonical body by authority), `Resolve-MetraPlanWorkingPath` / `Resolve-YarnFormalPlanReadPath` (Cursor working body only; never returns a repo scar). Surveyor reads indexes; it never rewrites them. Legacy `docs\*.plan.md` remain readable for inventory/allowlists.
 
 ## Commands
 

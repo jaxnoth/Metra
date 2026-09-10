@@ -318,7 +318,7 @@ function Get-MetraInspectPlanRoots {
     if (Test-Path -LiteralPath $userPlans) { [void]$roots.Add($userPlans) }
     $checkoutPlans = Join-Path $MetraRoot '.cursor\plans'
     if (Test-Path -LiteralPath $checkoutPlans) { [void]$roots.Add($checkoutPlans) }
-    # Repo Loom handoff copies live under plans\; docs\ is legacy + human docs (not Yarn synthesize).
+    # Repo plans/ = index.yaml + authority:repo scars; working bodies live under ~/.cursor/plans.
     foreach ($rel in @('plans', 'docs')) {
         $dir = Join-Path $MetraRoot $rel
         if (Test-Path -LiteralPath $dir) {
@@ -473,10 +473,12 @@ function Resolve-MetraInspectPlanPath {
                 Ok       = $false
                 ListOnly = $false
                 Path     = $null
-                Error    = "Plan -Path must be under a known plan root (~/.cursor/plans, <metra>/.cursor/plans, <metra>/docs, or <sibling>/docs): $fullPath"
+                Error    = "Plan -Path must be under a known plan root (~/.cursor/plans, <metra>/.cursor/plans, <metra>/(plans|docs), or <sibling>/(plans|docs)): $fullPath"
                 Matches  = @()
             }
         }
+        $mapped = ConvertTo-MetraInspectWorkingPlanPath -Path $fullPath -MetraRoot $MetraRoot
+        if (-not [string]::IsNullOrWhiteSpace($mapped)) { $fullPath = $mapped }
         return [PSCustomObject]@{
             Ok       = $true
             ListOnly = $false
@@ -497,16 +499,39 @@ function Resolve-MetraInspectPlanPath {
                 Matches  = @()
             }
         }
+        $latestPath = [string]$all[0].Path
+        $mappedLatest = ConvertTo-MetraInspectWorkingPlanPath -Path $latestPath -MetraRoot $MetraRoot
+        if (-not [string]::IsNullOrWhiteSpace($mappedLatest)) { $latestPath = $mappedLatest }
         return [PSCustomObject]@{
             Ok       = $true
             ListOnly = $false
-            Path     = [string]$all[0].Path
+            Path     = $latestPath
             Error    = $null
             Matches  = @($all[0])
         }
     }
 
     $frag = $Fragment.Trim()
+    $indexHits = @(Resolve-MetraInspectPlanPathViaIndex -Fragment $frag -MetraRoot $MetraRoot)
+    if ($indexHits.Count -eq 1) {
+        return [PSCustomObject]@{
+            Ok       = $true
+            ListOnly = $false
+            Path     = [string]$indexHits[0].Path
+            Error    = $null
+            Matches  = @($indexHits[0])
+        }
+    }
+    if ($indexHits.Count -gt 1) {
+        return [PSCustomObject]@{
+            Ok       = $false
+            ListOnly = $false
+            Path     = $null
+            Error    = "Ambiguous plan fragment '$frag' across plan indexes. Pass -Path or a more specific fragment."
+            Matches  = $indexHits
+        }
+    }
+
     $fragLiteral = [regex]::Escape($frag)
     $hits = @($all | Where-Object { $_.Name -match $fragLiteral })
     if ($hits.Count -eq 0) {
@@ -527,13 +552,143 @@ function Resolve-MetraInspectPlanPath {
             Matches  = $hits
         }
     }
+    $hitPath = [string]$hits[0].Path
+    $mappedHit = ConvertTo-MetraInspectWorkingPlanPath -Path $hitPath -MetraRoot $MetraRoot
+    if (-not [string]::IsNullOrWhiteSpace($mappedHit)) { $hitPath = $mappedHit }
     return [PSCustomObject]@{
         Ok       = $true
         ListOnly = $false
-        Path     = [string]$hits[0].Path
+        Path     = $hitPath
         Error    = $null
         Matches  = $hits
     }
+}
+
+function Get-MetraInspectProjectKeyFromPlanPath {
+    <#
+    .SYNOPSIS
+        Infer ProjectKey from <parent>\<Project>\(plans|docs)\... under Metra sibling layout.
+    #>
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory)][string]$Path,
+        [string]$MetraRoot = (Get-MetraRoot)
+    )
+    try {
+        $full = [System.IO.Path]::GetFullPath($Path)
+        $parent = [System.IO.Path]::GetFullPath((Split-Path -Parent $MetraRoot))
+        $sep = [string][System.IO.Path]::DirectorySeparatorChar
+        if (-not $parent.EndsWith($sep)) { $parent = $parent + $sep }
+        if (-not $full.StartsWith($parent, [System.StringComparison]::OrdinalIgnoreCase)) { return 'Metra' }
+        $rel = $full.Substring($parent.Length)
+        $parts = @($rel -split '[\\/]')
+        $metraLeaf = Split-Path -Leaf $MetraRoot
+        if ($parts.Count -ge 2 -and $parts[1] -in @('plans', 'docs')) {
+            $candidate = [string]$parts[0]
+            if ($candidate -eq $metraLeaf -or $candidate -in @('Metra', '_meta', '_metra')) {
+                return 'Metra'
+            }
+            return $candidate
+        }
+        if ($parts.Count -ge 1 -and $parts[0] -eq $metraLeaf) { return 'Metra' }
+    }
+    catch { }
+    return 'Metra'
+}
+
+function ConvertTo-MetraInspectWorkingPlanPath {
+    <#
+    .SYNOPSIS
+        Soft-map a plans/ scar to Cursor working body via Yarn FormalPlanReadPath when available.
+    #>
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory)][string]$Path,
+        [string]$MetraRoot = (Get-MetraRoot)
+    )
+    $cmd = Get-Command Resolve-YarnFormalPlanReadPath -ErrorAction SilentlyContinue
+    if (-not $cmd) { return $null }
+    try {
+        $pk = Get-MetraInspectProjectKeyFromPlanPath -Path $Path -MetraRoot $MetraRoot
+        $mapped = Resolve-YarnFormalPlanReadPath -FormalPlanPath $Path -ProjectKey $pk -MetraRoot $MetraRoot
+        if (-not [string]::IsNullOrWhiteSpace([string]$mapped) -and (Test-Path -LiteralPath $mapped)) {
+            return [System.IO.Path]::GetFullPath($mapped)
+        }
+    }
+    catch { }
+    return $null
+}
+
+function Resolve-MetraInspectPlanPathViaIndex {
+    <#
+    .SYNOPSIS
+        Match fragment against plans/index.yaml stems/leaves; prefer WorkingPath then authority path.
+    #>
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory)][string]$Fragment,
+        [string]$MetraRoot = (Get-MetraRoot)
+    )
+    $readIndex = Get-Command Read-MetraPlanIndex -ErrorAction SilentlyContinue
+    $workCmd = Get-Command Resolve-MetraPlanWorkingPath -ErrorAction SilentlyContinue
+    $pathCmd = Get-Command Resolve-MetraPlanPath -ErrorAction SilentlyContinue
+    if (-not $readIndex -or (-not $workCmd -and -not $pathCmd)) { return @() }
+
+    $frag = $Fragment.Trim()
+    $hitList = @()
+    $seen = @{}
+    $fragEsc = [regex]::Escape($frag)
+    foreach ($root in @(Get-MetraInspectPlanRoots -MetraRoot $MetraRoot)) {
+        if ((Split-Path -Leaf $root) -ne 'plans') { continue }
+        if (-not (Test-Path -LiteralPath (Join-Path $root 'index.yaml'))) { continue }
+        $doc = $null
+        try { $doc = Read-MetraPlanIndex -PlansDir $root } catch { $doc = $null }
+        if ($null -eq $doc) { continue }
+        foreach ($entry in @($doc.plans)) {
+            $stem = [string]$entry.stem
+            $cursorLeaf = [string]$entry.cursorLeaf
+            $stemMatch = $false
+            $leafMatch = $false
+            if (-not [string]::IsNullOrWhiteSpace($stem)) {
+                $stemMatch = [regex]::IsMatch($stem, $fragEsc, [System.Text.RegularExpressions.RegexOptions]::IgnoreCase)
+            }
+            if (-not [string]::IsNullOrWhiteSpace($cursorLeaf)) {
+                $leafMatch = [regex]::IsMatch($cursorLeaf, $fragEsc, [System.Text.RegularExpressions.RegexOptions]::IgnoreCase)
+            }
+            if (-not $stemMatch -and -not $leafMatch) { continue }
+
+            $resolvedPath = $null
+            if ($workCmd) {
+                try {
+                    $w = Resolve-MetraPlanWorkingPath -PlansDir $root -Stem $stem
+                    if (($w.status -eq 'Resolved' -or $w.status -eq 'AmbiguousSelected') -and
+                        -not [string]::IsNullOrWhiteSpace([string]$w.path)) {
+                        $resolvedPath = [string]$w.path
+                    }
+                }
+                catch { }
+            }
+            if ([string]::IsNullOrWhiteSpace($resolvedPath) -and $pathCmd) {
+                try {
+                    $p = Resolve-MetraPlanPath -PlansDir $root -Stem $stem
+                    if ($p.status -eq 'Resolved' -and -not [string]::IsNullOrWhiteSpace([string]$p.path)) {
+                        $resolvedPath = [string]$p.path
+                    }
+                }
+                catch { }
+            }
+            if ([string]::IsNullOrWhiteSpace($resolvedPath)) { continue }
+            $norm = [System.IO.Path]::GetFullPath($resolvedPath).ToLowerInvariant()
+            if ($seen.ContainsKey($norm)) { continue }
+            $seen[$norm] = $true
+            $hitList += [PSCustomObject]@{
+                Name = [System.IO.Path]::GetFileName($resolvedPath)
+                Path = $resolvedPath
+                Stem = $stem
+            }
+        }
+    }
+    return @($hitList)
 }
 
 function Get-MetraInspectNormalizedRepoPath {
