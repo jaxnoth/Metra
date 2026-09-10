@@ -132,11 +132,24 @@ The iOS companion may use a **facial reading of the same nodes mark** (terminals
 | Cross-mood movement | Always through a perceptually stable Attend pose |
 | Playful entry | Cue-gated; enters only via `playful/wave` |
 | Incident | Static Attend; severity lives in surrounding UI, not a new face or MARK withdrawal |
-| Speech / listen | Open-center **node** overlay only (Appendix A); no jaw, lips, teeth, or second mouth |
+| Speech / listen | Open-center **node** overlay only (Appendix A); five poses `rest` / `closed` / `mid` / `wide` / `round`; no jaw, lips, teeth, second mouth, or distinct spread/ee pose |
 | Voice identity (which TTS voice) | Voice module / settings; provisional default **Siri Voice 4** - see [ios-voice-identity.plan.md](ios-voice-identity.plan.md). Not a face concern. |
 | Conversation policy (Desk vs Company) | Separate from face geometry - see [ios-conversation-policy.plan.md](ios-conversation-policy.plan.md). Company = warmer Metra, not a second character. Intimacy ceiling: warm company + personal support; no romance / sexual partner roleplay. **Person vs body:** intimacy about the person (attention, memory, specific notice), not the body; Warmth is choices, not costume (avatar / TTS mood paint must not bypass the ceiling). Personal support uses ephemeral retention (off Metra saved history; local or no-retain provider when available). Warmth dials and seam/spark vocabulary live in humor-desk / conversation policy - Brand is boundary only, not a duplicate executable personality contract. |
 
-Assets: [`assets/metra-presence-face.svg`](assets/metra-presence-face.svg) (gallery HTML alongside). Base mark remains [`assets/metra-mark.svg`](assets/metra-mark.svg).
+Assets: [`assets/metra-presence-face.svg`](assets/metra-presence-face.svg) (gallery HTML alongside). Canonical weight is the filled-out stroke set in that file (heavier route / eye / mouth strokes than the early thin draft). Base mark remains [`assets/metra-mark.svg`](assets/metra-mark.svg).
+
+### Video / TikTok presence
+
+Prerendered video (TikTok channel and similar) may use the **same** facial reading of the nodes mark. Video is another surface, not a second character or a forked mouth alphabet.
+
+| Rule | Brand stance |
+|------|----------------|
+| Source asset | Same [`assets/metra-presence-face.svg`](assets/metra-presence-face.svg) - do not keep a thinner or alternate face fork |
+| Mood catalog | Same nine variants; Attend hub; Playful entry via `wave` (presence-behavior plan) |
+| Speech alphabet | Same Appendix A five poses (`rest` / `closed` / `mid` / `wide` / `round`). Map E/I into `mid` or capped `wide`. No distinct spread/ee pose |
+| Motion | Continuous interpolation **between** those poses is allowed when prerendered. Lip-sync tools may drive timing; they must not invent a richer pose class or a jaw/lips mouth |
+| Nameplate (video scale only) | May use a related Mist step (slightly darker or lighter) for depth and legibility at large on-screen scale. Keep Signal Teal letters. No new accent color and no chrome-badge look. iOS and small surfaces keep the SVG same-fill nameplate |
+| Ops / public mark | Unchanged - video does not put a face on the HTML Ops desk or the public README mark |
 
 ### Visual vocabulary
 
@@ -189,6 +202,7 @@ Below that:
 | Markdown docs / `ctx` packs | Neutral prose; product name **Metra** in titles. No teal wallpaper. |
 | Installer (Inno) | Temporary first glimpse; Brand vocabulary + light first-person Welcome; Signal Teal / Mist / route mark; at most one dry beat on Welcome. Role = intent (including Files only). |
 | Metra Ops Settings | Same role / Main Metra address vocabulary as the glossary below; factual, not humorous. |
+| Video / TikTok presence | Same presence face + Appendix A five-pose speech alphabet. Continuous interp between poses OK when prerendered. Nameplate may use a related Mist depth step at large scale only. |
 
 ## Naming boundary
 

@@ -10,11 +10,11 @@
   -->
   <defs>
     <style type="text/css"><![CDATA[
-      .teal-stroke { stroke: #0f766e; fill: none; stroke-width: 6; stroke-linecap: round; stroke-linejoin: round; }
+      .teal-stroke { stroke: #0f766e; fill: none; stroke-width: 8; stroke-linecap: round; stroke-linejoin: round; }
       .teal-fill { fill: #0f766e; }
-      .open-node { fill: #ffffff; stroke: #0f766e; stroke-width: 5; }
+      .open-node { fill: #ffffff; stroke: #0f766e; stroke-width: 7; }
       .pill { fill: #e6f4f1; }
-      .sclera { fill: #ffffff; stroke: #0f766e; stroke-width: 4; }
+      .sclera { fill: #ffffff; stroke: #0f766e; stroke-width: 6; }
       .iris { fill: #0f766e; }
       .L {
         fill: #0f766e;
@@ -186,7 +186,7 @@
       svg[data-mood="playful"][data-variant="cheeky"] #L5 { animation: tumble 0.9s ease-in-out infinite; animation-delay: 0.2s; }
       svg[data-mood="playful"][data-variant="cheeky"] #nameplate { animation: bounce-big 0.9s ease-in-out infinite; }
       svg[data-mood="playful"][data-variant="cheeky"] #presence { animation: tip 1.4s ease-in-out infinite; }
-      svg[data-mood="playful"][data-variant="cheeky"] #mouth-smile { stroke-width: 8; }
+      svg[data-mood="playful"][data-variant="cheeky"] #mouth-smile { stroke-width: 10; }
 
       /* ----- keyframes ----- */
       @keyframes soft-engage {
@@ -315,7 +315,7 @@
         <text id="L4" class="L" x="146" y="55">r</text>
         <text id="L5" class="L" x="164" y="55">a</text>
       </g>
-      <path class="teal-stroke" d="M128 68v22" stroke-width="5"/>
+      <path class="teal-stroke" d="M128 68v22" stroke-width="7"/>
     </g>
 
     <g id="eyes">
