@@ -26,10 +26,12 @@ function Test-MetraLoomStatusHoldsLane {
         return $true
     }
     if ($st -eq 'blocked') {
+        # Explicit laneHeld wins so operational run-failures can free the lane in-session.
+        $laneHeld = Get-LoomProp -Object $Item -Name 'laneHeld' -Default $null
+        if ($null -ne $laneHeld) { return [bool]$laneHeld }
+
         $from = [string](Get-LoomProp -Object $Item -Name 'blockedFrom' -Default '')
         if ([string]::IsNullOrWhiteSpace($from)) {
-            $laneHeld = Get-LoomProp -Object $Item -Name 'laneHeld' -Default $null
-            if ($null -ne $laneHeld) { return [bool]$laneHeld }
             return $false
         }
         return ((Get-MetraLoomLaneHoldingStatuses) -contains $from) -or ($from -eq 'accepted-pending-commit')

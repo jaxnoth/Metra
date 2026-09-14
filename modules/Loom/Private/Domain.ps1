@@ -626,6 +626,8 @@ function Read-MetraLoomPlanFile {
 
     $planStatus = 'Unknown'
     $bingReviewed = $false
+    $externalReviewed = $false
+    $approveForLoom = $false
     $fmStatus = $null
     if ($text -match '(?ms)^---\r?\n(.*?)\r?\n---') {
         $yamlBlock = $Matches[1]
@@ -638,6 +640,12 @@ function Read-MetraLoomPlanFile {
         elseif ($yamlBlock -match '(?m)^bingReviewed:\s*(false|no)\s*$') {
             $bingReviewed = $false
         }
+        if ($yamlBlock -match '(?m)^externalReviewed:\s*(true|yes)\s*$') {
+            $externalReviewed = $true
+        }
+        if ($yamlBlock -match '(?m)^approveForLoom:\s*(true|yes)\s*$') {
+            $approveForLoom = $true
+        }
     }
     if (-not [string]::IsNullOrWhiteSpace($fmStatus)) {
         $planStatus = $fmStatus
@@ -645,8 +653,13 @@ function Read-MetraLoomPlanFile {
     elseif ($text -match '(?mi)\*\*Status:\*\*\s*(.+)') {
         $planStatus = $Matches[1].Trim()
     }
+    # Legacy: status Approved (+ optional bingReviewed).
     $approved = ($planStatus -match '(?i)\bApproved\b') -and ($planStatus -notmatch '(?i)\bPending\b')
     if ($bingReviewed -and ($planStatus -match '(?i)^approved$')) {
+        $approved = $true
+    }
+    # Content-bound desk marks: Yarn may ingest before writing status Approved.
+    if ($externalReviewed -and $approveForLoom) {
         $approved = $true
     }
 
@@ -673,18 +686,20 @@ function Read-MetraLoomPlanFile {
     $patternIds = @(Get-MetraPlanPatternIds -PlanText $text)
 
     return [PSCustomObject]@{
-        path           = $Path
-        name           = $name
-        overview       = $overview
-        planStatus     = $planStatus
-        bingReviewed   = [bool]$bingReviewed
-        approved       = [bool]$approved
-        todos          = @($todos)
-        project        = $project
-        verifyCommands = @($verifyCommands)
-        doneWhen       = @($doneWhen)
-        patterns       = @($patternIds)
-        lastWriteUtc   = (Get-Item -LiteralPath $Path).LastWriteTimeUtc
+        path               = $Path
+        name               = $name
+        overview           = $overview
+        planStatus         = $planStatus
+        bingReviewed       = [bool]$bingReviewed
+        externalReviewed   = [bool]$externalReviewed
+        approveForLoom     = [bool]$approveForLoom
+        approved           = [bool]$approved
+        todos              = @($todos)
+        project            = $project
+        verifyCommands     = @($verifyCommands)
+        doneWhen           = @($doneWhen)
+        patterns           = @($patternIds)
+        lastWriteUtc       = (Get-Item -LiteralPath $Path).LastWriteTimeUtc
     }
 }
 
@@ -708,16 +723,18 @@ function Resolve-MetraLoomPlanProject {
         }
     }
 
-    if (Test-LoomRoutingAdapterAvailable) {
-        if ($Title -match '(?i)\bmetra\b' -or $Overview -match '(?i)\bmetra\b') {
-            return [PSCustomObject]@{
-                registryName      = 'Metra'
-                root              = $metraFull
-                routingConfidence = 0.92
-                routingEvidence   = 'plan-title-mentions-metra'
-            }
+    # Cursor plans live outside the Metra checkout. Title/overview Metra cue must not
+    # require the routing adapter (Yarn handoff often loads Loom without Metra Routing).
+    if ($Title -match '(?i)\bmetra\b' -or $Overview -match '(?i)\bmetra\b') {
+        return [PSCustomObject]@{
+            registryName      = 'Metra'
+            root              = $metraFull
+            routingConfidence = 0.92
+            routingEvidence   = 'plan-title-mentions-metra'
         }
+    }
 
+    if (Test-LoomRoutingAdapterAvailable) {
         $query = ("$Title $Overview").Trim()
         if ([string]::IsNullOrWhiteSpace($query)) { $query = $Title }
         try {
@@ -743,6 +760,109 @@ function Resolve-MetraLoomPlanProject {
         routingConfidence = 0.0
         routingEvidence   = 'unresolved'
     }
+}
+
+function Resolve-MetraLoomProjectRootForKey {
+    <#
+    .SYNOPSIS
+        Resolve a filesystem project root for a Yarn/Loom projectKey (fail closed when unknown).
+    .NOTES
+        ProjectKey is treated as a single path segment under the Metra sibling parent.
+        Traversal, rooted, UNC, and separator-bearing keys return null. Routed adapter
+        roots must also resolve under that same parent prefix (no cross-volume escape).
+    #>
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory)][string]$ProjectKey,
+        [string]$MetraRoot = (Get-LoomHostRoot)
+    )
+
+    $key = [string]$ProjectKey.Trim()
+    if ([string]::IsNullOrWhiteSpace($MetraRoot)) {
+        return $null
+    }
+
+    $metraFull = $null
+    try {
+        $metraFull = [System.IO.Path]::GetFullPath($MetraRoot)
+    }
+    catch {
+        return $null
+    }
+    if (-not (Test-Path -LiteralPath $metraFull -PathType Container)) {
+        return $null
+    }
+
+    if ([string]::IsNullOrWhiteSpace($key) -or $key -eq 'Metra') {
+        return $metraFull
+    }
+
+    # Single-segment keys only. Fail closed on traversal / rooted / UNC / control chars.
+    if ($key -eq '.' -or $key -eq '..' -or
+        $key.IndexOfAny([char[]]@('\', '/', [char]0)) -ge 0 -or
+        $key.Contains('..') -or
+        $key -match '[\p{C}]' -or
+        $key -match '^[A-Za-z]:' -or
+        $key.StartsWith('\\')) {
+        return $null
+    }
+
+    $parent = Split-Path -Parent $metraFull
+    if ([string]::IsNullOrWhiteSpace($parent)) {
+        return $null
+    }
+    $parentFull = [System.IO.Path]::GetFullPath($parent)
+    $parentPrefix = $parentFull.TrimEnd([System.IO.Path]::DirectorySeparatorChar, [System.IO.Path]::AltDirectorySeparatorChar) +
+        [System.IO.Path]::DirectorySeparatorChar
+
+    $sibling = Join-Path $parentFull $key
+    $siblingFull = $null
+    try {
+        $siblingFull = [System.IO.Path]::GetFullPath($sibling)
+    }
+    catch {
+        return $null
+    }
+    # Require a strict child of parent (not parent itself).
+    if (-not $siblingFull.StartsWith($parentPrefix, [StringComparison]::OrdinalIgnoreCase)) {
+        return $null
+    }
+    if ([string]::Equals($siblingFull.TrimEnd('\', '/'), $parentFull.TrimEnd('\', '/'), [StringComparison]::OrdinalIgnoreCase)) {
+        return $null
+    }
+    if (Test-Path -LiteralPath $siblingFull -PathType Container) {
+        return $siblingFull
+    }
+
+    if (Test-LoomRoutingAdapterAvailable) {
+        try {
+            $amb = Get-LoomRoutingAmbiguity -Query $key -SkipTelemetry
+            if ($amb.Mode -ne 'adapter-unavailable' -and $amb.Primary -and [string]$amb.Primary.Name -eq $key) {
+                $root = [string]$amb.Primary.Root
+                if ([string]::IsNullOrWhiteSpace($root)) { return $null }
+                try {
+                    $rootFull = [System.IO.Path]::GetFullPath($root)
+                }
+                catch {
+                    return $null
+                }
+                if (-not (Test-Path -LiteralPath $rootFull -PathType Container)) {
+                    return $null
+                }
+                # Routed roots must still sit under the same workspaces parent as Metra.
+                if (-not $rootFull.StartsWith($parentPrefix, [StringComparison]::OrdinalIgnoreCase)) {
+                    return $null
+                }
+                if ([string]::Equals($rootFull.TrimEnd('\', '/'), $parentFull.TrimEnd('\', '/'), [StringComparison]::OrdinalIgnoreCase)) {
+                    return $null
+                }
+                return $rootFull
+            }
+        }
+        catch { }
+    }
+
+    return $null
 }
 
 function Get-MetraLoomReversibilityPenalty {
@@ -811,6 +931,10 @@ function Test-MetraLoomEligibility {
     if ([bool]$Classification.externalSideEffect) { [void]$reasons.Add('external-side-effect') }
     if ([double]$Project.routingConfidence -lt (Get-MetraLoomMinimumRoutingConfidence)) {
         [void]$reasons.Add('routing-confidence-low')
+    }
+    $projectRoot = [string](Get-LoomProp -Object $Project -Name 'root' -Default '')
+    if ([string]::IsNullOrWhiteSpace($projectRoot)) {
+        [void]$reasons.Add('missing-project-root')
     }
     if (@($Contract.verifyCommands).Count -eq 0) { [void]$reasons.Add('missing-verify-commands') }
     if (@($Contract.doneWhen).Count -eq 0) { [void]$reasons.Add('missing-done-when') }
@@ -1192,6 +1316,20 @@ function Invoke-MetraLoomIngestApprovedPlan {
             root              = [string](Get-LoomProp -Object $project -Name 'root' -Default '')
             routingConfidence = [double](Get-LoomProp -Object $project -Name 'routingConfidence' -Default 0.9)
             routingEvidence   = ('yarn-projectKey-override:' + [string](Get-LoomProp -Object $project -Name 'routingEvidence' -Default ''))
+        }
+    }
+
+    # Always fill project.root from projectKey when missing (Cursor plans are outside Metra root).
+    if ([string]::IsNullOrWhiteSpace([string](Get-LoomProp -Object $project -Name 'root' -Default ''))) {
+        $filledRoot = Resolve-MetraLoomProjectRootForKey -ProjectKey $ProjectKey -MetraRoot $MetraRoot
+        if ([string]::IsNullOrWhiteSpace($filledRoot)) {
+            throw ("Cannot ingest approved plan: project.root unresolved for projectKey '{0}'." -f $ProjectKey)
+        }
+        $project = [PSCustomObject]@{
+            registryName      = [string](Get-LoomProp -Object $project -Name 'registryName' -Default $ProjectKey)
+            root              = $filledRoot
+            routingConfidence = [double](Get-LoomProp -Object $project -Name 'routingConfidence' -Default 0.95)
+            routingEvidence   = ([string](Get-LoomProp -Object $project -Name 'routingEvidence' -Default 'yarn-projectKey') + '+host-root')
         }
     }
 

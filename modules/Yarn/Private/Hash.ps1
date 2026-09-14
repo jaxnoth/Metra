@@ -21,11 +21,20 @@ function Get-YarnSourceHash {
 
 function Get-YarnPlanContentForHash {
     param([Parameter(Mandatory)][AllowEmptyString()][string]$PlanText)
-    # Strip mutable packaging metadata lines from frontmatter-ish content.
+    # Frozen desk contract: UTF-8 + LF (via Get-YarnCanonicalText) then exclude workflow keys.
+    # Keys must stay aligned with Get-YarnPlanWorkflowFrontmatterKeys when that helper is loaded.
+    $exclude = @(
+        'externalReviewed', 'externalReviewHash',
+        'approveForLoom', 'approveForLoomHash',
+        'status', 'loomHandoffId', 'loomAcceptedAt',
+        'packedAt', 'packPlanPath', 'packInputHash', 'bingReviewed',
+        'approvedAt', 'approvedBy', 'approvalId', 'approvalRevision'
+    )
+    $excludeAlt = ($exclude -join '|')
     $canonical = Get-YarnCanonicalText -Text $PlanText
     $filtered = New-Object System.Collections.Generic.List[string]
     foreach ($line in ($canonical -split "`n")) {
-        if ($line -match '^\s*(packedAt|packPlanPath|packInputHash|status|bingReviewed|approvedAt|approvedBy|approvalId|approvalRevision)\s*:') { continue }
+        if ($line -match ("^\s*($excludeAlt)\s*:")) { continue }
         [void]$filtered.Add($line)
     }
     return ($filtered -join "`n")

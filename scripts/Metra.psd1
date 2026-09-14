@@ -179,6 +179,7 @@
         'Invoke-MetraCaptureCommand',
         'Invoke-MetraNarrativeCommand',
         'Invoke-MetraLoomCommand',
+        'Invoke-MetraLoomImplementer',
         'Invoke-MetraYarnCommand',
         'Invoke-MetraAzdoCommand',
         'Invoke-MetraAtlasCommand',

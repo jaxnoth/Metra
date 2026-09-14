@@ -121,6 +121,31 @@ Describe 'Loom path escape guards' {
             }
         }
     }
+
+    It 'Resolve-MetraLoomProjectRootForKey rejects traversal and rooted keys' {
+        InModuleScope Loom {
+            $metra = Join-Path ([IO.Path]::GetTempPath()) ('ap-rootkey-' + [guid]::NewGuid().ToString('n'))
+            $sibling = Join-Path (Split-Path -Parent $metra) 'TicketTracker'
+            try {
+                New-Item -ItemType Directory -Path $metra, $sibling -Force | Out-Null
+                Resolve-MetraLoomProjectRootForKey -ProjectKey 'TicketTracker' -MetraRoot $metra |
+                    Should -Be ([System.IO.Path]::GetFullPath($sibling))
+                Resolve-MetraLoomProjectRootForKey -ProjectKey 'Metra' -MetraRoot $metra |
+                    Should -Be ([System.IO.Path]::GetFullPath($metra))
+                Resolve-MetraLoomProjectRootForKey -ProjectKey '..\evil' -MetraRoot $metra | Should -BeNullOrEmpty
+                Resolve-MetraLoomProjectRootForKey -ProjectKey 'a/b' -MetraRoot $metra | Should -BeNullOrEmpty
+                Resolve-MetraLoomProjectRootForKey -ProjectKey 'C:\Windows' -MetraRoot $metra | Should -BeNullOrEmpty
+                Resolve-MetraLoomProjectRootForKey -ProjectKey '.' -MetraRoot $metra | Should -BeNullOrEmpty
+                Resolve-MetraLoomProjectRootForKey -ProjectKey '..' -MetraRoot $metra | Should -BeNullOrEmpty
+                Resolve-MetraLoomProjectRootForKey -ProjectKey '\\server\share' -MetraRoot $metra | Should -BeNullOrEmpty
+                Resolve-MetraLoomProjectRootForKey -ProjectKey ("bad$([char]0)key") -MetraRoot $metra | Should -BeNullOrEmpty
+            }
+            finally {
+                Remove-Item -LiteralPath $metra -Recurse -Force -ErrorAction SilentlyContinue
+                Remove-Item -LiteralPath $sibling -Recurse -Force -ErrorAction SilentlyContinue
+            }
+        }
+    }
 }
 
 Describe 'Loom corrupt state recovery' {

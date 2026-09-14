@@ -223,6 +223,11 @@ function Invoke-LoomInspectAdapter {
     }
     $cmd = Get-Command Invoke-MetraInspectReviewLoop -ErrorAction SilentlyContinue
     if (-not $cmd) {
+        $metraRoot = Get-LoomHostRoot
+        [void](Import-LoomMetraHostModule -MetraRoot $metraRoot)
+        $cmd = Get-Command Invoke-MetraInspectReviewLoop -ErrorAction SilentlyContinue
+    }
+    if (-not $cmd) {
         $result = [PSCustomObject]@{
             schemaVersion = 1
             outcome       = 'adapter-unavailable'
@@ -291,16 +296,51 @@ function Invoke-LoomImplementerAdapter {
         return & $ImplementerScript $Request $ProjectRoot $RunDir
     }
 
-    $cmd = Get-Command Invoke-MetraLoomImplementer -ErrorAction SilentlyContinue
-    if ($cmd) {
+    try {
+        $cmd = Get-Command Invoke-MetraLoomImplementer -ErrorAction SilentlyContinue
+        if (-not $cmd) {
+            $metraRoot = Get-LoomHostRoot
+            $imported = $false
+            try {
+                $imported = [bool](Import-LoomMetraHostModule -MetraRoot $metraRoot)
+            }
+            catch {
+                return [PSCustomObject]@{
+                    schemaVersion = 1
+                    status        = 'adapter-unavailable'
+                    message       = ('Implementer adapter unavailable (Metra host import failed: {0}).' -f $_.Exception.Message)
+                    exitCode      = 127
+                }
+            }
+            if (-not $imported) {
+                return [PSCustomObject]@{
+                    schemaVersion = 1
+                    status        = 'adapter-unavailable'
+                    message       = 'Implementer adapter unavailable (Metra host import failed).'
+                    exitCode      = 127
+                }
+            }
+            $cmd = Get-Command Invoke-MetraLoomImplementer -ErrorAction SilentlyContinue
+        }
+
+        if (-not $cmd) {
+            return [PSCustomObject]@{
+                schemaVersion = 1
+                status        = 'adapter-unavailable'
+                message       = 'Implementer adapter unavailable (Invoke-MetraLoomImplementer not loaded).'
+                exitCode      = 127
+            }
+        }
+
         return & $cmd -Request $Request -ProjectRoot $ProjectRoot -RunDir $RunDir
     }
-
-    return [PSCustomObject]@{
-        schemaVersion = 1
-        status        = 'adapter-unavailable'
-        message       = 'Implementer adapter unavailable (Invoke-MetraLoomImplementer not loaded).'
-        exitCode      = 127
+    catch {
+        return [PSCustomObject]@{
+            schemaVersion = 1
+            status        = 'failed'
+            message       = ('Implementer adapter error: {0}' -f $_.Exception.Message)
+            exitCode      = 1
+        }
     }
 }
 
@@ -500,6 +540,23 @@ function Invoke-LoomInspectPackAdapter {
     }
 }
 
+function Import-LoomMetraHostModule {
+    <#
+    .SYNOPSIS
+        Ensure Metra host module is loaded so Ask/Inspect cmdlets resolve in Loom-only sessions.
+    #>
+    [CmdletBinding()]
+    param([string]$MetraRoot = (Get-LoomHostRoot))
+
+    if ([string]::IsNullOrWhiteSpace($MetraRoot)) { $MetraRoot = Get-LoomHostRoot }
+    $manifest = Join-Path $MetraRoot 'scripts\Metra.psd1'
+    if (-not (Test-Path -LiteralPath $manifest)) {
+        return $false
+    }
+    Import-Module $manifest -Force -ErrorAction SilentlyContinue
+    return $true
+}
+
 function Invoke-LoomAskCapabilityAdapter {
     <#
     .SYNOPSIS
@@ -511,6 +568,10 @@ function Invoke-LoomAskCapabilityAdapter {
     )
 
     $cmd = Get-Command Get-MetraAskCapability -ErrorAction SilentlyContinue
+    if (-not $cmd) {
+        [void](Import-LoomMetraHostModule -MetraRoot $MetraRoot)
+        $cmd = Get-Command Get-MetraAskCapability -ErrorAction SilentlyContinue
+    }
     if (-not $cmd) {
         return $null
     }

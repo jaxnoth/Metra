@@ -10,6 +10,7 @@ $script:YarnModuleRoot = $PSScriptRoot
 . (Join-Path $PSScriptRoot 'Private\Storage.ps1')
 . (Join-Path $PSScriptRoot 'Private\Validate.ps1')
 . (Join-Path $PSScriptRoot 'Private\Hash.ps1')
+. (Join-Path $PSScriptRoot 'Private\Frontmatter.ps1')
 . (Join-Path $PSScriptRoot 'Private\Rank.ps1')
 . (Join-Path $PSScriptRoot 'Adapters\Metra.Adapters.ps1')
 . (Join-Path $PSScriptRoot 'Private\Backlog.ps1')
@@ -17,6 +18,7 @@ $script:YarnModuleRoot = $PSScriptRoot
 . (Join-Path $PSScriptRoot 'Private\Synthesize.ps1')
 . (Join-Path $PSScriptRoot 'Private\Pack.ps1')
 . (Join-Path $PSScriptRoot 'Private\Approve.ps1')
+. (Join-Path $PSScriptRoot 'Private\Schedule.ps1')
 . (Join-Path $PSScriptRoot 'Private\PlanBoard.ps1')
 . (Join-Path $PSScriptRoot 'Private\PlanIndex.ps1')
 . (Join-Path $PSScriptRoot 'Private\Daily.ps1')
@@ -43,6 +45,14 @@ $export = @(
     'Get-YarnPlanContentHash'
     'Get-YarnPackInputHash'
     'Test-YarnPackFreshness'
+    'Get-YarnPlanWorkflowFrontmatterKeys'
+    'Split-YarnPlanDocument'
+    'Get-YarnPlanFrontmatterMap'
+    'Set-YarnPlanFrontmatterFields'
+    'Set-YarnPlanContentBoundMarks'
+    'Get-YarnPlanFrontmatterScalars'
+    'Test-YarnContentBoundLoomEligibility'
+    'Get-YarnDeterministicLoomHandoffId'
     'Assert-YarnBacklogDocument'
     'Assert-YarnPlanLinksDocument'
     'Measure-YarnRank'
@@ -52,13 +62,23 @@ $export = @(
     'Invoke-MetraYarnPack'
     'Invoke-MetraYarnReconcile'
     'Invoke-MetraYarnPlanApprove'
+    'Invoke-MetraYarnReviewAffirm'
     'Set-YarnPlanApproved'
     'Invoke-YarnHandoffIngestRetry'
+    'Find-YarnApproveForLoomCandidates'
+    'Invoke-YarnProcessApproveForLoomCandidates'
     'Get-MetraYarnPending'
     'Get-MetraYarnDaily'
     'Get-MetraYarnStatus'
     'Write-YarnAtomicUtf8Text'
     'Get-YarnUtf8NoBomEncoding'
+    'Invoke-MetraYarnLoomSchedule'
+    'Get-MetraYarnScheduleStatus'
+    'Install-MetraYarnSchedule'
+    'Uninstall-MetraYarnSchedule'
+    'Install-MetraYarnPulseSchedule'
+    'Uninstall-MetraYarnPulseSchedule'
+    'Invoke-YarnScheduleCommand'
     'Test-YarnLoomQueueWriteForbidden'
     'Read-YarnFutureDevIdeas'
     'Test-YarnAtlasAdapterAvailable'

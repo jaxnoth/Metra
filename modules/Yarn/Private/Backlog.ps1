@@ -177,13 +177,42 @@ function Sync-YarnPlanLink {
         [Parameter(Mandatory)][string]$Root,
         [Parameter(Mandatory)]$Link
     )
-    $map = ConvertTo-YarnPropertyMap -Object $Link
+    $incoming = ConvertTo-YarnPropertyMap -Object $Link
+    $backlogId = [string](Get-YarnProp -Object $Link -Name 'backlogId' -Default '')
+    $links = @(Get-YarnPlanLinks -Root $Root)
+    $existing = $null
+    if (-not [string]::IsNullOrWhiteSpace($backlogId)) {
+        $existing = $links | Where-Object {
+            [string](Get-YarnProp -Object $_ -Name 'backlogId' -Default '') -eq $backlogId
+        } | Select-Object -First 1
+    }
+
+    # Merge: incoming keys win, but never drop durable approval/handoff receipts when omitted.
+    $map = @{}
+    if ($existing) {
+        $map = ConvertTo-YarnPropertyMap -Object $existing
+    }
+    foreach ($key in $incoming.Keys) {
+        $map[$key] = $incoming[$key]
+    }
+    if (
+        (-not $incoming.ContainsKey('loomHandoff') -or $null -eq $incoming['loomHandoff']) -and
+        $existing -and
+        $null -ne (Get-YarnProp -Object $existing -Name 'loomHandoff' -Default $null)
+    ) {
+        $map['loomHandoff'] = Get-YarnProp -Object $existing -Name 'loomHandoff' -Default $null
+    }
+    if (
+        (-not $incoming.ContainsKey('approval') -or $null -eq $incoming['approval']) -and
+        $existing -and
+        $null -ne (Get-YarnProp -Object $existing -Name 'approval' -Default $null)
+    ) {
+        $map['approval'] = Get-YarnProp -Object $existing -Name 'approval' -Default $null
+    }
     if (-not $map.ContainsKey('handoffContractVersion') -or $null -eq $map['handoffContractVersion']) {
         $map['handoffContractVersion'] = Get-YarnHandoffContractVersion
     }
     $normalized = (New-YarnPsObject -Map $map)
-    $links = @(Get-YarnPlanLinks -Root $Root)
-    $backlogId = [string](Get-YarnProp -Object $normalized -Name 'backlogId' -Default '')
     $links = @($links | Where-Object { [string](Get-YarnProp -Object $_ -Name 'backlogId' -Default '') -ne $backlogId })
     $links += $normalized
     $doc = [ordered]@{

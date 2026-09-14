@@ -254,7 +254,7 @@ function Get-LoomGitChangedPaths {
         [Parameter(Mandatory)][string]$ProjectRoot
     )
 
-    $r = Invoke-LoomGit -ProjectRoot $ProjectRoot -GitArgs @('status', '--porcelain')
+    $r = Invoke-LoomGit -ProjectRoot $ProjectRoot -GitArgs @('status', '--porcelain', '-uall')
     if ($r.ExitCode -ne 0) {
         throw "git status failed: $(Get-LoomGitErrorDetail $r)"
     }
@@ -262,15 +262,137 @@ function Get-LoomGitChangedPaths {
     foreach ($line in @($r.Stdout -split "`n")) {
         if ([string]::IsNullOrWhiteSpace($line)) { continue }
         if ($line.Length -lt 4) { continue }
-        $pathPart = $line.Substring(3).Trim()
+        $pathPart = $line.Substring(3).Trim().TrimEnd('/')
         if ($pathPart -match ' -> ') {
-            $pathPart = ($pathPart -split ' -> ', 2)[1].Trim()
+            $pathPart = ($pathPart -split ' -> ', 2)[1].Trim().TrimEnd('/')
         }
         if (-not [string]::IsNullOrWhiteSpace($pathPart)) {
             [void]$paths.Add(($pathPart -replace '\\', '/'))
         }
     }
     return @($paths | Select-Object -Unique)
+}
+
+function Get-LoomGitPathContentFingerprint {
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory)][string]$ProjectRoot,
+        [Parameter(Mandatory)][string]$RelativePath
+    )
+
+    $norm = ([string]$RelativePath).Replace('\', '/').Trim().TrimEnd('/')
+    if ([string]::IsNullOrWhiteSpace($norm)) { return 'empty-path' }
+    $full = Join-Path $ProjectRoot ($norm -replace '/', [System.IO.Path]::DirectorySeparatorChar)
+    try {
+        $full = [System.IO.Path]::GetFullPath($full)
+    }
+    catch {
+        return 'unresolvable'
+    }
+    if (-not (Test-Path -LiteralPath $full)) { return 'missing' }
+    $item = Get-Item -LiteralPath $full -Force -ErrorAction SilentlyContinue
+    if ($null -eq $item) { return 'missing' }
+    if ($item.PSIsContainer) {
+        # Directory rows (rare with -uall) - fingerprint child files so edits are visible.
+        $childHashes = New-Object 'System.Collections.Generic.List[string]'
+        Get-ChildItem -LiteralPath $full -Recurse -File -Force -ErrorAction SilentlyContinue |
+            Sort-Object -Property FullName |
+            ForEach-Object {
+                try {
+                    $relChild = $_.FullName.Substring(([System.IO.Path]::GetFullPath($ProjectRoot)).Length).TrimStart('\', '/')
+                    $relChild = ($relChild -replace '\\', '/')
+                    [void]$childHashes.Add("$relChild=$((Get-FileHash -LiteralPath $_.FullName -Algorithm SHA256).Hash)")
+                }
+                catch {
+                    [void]$childHashes.Add("$($_.Name)=unreadable")
+                }
+            }
+        if ($childHashes.Count -eq 0) { return 'dir:empty' }
+        $joined = ($childHashes -join '|')
+        $bytes = [System.Text.Encoding]::UTF8.GetBytes($joined)
+        $sha = [System.Security.Cryptography.SHA256]::Create()
+        try {
+            return ([BitConverter]::ToString($sha.ComputeHash($bytes)).Replace('-', ''))
+        }
+        finally {
+            $sha.Dispose()
+        }
+    }
+    try {
+        return ((Get-FileHash -LiteralPath $full -Algorithm SHA256).Hash)
+    }
+    catch {
+        return 'unreadable'
+    }
+}
+
+function Get-LoomGitWorkingTreeSnapshot {
+    <#
+    .SYNOPSIS
+      Map of dirty repo-relative paths to content fingerprints (for dirty-Scout run deltas).
+    #>
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory)][string]$ProjectRoot
+    )
+
+    $map = New-Object 'System.Collections.Generic.Dictionary[string,string]' ([StringComparer]::OrdinalIgnoreCase)
+    foreach ($rel in @(Get-LoomGitChangedPaths -ProjectRoot $ProjectRoot)) {
+        $key = ([string]$rel).Replace('\', '/').Trim()
+        if ([string]::IsNullOrWhiteSpace($key)) { continue }
+        if ($map.ContainsKey($key)) { continue }
+        $map[$key] = Get-LoomGitPathContentFingerprint -ProjectRoot $ProjectRoot -RelativePath $key
+    }
+    return $map
+}
+
+function Get-LoomGitWorkingTreeDeltaPaths {
+    <#
+    .SYNOPSIS
+      Paths whose presence or content fingerprint changed between two dirty-tree snapshots.
+    #>
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory)]$Before,
+        [Parameter(Mandatory)]$After
+    )
+
+    $delta = New-Object 'System.Collections.Generic.List[string]'
+    $seen = New-Object 'System.Collections.Generic.HashSet[string]' ([StringComparer]::OrdinalIgnoreCase)
+
+    $afterKeys = @()
+    if ($After -is [System.Collections.IDictionary]) {
+        $afterKeys = @($After.Keys)
+    }
+    foreach ($keyObj in $afterKeys) {
+        $key = [string]$keyObj
+        if ([string]::IsNullOrWhiteSpace($key)) { continue }
+        $afterFp = [string]$After[$key]
+        $beforeHas = $false
+        $beforeFp = $null
+        if ($Before -is [System.Collections.IDictionary] -and $Before.ContainsKey($key)) {
+            $beforeHas = $true
+            $beforeFp = [string]$Before[$key]
+        }
+        if (-not $beforeHas -or $beforeFp -ne $afterFp) {
+            if ($seen.Add($key)) { [void]$delta.Add($key) }
+        }
+    }
+
+    $beforeKeys = @()
+    if ($Before -is [System.Collections.IDictionary]) {
+        $beforeKeys = @($Before.Keys)
+    }
+    foreach ($keyObj in $beforeKeys) {
+        $key = [string]$keyObj
+        if ([string]::IsNullOrWhiteSpace($key)) { continue }
+        $afterHas = ($After -is [System.Collections.IDictionary] -and $After.ContainsKey($key))
+        if (-not $afterHas) {
+            if ($seen.Add($key)) { [void]$delta.Add($key) }
+        }
+    }
+
+    return @($delta)
 }
 
 function Test-LoomChangedPathsAllowed {
@@ -448,6 +570,56 @@ function New-LoomRunRequestPackage {
     return [PSCustomObject]$pkg
 }
 
+function Test-LoomItemIsScout {
+    <#
+    .SYNOPSIS
+        Scout path canary: plan frontmatter kind: Scout, or summary/source leaf Scout.
+    #>
+    [CmdletBinding()]
+    param([Parameter(Mandatory)]$Item)
+
+    $summary = [string](Get-LoomProp -Object $Item -Name 'summary' -Default '')
+    if ($summary -match '(?i)^Scout$') { return $true }
+
+    $source = Get-LoomProp -Object $Item -Name 'source' -Default $null
+    $path = [string](Get-LoomProp -Object $source -Name 'path' -Default '')
+    if ([string]::IsNullOrWhiteSpace($path)) { return $false }
+    $leaf = [System.IO.Path]::GetFileNameWithoutExtension($path)
+    if ($leaf -match '(?i)^Scout$') { return $true }
+    if (-not (Test-Path -LiteralPath $path)) { return $false }
+    try {
+        $enc = Get-LoomUtf8NoBomEncoding
+        $text = [System.IO.File]::ReadAllText($path, $enc)
+        if ($text -match '(?ms)^---\r?\n(.*?)\r?\n---') {
+            $yaml = $Matches[1]
+            if ($yaml -match '(?m)^kind:\s*["'']?Scout["'']?\s*$') { return $true }
+        }
+    }
+    catch { }
+    return $false
+}
+
+function Add-LoomItemEvidenceFinding {
+    param(
+        [Parameter(Mandatory)]$Item,
+        [Parameter(Mandatory)][string]$Code,
+        [Parameter(Mandatory)][string]$Message,
+        [string]$Severity = 'warn'
+    )
+    $finding = [PSCustomObject]@{
+        type      = 'finding'
+        code      = $Code
+        severity  = $Severity
+        message   = $Message
+        at        = (Get-Date).ToString('o')
+    }
+    $existing = @()
+    $ev = Get-LoomProp -Object $Item -Name 'evidence' -Default $null
+    if ($null -ne $ev) { $existing = @($ev) }
+    $Item | Add-Member -NotePropertyName evidence -NotePropertyValue (@($existing) + @($finding)) -Force
+    return $Item
+}
+
 function Invoke-LoomGitCreateItemBranch {
     [CmdletBinding()]
     param(
@@ -571,11 +743,36 @@ function Invoke-MetraLoomRun {
         $ChainReview = $true
     }
 
-    if (-not (Test-LoomGitWorkingTreeClean -ProjectRoot $projectRoot)) {
-        $fromStatus = if ($AlreadyClaimed) { 'claimed' } else { 'queued' }
-        $blocked = Invoke-MetraLoomStateChange -Root $Root -ItemId $ItemId -From $fromStatus -To 'blocked' `
-            -Reason 'dirty-git-baseline'
-        throw "Git working tree is not clean in $projectRoot; item blocked."
+    $isScout = Test-LoomItemIsScout -Item $item
+    $startedDirty = -not (Test-LoomGitWorkingTreeClean -ProjectRoot $projectRoot)
+    # Scout may run on a dirty Metra tree (canary while fixing the desk). Skip branch
+    # isolation + hard-reset restore so operator WIP is not wiped. Non-Scout still fail closed.
+    $skipGitIsolation = $false
+    if ($startedDirty) {
+        if (-not $isScout) {
+            $fromStatus = if ($AlreadyClaimed) { 'claimed' } else { 'queued' }
+            $null = Invoke-MetraLoomStateChange -Root $Root -ItemId $ItemId -From $fromStatus -To 'blocked' `
+                -Reason 'dirty-git-baseline' -Mutator {
+                param($qi)
+                $qi | Add-Member -NotePropertyName laneHeld -NotePropertyValue $false -Force
+                $qi | Add-Member -NotePropertyName blockedFrom -NotePropertyValue $fromStatus -Force
+                $qi | Add-Member -NotePropertyName lastError -NotePropertyValue 'dirty-git-baseline' -Force
+                return $qi
+            }
+            throw "Git working tree is not clean in $projectRoot; item blocked."
+        }
+        $skipGitIsolation = $true
+        $item = Add-LoomItemEvidenceFinding -Item $item -Code 'dirty-git-scout-allowed' `
+            -Message 'Scout allowed on dirty working tree; git branch isolation skipped to protect WIP.' -Severity 'warn'
+        Save-MetraLoomQueueItem -Root $Root -Item $item
+        Add-MetraLoomJournalEntry -Root $Root -Entry @{
+            itemId  = $ItemId
+            from    = [string]$item.status
+            to      = [string]$item.status
+            actor   = 'harness-run'
+            reason  = 'dirty-git-scout-allowed'
+            message = 'Scout proceeding without clean-tree baseline; isolation skipped.'
+        }
     }
 
     $baselineSha = Get-LoomGitHeadCommit -ProjectRoot $projectRoot
@@ -588,6 +785,9 @@ function Invoke-MetraLoomRun {
         $i.execution | Add-Member -NotePropertyName baselineSha -NotePropertyValue $baselineSha -Force
         $i.execution | Add-Member -NotePropertyName runNumber -NotePropertyValue $runNum -Force
         $i.execution | Add-Member -NotePropertyName runDir -NotePropertyValue $runDir -Force
+        if ($skipGitIsolation) {
+            $i.execution | Add-Member -NotePropertyName skipGitIsolation -NotePropertyValue $true -Force
+        }
         return $i
     }
     if ($AlreadyClaimed) {
@@ -608,14 +808,23 @@ function Invoke-MetraLoomRun {
     }
 
     try {
-        Invoke-LoomGitCreateItemBranch -ProjectRoot $projectRoot -BranchName $branch
-        $gitRunActive = $true
+        if (-not $skipGitIsolation) {
+            Invoke-LoomGitCreateItemBranch -ProjectRoot $projectRoot -BranchName $branch
+            $gitRunActive = $true
+        }
 
         $pkg = New-LoomRunRequestPackage -Item $claimed -RunDir $runDir -MetraRoot $MetraRoot
         $stdoutPath = Join-Path $runDir 'stdout.log'
         $stderrPath = Join-Path $runDir 'stderr.log'
 
         $implementing = Invoke-MetraLoomStateChange -Root $Root -ItemId $ItemId -From 'claimed' -To 'implementing' -Reason 'implementer-start'
+
+        # Dirty Scout: fingerprint the pre-run dirty tree so scope checks only the run delta
+        # (untouched WIP under modules/ etc. must not become scope-violations).
+        $beforeDirtySnapshot = $null
+        if ($skipGitIsolation) {
+            $beforeDirtySnapshot = Get-LoomGitWorkingTreeSnapshot -ProjectRoot $projectRoot
+        }
 
         $implResult = Invoke-LoomImplementerAdapter -Request $pkg -ProjectRoot $projectRoot -RunDir $runDir -ImplementerScript $ImplementerScript
 
@@ -656,7 +865,28 @@ function Invoke-MetraLoomRun {
             throw "Implementer failed: $($implResult.message)"
         }
 
-        $changed = @(Get-LoomGitChangedPaths -ProjectRoot $projectRoot)
+        if ($skipGitIsolation -and $null -ne $beforeDirtySnapshot) {
+            $afterDirtySnapshot = Get-LoomGitWorkingTreeSnapshot -ProjectRoot $projectRoot
+            $changed = @(Get-LoomGitWorkingTreeDeltaPaths -Before $beforeDirtySnapshot -After $afterDirtySnapshot)
+            try {
+                $deltaEvidence = [PSCustomObject]@{
+                    schemaVersion = 1
+                    mode          = 'dirty-scout-run-delta'
+                    beforeCount   = @($beforeDirtySnapshot.Keys).Count
+                    afterCount    = @($afterDirtySnapshot.Keys).Count
+                    deltaPaths    = @($changed)
+                    recordedAtUtc = (Get-Date).ToUniversalTime().ToString('o')
+                }
+                Write-LoomAtomicUtf8Text -Path (Join-Path $runDir 'dirty-scope-delta.json') `
+                    -Text (($deltaEvidence | ConvertTo-Json -Depth 6) + "`n")
+            }
+            catch {
+                Write-Warning ("Could not write dirty-scope-delta evidence: $($_.Exception.Message)")
+            }
+        }
+        else {
+            $changed = @(Get-LoomGitChangedPaths -ProjectRoot $projectRoot)
+        }
         $contract = $implementing.contract
         $scope = Test-LoomChangedPathsAllowed -ChangedPaths $changed -ProjectRoot $projectRoot `
             -AllowedPaths @($(Get-LoomProp -Object $contract -Name 'allowedPaths' -Default @())) `
@@ -733,7 +963,7 @@ function Invoke-MetraLoomRun {
         }
     }
     catch {
-        if ($gitRunActive) {
+        if ($gitRunActive -and -not $skipGitIsolation) {
             Restore-LoomGitAfterFailedRun -ProjectRoot $projectRoot -BaselineSha $baselineSha `
                 -OriginalBranch $originalBranch -ItemBranch $branch `
                 -BeforeUntracked @($beforeUntracked) -RunDir $runDir
@@ -742,7 +972,11 @@ function Invoke-MetraLoomRun {
             try {
                 $cur = Get-MetraLoomQueueItem -Root $Root -Id $ItemId
                 if ($cur -and @('claimed', 'implementing') -contains [string]$cur.status) {
-                    Invoke-MetraLoomStateChange -Root $Root -ItemId $ItemId -From ([string]$cur.status) -To 'blocked' -Reason 'run-exception' | Out-Null
+                    Invoke-MetraLoomStateChange -Root $Root -ItemId $ItemId -From ([string]$cur.status) -To 'blocked' -Reason 'run-exception' -Mutator {
+                        param($qi)
+                        $qi | Add-Member -NotePropertyName laneHeld -NotePropertyValue $false -Force
+                        return $qi
+                    } | Out-Null
                 }
             }
             catch { }

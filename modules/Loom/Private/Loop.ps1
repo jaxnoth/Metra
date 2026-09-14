@@ -286,6 +286,34 @@ function Invoke-MetraLoomLoop {
 
     $pause = Get-LoomLoopPauseState -Root $Root
     if ($pause.loopPaused) {
+        $reason = [string]$pause.pauseReason
+        # Self-heal sticky inspect/Ask pauses once the Metra host module + engine are healthy again.
+        if ($reason -match '(?i)^inspect-') {
+            $engine = Test-LoomInspectEngineHealthy -MetraRoot $MetraRoot
+            if (-not $engine.healthy -and $engine.tier -eq 'recover') {
+                $null = Invoke-LoomInspectEngineRecovery -Probe {
+                    (Test-LoomInspectEngineHealthy -MetraRoot $MetraRoot).healthy
+                } -DelaySeconds @(2, 5, 10)
+                $engine = Test-LoomInspectEngineHealthy -MetraRoot $MetraRoot
+            }
+            if ($engine.healthy) {
+                if (-not $DryRun) {
+                    Set-LoomLoopPauseState -Root $Root -Paused $false | Out-Null
+                    Add-MetraLoomJournalEntry -Root $Root -Entry @{
+                        itemId  = ''
+                        from    = 'paused'
+                        to      = 'loop'
+                        actor   = 'harness-loop'
+                        reason  = 'inspect-engine-recovered'
+                        message = "Cleared sticky pause ($reason); Ask/Inspect capability healthy."
+                    }
+                }
+                $pause = Get-LoomLoopPauseState -Root $Root
+            }
+        }
+    }
+
+    if ($pause.loopPaused) {
         $age = Get-LoomPauseAgeDescription -PausedAtUtc $pause.pausedAtUtc
         if (-not $DryRun) {
             Add-MetraLoomJournalEntry -Root $Root -Entry @{
@@ -384,81 +412,154 @@ function Invoke-MetraLoomLoop {
         }
     }
 
-    $claim = Invoke-MetraLoomClaimNextEligible -Root $Root -Actor 'harness-loop' -Reason 'until-daily-gate'
-    if (-not $claim.claimed) {
-        return [PSCustomObject]@{
-            outcome = 'idle'
-            message = ('No eligible queued items ({0})' -f [string]$claim.reason)
-        }
-    }
+    $processed = New-Object System.Collections.Generic.List[object]
+    $sessionDir = $null
 
-    $item = $claim.item
-    $policy = Test-LoomUnattendedPolicy -Root $Root -Item $item
-    $sessionDir = New-LoomLoopSessionDir -Root $Root
-
-    Add-MetraLoomJournalEntry -Root $Root -Entry @{
-        itemId  = [string]$item.id
-        from    = 'loop'
-        to      = 'dequeue'
-        actor   = 'harness-loop'
-        reason  = 'until-daily-gate'
-        message = ("score={0};claim={1}" -f (Get-LoomProp -Object $item.scores -Name 'total' -Default 0), $claim.reason)
-    }
-
-    $runResult = $null
-    $runError = $null
-    try {
-        if ($RunOverride) {
-            $runResult = & $RunOverride @{
-                Root          = $Root
-                ItemId        = [string]$item.id
-                MetraRoot     = $MetraRoot
-                Confirm       = $true
-                ChainReview   = $true
-                AlreadyClaimed = $true
+    while ($true) {
+        $claim = Invoke-MetraLoomClaimNextEligible -Root $Root -Actor 'harness-loop' -Reason 'until-daily-gate'
+        if (-not $claim.claimed) {
+            if ($processed.Count -eq 0) {
+                return [PSCustomObject]@{
+                    outcome = 'idle'
+                    message = ('No eligible queued items ({0})' -f [string]$claim.reason)
+                }
+            }
+            return [PSCustomObject]@{
+                outcome         = 'session-complete'
+                processedCount  = $processed.Count
+                processed       = @($processed.ToArray())
+                sessionDir      = $sessionDir
+                message         = ("Session finished after {0} item(s); no further eligible queued work ({1})" -f $processed.Count, [string]$claim.reason)
             }
         }
-        else {
-            $runResult = Invoke-MetraLoomRun -Root $Root -ItemId ([string]$item.id) -MetraRoot $MetraRoot -Confirm -ChainReview -AlreadyClaimed
+
+        $item = $claim.item
+        $policy = Test-LoomUnattendedPolicy -Root $Root -Item $item
+        if (-not $sessionDir) {
+            $sessionDir = New-LoomLoopSessionDir -Root $Root
         }
-    }
-    catch {
-        $runError = $_
-    }
 
-    $finalItem = Get-MetraLoomQueueItem -Root $Root -Id ([string]$item.id)
-    $terminal = if ($finalItem) { [string]$finalItem.status } else { 'error' }
+        Add-MetraLoomJournalEntry -Root $Root -Entry @{
+            itemId  = [string]$item.id
+            from    = 'loop'
+            to      = 'dequeue'
+            actor   = 'harness-loop'
+            reason  = 'until-daily-gate'
+            message = ("score={0};claim={1}" -f (Get-LoomProp -Object $item.scores -Name 'total' -Default 0), $claim.reason)
+        }
 
-    Save-LoomLoopSession -SessionDir $sessionDir -Payload ([ordered]@{
-        schemaVersion  = 1
-        selectedItemId = [string]$item.id
-        policy         = $policy
-        engineProbe    = $engine
-        startedAtUtc   = (Get-Date).ToUniversalTime().ToString('o')
-        terminalStatus = $terminal
-        runResult      = $runResult
-        runError       = if ($runError) { [string]$runError.Exception.Message } else { $null }
-    }) | Out-Null
+        $runResult = $null
+        $runError = $null
+        try {
+            if ($RunOverride) {
+                $runResult = & $RunOverride @{
+                    Root           = $Root
+                    ItemId         = [string]$item.id
+                    MetraRoot      = $MetraRoot
+                    Confirm        = $true
+                    ChainReview    = $true
+                    AlreadyClaimed = $true
+                }
+            }
+            else {
+                $runResult = Invoke-MetraLoomRun -Root $Root -ItemId ([string]$item.id) -MetraRoot $MetraRoot -Confirm -ChainReview -AlreadyClaimed
+            }
+        }
+        catch {
+            $runError = $_
+        }
 
-    Add-MetraLoomJournalEntry -Root $Root -Entry @{
-        itemId  = [string]$item.id
-        from    = 'loop'
-        to      = $terminal
-        actor   = 'harness-loop'
-        reason  = if ($runError) { 'until-daily-gate-error' } else { 'until-daily-gate-complete' }
-        message = if ($runError) { [string]$runError.Exception.Message } else { '' }
-    }
+        if ($runError) {
+            $blockReason = ('run-failure:{0}' -f [string]$runError.Exception.Message)
+            if ($blockReason.Length -gt 180) { $blockReason = $blockReason.Substring(0, 180) }
+            try {
+                $cur = Get-MetraLoomQueueItem -Root $Root -Id ([string]$item.id)
+                $fromSt = if ($cur) { [string]$cur.status } else { 'claimed' }
+                if ($fromSt -in @('claimed', 'implementing')) {
+                    Invoke-MetraLoomStateChange -Root $Root -ItemId ([string]$item.id) -From $fromSt -To 'blocked' `
+                        -Actor 'harness-loop' -Reason $blockReason -Mutator {
+                        param($qi)
+                        $qi | Add-Member -NotePropertyName laneHeld -NotePropertyValue $false -Force
+                        $qi | Add-Member -NotePropertyName blockedFrom -NotePropertyValue $fromSt -Force
+                        return $qi
+                    } | Out-Null
+                }
+            }
+            catch {
+                # Best-effort block; still free the session to try the next queued item.
+            }
 
-    if ($runError) {
-        throw $runError
-    }
+            $finalBlocked = Get-MetraLoomQueueItem -Root $Root -Id ([string]$item.id)
+            $terminal = if ($finalBlocked) { [string]$finalBlocked.status } else { 'error' }
+            Save-LoomLoopSession -SessionDir $sessionDir -Payload ([ordered]@{
+                    schemaVersion  = 1
+                    selectedItemId = [string]$item.id
+                    policy         = $policy
+                    engineProbe    = $engine
+                    startedAtUtc   = (Get-Date).ToUniversalTime().ToString('o')
+                    terminalStatus = $terminal
+                    runResult      = $null
+                    runError       = [string]$runError.Exception.Message
+                    continued      = $true
+                }) | Out-Null
 
-    return [PSCustomObject]@{
-        outcome        = $terminal
-        selectedItemId = [string]$item.id
-        sessionDir     = $sessionDir
-        runResult      = $runResult
-        message        = "Loop finished: $terminal"
+            Add-MetraLoomJournalEntry -Root $Root -Entry @{
+                itemId  = [string]$item.id
+                from    = 'loop'
+                to      = $terminal
+                actor   = 'harness-loop'
+                reason  = 'until-daily-gate-error'
+                message = [string]$runError.Exception.Message
+            }
+
+            [void]$processed.Add([PSCustomObject]@{
+                    itemId   = [string]$item.id
+                    terminal = $terminal
+                    blocked  = $true
+                    error    = [string]$runError.Exception.Message
+                })
+            # Lane released (laneHeld=false): claim the next eligible item in this same session.
+            continue
+        }
+
+        $finalItem = Get-MetraLoomQueueItem -Root $Root -Id ([string]$item.id)
+        $terminal = if ($finalItem) { [string]$finalItem.status } else { 'error' }
+
+        Save-LoomLoopSession -SessionDir $sessionDir -Payload ([ordered]@{
+                schemaVersion  = 1
+                selectedItemId = [string]$item.id
+                policy         = $policy
+                engineProbe    = $engine
+                startedAtUtc   = (Get-Date).ToUniversalTime().ToString('o')
+                terminalStatus = $terminal
+                runResult      = $runResult
+                runError       = $null
+            }) | Out-Null
+
+        Add-MetraLoomJournalEntry -Root $Root -Entry @{
+            itemId  = [string]$item.id
+            from    = 'loop'
+            to      = $terminal
+            actor   = 'harness-loop'
+            reason  = 'until-daily-gate-complete'
+            message = ''
+        }
+
+        [void]$processed.Add([PSCustomObject]@{
+                itemId   = [string]$item.id
+                terminal = $terminal
+                blocked  = $false
+            })
+
+        # Successful dequeue still stops at one completed path per invocation (Slice 6).
+        return [PSCustomObject]@{
+            outcome        = $terminal
+            selectedItemId = [string]$item.id
+            sessionDir     = $sessionDir
+            runResult      = $runResult
+            processed      = @($processed.ToArray())
+            message        = "Loop finished: $terminal"
+        }
     }
 }
 
