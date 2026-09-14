@@ -148,6 +148,37 @@ Describe 'Loom run live (git + implementer override)' {
         }
     }
 
+    It 'advances to reviewing when implementer returns completed status' {
+        $root = Join-Path ([IO.Path]::GetTempPath()) ('ap-run-' + [guid]::NewGuid().ToString('n'))
+        $proj = Join-Path ([IO.Path]::GetTempPath()) ('ap-proj-' + [guid]::NewGuid().ToString('n'))
+        $branchName = $null
+        try {
+            Initialize-LoomTestGitRepo -Path $proj
+            New-Item -ItemType Directory -Path (Join-Path $proj 'tests') -Force | Out-Null
+            Initialize-MetraLoomLayout -Root $root
+            $item = New-LoomTestQueueItem -Root $root -ProjectRoot $proj
+            $branchName = [string]$item.execution.branch
+            $impl = {
+                param($Request, $ProjectRoot, $RunDir)
+                $target = Join-Path $ProjectRoot 'tests\runner-completed.txt'
+                Set-Content -Path $target -Value 'ok'
+                git -C $ProjectRoot add tests/runner-completed.txt 2>$null | Out-Null
+                return [PSCustomObject]@{ schemaVersion = 1; status = 'completed'; message = 'test completed'; exitCode = 0 }
+            }
+            $result = Invoke-MetraLoomRun -Root $root -ItemId $item.id -Confirm -ChainReview:$false -ImplementerScript $impl
+            $result.status | Should -Be 'reviewing'
+            Test-Path -LiteralPath (Join-Path $result.runDir 'implementation.json') | Should -BeTrue
+        }
+        finally {
+            if ($branchName -and (Test-Path -LiteralPath $proj)) {
+                git -C $proj checkout master 2>$null | Out-Null
+                git -C $proj branch -D $branchName 2>$null | Out-Null
+            }
+            Remove-Item -LiteralPath $root -Recurse -Force -ErrorAction SilentlyContinue
+            Remove-Item -LiteralPath $proj -Recurse -Force -ErrorAction SilentlyContinue
+        }
+    }
+
     It 'blocks on out-of-scope path changes' {
         $root = Join-Path ([IO.Path]::GetTempPath()) ('ap-run-' + [guid]::NewGuid().ToString('n'))
         $proj = Join-Path ([IO.Path]::GetTempPath()) ('ap-proj-' + [guid]::NewGuid().ToString('n'))
@@ -257,6 +288,72 @@ Describe 'Loom changed-path scope' {
             Test-LoomForbiddenPathMatch -NormalizedPath 'config/api.key' -ForbiddenPattern '*.key' | Should -BeTrue
             Test-LoomForbiddenPathMatch -NormalizedPath 'docs/readme.md' -ForbiddenPattern 'docs' | Should -BeTrue
             Test-LoomForbiddenPathMatch -NormalizedPath 'mydocs/x' -ForbiddenPattern 'docs' | Should -BeFalse
+        }
+    }
+}
+
+Describe 'Loom dirty-tree run delta' {
+    It 'ignores untouched pre-dirty paths and includes new or content-changed paths' {
+        InModuleScope Loom {
+            $before = New-Object 'System.Collections.Generic.Dictionary[string,string]' ([StringComparer]::OrdinalIgnoreCase)
+            $before['modules/Loom/Private/Runner.ps1'] = 'AAA'
+            $before['docs/scout-last-run.md'] = 'OLD'
+            $after = New-Object 'System.Collections.Generic.Dictionary[string,string]' ([StringComparer]::OrdinalIgnoreCase)
+            $after['modules/Loom/Private/Runner.ps1'] = 'AAA'
+            $after['docs/scout-last-run.md'] = 'NEW'
+            $after['docs/new-note.md'] = 'X'
+            $delta = @(Get-LoomGitWorkingTreeDeltaPaths -Before $before -After $after)
+            $delta | Should -Contain 'docs/scout-last-run.md'
+            $delta | Should -Contain 'docs/new-note.md'
+            $delta | Should -Not -Contain 'modules/Loom/Private/Runner.ps1'
+        }
+    }
+
+    It 'includes paths cleaned during the run' {
+        InModuleScope Loom {
+            $before = New-Object 'System.Collections.Generic.Dictionary[string,string]' ([StringComparer]::OrdinalIgnoreCase)
+            $before['docs/tmp.md'] = '1'
+            $after = New-Object 'System.Collections.Generic.Dictionary[string,string]' ([StringComparer]::OrdinalIgnoreCase)
+            $delta = @(Get-LoomGitWorkingTreeDeltaPaths -Before $before -After $after)
+            $delta | Should -Contain 'docs/tmp.md'
+        }
+    }
+
+    It 'snapshots fingerprints so dirty WIP outside the run does not fail allowed scope' {
+        InModuleScope Loom {
+            $proj = Join-Path ([IO.Path]::GetTempPath()) ('ap-delta-' + [guid]::NewGuid().ToString('n'))
+            try {
+                New-Item -ItemType Directory -Path $proj -Force | Out-Null
+                Push-Location $proj
+                git init 2>$null | Out-Null
+                git config user.email 'loom@test.local' 2>$null | Out-Null
+                git config user.name 'Loom Test' 2>$null | Out-Null
+                New-Item -ItemType Directory -Path (Join-Path $proj 'docs') -Force | Out-Null
+                New-Item -ItemType Directory -Path (Join-Path $proj 'modules') -Force | Out-Null
+                Set-Content -Path (Join-Path $proj 'README.md') -Value 'init'
+                git add README.md 2>$null | Out-Null
+                git commit -m 'init' 2>$null | Out-Null
+
+                Set-Content -Path (Join-Path $proj 'modules\wip.ps1') -Value 'wip-before'
+                Set-Content -Path (Join-Path $proj 'docs\scout-last-run.md') -Value 'lastRunUtc: old'
+                $before = Get-LoomGitWorkingTreeSnapshot -ProjectRoot $proj
+
+                Set-Content -Path (Join-Path $proj 'docs\scout-last-run.md') -Value 'lastRunUtc: new'
+                # untouched WIP stays dirty with same content
+                $after = Get-LoomGitWorkingTreeSnapshot -ProjectRoot $proj
+                $delta = @(Get-LoomGitWorkingTreeDeltaPaths -Before $before -After $after)
+
+                $delta | Should -Contain 'docs/scout-last-run.md'
+                $delta | Should -Not -Contain 'modules/wip.ps1'
+
+                $scope = Test-LoomChangedPathsAllowed -ChangedPaths $delta -ProjectRoot $proj `
+                    -AllowedPaths @('docs', 'scripts', 'tests') -ForbiddenPaths @('docs/Decisions.md')
+                $scope.allowed | Should -BeTrue
+            }
+            finally {
+                Pop-Location
+                Remove-Item -LiteralPath $proj -Recurse -Force -ErrorAction SilentlyContinue
+            }
         }
     }
 }

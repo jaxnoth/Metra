@@ -22,19 +22,71 @@ Helpers: `Resolve-MetraPlanPath` (canonical body by authority), `Resolve-MetraPl
 .\metra.ps1 yarn scan
 .\metra.ps1 yarn backlog
 .\metra.ps1 yarn daily
+.\metra.ps1 yarn daily -Reconcile
 .\metra.ps1 yarn synthesize -BacklogId <id> -Confirm
 .\metra.ps1 yarn synthesize -FromMemory <stableId> -Confirm
 .\metra.ps1 yarn pack -BacklogId <id>
 .\metra.ps1 yarn reconcile [-DryRun]
 .\metra.ps1 yarn pending
+.\metra.ps1 yarn review affirm -Path <formal.plan.md> -Confirm
 .\metra.ps1 yarn plan approve -BacklogId <id> -Confirm
 .\metra.ps1 yarn plan approve -Path <formal.plan.md> -Confirm
+.\metra.ps1 yarn schedule status
+.\metra.ps1 yarn schedule install [-At "02:00"] -Confirm
+.\metra.ps1 yarn schedule uninstall -Confirm
+.\metra.ps1 yarn schedule run
+.\metra.ps1 yarn schedule pulse install [-EveryMinutes 15] -Confirm
+.\metra.ps1 yarn schedule pulse uninstall -Confirm
+.\metra.ps1 yarn schedule pulse run
 .\metra.ps1 plan-board status
 .\metra.ps1 plan-board sync -DryRun
 .\metra.ps1 plan-board sync
 .\metra.ps1 plan-board inventory
 .\metra.ps1 plan-board inventory apply -Confirm
 ```
+
+## Desk order (content-bound marks)
+
+Surveyor owns Pack Plan (thin pack) and **Approve Plan**. Approve Plan is operator authority for Loom eligibility: it writes **both** content-bound pairs (`approveForLoom*` and `externalReviewed*`) bound to the current content hash. Optional `yarn review affirm` remains for recording independent review before Approve; it is not required after Approve.
+
+1. Surveyor **Pack Plan** - thin pack under `%LOCALAPPDATA%\Surveyor\review\` (no Metra shell)
+2. Independent external review (operator judgment; optional pack)
+3. Optional: `yarn review affirm -Path <plan> -Confirm` - records `externalReviewed` + hash early
+4. Surveyor **Approve Plan** - sets `approveForLoom*` **and** `externalReviewed*` to the current hash (overrides / completes the review gate)
+5. `yarn scan` / `yarn reconcile` / schedule - both mark/hash pairs must match current content, then Loom ingest, then `status: Approved` + `loomHandoffId` / `loomAcceptedAt`
+6. Optional `loom loop -UntilDailyGate -Confirm`
+
+### Canonical content hash (frozen)
+
+Shared helper `Get-YarnPlanContentHash` (Surveyor port: `getPlanContentHash`):
+
+| Step | Rule |
+|------|------|
+| Encoding | UTF-8 |
+| Newlines | Normalize to LF; trimEnd each line |
+| Frontmatter | Exclude workflow keys (`externalReviewed*`, `approveForLoom*`, `status`, `loomHandoffId`, `loomAcceptedAt`, pack/approval bookkeeping, legacy `bingReviewed`) |
+| Digest | SHA256 lowercase hex |
+
+Mark writes must not change the hash. Plan body edits invalidate both gates until Approve (or affirm+Approve) runs again.
+
+Legacy `bingReviewed: true` or Bing language in the plan body is not enough alone. Plans that already have a current `approveForLoom` hash get `externalReviewed` backfilled on scan (one-time lift for Approves made before Approve-overrides-review).
+
+### Schedule
+
+Two tasks share the same runner and a single schedule lock (they never overlap):
+
+| Task | Cadence | Stages |
+|------|---------|--------|
+| `MetraYarnLoomDaily` | Once daily (default `02:00`) | scan → daily -Reconcile → loom loop |
+| `MetraYarnLoomPulse` | Every N minutes (default 15; range 5-120) | scan → loom loop (skips reconcile) |
+
+Runner: `scripts/Invoke-MetraYarnLoomSchedule.ps1 -Mode Daily|Pulse`. Exit codes: 0 ok/daily-gate, 1 failure, 2 validation blocked, 3 unexpected loom pause, 4 lock held. Logs: `%LOCALAPPDATA%\Metra\yarn\schedule-logs\`.
+
+**Approve does not start Yarn/Loom immediately.** Surveyor only writes content-bound marks. The next Pulse (or Daily, or `yarn schedule run` / `pulse run`) enrolls and builds. Prefer Pulse for desk-speed after Approve; keep Daily for overnight reconcile + full gate.
+
+Still human: Surveyor Approve Plan (and morning Loom ACCEPT). Affirm is optional when Approve is used.
+
+**Approve = build order:** Surveyor Approve marks the Cursor plan. `yarn scan` (including Pulse/Daily) enrolls that plan into the Yarn backlog if missing, then fails closed into Loom ingest when content-bound gates are current. Approve alone does not write the Loom queue - scan/schedule consumes the mark.
 
 ## Plan Board projection
 
@@ -46,12 +98,13 @@ Copy `modules/Yarn/config/plan-board.example.json` to the Yarn root settings fil
 
 That path is `Join-Path (Get-MetraYarnRoot) 'plan-board.settings.json'` (override with `METRA_YARN_ROOT` if set). Token: `METRA_NOTION_API_KEY`, else Atlas Notion `apiKey`. Missing Plan Board never blocks intake or approve.
 
-`yarn scan` skips per-item Plan Board notifies. Full catch-up is `plan-board sync`, which rebuilds from **all** Yarn backlog items (with or without `formalPlanPath`), plan-links, Loom queue plan paths, and existing Plan Board cards.
+`yarn scan` skips per-item Plan Board notifies for bulk Capture/Atlas intake upserts. Approve enroll, status persist, successful Loom handoff, and already-approved reconcile each notify fail-open. Full catch-up remains `plan-board sync` (stem-matched CursorPlan twins, Loom module auto-import for queue signals).
 
 | Event | Board update? |
 |-------|---------------|
-| Yarn status persisted: `idea` \| `ready` \| `pending-bing` \| `stale-pack` \| `approved` \| `parked` \| `rejected` | Yes (fail-open, once after persist; not during bulk `scan`) |
-| Successful Loom handoff | Yes |
+| Yarn status persisted: `idea` \| `ready` \| `pending-bing` \| `stale-pack` \| `approved` \| `parked` \| `rejected` | Yes (fail-open, once after persist; not during bulk Capture/Atlas `scan` upserts) |
+| Surveyor-Approve enroll / heal into backlog | Yes |
+| Successful Loom handoff (and already-approved reconcile) | Yes |
 | Verified Loom `accepted` (after local commit verify) | Yes (Shipped) |
 | `accepted-pending-commit` / other Loom hops | No |
 | Failed Yarn mutation or failed handoff | No |
@@ -125,6 +178,26 @@ Sync and apply summaries use a **stable public contract**: `scanned`, `proposed`
 - Post-sync cache = Atlas local mirror (`data/sync/objects` + stub), not a Yarn content cache
 - Backlog fields: `atlasStableId`, `memoryLane=atlas`, `atlasKind` (Plan|Roadmap|Parked)
 - Offline: empty Atlas set; Capture/Future-Dev continue; status/daily show `memoryLane=paused`
+
+## Scout (synthetic path inspection)
+
+Permanent Metra fixture: Surveyor dispatches a **Scout** through Yarn and Loom to find desk-path defects, then retires. Industry gloss: synthetic path inspection. Frontmatter `kind: Scout` marks the Cursor plan for reporting.
+
+Desk vocabulary: Surveyor dispatches → Yarn routes → Loom works → Scout probes/retires.
+
+| Piece | Role |
+|-------|------|
+| Cursor plan | `%USERPROFILE%\.cursor\plans\Scout.plan.md` (Approve = build order; twin `Scout.md` is display-only) |
+| Tooling | `scripts/Test-MetraScout.ps1` (-Probe / -Reset -Confirm) - permanent; not rebuilt each run |
+| Cadence | Operator Approve → `MetraYarnLoomPulse` (or `yarn schedule pulse run`); not Daily alone |
+| Dirty git | Scout may run on a dirty Metra tree (`dirty-git-scout-allowed` finding); non-Scout items still block |
+
+```powershell
+pwsh -File .\scripts\Test-MetraScout.ps1 -Probe
+pwsh -File .\scripts\Test-MetraScout.ps1 -Reset -Confirm
+```
+
+Retire clears Approve marks on the Scout leaf only, drops its Yarn backlog/plan-link, and fails matching Loom `AP-*` with reason `scout-retire` (`laneHeld: false`). See [loom.md](loom.md) lane/`laneHeld` notes.
 
 ## Related
 

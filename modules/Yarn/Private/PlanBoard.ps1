@@ -1208,6 +1208,30 @@ function Write-YarnPlanBoardCard {
     }
 }
 
+function Get-YarnPlanBoardLoomQueueCommands {
+    <#
+    .SYNOPSIS
+        Resolve Loom queue cmdlets, importing Loom when Yarn-only session.
+    #>
+    [CmdletBinding()]
+    param([string]$MetraRoot)
+    if ([string]::IsNullOrWhiteSpace($MetraRoot)) { $MetraRoot = Get-YarnHostRoot }
+    $cmdItems = Get-Command Get-MetraLoomQueueItems -ErrorAction SilentlyContinue
+    $cmdRoot = Get-Command Get-MetraLoomRoot -ErrorAction SilentlyContinue
+    if (-not $cmdItems -or -not $cmdRoot) {
+        $loomManifest = Join-Path $MetraRoot 'modules\Loom\Loom.psd1'
+        if (Test-Path -LiteralPath $loomManifest) {
+            Import-Module $loomManifest -Force -ErrorAction SilentlyContinue
+            $cmdItems = Get-Command Get-MetraLoomQueueItems -ErrorAction SilentlyContinue
+            $cmdRoot = Get-Command Get-MetraLoomRoot -ErrorAction SilentlyContinue
+        }
+    }
+    return [PSCustomObject]@{
+        Items = $cmdItems
+        Root  = $cmdRoot
+    }
+}
+
 function Get-YarnPlanBoardLoomSignals {
     [CmdletBinding()]
     param(
@@ -1220,14 +1244,14 @@ function Get-YarnPlanBoardLoomSignals {
         hasActiveLoomQueue   = $false
         verifiedLoomAccepted = $false
     }
-    $cmdItems = Get-Command Get-MetraLoomQueueItems -ErrorAction SilentlyContinue
-    $cmdRoot = Get-Command Get-MetraLoomRoot -ErrorAction SilentlyContinue
-    if (-not $cmdItems -or -not $cmdRoot) {
+    if ([string]::IsNullOrWhiteSpace($MetraRoot)) { $MetraRoot = Get-YarnHostRoot }
+    $cmds = Get-YarnPlanBoardLoomQueueCommands -MetraRoot $MetraRoot
+    if (-not $cmds.Items -or -not $cmds.Root) {
         return $result
     }
     try {
-        $loomRoot = & $cmdRoot
-        $items = @(& $cmdItems -Root $loomRoot)
+        $loomRoot = & $cmds.Root
+        $items = @(& $cmds.Items -Root $loomRoot)
     }
     catch {
         return $result
@@ -1248,9 +1272,17 @@ function Get-YarnPlanBoardLoomSignals {
         }
         $yh = Get-YarnProp -Object $item -Name 'yarnHandoff' -Default $null
         # Loom ingest records yarnHandoff without a state field; Yarn plan-links use loomHandoff.state.
-        # Never treat mere object presence as success (failed/superseded residue must not force Loom).
         $yhState = [string](Get-YarnProp -Object $yh -Name 'state' -Default '')
         if ($yhState -eq 'succeeded') {
+            $result.handoffSucceeded = $true
+        }
+        elseif (
+            $null -ne $yh -and
+            [string]::IsNullOrWhiteSpace($yhState) -and
+            (Test-LoomPlanBoardActiveQueueStatus -Status $st) -and
+            -not [string]::IsNullOrWhiteSpace([string](Get-YarnProp -Object $yh -Name 'approvalRevision' -Default ''))
+        ) {
+            # Active queue row from yarn-handoff ingest: treat as handoff success for Plan Board.
             $result.handoffSucceeded = $true
         }
     }
@@ -1612,6 +1644,7 @@ function Invoke-MetraYarnPlanBoardSync {
     $token = Get-YarnPlanBoardNotionApiKey -MetraRoot $MetraRoot
 
     # Work set keyed by stable identity: plan:<name> or yarn:<id>
+    # Truncated CursorPlan stubs and full leaves that share a normalize stem merge into one work row.
     $byKey = @{}
     $addWork = {
         param($Name, $Item, $Link, $YarnIdOnly)
@@ -1620,7 +1653,23 @@ function Invoke-MetraYarnPlanBoardSync {
         if ($Item) { $yid = [string](Get-YarnProp -Object $Item -Name 'id' -Default '') }
         if ([string]::IsNullOrWhiteSpace($yid) -and $YarnIdOnly) { $yid = [string]$YarnIdOnly }
         if ([string]::IsNullOrWhiteSpace($n) -and [string]::IsNullOrWhiteSpace($yid)) { return }
-        $k = if (-not [string]::IsNullOrWhiteSpace($n)) { 'plan:' + $n.ToLowerInvariant() } else { 'yarn:' + $yid.ToLowerInvariant() }
+
+        $k = $null
+        if (-not [string]::IsNullOrWhiteSpace($n)) {
+            foreach ($existingKey in @($byKey.Keys)) {
+                if ($existingKey -notlike 'plan:*') { continue }
+                $ekName = $existingKey.Substring(5)
+                if (Test-YarnPlanBoardCursorPlanMatch -Left $ekName -Right $n) {
+                    $k = $existingKey
+                    break
+                }
+            }
+            if (-not $k) { $k = 'plan:' + $n.ToLowerInvariant() }
+        }
+        else {
+            $k = 'yarn:' + $yid.ToLowerInvariant()
+        }
+
         if (-not $byKey.ContainsKey($k)) {
             $byKey[$k] = [PSCustomObject]@{
                 CursorPlan = $n
@@ -1633,7 +1682,14 @@ function Invoke-MetraYarnPlanBoardSync {
             $cur = $byKey[$k]
             if (-not $cur.Item -and $Item) { $cur | Add-Member -NotePropertyName Item -NotePropertyValue $Item -Force }
             if (-not $cur.Link -and $Link) { $cur | Add-Member -NotePropertyName Link -NotePropertyValue $Link -Force }
-            if ([string]::IsNullOrWhiteSpace([string]$cur.CursorPlan) -and $n) {
+            $curName = [string]$cur.CursorPlan
+            if (
+                (-not [string]::IsNullOrWhiteSpace($n)) -and
+                (
+                    [string]::IsNullOrWhiteSpace($curName) -or
+                    ($n -like '*.plan.md' -and $curName -notlike '*.plan.md')
+                )
+            ) {
                 $cur | Add-Member -NotePropertyName CursorPlan -NotePropertyValue $n -Force
             }
             if ([string]::IsNullOrWhiteSpace([string]$cur.YarnId) -and $yid) {
@@ -1662,12 +1718,11 @@ function Invoke-MetraYarnPlanBoardSync {
         & $addWork $fp $it $lk $bid
     }
 
-    $cmdItems = Get-Command Get-MetraLoomQueueItems -ErrorAction SilentlyContinue
-    $cmdRoot = Get-Command Get-MetraLoomRoot -ErrorAction SilentlyContinue
-    if ($cmdItems -and $cmdRoot) {
+    $loomCmds = Get-YarnPlanBoardLoomQueueCommands -MetraRoot $MetraRoot
+    if ($loomCmds.Items -and $loomCmds.Root) {
         try {
-            $loomRoot = & $cmdRoot
-            foreach ($loomItem in @(& $cmdItems -Root $loomRoot)) {
+            $loomRoot = & $loomCmds.Root
+            foreach ($loomItem in @(& $loomCmds.Items -Root $loomRoot)) {
                 $src = Get-YarnProp -Object $loomItem -Name 'source' -Default $null
                 $path = [string](Get-YarnProp -Object $src -Name 'path' -Default '')
                 if ([string]::IsNullOrWhiteSpace($path)) {
@@ -2651,12 +2706,11 @@ function Invoke-MetraYarnPlanBoardInventory {
         }
     }
 
-    $cmdItems = Get-Command Get-MetraLoomQueueItems -ErrorAction SilentlyContinue
-    $cmdRoot = Get-Command Get-MetraLoomRoot -ErrorAction SilentlyContinue
-    if ($cmdItems -and $cmdRoot) {
+    $loomCmds = Get-YarnPlanBoardLoomQueueCommands -MetraRoot $MetraRoot
+    if ($loomCmds.Items -and $loomCmds.Root) {
         try {
-            $loomRoot = & $cmdRoot
-            foreach ($loomItem in @(& $cmdItems -Root $loomRoot)) {
+            $loomRoot = & $loomCmds.Root
+            foreach ($loomItem in @(& $loomCmds.Items -Root $loomRoot)) {
                 $src = Get-YarnProp -Object $loomItem -Name 'source' -Default $null
                 $path = [string](Get-YarnProp -Object $src -Name 'path' -Default '')
                 if ([string]::IsNullOrWhiteSpace($path)) {

@@ -280,10 +280,15 @@ function Invoke-MetraYarnReconcile {
         }
     }
 
+    # Content-bound Approve Plan discovery (same path as scan).
+    $markHandoff = Invoke-YarnProcessApproveForLoomCandidates -Root $Root -MetraRoot $MetraRoot -DryRun:$DryRun
+    foreach ($a in @($markHandoff.actions)) { [void]$results.Add($a) }
+
     return [PSCustomObject]@{
         outcome                    = $(if ($DryRun) { 'reconcile-dry-run' } else { 'reconciled' })
         actions                    = @($results.ToArray())
         approvedButNotEnqueued     = @($approvedPending)
+        validationBlocked          = [int]$markHandoff.validationBlocked
     }
 }
 

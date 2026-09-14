@@ -1,4 +1,5 @@
-# A3: human approval + Loom handoff (Yarn never writes Loom queue files).
+# Content-bound review affirm + Loom handoff transaction (fail-closed).
+# Desk order: affirm (Yarn) -> Approve Plan (Surveyor) -> scan/reconcile handoff.
 
 function New-YarnApprovalId {
     return ('ya-' + [guid]::NewGuid().ToString('n'))
@@ -15,29 +16,73 @@ function Get-YarnRankSnapshotFromItem {
     }
 }
 
-function Set-YarnFormalPlanApprovedFrontmatter {
+function Invoke-MetraYarnReviewAffirm {
+    <#
+    .SYNOPSIS
+        Record external review affirm: externalReviewed + externalReviewHash only.
+        Does not enqueue Loom. Migrates legacy bingReviewed off the automated path.
+    #>
     [CmdletBinding()]
     param(
-        [Parameter(Mandatory)][string]$PlanPath,
-        [switch]$DryRun
+        [Parameter(Mandatory)][string]$Root,
+        [string]$MetraRoot = (Get-YarnHostRoot),
+        [Parameter(Mandatory)][string]$Path,
+        [switch]$DryRun,
+        [switch]$Confirm
     )
 
-    $text = [System.IO.File]::ReadAllText($PlanPath, (Get-YarnUtf8NoBomEncoding))
-    if ($text -notmatch '(?ms)^---\r?\n.*?\r?\n---') {
-        throw "Formal plan missing YAML frontmatter: $PlanPath"
+    if (-not $DryRun -and -not $Confirm) {
+        throw 'yarn review affirm requires -Confirm or -DryRun'
     }
-    $updated = [regex]::Replace($text, '(?m)^status:\s*.*$', 'status: Approved', 1)
-    if ($updated -match '(?m)^bingReviewed:\s*') {
-        $updated = [regex]::Replace($updated, '(?m)^bingReviewed:\s*.*$', 'bingReviewed: true', 1)
+
+    $planPath = [System.IO.Path]::GetFullPath($Path)
+    if (-not (Test-Path -LiteralPath $planPath)) {
+        throw "Plan not found: $planPath"
     }
-    else {
-        $updated = [regex]::Replace($updated, '(?ms)^(---\r?\n)', "`$1bingReviewed: true`n", 1)
+
+    $planText = [System.IO.File]::ReadAllText($planPath, (Get-YarnUtf8NoBomEncoding))
+    $fm = Get-YarnPlanFrontmatterScalars -PlanText $planText
+    $hashNow = Get-YarnPlanContentHash -PlanText $planText
+
+    if ($fm.externalReviewed -and $fm.externalReviewHash -eq $hashNow) {
+        return [PSCustomObject]@{
+            outcome            = 'already-affirmed'
+            planPath           = $planPath
+            externalReviewHash = $hashNow
+            changed            = $false
+        }
     }
+
     if ($DryRun) {
-        return [PSCustomObject]@{ changed = ($updated -ne $text); text = $updated }
+        $preview = Set-YarnPlanContentBoundMarks -Path $planPath -ExternalReviewed -DryRun
+        return [PSCustomObject]@{
+            outcome            = 'dry-run'
+            planPath           = $planPath
+            externalReviewHash = [string]$preview.contentHash
+            wouldSet           = @{ externalReviewed = $true; externalReviewHash = [string]$preview.contentHash }
+        }
     }
-    Write-YarnAtomicUtf8Text -Path $PlanPath -Text $updated
-    return [PSCustomObject]@{ changed = ($updated -ne $text); path = $PlanPath }
+
+    $fieldsClear = @{}
+    if ($fm.map.Contains('bingReviewed')) {
+        $fieldsClear['bingReviewed'] = $false
+        [void](Set-YarnPlanFrontmatterFields -Path $planPath -Fields $fieldsClear)
+    }
+
+    $write = Set-YarnPlanContentBoundMarks -Path $planPath -ExternalReviewed
+    $hash = [string]$write.contentHash
+    Add-MetraYarnJournalEntry -Root $Root -Entry @{
+        op                 = 'review-affirm'
+        planPath           = $planPath
+        externalReviewHash = $hash
+    }
+
+    return [PSCustomObject]@{
+        outcome            = 'affirmed'
+        planPath           = $planPath
+        externalReviewHash = $hash
+        changed            = [bool]$write.changed
+    }
 }
 
 function Invoke-YarnLoomIngest {
@@ -48,7 +93,8 @@ function Invoke-YarnLoomIngest {
         [Parameter(Mandatory)][string]$ApprovalRevision,
         [Parameter(Mandatory)][string]$ApprovalId,
         [Parameter(Mandatory)]$RankSnapshot,
-        [string]$MetraRoot = (Get-YarnHostRoot)
+        [string]$MetraRoot = (Get-YarnHostRoot),
+        [string]$LoomHandoffId
     )
 
     if ($script:YarnLoomIngestOverride) {
@@ -60,12 +106,12 @@ function Invoke-YarnLoomIngest {
             RankSnapshot           = $RankSnapshot
             HandoffContractVersion = Get-YarnHandoffContractVersion
             MetraRoot              = $MetraRoot
+            LoomHandoffId          = $LoomHandoffId
         }
     }
 
     $cmd = Get-Command Invoke-MetraLoomIngestApprovedPlan -ErrorAction SilentlyContinue
     if (-not $cmd) {
-        # Yarn is a separate module; Loom may not be imported yet on yarn-only CLI paths.
         $hostRoot = if (-not [string]::IsNullOrWhiteSpace($MetraRoot)) { $MetraRoot } else { Get-YarnHostRoot }
         $loomManifest = Join-Path $hostRoot 'modules\Loom\Loom.psd1'
         if (Test-Path -LiteralPath $loomManifest) {
@@ -82,16 +128,29 @@ function Invoke-YarnLoomIngest {
         throw 'Loom root resolver unavailable (Resolve-MetraLoomRoot not loaded).'
     }
     $loomRoot = [string]((& $loomRootCmd).Path)
-    return & $cmd -Root $loomRoot -PlanPath $PlanPath -ProjectKey $ProjectKey `
-        -ApprovalRevision $ApprovalRevision -ApprovalId $ApprovalId `
-        -RankSnapshot $RankSnapshot -HandoffContractVersion (Get-YarnHandoffContractVersion) `
-        -MetraRoot $MetraRoot
+    $params = @{
+        Root                   = $loomRoot
+        PlanPath               = $PlanPath
+        ProjectKey             = $ProjectKey
+        ApprovalRevision       = $ApprovalRevision
+        ApprovalId             = $ApprovalId
+        RankSnapshot           = $RankSnapshot
+        HandoffContractVersion = (Get-YarnHandoffContractVersion)
+        MetraRoot              = $MetraRoot
+    }
+    # Optional LoomHandoffId when Loom supports it (forward-compatible).
+    $meta = $cmd.Parameters
+    if ($meta -and $meta.ContainsKey('LoomHandoffId') -and -not [string]::IsNullOrWhiteSpace($LoomHandoffId)) {
+        $params['LoomHandoffId'] = $LoomHandoffId
+    }
+    return & $cmd @params
 }
 
 function Set-YarnPlanApproved {
     <#
     .SYNOPSIS
-        Coordinated Approved write + Loom ingest request (A3).
+        Fail-closed Loom handoff transaction.
+        Validate marks -> backlog upsert -> loomHandoffId -> Loom accept -> then status Approved.
     #>
     [CmdletBinding()]
     param(
@@ -110,12 +169,6 @@ function Set-YarnPlanApproved {
         throw "Cannot approve backlog $backlogId while health=$health"
     }
 
-    $status = [string](Get-YarnProp -Object $BacklogItem -Name 'status' -Default '')
-    $alreadyApproved = ($status -eq 'approved')
-    if (-not $alreadyApproved -and $status -ne 'pending-bing') {
-        throw "Cannot approve backlog $backlogId with status '$status' (require pending-bing)."
-    }
-
     $planPath = [string](Get-YarnProp -Object $PlanLink -Name 'formalPlanPath' -Default '')
     if ([string]::IsNullOrWhiteSpace($planPath)) {
         $planPath = [string](Get-YarnProp -Object $BacklogItem -Name 'formalPlanPath' -Default '')
@@ -129,30 +182,49 @@ function Set-YarnPlanApproved {
     }
 
     $planText = [System.IO.File]::ReadAllText($planPath, (Get-YarnUtf8NoBomEncoding))
-    $fresh = Test-YarnPackFreshness -PlanText $planText `
-        -RecordedPlanContentHash ([string](Get-YarnProp -Object $PlanLink -Name 'planContentHash' -Default '')) `
-        -RecordedPackInputHash ([string](Get-YarnProp -Object $PlanLink -Name 'packInputHash' -Default '')) `
-        -RecordedPackContractVersion ([string](Get-YarnProp -Object $PlanLink -Name 'packContractVersion' -Default '')) `
-        -LastPackSucceeded:([bool](Get-YarnProp -Object $PlanLink -Name 'packSucceeded' -Default $false))
-    if (-not $fresh.fresh) {
-        throw ("Pack not fresh for approve ($($fresh.reason)). Run yarn pack / reconcile first.")
+    $elig = Test-YarnContentBoundLoomEligibility -PlanText $planText
+    if (-not $elig.eligible) {
+        throw ("Content-bound Loom gates failed ($($elig.reason)). Affirm external review and Approve Plan for current content first.")
     }
 
-    $planHash = Get-YarnPlanContentHash -PlanText $planText
-    $linkHash = [string](Get-YarnProp -Object $PlanLink -Name 'planContentHash' -Default '')
-    if ($linkHash -ne $planHash) {
-        throw 'Formal plan vs plan-link planContentHash mismatch (health=inconsistent path).'
+    $planHash = [string]$elig.currentContentHash
+    $fm = $elig.frontmatter
+    $existingHandoffId = [string]$fm.loomHandoffId
+    $existingAccepted = [string]$fm.loomAcceptedAt
+    $statusNow = [string]$fm.status
+
+    $projectKey = [string](Get-YarnProp -Object $BacklogItem -Name 'projectKey' -Default 'Metra')
+    $planIdentity = ('{0}|{1}' -f $projectKey, [System.IO.Path]::GetFileName($planPath))
+    $loomHandoffId = if (-not [string]::IsNullOrWhiteSpace($existingHandoffId)) {
+        $existingHandoffId
+    }
+    else {
+        Get-YarnDeterministicLoomHandoffId -PlanIdentity $planIdentity -ContentHash $planHash
     }
 
     $existingApproval = Get-YarnProp -Object $PlanLink -Name 'approval' -Default $null
     $approvalId = [string](Get-YarnProp -Object $existingApproval -Name 'approvalId' -Default '')
-    $approvalRevision = [string](Get-YarnProp -Object $existingApproval -Name 'approvalRevision' -Default '')
     if ([string]::IsNullOrWhiteSpace($approvalId)) { $approvalId = New-YarnApprovalId }
-    if ([string]::IsNullOrWhiteSpace($approvalRevision)) { $approvalRevision = $planHash }
-
-    $projectKey = [string](Get-YarnProp -Object $BacklogItem -Name 'projectKey' -Default 'Metra')
+    $approvalRevision = $planHash
     $rankSnapshot = Get-YarnRankSnapshotFromItem -Item $BacklogItem
     $approvedAt = (Get-Date).ToUniversalTime().ToString('o')
+
+    # Idempotent success: already Approved with matching handoff receipt.
+    if ($statusNow -match '(?i)^approved$' -and -not [string]::IsNullOrWhiteSpace($existingAccepted)) {
+        $handoff = Get-YarnProp -Object $PlanLink -Name 'loomHandoff' -Default $null
+        $state = [string](Get-YarnProp -Object $handoff -Name 'state' -Default '')
+        if ($state -eq 'succeeded') {
+            return [PSCustomObject]@{
+                outcome          = 'handoff-already-succeeded'
+                backlogId        = $backlogId
+                planPath         = $planPath
+                approvalId       = $approvalId
+                approvalRevision = $approvalRevision
+                loomHandoffId    = $loomHandoffId
+                queueItemId      = [string](Get-YarnProp -Object $handoff -Name 'queueItemId' -Default '')
+            }
+        }
+    }
 
     if ($DryRun) {
         return [PSCustomObject]@{
@@ -161,30 +233,31 @@ function Set-YarnPlanApproved {
             planPath         = $planPath
             approvalId       = $approvalId
             approvalRevision = $approvalRevision
+            loomHandoffId    = $loomHandoffId
+            eligible         = $true
         }
     }
 
-    [void](Set-YarnFormalPlanApprovedFrontmatter -PlanPath $planPath)
-
+    # Ensure backlog + plan-link reflect pending handoff BEFORE Loom (receipt boundary).
     $approval = [PSCustomObject]@{
-        approvedAt         = $approvedAt
-        approvedBy         = $ApprovedBy
-        approvalId         = $approvalId
-        approvalRevision   = $approvalRevision
-        planContentHash    = $planHash
+        approvedAt       = $approvedAt
+        approvedBy       = $ApprovedBy
+        approvalId       = $approvalId
+        approvalRevision = $approvalRevision
+        planContentHash  = $planHash
     }
-
-    $handoff = [PSCustomObject]@{
-        state      = 'pending'
-        lastError  = $null
-        queueItemId = $null
-        updatedAt  = $approvedAt
+    $handoffPending = [PSCustomObject]@{
+        state         = 'pending'
+        lastError     = $null
+        queueItemId   = $null
+        updatedAt     = $approvedAt
+        loomHandoffId = $loomHandoffId
     }
 
     Sync-YarnPlanLink -Root $Root -Link ([PSCustomObject]@{
             backlogId              = $backlogId
             formalPlanPath         = $planPath
-            planStatus             = 'Approved'
+            planStatus             = $(if ($statusNow) { $statusNow } else { 'Pending External Review' })
             sourceHash             = [string](Get-YarnProp -Object $PlanLink -Name 'sourceHash' -Default '')
             planContentHash        = $planHash
             packInputHash          = [string](Get-YarnProp -Object $PlanLink -Name 'packInputHash' -Default '')
@@ -193,26 +266,27 @@ function Set-YarnPlanApproved {
             handoffContractVersion = Get-YarnHandoffContractVersion
             packSucceeded          = [bool](Get-YarnProp -Object $PlanLink -Name 'packSucceeded' -Default $false)
             approval               = $approval
-            loomHandoff            = $handoff
+            loomHandoff            = $handoffPending
         })
 
     $items = @(Get-MetraYarnBacklog -Root $Root)
     $map = ConvertTo-YarnPropertyMap -Object $BacklogItem
-    $map['status'] = 'approved'
     $map['formalPlanPath'] = $planPath
+    if ([string](Get-YarnProp -Object $BacklogItem -Name 'status' -Default '') -ne 'approved') {
+        $map['status'] = 'pending-bing'
+    }
     $updatedItem = (New-YarnPsObject -Map $map)
     $items = @($items | Where-Object { [string]$_.id -ne $backlogId }) + @($updatedItem)
     Save-MetraYarnBacklogItems -Root $Root -Items $items
 
     Add-MetraYarnJournalEntry -Root $Root -Entry @{
-        op               = 'approve'
+        op               = 'handoff-pending'
         backlogId        = $backlogId
         planPath         = $planPath
         approvalId       = $approvalId
         approvalRevision = $approvalRevision
+        loomHandoffId    = $loomHandoffId
     }
-
-    Invoke-YarnPlanBoardNotifyFailOpen -Root $Root -MetraRoot $MetraRoot -BacklogId $backlogId -CursorPlan $planPath -Reason 'yarn-status:approved'
 
     if ($SkipIngest) {
         return [PSCustomObject]@{
@@ -221,7 +295,8 @@ function Set-YarnPlanApproved {
             planPath         = $planPath
             approvalId       = $approvalId
             approvalRevision = $approvalRevision
-            loomHandoff      = $handoff
+            loomHandoffId    = $loomHandoffId
+            loomHandoff      = $handoffPending
         }
     }
 
@@ -244,6 +319,7 @@ function Invoke-YarnHandoffIngestRetry {
     $approval = Get-YarnProp -Object $link -Name 'approval' -Default $null
     $handoff = Get-YarnProp -Object $link -Name 'loomHandoff' -Default $null
     $state = [string](Get-YarnProp -Object $handoff -Name 'state' -Default '')
+    $loomHandoffId = [string](Get-YarnProp -Object $handoff -Name 'loomHandoffId' -Default '')
     if ($state -eq 'succeeded') {
         return [PSCustomObject]@{
             outcome          = 'handoff-already-succeeded'
@@ -251,21 +327,67 @@ function Invoke-YarnHandoffIngestRetry {
             queueItemId      = [string](Get-YarnProp -Object $handoff -Name 'queueItemId' -Default '')
             approvalId       = [string](Get-YarnProp -Object $approval -Name 'approvalId' -Default '')
             approvalRevision = [string](Get-YarnProp -Object $approval -Name 'approvalRevision' -Default '')
+            loomHandoffId    = $loomHandoffId
         }
     }
 
     $planPath = [string](Get-YarnProp -Object $link -Name 'formalPlanPath' -Default '')
     $projectKey = [string](Get-YarnProp -Object $item -Name 'projectKey' -Default 'Metra')
+    if (-not [string]::IsNullOrWhiteSpace($planPath)) {
+        $planPath = Resolve-YarnFormalPlanReadPath -FormalPlanPath $planPath -ProjectKey $projectKey -MetraRoot $MetraRoot
+    }
+
+    # Re-validate content-bound gates on retry (plan may have been edited).
+    $planText = [System.IO.File]::ReadAllText($planPath, (Get-YarnUtf8NoBomEncoding))
+    $elig = Test-YarnContentBoundLoomEligibility -PlanText $planText
+    if (-not $elig.eligible) {
+        $nowBlock = (Get-Date).ToUniversalTime().ToString('o')
+        $blockErr = ("gates-invalid:" + $elig.reason)
+        Sync-YarnPlanLink -Root $Root -Link ([PSCustomObject]@{
+                backlogId              = $BacklogId
+                formalPlanPath         = $planPath
+                planStatus             = [string](Get-YarnProp -Object $link -Name 'planStatus' -Default '')
+                sourceHash             = [string](Get-YarnProp -Object $link -Name 'sourceHash' -Default '')
+                planContentHash        = [string]$elig.currentContentHash
+                packInputHash          = [string](Get-YarnProp -Object $link -Name 'packInputHash' -Default '')
+                packPlanPath           = [string](Get-YarnProp -Object $link -Name 'packPlanPath' -Default '')
+                packContractVersion    = [string](Get-YarnProp -Object $link -Name 'packContractVersion' -Default '')
+                handoffContractVersion = Get-YarnHandoffContractVersion
+                packSucceeded          = [bool](Get-YarnProp -Object $link -Name 'packSucceeded' -Default $false)
+                approval               = $approval
+                loomHandoff            = [PSCustomObject]@{
+                    state         = 'failed'
+                    lastError     = $blockErr
+                    queueItemId   = $null
+                    updatedAt     = $nowBlock
+                    retryable     = $false
+                    loomHandoffId = $loomHandoffId
+                }
+            })
+        return [PSCustomObject]@{
+            outcome   = 'handoff-gates-invalid'
+            backlogId = $BacklogId
+            planPath  = $planPath
+            lastError = $blockErr
+            reason    = $elig.reason
+        }
+    }
+
+    $planHash = [string]$elig.currentContentHash
+    if ([string]::IsNullOrWhiteSpace($loomHandoffId)) {
+        $planIdentity = ('{0}|{1}' -f $projectKey, [System.IO.Path]::GetFileName($planPath))
+        $loomHandoffId = Get-YarnDeterministicLoomHandoffId -PlanIdentity $planIdentity -ContentHash $planHash
+    }
+
     $approvalId = [string](Get-YarnProp -Object $approval -Name 'approvalId' -Default '')
-    $approvalRevision = [string](Get-YarnProp -Object $approval -Name 'approvalRevision' -Default '')
+    if ([string]::IsNullOrWhiteSpace($approvalId)) { $approvalId = New-YarnApprovalId }
+    $approvalRevision = $planHash
     $rankSnapshot = Get-YarnRankSnapshotFromItem -Item $item
     $now = (Get-Date).ToUniversalTime().ToString('o')
 
-    # Upsert project plans/index.yaml; keep formalPlanPath as Cursor absolute path (no body copy).
     try {
         $indexed = Copy-YarnFormalPlanToProjectPlans -SourcePath $planPath -ProjectKey $projectKey -MetraRoot $MetraRoot
         if (-not [string]::Equals($indexed, [System.IO.Path]::GetFullPath($planPath), [System.StringComparison]::OrdinalIgnoreCase)) {
-            # Shim must return Cursor path; if not, refuse rewriting formalPlanPath to a repo body.
             throw "plan-index shim returned non-Cursor path: $indexed"
         }
     }
@@ -274,9 +396,9 @@ function Invoke-YarnHandoffIngestRetry {
         Sync-YarnPlanLink -Root $Root -Link ([PSCustomObject]@{
                 backlogId              = $BacklogId
                 formalPlanPath         = $planPath
-                planStatus             = 'Approved'
+                planStatus             = [string](Get-YarnProp -Object $link -Name 'planStatus' -Default '')
                 sourceHash             = [string](Get-YarnProp -Object $link -Name 'sourceHash' -Default '')
-                planContentHash        = [string](Get-YarnProp -Object $link -Name 'planContentHash' -Default '')
+                planContentHash        = $planHash
                 packInputHash          = [string](Get-YarnProp -Object $link -Name 'packInputHash' -Default '')
                 packPlanPath           = [string](Get-YarnProp -Object $link -Name 'packPlanPath' -Default '')
                 packContractVersion    = [string](Get-YarnProp -Object $link -Name 'packContractVersion' -Default '')
@@ -284,11 +406,12 @@ function Invoke-YarnHandoffIngestRetry {
                 packSucceeded          = [bool](Get-YarnProp -Object $link -Name 'packSucceeded' -Default $false)
                 approval               = $approval
                 loomHandoff            = [PSCustomObject]@{
-                    state       = 'failed'
-                    lastError   = $copyErr
-                    queueItemId = $null
-                    updatedAt   = $now
-                    retryable   = $true
+                    state         = 'failed'
+                    lastError     = $copyErr
+                    queueItemId   = $null
+                    updatedAt     = $now
+                    retryable     = $true
+                    loomHandoffId = $loomHandoffId
                 }
             })
         Add-MetraYarnJournalEntry -Root $Root -Entry @{
@@ -303,6 +426,7 @@ function Invoke-YarnHandoffIngestRetry {
             planPath         = $planPath
             approvalId       = $approvalId
             approvalRevision = $approvalRevision
+            loomHandoffId    = $loomHandoffId
             lastError        = $copyErr
         }
     }
@@ -310,54 +434,85 @@ function Invoke-YarnHandoffIngestRetry {
     try {
         $ingest = Invoke-YarnLoomIngest -PlanPath $planPath -ProjectKey $projectKey `
             -ApprovalRevision $approvalRevision -ApprovalId $approvalId `
-            -RankSnapshot $rankSnapshot -MetraRoot $MetraRoot
+            -RankSnapshot $rankSnapshot -MetraRoot $MetraRoot -LoomHandoffId $loomHandoffId
         $queueItemId = [string](Get-YarnProp -Object $ingest -Name 'queueItemId' -Default '')
+        $acceptedAt = (Get-Date).ToUniversalTime().ToString('o')
+
+        # ONLY after Loom accept: write status Approved + receipts on the plan.
+        [void](Set-YarnPlanFrontmatterFields -Path $planPath -Fields @{
+                status         = 'Approved'
+                loomHandoffId  = $loomHandoffId
+                loomAcceptedAt = $acceptedAt
+            })
+
+        $approvalOk = [PSCustomObject]@{
+            approvedAt       = $acceptedAt
+            approvedBy       = 'operator'
+            approvalId       = $approvalId
+            approvalRevision = $approvalRevision
+            planContentHash  = $planHash
+        }
+
         Sync-YarnPlanLink -Root $Root -Link ([PSCustomObject]@{
                 backlogId              = $BacklogId
                 formalPlanPath         = $planPath
                 planStatus             = 'Approved'
                 sourceHash             = [string](Get-YarnProp -Object $link -Name 'sourceHash' -Default '')
-                planContentHash        = [string](Get-YarnProp -Object $link -Name 'planContentHash' -Default '')
+                planContentHash        = $planHash
                 packInputHash          = [string](Get-YarnProp -Object $link -Name 'packInputHash' -Default '')
                 packPlanPath           = [string](Get-YarnProp -Object $link -Name 'packPlanPath' -Default '')
                 packContractVersion    = [string](Get-YarnProp -Object $link -Name 'packContractVersion' -Default '')
                 handoffContractVersion = Get-YarnHandoffContractVersion
                 packSucceeded          = [bool](Get-YarnProp -Object $link -Name 'packSucceeded' -Default $false)
-                approval               = $approval
+                approval               = $approvalOk
                 loomHandoff            = [PSCustomObject]@{
-                    state       = 'succeeded'
-                    lastError   = $null
-                    queueItemId = $queueItemId
-                    updatedAt   = $now
-                    outcome     = [string](Get-YarnProp -Object $ingest -Name 'outcome' -Default '')
+                    state         = 'succeeded'
+                    lastError     = $null
+                    queueItemId   = $queueItemId
+                    updatedAt     = $acceptedAt
+                    outcome       = [string](Get-YarnProp -Object $ingest -Name 'outcome' -Default '')
+                    loomHandoffId = $loomHandoffId
                 }
             })
+
+        $all = @(Get-MetraYarnBacklog -Root $Root)
+        $bmap = ConvertTo-YarnPropertyMap -Object $item
+        $bmap['status'] = 'approved'
+        $bmap['formalPlanPath'] = $planPath
+        Save-MetraYarnBacklogItems -Root $Root -Items @(($all | Where-Object { [string]$_.id -ne $BacklogId }) + @((New-YarnPsObject -Map $bmap)))
+
         Add-MetraYarnJournalEntry -Root $Root -Entry @{
-            op          = 'loom-handoff'
-            backlogId   = $BacklogId
-            state       = 'succeeded'
-            queueItemId = $queueItemId
-            planPath    = $planPath
+            op            = 'loom-handoff'
+            backlogId     = $BacklogId
+            state         = 'succeeded'
+            queueItemId   = $queueItemId
+            planPath      = $planPath
+            loomHandoffId = $loomHandoffId
         }
+
+        # Plan Board notify is fail-open AFTER accept (no re-ingest on notify failure).
         Invoke-YarnPlanBoardNotifyFailOpen -Root $Root -MetraRoot $MetraRoot -BacklogId $BacklogId -CursorPlan $planPath -Reason 'loom-handoff'
+
         return [PSCustomObject]@{
             outcome          = 'approved-enqueued'
             backlogId        = $BacklogId
             planPath         = $planPath
             approvalId       = $approvalId
             approvalRevision = $approvalRevision
+            loomHandoffId    = $loomHandoffId
             queueItemId      = $queueItemId
             ingest           = $ingest
         }
     }
     catch {
         $err = [string]$_.Exception.Message
+        # Fail-closed: do NOT set status Approved when Loom ingest fails.
         Sync-YarnPlanLink -Root $Root -Link ([PSCustomObject]@{
                 backlogId              = $BacklogId
                 formalPlanPath         = $planPath
-                planStatus             = 'Approved'
+                planStatus             = [string](Get-YarnProp -Object $link -Name 'planStatus' -Default '')
                 sourceHash             = [string](Get-YarnProp -Object $link -Name 'sourceHash' -Default '')
-                planContentHash        = [string](Get-YarnProp -Object $link -Name 'planContentHash' -Default '')
+                planContentHash        = $planHash
                 packInputHash          = [string](Get-YarnProp -Object $link -Name 'packInputHash' -Default '')
                 packPlanPath           = [string](Get-YarnProp -Object $link -Name 'packPlanPath' -Default '')
                 packContractVersion    = [string](Get-YarnProp -Object $link -Name 'packContractVersion' -Default '')
@@ -365,18 +520,20 @@ function Invoke-YarnHandoffIngestRetry {
                 packSucceeded          = [bool](Get-YarnProp -Object $link -Name 'packSucceeded' -Default $false)
                 approval               = $approval
                 loomHandoff            = [PSCustomObject]@{
-                    state       = 'failed'
-                    lastError   = $err
-                    queueItemId = $null
-                    updatedAt   = $now
-                    retryable   = $true
+                    state         = 'failed'
+                    lastError     = $err
+                    queueItemId   = $null
+                    updatedAt     = $now
+                    retryable     = $true
+                    loomHandoffId = $loomHandoffId
                 }
             })
         Add-MetraYarnJournalEntry -Root $Root -Entry @{
-            op        = 'loom-handoff'
-            backlogId = $BacklogId
-            state     = 'failed'
-            error     = $err
+            op            = 'loom-handoff'
+            backlogId     = $BacklogId
+            state         = 'failed'
+            error         = $err
+            loomHandoffId = $loomHandoffId
         }
         return [PSCustomObject]@{
             outcome          = 'approved-handoff-failed'
@@ -384,8 +541,312 @@ function Invoke-YarnHandoffIngestRetry {
             planPath         = $planPath
             approvalId       = $approvalId
             approvalRevision = $approvalRevision
+            loomHandoffId    = $loomHandoffId
             lastError        = $err
         }
+    }
+}
+
+function Sync-YarnEnrollApprovedCursorPlans {
+    <#
+    .SYNOPSIS
+        Operator Approve Plan is a build order. Enroll eligible Cursor plans into Yarn backlog
+        so scan/schedule can hand off to Loom without a prior Capture/synth row.
+    #>
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory)][string]$Root,
+        [string]$MetraRoot = (Get-YarnHostRoot),
+        [switch]$DryRun
+    )
+
+    $plansDir = Resolve-YarnCursorPlansDir
+    if (-not (Test-Path -LiteralPath $plansDir)) {
+        return [PSCustomObject]@{ enrolled = 0; updated = 0; scanned = 0 }
+    }
+
+    $files = @(Get-ChildItem -LiteralPath $plansDir -Filter '*.plan.md' -File -ErrorAction SilentlyContinue)
+    $enrolled = 0
+    $updated = 0
+    $existing = @(Get-MetraYarnBacklog -Root $Root)
+
+    foreach ($file in $files) {
+        $planPath = [System.IO.Path]::GetFullPath($file.FullName)
+        try {
+            $text = [System.IO.File]::ReadAllText($planPath, (Get-YarnUtf8NoBomEncoding))
+            $fm = Get-YarnPlanFrontmatterScalars -PlanText $text
+        }
+        catch { continue }
+
+        if (-not $fm.approveForLoom) { continue }
+
+        $currentHash = Get-YarnPlanContentHash -PlanText $text
+        if (
+            -not [string]::IsNullOrWhiteSpace($fm.approveForLoomHash) -and
+            $fm.approveForLoomHash -eq $currentHash -and
+            (
+                -not $fm.externalReviewed -or
+                [string]::IsNullOrWhiteSpace($fm.externalReviewHash) -or
+                $fm.externalReviewHash -ne $currentHash
+            )
+        ) {
+            if (-not $DryRun) {
+                try {
+                    $null = Set-YarnPlanContentBoundMarks -Path $planPath -ExternalReviewed
+                    $text = [System.IO.File]::ReadAllText($planPath, (Get-YarnUtf8NoBomEncoding))
+                    $fm = Get-YarnPlanFrontmatterScalars -PlanText $text
+                }
+                catch { }
+            }
+        }
+
+        $elig = Test-YarnContentBoundLoomEligibility -PlanText $text
+        if (-not $elig.eligible) { continue }
+
+        $leaf = [System.IO.Path]::GetFileName($planPath)
+        $sourceKey = 'cursor-approve:' + $leaf
+        $title = [string]$fm.map['name']
+        if ([string]::IsNullOrWhiteSpace($title)) { $title = [System.IO.Path]::GetFileNameWithoutExtension($leaf) }
+        $overview = [string]$fm.map['overview']
+        if ([string]::IsNullOrWhiteSpace($overview)) { $overview = $title }
+
+        $byPath = $existing | Where-Object {
+            $fp = [string](Get-YarnProp -Object $_ -Name 'formalPlanPath' -Default '')
+            if ([string]::IsNullOrWhiteSpace($fp)) { return $false }
+            try {
+                return [string]::Equals(
+                    [System.IO.Path]::GetFullPath($fp),
+                    $planPath,
+                    [System.StringComparison]::OrdinalIgnoreCase
+                )
+            }
+            catch { return $false }
+        } | Select-Object -First 1
+
+        $primaryKey = if ($byPath) {
+            [string](Get-YarnProp -Object $byPath -Name 'primarySourceKey' -Default $sourceKey)
+        }
+        else { $sourceKey }
+        if ([string]::IsNullOrWhiteSpace($primaryKey)) { $primaryKey = $sourceKey }
+
+        $sources = @($primaryKey)
+        if ($primaryKey -ne $sourceKey) { $sources += $sourceKey }
+
+        # Never downgrade terminal / already-handed-off backlog rows on re-scan.
+        $priorStatus = if ($byPath) {
+            [string](Get-YarnProp -Object $byPath -Name 'status' -Default '')
+        }
+        else { '' }
+        $planAlreadyApproved = (
+            [string]$fm.status -match '(?i)^approved$' -and
+            -not [string]::IsNullOrWhiteSpace([string]$fm.loomHandoffId)
+        )
+        $status = 'pending-bing'
+        if ($priorStatus -in @('approved', 'parked', 'rejected')) {
+            $status = $priorStatus
+        }
+        elseif ($planAlreadyApproved) {
+            $status = 'approved'
+        }
+
+        $incoming = [PSCustomObject]@{
+            title            = $title
+            primarySourceKey = $primaryKey
+            sources          = $sources
+            projectKey       = 'Metra'
+            sourceText       = $overview
+            status           = $status
+            health           = 'ok'
+            formalPlanPath   = $planPath
+            total            = 3
+            effectiveImpact  = 1
+            completionReady  = 1
+            rubricVersion    = 'yarn-rank-v1'
+            rankReasons      = @('surveyorApprove')
+        }
+
+        if ($DryRun) {
+            if ($byPath) { $updated++ } else { $enrolled++ }
+            continue
+        }
+
+        # Notify Plan Board on enroll/heal so Approve→queue is visible without a manual sync.
+        $row = Sync-YarnBacklogItem -Root $Root -Incoming $incoming
+        $linkMap = @{
+            backlogId              = [string]$row.id
+            formalPlanPath         = $planPath
+            planStatus             = $(if ($status -eq 'approved') { 'Approved' } else { 'Pending Loom' })
+            handoffContractVersion = Get-YarnHandoffContractVersion
+            planContentHash        = [string]$elig.currentContentHash
+            packInputHash          = [string]$elig.currentContentHash
+            packContractVersion    = Get-YarnPackContractVersion
+            packSucceeded          = $true
+        }
+        if ($planAlreadyApproved) {
+            $existingLink = @(Get-YarnPlanLinks -Root $Root) | Where-Object {
+                [string](Get-YarnProp -Object $_ -Name 'backlogId' -Default '') -eq [string]$row.id
+            } | Select-Object -First 1
+            $ho = Get-YarnProp -Object $existingLink -Name 'loomHandoff' -Default $null
+            $hoState = [string](Get-YarnProp -Object $ho -Name 'state' -Default '')
+            if ($hoState -ne 'succeeded') {
+                $linkMap['loomHandoff'] = [PSCustomObject]@{
+                    state         = 'succeeded'
+                    lastError     = $null
+                    queueItemId   = [string](Get-YarnProp -Object $ho -Name 'queueItemId' -Default '')
+                    updatedAt     = (Get-Date).ToUniversalTime().ToString('o')
+                    outcome       = 'healed-from-plan'
+                    loomHandoffId = [string]$fm.loomHandoffId
+                }
+            }
+        }
+        Sync-YarnPlanLink -Root $Root -Link (New-YarnPsObject -Map $linkMap)
+
+        if ($byPath) { $updated++ } else { $enrolled++ }
+        $existing = @(Get-MetraYarnBacklog -Root $Root)
+    }
+
+    return [PSCustomObject]@{
+        enrolled = $enrolled
+        updated  = $updated
+        scanned  = $files.Count
+    }
+}
+
+function Find-YarnApproveForLoomCandidates {
+    <#
+    .SYNOPSIS
+        Discover backlog items / plan paths with approveForLoom intent for scan/reconcile.
+        Enrolls Surveyor-approved Cursor plans into the backlog first (Approve = build order).
+    #>
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory)][string]$Root,
+        [string]$MetraRoot = (Get-YarnHostRoot)
+    )
+
+    $null = Sync-YarnEnrollApprovedCursorPlans -Root $Root -MetraRoot $MetraRoot
+
+    $hits = New-Object System.Collections.Generic.List[object]
+    $seen = New-Object 'System.Collections.Generic.HashSet[string]' ([StringComparer]::OrdinalIgnoreCase)
+
+    foreach ($item in @(Get-MetraYarnBacklog -Root $Root)) {
+        $planPath = [string](Get-YarnProp -Object $item -Name 'formalPlanPath' -Default '')
+        $pk = [string](Get-YarnProp -Object $item -Name 'projectKey' -Default 'Metra')
+        if ([string]::IsNullOrWhiteSpace($planPath)) { continue }
+        try {
+            $planPath = Resolve-YarnFormalPlanReadPath -FormalPlanPath $planPath -ProjectKey $pk -MetraRoot $MetraRoot
+        }
+        catch { continue }
+        if (-not (Test-Path -LiteralPath $planPath)) { continue }
+        if (-not $seen.Add($planPath)) { continue }
+
+        try {
+            $text = [System.IO.File]::ReadAllText($planPath, (Get-YarnUtf8NoBomEncoding))
+            $fm = Get-YarnPlanFrontmatterScalars -PlanText $text
+        }
+        catch { continue }
+
+        if (-not $fm.approveForLoom) { continue }
+
+        # Approve Plan is operator authority for both gates. Backfill externalReviewed
+        # when approveForLoom hash already matches current content (pre-override Approves).
+        $currentHash = Get-YarnPlanContentHash -PlanText $text
+        if (
+            -not [string]::IsNullOrWhiteSpace($fm.approveForLoomHash) -and
+            $fm.approveForLoomHash -eq $currentHash -and
+            (
+                -not $fm.externalReviewed -or
+                [string]::IsNullOrWhiteSpace($fm.externalReviewHash) -or
+                $fm.externalReviewHash -ne $currentHash
+            )
+        ) {
+            try {
+                $null = Set-YarnPlanContentBoundMarks -Path $planPath -ExternalReviewed
+                $text = [System.IO.File]::ReadAllText($planPath, (Get-YarnUtf8NoBomEncoding))
+                $fm = Get-YarnPlanFrontmatterScalars -PlanText $text
+            }
+            catch { }
+        }
+
+        $elig = Test-YarnContentBoundLoomEligibility -PlanText $text
+        [void]$hits.Add([PSCustomObject]@{
+                backlogId     = [string]$item.id
+                planPath      = $planPath
+                projectKey    = $pk
+                eligible      = [bool]$elig.eligible
+                reason        = [string]$elig.reason
+                contentHash   = [string]$elig.currentContentHash
+                status        = [string]$fm.status
+                loomHandoffId = [string]$fm.loomHandoffId
+            })
+    }
+
+    return @($hits.ToArray())
+}
+
+function Invoke-YarnProcessApproveForLoomCandidates {
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory)][string]$Root,
+        [string]$MetraRoot = (Get-YarnHostRoot),
+        [switch]$DryRun
+    )
+
+    $results = New-Object System.Collections.Generic.List[object]
+    $validationBlocked = 0
+    foreach ($c in @(Find-YarnApproveForLoomCandidates -Root $Root -MetraRoot $MetraRoot)) {
+        if (-not $c.eligible) {
+            $validationBlocked++
+            [void]$results.Add([PSCustomObject]@{
+                    backlogId = $c.backlogId
+                    planPath  = $c.planPath
+                    outcome   = 'not-eligible'
+                    reason    = $c.reason
+                })
+            continue
+        }
+        if ($c.status -match '(?i)^approved$' -and -not [string]::IsNullOrWhiteSpace($c.loomHandoffId)) {
+            # Reconcile Plan Board when already handed off (card may still show Idea).
+            Invoke-YarnPlanBoardNotifyFailOpen -Root $Root -MetraRoot $MetraRoot `
+                -BacklogId ([string]$c.backlogId) -CursorPlan $c.planPath -Reason 'loom-handoff-reconcile'
+            [void]$results.Add([PSCustomObject]@{
+                    backlogId = $c.backlogId
+                    planPath  = $c.planPath
+                    outcome   = 'already-approved'
+                })
+            continue
+        }
+        if ($DryRun) {
+            [void]$results.Add([PSCustomObject]@{
+                    backlogId = $c.backlogId
+                    planPath  = $c.planPath
+                    outcome   = 'would-handoff'
+                })
+            continue
+        }
+
+        $item = @(Get-MetraYarnBacklog -Root $Root) | Where-Object { [string]$_.id -eq [string]$c.backlogId } | Select-Object -First 1
+        $link = @(Get-YarnPlanLinks -Root $Root) | Where-Object { [string]$_.backlogId -eq [string]$c.backlogId } | Select-Object -First 1
+        if (-not $link) {
+            Sync-YarnPlanLink -Root $Root -Link ([PSCustomObject]@{
+                    backlogId              = $c.backlogId
+                    formalPlanPath         = $c.planPath
+                    planStatus             = 'Pending Loom'
+                    handoffContractVersion = Get-YarnHandoffContractVersion
+                    planContentHash        = $c.contentHash
+                    packInputHash          = $c.contentHash
+                    packContractVersion    = Get-YarnPackContractVersion
+                    packSucceeded          = $true
+                })
+            $link = @(Get-YarnPlanLinks -Root $Root) | Where-Object { [string]$_.backlogId -eq [string]$c.backlogId } | Select-Object -First 1
+        }
+        $handoff = Set-YarnPlanApproved -Root $Root -BacklogItem $item -PlanLink $link -MetraRoot $MetraRoot
+        [void]$results.Add($handoff)
+    }
+
+    return [PSCustomObject]@{
+        actions            = @($results.ToArray())
+        validationBlocked  = $validationBlocked
     }
 }
 

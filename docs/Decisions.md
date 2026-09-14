@@ -18,6 +18,33 @@ Entry shape:
 
 ---
 
+## 2026-09-12 - Yarn content-bound desk marks (Surveyor Pack/Approve)
+
+- Decision: Loom handoff eligibility is **content-bound**: `externalReviewed` + `externalReviewHash` (Yarn `review affirm`) and `approveForLoom` + `approveForLoomHash` (Surveyor Approve Plan) must all match the current canonical plan content hash. Plan edits invalidate both gates without editor integration.
+- Decision: Canonical hash is frozen as UTF-8, LF normalize, workflow-key exclusions, SHA256 lowercase hex (`Get-YarnPlanContentHash` / Surveyor `getPlanContentHash`). One algorithm shared by synth, affirm, approve, scan, and reconcile.
+- Decision: Loom ingest runs **before** writing `status: Approved`. Yarn records `loomHandoffId` + `loomAcceptedAt` only after durable Loom acceptance. Plan Board notify is fail-open after accept (no re-ingest).
+- Decision: Surveyor Pack Plan is a **thin pack** (no Metra Inspect shell). Surveyor never writes review marks, `status`, or Loom receipts. Send-to-Yarn intake JSON is retired as a product action.
+- Decision: Optional Windows task `MetraYarnLoomDaily` runs scan → daily -Reconcile → `loom loop -UntilDailyGate` with stable exit codes 0-4; install only after pilot.
+- Why: Separates "someone reviewed this" from "send to Loom", keeps Surveyor Metra-independent, and prevents Approved-but-not-in-Loom / stale-approval-after-edit failure modes.
+- See: `modules/Yarn/Private/Frontmatter.ps1`, `modules/Yarn/Private/Approve.ps1`, `modules/Yarn/Private/Schedule.ps1`, `docs/playbooks/yarn.md`, Surveyor `thinPack.ts` / `approvePlan.ts`
+- Superseded in part: 2026-09-13 Approve Plan overrides review gate (Approve writes both mark pairs; affirm optional).
+
+## 2026-09-13 - Approve Plan overrides external-review gate
+
+- Decision: Surveyor **Approve Plan** is operator authority for Loom eligibility. It writes **both** content-bound pairs (`approveForLoom*` and `externalReviewed*`) to the current canonical content hash. Optional `yarn review affirm` may still record review early; it is not required after Approve.
+- Decision: Yarn scan/reconcile **backfills** `externalReviewed*` when `approveForLoom` already matches the current hash but external marks are missing/stale (one-time lift for Approves made before this rule).
+- Decision: Bing language in the plan body or legacy `bingReviewed` alone still does not unlock Loom - a current hash-bound Approve (or affirm+Approve) does.
+- Why: Pre-adjustment Bing-hardened plans and operator Approve clicks were blocked waiting for a separate affirm CLI. Dual gate remains on disk for audit; Approve completes both so schedule automation can proceed.
+- See: Surveyor `approvePlan.ts`; `modules/Yarn/Private/Approve.ps1` (`Find-YarnApproveForLoomCandidates`); `docs/playbooks/yarn.md`
+
+## 2026-09-12 - Implement-from-plan todo status vs Cursor Build do-not-edit
+
+- Decision: Cursor Build "Do NOT edit the plan file" forbids rewriting the **plan spec** (overview, architecture, acceptance criteria, todo **content**). It does **not** forbid updating `todos[].status` as bites land. Session TodoWrite is optional and is not a substitute for frontmatter progress the Plans/Surveyor UI reads.
+- Decision: When a short stub and a full body share the same work (same name / todo ids), keep todo status aligned on both leaves, or complete the non-authority leaf when the Build-attached leaf finishes. Prefer one authority leaf going forward.
+- Decision: Surveyor product code still must not mutate plan YAML todos (Pack/Approve stay mark-only on `approveForLoom*`). Implementer agents (Cursor Agent / Metra) **do** update `todos[].status` during implement-from-plan.
+- Why: Yarn Surveyor desk Build left chat todos and the stub completed while the full body stayed pending, so Surveyor showed Not started for shipped work. The operator did not ask to skip checkoffs; Cursor injects the do-not-edit line.
+- See: Decision Registry `d25e1f0a927`; `docs/playbooks/inspect-loop.md` (Plan progress ledger); `.cursor/rules/metra-inspect-loop.mdc`; Surveyor `AGENTS.md`
+
 ## 2026-09-10 - Plan index affiliation (project + stem, authority body)
 
 - Decision: Plan affiliation identity is **project + normalized stem** (path hash remains Surveyor's browser cache key only). Each project may keep `plans/index.yaml` (`schemaVersion: 1`) with `cursorLeaf` / `repoPath` locators and required `authority: cursor|repo`.

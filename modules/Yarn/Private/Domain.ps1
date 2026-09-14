@@ -163,11 +163,34 @@ function Invoke-YarnCommand {
             }
             throw "yarn plan: unknown subcommand '$inner' (use approve)"
         }
+        'review' {
+            $inner = if ($ArgsRest.Count -gt 0) { $ArgsRest[0].ToLowerInvariant() } else { '' }
+            if ($inner -eq 'affirm') {
+                $rest = @()
+                if ($ArgsRest.Count -gt 1) { $rest = @($ArgsRest[1..($ArgsRest.Count - 1)]) }
+                $path = $null
+                $dry = $false
+                $confirm = $false
+                for ($i = 0; $i -lt $rest.Count; $i++) {
+                    if ($rest[$i] -eq '-Path' -and ($i + 1) -lt $rest.Count) { $path = [string]$rest[$i + 1]; $i++ }
+                    elseif ($rest[$i] -eq '-DryRun') { $dry = $true }
+                    elseif ($rest[$i] -eq '-Confirm') { $confirm = $true }
+                }
+                if ([string]::IsNullOrWhiteSpace($path)) {
+                    throw 'yarn review affirm requires -Path <plan.md> [-Confirm|-DryRun]'
+                }
+                return Invoke-MetraYarnReviewAffirm -Root $Root -MetraRoot $MetraRoot -Path $path -DryRun:$dry -Confirm:$confirm
+            }
+            throw "yarn review: unknown subcommand '$inner' (use affirm)"
+        }
+        'schedule' {
+            return Invoke-YarnScheduleCommand -ArgsRest $ArgsRest -MetraRoot $MetraRoot -Root $Root
+        }
         'plan-board' {
             return Invoke-YarnPlanBoardCommand -ArgsRest $ArgsRest -Root $Root -MetraRoot $MetraRoot
         }
         default {
-            throw "Unknown yarn subcommand: $Subcommand. Use status|scan|backlog|pending|reconcile|pack|daily|synthesize|plan|plan-board"
+            throw "Unknown yarn subcommand: $Subcommand. Use status|scan|backlog|pending|reconcile|pack|daily|synthesize|plan|review|schedule|plan-board"
         }
     }
 }

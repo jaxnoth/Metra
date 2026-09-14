@@ -150,7 +150,7 @@ Describe 'Yarn A1 rank and scan' {
 }
 
 Describe 'Yarn A2 synthesize pack reconcile' {
-    It 'template synthesizes Pending Bing Review and packs' {
+    It 'template synthesizes Pending External Review and packs' {
         InModuleScope Yarn {
             $root = Join-Path ([IO.Path]::GetTempPath()) ('metra-yarn-' + [guid]::NewGuid().ToString('n'))
             $hostRoot = Join-Path ([IO.Path]::GetTempPath()) ('metra-yarn-host-' + [guid]::NewGuid().ToString('n'))
@@ -177,13 +177,13 @@ Describe 'Yarn A2 synthesize pack reconcile' {
                 { Invoke-MetraYarnSynthesize -Root $root -MetraRoot $hostRoot -BacklogId $item.id -UseAgent -Confirm } | Should -Throw
                 $synth = Invoke-MetraYarnSynthesize -Root $root -MetraRoot $hostRoot -BacklogId $item.id -Confirm
                 $synth.outcome | Should -Be 'synthesized'
-                $synth.status | Should -Be 'Pending Bing Review'
+                $synth.status | Should -Be 'Pending External Review'
                 Test-Path -LiteralPath $synth.planPath | Should -BeTrue
                 ([System.IO.Path]::GetFullPath($synth.planPath)).StartsWith(
                     [System.IO.Path]::GetFullPath($cursorPlans),
                     [System.StringComparison]::OrdinalIgnoreCase
                 ) | Should -BeTrue
-                (Get-Content -LiteralPath $synth.planPath -Raw) | Should -Match 'Pending Bing Review'
+                (Get-Content -LiteralPath $synth.planPath -Raw) | Should -Match 'Pending External Review'
                 (Get-Content -LiteralPath $synth.planPath -Raw) | Should -Not -Match '(?m)^status:\s*Approved'
                 (Get-Content -LiteralPath $synth.planPath -Raw) | Should -Match '(?m)^patterns:'
                 (Get-Content -LiteralPath $synth.planPath -Raw) | Should -Match '## Pattern gaps'
@@ -303,22 +303,39 @@ Describe 'Yarn Bing punch-list (schema, health, Future-Dev)' {
 }
 
 Describe "Yarn A3 approve and handoff" {
-    It "refuses approve without Confirm and blocks ready status" {
+    It "refuses approve without Confirm and blocks missing content-bound marks" {
         InModuleScope Yarn {
             $root = Join-Path ([IO.Path]::GetTempPath()) ("metra-yarn-a3-" + [guid]::NewGuid().ToString("n"))
+            $docs = Join-Path $root "docs"
             try {
                 Initialize-MetraYarnLayout -Root $root
                 { Invoke-MetraYarnPlanApprove -Root $root -BacklogId "x" } | Should -Throw "*Confirm*"
+                New-Item -ItemType Directory -Path $docs -Force | Out-Null
+                $planPath = Join-Path $docs "ready-only.plan.md"
+                Write-YarnAtomicUtf8Text -Path $planPath -Text @"
+---
+name: Ready Only
+overview: fixture
+status: Pending External Review
+externalReviewed: false
+externalReviewHash: null
+approveForLoom: false
+approveForLoomHash: null
+---
+
+# Ready Only
+"@
                 $item = Sync-YarnBacklogItem -Root $root -Incoming ([PSCustomObject]@{
                         title = "Ready Only"; primarySourceKey = "capture:r1"; sources = @("capture:r1")
                         projectKey = "Metra"; sourceText = "Ready Only"; status = "ready"; health = "ok"
+                        formalPlanPath = $planPath
                     })
                 Sync-YarnPlanLink -Root $root -Link ([PSCustomObject]@{
-                        backlogId = $item.id; formalPlanPath = "C:\missing.md"; planStatus = "Draft"
+                        backlogId = $item.id; formalPlanPath = $planPath; planStatus = "Draft"
                         handoffContractVersion = 1; planContentHash = "h"; packInputHash = "p"
                         packContractVersion = (Get-YarnPackContractVersion); packSucceeded = $true
                     })
-                { Invoke-MetraYarnPlanApprove -Root $root -BacklogId $item.id -Confirm } | Should -Throw "*pending-bing*"
+                { Invoke-MetraYarnPlanApprove -Root $root -BacklogId $item.id -Confirm } | Should -Throw "*Content-bound*"
             }
             finally {
                 Remove-Item -LiteralPath $root -Recurse -Force -ErrorAction SilentlyContinue
@@ -326,7 +343,7 @@ Describe "Yarn A3 approve and handoff" {
         }
     }
 
-    It "approves pending-bing, transfers contract fields, retries after Loom failure" {
+    It "affirms, approves with both marks, retries after Loom failure without status Approved until accept" {
         InModuleScope Yarn {
             $root = Join-Path ([IO.Path]::GetTempPath()) ("metra-yarn-a3-" + [guid]::NewGuid().ToString("n"))
             $hostRoot = Join-Path ([IO.Path]::GetTempPath()) ("metra-yarn-a3-host-" + [guid]::NewGuid().ToString("n"))
@@ -336,27 +353,29 @@ Describe "Yarn A3 approve and handoff" {
                 New-Item -ItemType Directory -Path $cursorDir -Force | Out-Null
                 New-Item -ItemType Directory -Path (Join-Path $hostRoot 'plans') -Force | Out-Null
                 $script:YarnHostRootOverride = $hostRoot
+                $script:YarnCursorPlansDirOverride = $cursorDir
                 $planPath = Join-Path $cursorDir "approve-me.plan.md"
                 $planBody = @"
 ---
 name: Approve Me
 overview: "fixture"
-status: Pending Bing Review
-bingReviewed: false
+status: Pending External Review
+externalReviewed: false
+externalReviewHash: null
+approveForLoom: false
+approveForLoomHash: null
 ---
 
 # Approve Me
 "@
                 Write-YarnAtomicUtf8Text -Path $planPath -Text $planBody
                 $planHash = Get-YarnPlanContentHash -PlanText $planBody
-                $packHash = Get-YarnPackInputHash -PlanText $planBody
                 $item = Sync-YarnBacklogItem -Root $root -Incoming ([PSCustomObject]@{
                         title = "Approve Me"; primarySourceKey = "capture:a3"; sources = @("capture:a3")
                         projectKey = "Metra"; sourceText = "Approve Me"; status = "pending-bing"; health = "ok"
                         formalPlanPath = $planPath; total = 3; effectiveImpact = 1; completionReady = 1
                         rubricVersion = "yarn-rank-v1"; rankReasons = @("objectivePresent")
                     })
-                # Force pending-bing after rank may flip ready
                 $all = @(Get-MetraYarnBacklog -Root $root)
                 $map = ConvertTo-YarnPropertyMap -Object ($all | Where-Object { $_.id -eq $item.id } | Select-Object -First 1)
                 $map["status"] = "pending-bing"
@@ -365,10 +384,18 @@ bingReviewed: false
                 $map["rubricVersion"] = "yarn-rank-v1"; $map["rankReasons"] = @("objectivePresent")
                 Save-MetraYarnBacklogItems -Root $root -Items @(($all | Where-Object { $_.id -ne $item.id }) + @((New-YarnPsObject -Map $map)))
                 Sync-YarnPlanLink -Root $root -Link ([PSCustomObject]@{
-                        backlogId = $item.id; formalPlanPath = $planPath; planStatus = "Pending Bing Review"
-                        handoffContractVersion = 1; planContentHash = $planHash; packInputHash = $packHash
+                        backlogId = $item.id; formalPlanPath = $planPath; planStatus = "Pending External Review"
+                        handoffContractVersion = 1; planContentHash = $planHash; packInputHash = $planHash
                         packContractVersion = (Get-YarnPackContractVersion); packSucceeded = $true
                     })
+
+                $affirm = Invoke-MetraYarnReviewAffirm -Root $root -Path $planPath -Confirm
+                $affirm.outcome | Should -Be "affirmed"
+                $boundHash = [string]$affirm.externalReviewHash
+                Set-YarnPlanContentBoundMarks -Path $planPath -ApproveForLoom | Out-Null
+                $elig = Test-YarnContentBoundLoomEligibility -PlanText ([IO.File]::ReadAllText($planPath))
+                $elig.eligible | Should -BeTrue
+                $boundHash | Should -Be $elig.currentContentHash
 
                 $script:YarnLoomIngestOverride = {
                     param($req)
@@ -376,16 +403,11 @@ bingReviewed: false
                 }
                 $failed = Invoke-MetraYarnPlanApprove -Root $root -MetraRoot $hostRoot -BacklogId $item.id -Confirm
                 $failed.outcome | Should -Be "approved-handoff-failed"
-                $expectedRepo = [System.IO.Path]::GetFullPath((Join-Path $hostRoot 'plans\approve-me.plan.md'))
-                $failed.planPath | Should -Be $expectedRepo
-                Test-Path -LiteralPath $expectedRepo | Should -BeTrue
+                $failed.planPath | Should -Be ([System.IO.Path]::GetFullPath($planPath))
                 $link = @(Get-YarnPlanLinks -Root $root) | Where-Object { $_.backlogId -eq $item.id } | Select-Object -First 1
-                $link.planStatus | Should -Be "Approved"
-                $link.formalPlanPath | Should -Be $expectedRepo
-                $link.approval.approvalRevision | Should -Be $planHash
-                $link.approval.planContentHash | Should -Be $planHash
                 $link.loomHandoff.state | Should -Be "failed"
-                (Get-Content -LiteralPath $expectedRepo -Raw) | Should -Match "status:\s*Approved"
+                (Get-Content -LiteralPath $planPath -Raw) | Should -Not -Match "(?m)^status:\s*Approved"
+                (Get-Content -LiteralPath $planPath -Raw) | Should -Match "approveForLoom:\s*true"
 
                 $script:YarnLoomIngestOverride = {
                     param($req)
@@ -399,22 +421,23 @@ bingReviewed: false
                 $link2 = @(Get-YarnPlanLinks -Root $root) | Where-Object { $_.backlogId -eq $item.id } | Select-Object -First 1
                 $link2.loomHandoff.state | Should -Be "succeeded"
                 $link2.loomHandoff.queueItemId | Should -Be "AP-20260902-0001"
-                $link2.formalPlanPath | Should -Be $expectedRepo
+                (Get-Content -LiteralPath $planPath -Raw) | Should -Match "(?m)^status:\s*Approved"
+                (Get-Content -LiteralPath $planPath -Raw) | Should -Match "loomHandoffId:"
 
-                # second approve same revision stays one logical handoff success
                 $again = Invoke-MetraYarnPlanApprove -Root $root -MetraRoot $hostRoot -BacklogId $item.id -Confirm
                 $again.outcome | Should -BeIn @("approved-enqueued", "handoff-already-succeeded")
             }
             finally {
                 $script:YarnLoomIngestOverride = $null
                 $script:YarnHostRootOverride = $null
+                $script:YarnCursorPlansDirOverride = $null
                 Remove-Item -LiteralPath $root -Recurse -Force -ErrorAction SilentlyContinue
                 Remove-Item -LiteralPath $hostRoot -Recurse -Force -ErrorAction SilentlyContinue
             }
         }
     }
 
-    It "blocks stale pack on approve" {
+    It "blocks stale content-bound hashes on approve" {
         InModuleScope Yarn {
             $root = Join-Path ([IO.Path]::GetTempPath()) ("metra-yarn-a3-" + [guid]::NewGuid().ToString("n"))
             $docs = Join-Path $root "docs"
@@ -422,7 +445,19 @@ bingReviewed: false
                 Initialize-MetraYarnLayout -Root $root
                 New-Item -ItemType Directory -Path $docs -Force | Out-Null
                 $planPath = Join-Path $docs "stale.plan.md"
-                Write-YarnAtomicUtf8Text -Path $planPath -Text "---`nname: Stale`nstatus: Pending Bing Review`nbingReviewed: false`n---`n# Stale`n"
+                Write-YarnAtomicUtf8Text -Path $planPath -Text @"
+---
+name: Stale
+overview: fixture
+status: Pending External Review
+externalReviewed: true
+externalReviewHash: deadbeef
+approveForLoom: true
+approveForLoomHash: deadbeef
+---
+
+# Stale
+"@
                 $item = Sync-YarnBacklogItem -Root $root -Incoming ([PSCustomObject]@{
                         title = "Stale"; primarySourceKey = "capture:stale"; sources = @("capture:stale")
                         projectKey = "Metra"; sourceText = "Stale"; status = "pending-bing"; health = "ok"
@@ -433,14 +468,42 @@ bingReviewed: false
                 $map["status"] = "pending-bing"; $map["formalPlanPath"] = $planPath
                 Save-MetraYarnBacklogItems -Root $root -Items @(($all | Where-Object { $_.id -ne $item.id }) + @((New-YarnPsObject -Map $map)))
                 Sync-YarnPlanLink -Root $root -Link ([PSCustomObject]@{
-                        backlogId = $item.id; formalPlanPath = $planPath; planStatus = "Pending Bing Review"
+                        backlogId = $item.id; formalPlanPath = $planPath; planStatus = "Pending External Review"
                         handoffContractVersion = 1; planContentHash = "old"; packInputHash = "old"
                         packContractVersion = (Get-YarnPackContractVersion); packSucceeded = $true
                     })
-                { Invoke-MetraYarnPlanApprove -Root $root -BacklogId $item.id -Confirm } | Should -Throw "*Pack not fresh*"
+                { Invoke-MetraYarnPlanApprove -Root $root -BacklogId $item.id -Confirm } | Should -Throw "*hash-stale*"
             }
             finally {
                 Remove-Item -LiteralPath $root -Recurse -Force -ErrorAction SilentlyContinue
+            }
+        }
+    }
+
+    It "synth emits content-bound defaults and hash ignores mark writes" {
+        InModuleScope Yarn {
+            $item = [PSCustomObject]@{
+                title            = 'Synth Marks'
+                primarySourceKey = 'capture:sm1'
+                captureId        = 'sm1'
+                projectKey       = 'Metra'
+                sourceText       = 'Synth Marks body'
+            }
+            $text = New-YarnFormalPlanText -BacklogItem $item -MetraRoot (Get-YarnHostRoot)
+            $text | Should -Match 'externalReviewed:\s*false'
+            $text | Should -Match 'approveForLoom:\s*false'
+            $text | Should -Not -Match 'yarnReady'
+            $tmp = Join-Path ([IO.Path]::GetTempPath()) ("yarn-synth-" + [guid]::NewGuid().ToString('n') + '.md')
+            try {
+                Write-YarnAtomicUtf8Text -Path $tmp -Text $text
+                $marks = Set-YarnPlanContentBoundMarks -Path $tmp -ExternalReviewed -ApproveForLoom
+                $h2 = Get-YarnPlanContentHash -PlanText ([IO.File]::ReadAllText($tmp))
+                $h2 | Should -Be $marks.contentHash
+                $elig = Test-YarnContentBoundLoomEligibility -PlanText ([IO.File]::ReadAllText($tmp))
+                $elig.eligible | Should -BeTrue
+            }
+            finally {
+                Remove-Item -LiteralPath $tmp -Force -ErrorAction SilentlyContinue
             }
         }
     }

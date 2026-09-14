@@ -42,7 +42,7 @@ Governed execution harness (queue, journal, triage, branch runner). Metra hosts 
 | Rule | Detail |
 |------|--------|
 | Canonical identity | Queue items persist top-level `projectKey`. Legacy resolves once from `yarnHandoff.projectKey` then `project.registryName` under the claim/migration lock. |
-| Lane-holding | At most one active item per `projectKey`: `claimed`, `implementing`, `reviewing`, `completed`, `accepted-pending-commit`, or `blocked` with `blockedFrom` from an active state |
+| Lane-holding | At most one active item per `projectKey`: `claimed`, `implementing`, `reviewing`, `completed`, `accepted-pending-commit`, or `blocked` with `blockedFrom` from an active state. Explicit `laneHeld: false` on `blocked` releases the lane (run-failure path) so the loop can claim the next queued item in the same session. |
 | Atomic claim | `run` and `loop` share claim helpers under the `loom_queue` namespace lock: reload → busy lanes → select → `queued`→`claimed` → persist and journal → unlock |
 | Selection | Among free lanes: `scores.total` desc → `effectiveImpact` desc → `createdAt` asc → `id` asc |
 | Acceptance | `completed` → `accepted-pending-commit` (human ACCEPT; lane busy) → `accepted` after observe-only local commit verification. No commit/push/merge in verify. Verified `accepted` fail-open notifies Yarn Plan Board (Shipped); `accepted-pending-commit` does not. |
@@ -52,17 +52,31 @@ Governed execution harness (queue, journal, triage, branch runner). Metra hosts 
 
 | Rule | Detail |
 |------|--------|
-| Scope | **One** eligible `queued` item per invocation; stops at `completed` |
+| Scope | Prefer one successful item per invocation; on run failure after claim, move to `blocked` with `laneHeld=false` and **continue** to the next eligible queued item in the same session |
 | Selection | Atomic claim among free `projectKey` lanes (see A4) |
-| Policy | Fail closed: missing `classification` rejects; code-only; routing >= 0.85; verify commands present |
+| Policy | Fail closed: missing `classification` rejects; code-only; routing >= 0.85; verify commands present; **non-empty `project.root` required** at ingest/eligibility. Clean git baseline required except **`kind: Scout`** (dirty tree is a recorded finding; branch isolation/hard-reset skipped so operator WIP is preserved; path scope uses a content fingerprint **run delta** vs the pre-run dirty snapshot, not the whole dirty tree) |
 | Pause | Tier 1 engine faults set `loopPaused`, `pausedAtUtc`, `pauseReason` in `state.json` |
 | Pause enforcement | Subsequent `loom loop` emits reason + age; **no dequeue** while paused |
 | Supervised path | `loom run -Id <AP-...> -Confirm` (same claim authority) |
-| Forbidden | No push, merge, `daily approve`, auto-enqueue, multi-item dequeue |
+| Forbidden | No push, merge, `daily approve`, auto-enqueue |
 
-Clear pause (v1): edit `%LOCALAPPDATA%\Metra\loom\state.json` (`loopPaused: false`). Slice 6b may add `loom loop resume`.
+Clear pause: sticky `inspect-*` pauses self-clear on the next `loom loop` once Ask/Inspect capability is healthy again (Metra host module auto-import). Manual: edit `%LOCALAPPDATA%\Metra\loom\state.json` (`loopPaused: false`). Slice 6b may add `loom loop resume`.
 
 Morning handoff unchanged: `loom daily` → pack-diff review → `daily approve -Confirm`.
+
+## Slice 3 implementer host
+
+| Rule | Detail |
+|------|--------|
+| Host | Metra exports `Invoke-MetraLoomImplementer` (not Ask `/v1/complete`) |
+| Process | One-shot `engines/cursor/implementer-run.mjs --request <absolute request.json>` |
+| I/O | stdout = one contract JSON object (`ok` / `completed` / `failed`); stderr = diagnostics only. Node emits `ok` or `completed` when the SDK reports that status; as a compatibility fallback, a non-empty `changedFiles` / `changedPaths` signal also counts as success (still without requiring status). Non-empty freeform text alone is never success. Host accepts both `ok` and `completed` (Runner same). Path policy stays with the Runner. |
+| cwd | Absolute canonical `ProjectRoot` (not `RunDir`) |
+| Prompt vs policy | Agent prompt may cite allowed/forbidden/doneWhen as guidance; **Runner** `Test-LoomChangedPathsAllowed` remains fail-closed enforcement |
+| Adapter | Loom-only sessions import Metra via `Import-LoomMetraHostModule` once before `adapter-unavailable` |
+| Secrets | API key only on child process env; never in argv, request.json, or returned result |
+| Scout | `kind: Scout` still uses this host (real Agent path); dirty-git Scout policy is separate (above) |
+| Agent def | `.cursor/agents/loom-implementer.md` |
 
 ## Slice 8 Pattern promote (Atlas publication)
 

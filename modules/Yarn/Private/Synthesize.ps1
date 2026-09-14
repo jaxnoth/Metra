@@ -38,9 +38,12 @@ function New-YarnFormalPlanText {
     $sb = New-Object System.Text.StringBuilder
     [void]$sb.AppendLine('---')
     [void]$sb.AppendLine("name: $title")
-    [void]$sb.AppendLine("overview: `"Draft from Yarn synthesize ($sourceKey). Pending Bing Review.`"")
-    [void]$sb.AppendLine('status: Pending Bing Review')
-    [void]$sb.AppendLine('bingReviewed: false')
+    [void]$sb.AppendLine("overview: `"Draft from Yarn synthesize ($sourceKey). Pending external review.`"")
+    [void]$sb.AppendLine('status: Pending External Review')
+    [void]$sb.AppendLine('externalReviewed: false')
+    [void]$sb.AppendLine('externalReviewHash: null')
+    [void]$sb.AppendLine('approveForLoom: false')
+    [void]$sb.AppendLine('approveForLoomHash: null')
     if ($atlasId) { [void]$sb.AppendLine("atlasStableId: $atlasId") }
     if ($captureId) { [void]$sb.AppendLine("captureId: $captureId") }
     [void]$sb.AppendLine("synthesizedAt: `"$now`"")
@@ -89,7 +92,7 @@ function New-YarnFormalPlanText {
     [void]$sb.AppendLine('')
     [void]$sb.AppendLine('## Constraints')
     [void]$sb.AppendLine('')
-    [void]$sb.AppendLine('- Status remains Pending Bing Review until Yarn human approval')
+    [void]$sb.AppendLine('- Status remains Pending External Review until Yarn Loom handoff after content-bound marks')
     [void]$sb.AppendLine('- Pattern gap checklist does not auto-author Pattern bodies')
     [void]$sb.AppendLine('')
     [void]$sb.AppendLine('## Open questions')
@@ -349,7 +352,7 @@ function Invoke-MetraYarnSynthesize {
             backlogId        = [string]$item.id
             planPath         = $planPath
             planContentHash  = $planHash
-            status           = 'Pending Bing Review'
+            status           = 'Pending External Review'
             patterns         = @($patternIds)
         }
     }
@@ -369,7 +372,7 @@ function Invoke-MetraYarnSynthesize {
     Sync-YarnPlanLink -Root $Root -Link (New-YarnPsObject -Map @{
             backlogId              = [string]$item.id
             formalPlanPath         = $planPath
-            planStatus             = 'Pending Bing Review'
+            planStatus             = 'Pending External Review'
             sourceHash             = [string](Get-YarnProp -Object $item -Name 'sourceHash' -Default '')
             planContentHash        = $planHash
             packContractVersion    = Get-YarnPackContractVersion
@@ -394,6 +397,6 @@ function Invoke-MetraYarnSynthesize {
         backlogId       = [string]$item.id
         planPath        = $planPath
         planContentHash = $planHash
-        status          = 'Pending Bing Review'
+        status          = 'Pending External Review'
     }
 }

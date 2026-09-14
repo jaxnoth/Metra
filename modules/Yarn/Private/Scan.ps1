@@ -250,14 +250,20 @@ function Invoke-MetraYarnScan {
         total      = $upserted.Count
         memoryLane = [string]$atlasResult.memoryLane
     }
+
+    # Discover Surveyor Approve Plan marks and run fail-closed Loom handoff when eligible.
+    $handoff = Invoke-YarnProcessApproveForLoomCandidates -Root $Root -MetraRoot $MetraRoot
+
     return [PSCustomObject]@{
-        outcome        = 'scanned'
-        captureCount   = $captured.Count
-        futureDevCount = $future.Count
-        atlasCount     = $atlas.Count
-        backlogCount   = @(Get-MetraYarnBacklog -Root $Root).Count
-        memoryLane     = [string]$atlasResult.memoryLane
-        lastError      = $atlasResult.lastError
-        items          = @(Sort-YarnBacklogItems -Items $upserted)
+        outcome            = 'scanned'
+        captureCount       = $captured.Count
+        futureDevCount     = $future.Count
+        atlasCount         = $atlas.Count
+        backlogCount       = @(Get-MetraYarnBacklog -Root $Root).Count
+        memoryLane         = [string]$atlasResult.memoryLane
+        lastError          = $atlasResult.lastError
+        items              = @(Sort-YarnBacklogItems -Items $upserted)
+        loomHandoff        = $handoff
+        validationBlocked  = [int]$handoff.validationBlocked
     }
 }
