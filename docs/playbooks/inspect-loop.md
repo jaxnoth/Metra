@@ -102,9 +102,11 @@ Formal plans (`.cursor/plans/*.plan.md` working bodies; `plans/*.plan.md` scars 
 Rules:
 
 1. **Implement-from-plan:** update frontmatter todo status as you finish each item. The Plans UI checklist is what the operator watches.
-2. **Do not rewrite spec during implement** unless the operator explicitly asks for a plan revision. Todo bookkeeping is not a spec rewrite.
-3. **After plan spec revision:** run `.\metra.ps1 inspect pack-only plan -Path <plan> -Name <Project>` and report `pack-plan.md` path.
-4. **Agent context:** still do not load full plan bodies into the coding loop unless the task is plan/policy work (`metra-inspect-loop.mdc`).
+2. **Cursor Build "Do NOT edit the plan file":** means do not rewrite the **spec** (overview, architecture, acceptance, todo **content**). It does **not** forbid `todos[].status` bookkeeping. Session TodoWrite is optional; it is not a substitute for plan frontmatter progress.
+3. **Twin leaves:** when a short stub and a full body share the same work (same name/todo ids), keep `todos[].status` aligned on both, or mark the non-authority leaf completed when the Build-attached leaf finishes. Prefer one authority leaf going forward.
+4. **Do not rewrite spec during implement** unless the operator explicitly asks for a plan revision. Todo bookkeeping is not a spec rewrite.
+5. **After plan spec revision:** run `.\metra.ps1 inspect pack-only plan -Path <plan> -Name <Project>` and report `pack-plan.md` path.
+6. **Agent context:** still do not load full plan bodies into the coding loop unless the task is plan/policy work (`metra-inspect-loop.mdc`).
 
 - `.\metra.ps1 inspect budget -Name <Project>` — no engine call; estimates prompt payload chars and band before inspect.
 - Round 1 assess: full collapsed reduced diff. Verify rounds: touch-set bodies only; outside paths are names-only indicators.

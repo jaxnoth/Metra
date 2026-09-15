@@ -17,20 +17,25 @@ Metra + TicketTracker = desk entry. Correct analysis often needs one investigate
 
 ## Sprint rank (one active bite at a time)
 
-| Sprint | Bite |
-| ------ | ---- |
-| **S1a** | Sparse-ticket safety gate + frozen fixture (gate for S2b publish) |
-| **S2a** | Draft + locally smoke `tickets` (format folded in) |
-| **S4a** | Missing companion discovery (`routing -MissingOnly`) |
-| **S5a** | Fail-closed honesty when TT/iSupport absent |
-| **S1b** | Five-ticket product proof + fixture capture |
-| **S3** | Overview + site SVG sync |
-| **S2b** | Marketplace publish (opt-in; gate S1a + S2a) |
-| — | Coworker dry-run 1 |
-| — | Fix observed defects only |
-| **S7** | G1 / A1 investigate-hop prove |
-| — | Coworker dry-run 2 |
-| **S6** | Stretch unless dry-run proves need |
+Refreshed 2026-09-07 from landed commits. Full notes: `_meta/docs/Future-Development.local.md` sprint block.
+
+| Sprint | Bite | Status |
+| ------ | ---- | ------ |
+| **S1a** | Sparse-ticket safety gate + frozen fixture | **Shipped** 2026-08-28 |
+| **S1a+** | Thin iSupport SQL similar + cite quality | **Shipped** Gate B 2026-09-07 |
+| **S2a** | Draft + locally smoke `tickets` / desk / codex | **Landed** (`plugins/coworker-marketplace/`) |
+| **S4a** | Missing companion discovery (`routing -MissingOnly` + Station Updates) | **Code landed** 0.1.20; dry-run open |
+| **S5a** | Fail-closed honesty when TT/iSupport absent | **Partial**; dry-run open |
+| **S2b** | Marketplace publish (opt-in; gate S1a + S2a) | **Next active** |
+| **S1b** | Five-ticket product proof + fixture capture | Open (after/with S2b) |
+| **S3** | Overview + site SVG sync | Demote vs S2b/S1b |
+| — | Coworker dry-run 1 | Open |
+| — | Fix observed defects only | Open |
+| **S7** | G1 / A1 investigate-hop prove | Open |
+| — | Coworker dry-run 2 | Open |
+| **S6** | Stretch unless dry-run proves need | Stretch |
+
+**Active bite:** S2b (Team Marketplace import + publish checklist). Parallel OK: S4a/S5a clean-machine dry-run. Out of sprint: Narrative Engine v0 (do not steal focus).
 
 ## S1a fixture acceptance contract
 

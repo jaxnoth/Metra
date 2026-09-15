@@ -303,9 +303,9 @@ Controller requests a **pose**. Renderer decides what interpolates vs replaces. 
 | **Public / README mark** | `metra-mark.svg` - route story, no face. |
 | **HTML Ops desk** | Wordmark + route motif; voice/attention as data attributes; **no facial presence**. |
 | **iOS companion** | Nodes composition **may** use facial reading via `metra-presence-face.svg`. |
-| **Video / TikTok** | Same facial reading and Appendix A speech alphabet (`rest` / `closed` / `mid` / `wide` / `round`). Continuous interpolation between poses allowed when prerendered; no seventh spread/ee pose and no jaw/lips mouth. Nameplate may use a related Mist depth step at large video scale only (see Brand.md). |
+| **Video / TikTok** | Same facial reading and Appendix A speech alphabet (`rest` / `closed` / `mid` / `wide` / `round`). Continuous interpolation between poses allowed when prerendered; no seventh spread/ee pose and no jaw/lips mouth. Nameplate may use a related Mist depth step at large video scale only (see Brand.md). Soft Mist-family outer-plate shading OK so head turns read as volume - rounded plaque silhouette, not a head shape (Brand.md). |
 
-Brand.md owns the Video / TikTok presence subsection and the filled-out canonical stroke weight on `metra-presence-face.svg`.
+Brand.md owns the Video / TikTok presence subsection, filled-out canonical stroke weight on `metra-presence-face.svg`, and outer-plate shading for turn evidence.
 
 ---
 

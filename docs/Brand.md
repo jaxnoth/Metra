@@ -138,6 +138,18 @@ The iOS companion may use a **facial reading of the same nodes mark** (terminals
 
 Assets: [`assets/metra-presence-face.svg`](assets/metra-presence-face.svg) (gallery HTML alongside). Canonical weight is the filled-out stroke set in that file (heavier route / eye / mouth strokes than the early thin draft). Base mark remains [`assets/metra-mark.svg`](assets/metra-mark.svg).
 
+#### Outer plate shading (facial surfaces)
+
+The outer Mist pill behind the nodes face may use **soft Mist-family shading** so occasional head turns read as volume, not as a flat icon sliding. Intent is turn evidence / lighting for motion.
+
+| Allow | Do not |
+|-------|--------|
+| Soft top-light, side falloff, or gentle radial shading within Mist / elevated soft fill | Reshape the outer path into a head, oval “skull,” or cheek/jaw contour |
+| Shade that moves with yaw/pitch (or the lit plate turning as one) so the turn is obvious | Static contouring that only makes the idle plate look more human |
+| Operator-tuned strength while exploring what looks natural | New accent colors, chrome gradients, glow, or mascot skin tones |
+
+Keep the rounded-square plate silhouette (`rx` plaque, not a head outline). Squint test: still a soft plaque behind terminals + nameplate - not a head.
+
 ### Video / TikTok presence
 
 Prerendered video (TikTok channel and similar) may use the **same** facial reading of the nodes mark. Video is another surface, not a second character or a forked mouth alphabet.
@@ -148,6 +160,7 @@ Prerendered video (TikTok channel and similar) may use the **same** facial readi
 | Mood catalog | Same nine variants; Attend hub; Playful entry via `wave` (presence-behavior plan) |
 | Speech alphabet | Same Appendix A five poses (`rest` / `closed` / `mid` / `wide` / `round`). Map E/I into `mid` or capped `wide`. No distinct spread/ee pose |
 | Motion | Continuous interpolation **between** those poses is allowed when prerendered. Lip-sync tools may drive timing; they must not invent a richer pose class or a jaw/lips mouth |
+| Outer plate shading | Soft Mist-family shading allowed so head turns read as volume (see Outer plate shading above). Exact falloff is operator-tuned; silhouette stays a rounded plaque |
 | Nameplate (video scale only) | May use a related Mist step (slightly darker or lighter) for depth and legibility at large on-screen scale. Keep Signal Teal letters. No new accent color and no chrome-badge look. iOS and small surfaces keep the SVG same-fill nameplate |
 | Ops / public mark | Unchanged - video does not put a face on the HTML Ops desk or the public README mark |
 
@@ -202,7 +215,7 @@ Below that:
 | Markdown docs / `ctx` packs | Neutral prose; product name **Metra** in titles. No teal wallpaper. |
 | Installer (Inno) | Temporary first glimpse; Brand vocabulary + light first-person Welcome; Signal Teal / Mist / route mark; at most one dry beat on Welcome. Role = intent (including Files only). |
 | Metra Ops Settings | Same role / Main Metra address vocabulary as the glossary below; factual, not humorous. |
-| Video / TikTok presence | Same presence face + Appendix A five-pose speech alphabet. Continuous interp between poses OK when prerendered. Nameplate may use a related Mist depth step at large scale only. |
+| Video / TikTok presence | Same presence face + Appendix A five-pose speech alphabet. Continuous interp between poses OK when prerendered. Mist-family outer-plate shading OK for head-turn volume; nameplate may use a related Mist depth step at large scale only. |
 
 ## Naming boundary
 
