@@ -18,6 +18,15 @@ Entry shape:
 
 ---
 
+## 2026-09-16 - Inspect pack evidence fidelity (Bing lane)
+
+- Decision: Bing / external review packs must emit an **Evidence fidelity** section with pack-level `fidelity` (`full`|`partial`), coverage (`visibleChars` / `sourceChars` / `bodyCoverage` when known), and **per-path Evidence Grades A/B/C only** (no A+/D or grade confidence scores). Grade B must distinguish **file truncated** vs **pack cutoff**.
+- Decision: Truncated appendix bodies use rich visibility markers (visible/original chars, omitted-line estimate). Optional unverified omitted-tail symbol lists are **annotations only** and must never feed fidelity counts.
+- Decision: Bing preamble requires classifying concerns as **Observed**, **Missing visibility**, or **Recommendation**. A finding classified as Missing visibility **must not also be reported as a defect**. Do not infer missing protections from Grade B/C or non-visible bodies.
+- Decision: Evidence fidelity answers "what can the reviewer see?" Runtime verification / proven-behavior attachments remain a **separate** follow-up (`inspect_runtime_verification_a1b2c3d4`). Do not merge verifiedProperties into fidelity grades.
+- Why: Reviewers were treating lossy packs as fully inspectable and inventing missing-protection defects. Metadata is the right lever; enlarging packs is not.
+- See: `scripts/private/Inspect.ps1`; `docs/playbooks/inspect-loop.md`; Cursor plan `inspect_evidence_fidelity_04e71151`; follow-up stub `inspect_runtime_verification_a1b2c3d4`
+
 ## 2026-09-15 - Plan harden: no silent collapse; stubs over drip-ship
 
 - Decision: Bing review and Metra plan harden must **not silently collapse** multi-phase or multi-slice intent into a narrower ship (for example rewriting overview to "Phase 0+1 only" and cancelling the rest) without an explicit operator-visible disposition.

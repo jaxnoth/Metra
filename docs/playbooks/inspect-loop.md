@@ -90,6 +90,8 @@ Independence of review matters more than the specific model. The safety net is i
 
 Parallel products: each `-Name <Project>` owns its slot - serial or concurrent work does not overwrite another product's pack.
 
+**Evidence fidelity (Bing packs):** Diff packs include an Evidence fidelity section (grades A/B/C, file truncated vs pack cutoff, coverage chars). Bing preamble requires Observed / Missing visibility / Recommendation; Missing visibility must not also be a defect. Do not treat Grade B/C as proof that protections are absent. Proven-behavior / runtime verification is a separate follow-up plan (`inspect_runtime_verification_a1b2c3d4`), not part of fidelity grades. Policy: [Decisions.md](../Decisions.md) (Inspect pack evidence fidelity).
+
 ## Plan progress ledger
 
 Formal plans (`.cursor/plans/*.plan.md` working bodies; `plans/*.plan.md` scars via `plans/index.yaml` authority) are editable artifacts with two edit classes. Prefer `Resolve-MetraPlanWorkingPath` for Cursor edits and `Resolve-MetraPlanPath` when authority selects the repo scar.

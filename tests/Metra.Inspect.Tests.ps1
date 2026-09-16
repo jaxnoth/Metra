@@ -1158,6 +1158,89 @@ Describe 'Inspect Bing pack profile' {
             $ask.DocsCollapsed | Should -Contain 'docs/readme.md'
         }
     }
+
+    It 'emits rich truncate markers and unverified symbols without counting them as fidelity metrics' {
+        InModuleScope Metra {
+            $body = ("x" * 100) + "`nfunction Get-Alpha { }`nfunction Get-Beta { }`n" + ("y" * 50)
+            $reduced = Reduce-MetraInspectDiffFiles -Files @(
+                [PSCustomObject]@{ path = 'src/Big.ps1'; content = $body }
+            ) -MaxFiles 10 -MaxBytesPerFile 100 -IncludeDocs
+
+            $f = @($reduced.Files | Where-Object { $_.path -eq 'src/Big.ps1' })[0]
+            $f.truncated | Should -Be $true
+            $f.originalChars | Should -Be $body.Length
+            $f.visibleChars | Should -Be 100
+            $f.content | Should -Match '\[truncated: visible 100/'
+            $f.content | Should -Match '\[do not assume remaining implementation\]'
+            $f.content | Should -Match '\[symbols after truncate \(unverified\):'
+            $f.content | Should -Match 'Get-Alpha'
+            # Symbol inventory must not inflate truncatedFiles-style counts beyond the file itself
+            $reduced.Truncated | Should -Be $true
+        }
+    }
+
+    It 'grades file truncated vs pack cutoff and emits coverage fields' {
+        InModuleScope Metra {
+            $root = Join-Path $env:TEMP ("metra-inspect-fidelity-" + [guid]::NewGuid().ToString('n'))
+            New-Item -ItemType Directory -Path $root -Force | Out-Null
+            try {
+                Mock ConvertTo-MetraInspectScrubbedDiffParts {
+                    param($Files)
+                    @($Files | ForEach-Object {
+                            [PSCustomObject]@{
+                                path          = $_.path
+                                content       = $_.content
+                                class         = $(if ($_.class) { $_.class } else { 'code' })
+                                truncated     = [bool](Get-MetraProp -Object $_ -Name 'truncated' -Default $false)
+                                originalChars = [int](Get-MetraProp -Object $_ -Name 'originalChars' -Default 0)
+                                visibleChars  = [int](Get-MetraProp -Object $_ -Name 'visibleChars' -Default 0)
+                            }
+                        })
+                }
+
+                # Force per-file truncate via small MaxBytes; force pack cutoff via default profile MaxPackBodyChars=80000
+                # Use many large files so joined body exceeds 80k under default profile.
+                $files = @(
+                    [PSCustomObject]@{ path = 'src/a.ps1'; content = ('A' * 50000) + "`nfunction Keep-A { }" },
+                    [PSCustomObject]@{ path = 'src/b.ps1'; content = ('B' * 50000) + "`nfunction Keep-B { }" },
+                    [PSCustomObject]@{ path = 'src/c.ps1'; content = ('C' * 50000) },
+                    [PSCustomObject]@{ path = 'src/d.ps1'; content = ('D' * 50000) }
+                )
+
+                # Temporarily exercise default profile (80k pack body) by calling Build with Profile default
+                # but Reduce uses MaxBytesPerFile from profile - default is 24k so file truncate applies.
+                $appendix = Build-MetraInspectPackDiffAppendix -Root $root -Files $files -Profile default
+
+                $appendix.Manifest | Should -Match '## Evidence fidelity'
+                $appendix.Manifest | Should -Match 'fidelity: partial'
+                $appendix.Manifest | Should -Match 'visibleChars:'
+                $appendix.Manifest | Should -Match 'sourceChars:'
+                $appendix.Manifest | Should -Match 'bodyCoverage:'
+                $appendix.Manifest | Should -Match 'Grade B \(file truncated\)'
+                $appendix.PackBodyTruncated | Should -Be $true
+                $appendix.Manifest | Should -Match 'Grade B \(pack cutoff\)|Grade B \(file truncated; pack cutoff\)|Grade C \(omitted by pack body cap\)'
+                $appendix.Body | Should -Match 'pack body cutoff'
+                # Unverified symbols must not appear as a fidelity count key
+                $appendix.Manifest | Should -Not -Match '(?i)symbolCount|functionsIncluded'
+            }
+            finally {
+                Remove-Item -LiteralPath $root -Recurse -Force -ErrorAction SilentlyContinue
+            }
+        }
+    }
+
+    It 'Bing preamble requires Observed / Missing visibility / Recommendation and no-defect rule' {
+        InModuleScope Metra {
+            $md = Format-MetraInspectPackMarkdown -Mode diff -Findings @() -PackBody 'body' -PackFileList @('a.ps1') `
+                -AssessedReportPath 'latest.json' -InspectedAtUtc '2026-09-16T00:00:00Z' -Engine cursor -Model test `
+                -Project Metra -PackManifest 'Pack profile: bing'
+            $md | Should -Match 'Observed'
+            $md | Should -Match 'Missing visibility'
+            $md | Should -Match 'Recommendation'
+            $md | Should -Match 'must not also be reported as a defect'
+            $md | Should -Match 'Do not report missing protections when the implementation body is not visible'
+        }
+    }
 }
 
 Describe 'Inspect review loop helpers' {
