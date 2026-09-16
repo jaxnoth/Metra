@@ -77,10 +77,10 @@ plans:
     repoPath: routing-graph-phase6-concept.plan.md
     updatedAt: '2026-09-10T14:49:05.6888154Z'
   - stem: scout
-    cursorLeaf: Scout.plan.md
+    cursorLeaf: null
     authority: repo
     repoPath: scout.plan.md
-    updatedAt: '2026-09-14T15:53:14.7636040Z'
+    updatedAt: '2026-09-15T19:25:00.0000000Z'
   - stem: sprint-coworker-ticket-analysis-2026-09
     cursorLeaf: null
     authority: repo
@@ -91,8 +91,18 @@ plans:
     authority: repo
     repoPath: tailscale-identity-auth.plan.md
     updatedAt: '2026-09-10T14:49:05.9372058Z'
+  - stem: ticket-watch-affirm-recommend
+    cursorLeaf: ticket_watch_affirm_recommend.plan.md
+    authority: cursor
+    repoPath: null
+    updatedAt: '2026-09-15T20:55:00.0000000Z'
+  - stem: ticket-watch-bus-sensors
+    cursorLeaf: ticket_watch_bus_sensors.plan.md
+    authority: cursor
+    repoPath: null
+    updatedAt: '2026-09-15T20:55:00.0000000Z'
   - stem: ticket-watch-desk
     cursorLeaf: ticket_watch_desk_97f6eee6.plan.md
     authority: cursor
     repoPath: null
-    updatedAt: '2026-09-14T00:58:39.8181938Z'
+    updatedAt: '2026-09-15T20:55:00.0000000Z'

@@ -11,9 +11,10 @@ param(
 )
 
 $ErrorActionPreference = 'Stop'
+$WarningPreference = 'SilentlyContinue'
 $metraRoot = [System.IO.Path]::GetFullPath((Join-Path $PSScriptRoot '..'))
 $yarnManifest = Join-Path $metraRoot 'modules\Yarn\Yarn.psd1'
-Import-Module $yarnManifest -Force
+Import-Module $yarnManifest -Force -DisableNameChecking
 $result = Invoke-MetraYarnLoomSchedule -MetraRoot $metraRoot -Mode $Mode
 $code = 1
 if ($null -ne $result -and $null -ne $result.exitCode) {

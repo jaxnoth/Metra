@@ -82,6 +82,8 @@ Two tasks share the same runner and a single schedule lock (they never overlap):
 
 Runner: `scripts/Invoke-MetraYarnLoomSchedule.ps1 -Mode Daily|Pulse`. Exit codes: 0 ok/daily-gate, 1 failure, 2 validation blocked, 3 unexpected loom pause, 4 lock held. Logs: `%LOCALAPPDATA%\Metra\yarn\schedule-logs\`.
 
+Install registers `pwsh -WindowStyle Hidden` so Interactive logon does not steal focus (Pulse especially). `yarn schedule status` reports `mismatch` if Hidden is missing - re-run `install` / `pulse install` with `-Confirm` to refresh.
+
 **Approve does not start Yarn/Loom immediately.** Surveyor only writes content-bound marks. The next Pulse (or Daily, or `yarn schedule run` / `pulse run`) enrolls and builds. Prefer Pulse for desk-speed after Approve; keep Daily for overnight reconcile + full gate.
 
 Still human: Surveyor Approve Plan (and morning Loom ACCEPT). Affirm is optional when Approve is used.
@@ -197,7 +199,7 @@ pwsh -File .\scripts\Test-MetraScout.ps1 -Probe
 pwsh -File .\scripts\Test-MetraScout.ps1 -Reset -Confirm
 ```
 
-Retire clears Approve marks on the Scout leaf only, drops its Yarn backlog/plan-link, and fails matching Loom `AP-*` with reason `scout-retire` (`laneHeld: false`). See [loom.md](loom.md) lane/`laneHeld` notes.
+Retire clears Approve marks on the Scout leaf only, drops its Yarn backlog/plan-link, and **supersedes** matching Loom `AP-*` with reason `scout-retire` (`laneHeld: false`). Scout success never uses Loom `failed`. Plan frontmatter `status` returns to `pending` so Surveyor shows it ready for the next Approve. Loom handoff ingest skips terminal queue rows so the next Approve enqueues a fresh `AP-*`. See [loom.md](loom.md) lane/`laneHeld` notes.
 
 ## Related
 

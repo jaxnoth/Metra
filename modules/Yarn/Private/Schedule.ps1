@@ -144,7 +144,7 @@ function Invoke-MetraYarnLoomSchedule {
             if (-not $loomCmd) {
                 $loomManifest = Join-Path $MetraRoot 'modules\Loom\Loom.psd1'
                 if (Test-Path -LiteralPath $loomManifest) {
-                    Import-Module $loomManifest -Force
+                    Import-Module $loomManifest -Force -DisableNameChecking
                     $loomCmd = Get-Command Invoke-MetraLoomLoop -ErrorAction SilentlyContinue
                 }
             }
@@ -241,6 +241,10 @@ function Get-YarnScheduleTaskStatusCore {
         if ($ExpectedModeArg -and $args -notlike "*$ExpectedModeArg*") {
             $mismatch = $true
         }
+        # Interactive logon still needs a hidden console so Pulse/Daily do not steal focus.
+        if ($args -notlike '*-WindowStyle*Hidden*') {
+            $mismatch = $true
+        }
         $state = [string]$task.State
         $repetitionMinutes = $null
         $triggers = @($task.Triggers)
@@ -312,7 +316,8 @@ function Install-MetraYarnSchedule {
     }
 
     $pwsh = Get-YarnSchedulePwshPath
-    $arg = "-NoProfile -ExecutionPolicy Bypass -File `"$runner`" -Mode Daily"
+    # -WindowStyle Hidden: Interactive logon otherwise pops a console every run (and Pulse is frequent).
+    $arg = "-WindowStyle Hidden -NoProfile -ExecutionPolicy Bypass -File `"$runner`" -Mode Daily"
     $action = New-ScheduledTaskAction -Execute $pwsh -Argument $arg -WorkingDirectory $MetraRoot
     $trigger = New-ScheduledTaskTrigger -Daily -At ([datetime]::Today.AddHours($when.Hour).AddMinutes($when.Minute))
     $settings = New-ScheduledTaskSettingsSet -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries `
@@ -387,7 +392,8 @@ function Install-MetraYarnPulseSchedule {
     }
 
     $pwsh = Get-YarnSchedulePwshPath
-    $arg = "-NoProfile -ExecutionPolicy Bypass -File `"$runner`" -Mode Pulse"
+    # -WindowStyle Hidden: Interactive logon otherwise pops a console every Pulse interval.
+    $arg = "-WindowStyle Hidden -NoProfile -ExecutionPolicy Bypass -File `"$runner`" -Mode Pulse"
     $action = New-ScheduledTaskAction -Execute $pwsh -Argument $arg -WorkingDirectory $MetraRoot
     # Once + repetition: Approve -> enroll/build within EveryMinutes without waiting for Daily 02:00.
     $start = (Get-Date).AddMinutes(1)
