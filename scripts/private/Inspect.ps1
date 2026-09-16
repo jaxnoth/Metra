@@ -1092,6 +1092,80 @@ function Invoke-MetraInspectBudget {
     return $budget
 }
 
+function Get-MetraInspectOmittedTailSymbols {
+    <#
+    .SYNOPSIS
+        Cheap unverified symbol names from omitted text after a truncate point.
+    .NOTES
+        Annotation only - never feed fidelity counts.
+    #>
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory)][AllowEmptyString()][string]$OmittedTail,
+        [int]$MaxNames = 12
+    )
+
+    if ([string]::IsNullOrWhiteSpace($OmittedTail) -or $MaxNames -le 0) {
+        return @()
+    }
+
+    $seen = New-Object 'System.Collections.Generic.HashSet[string]' ([StringComparer]::OrdinalIgnoreCase)
+    $names = New-Object System.Collections.Generic.List[string]
+    $patterns = @(
+        '(?m)^\s*(?:async\s+)?def\s+([A-Za-z_][\w]*)',
+        '(?m)^\s*(?:function|filter|Filter)\s+([A-Za-z_][\w-]*)',
+        '(?m)^\s*(?:export\s+)?(?:async\s+)?function\s+([A-Za-z_][\w]*)'
+    )
+    foreach ($pat in $patterns) {
+        foreach ($m in [regex]::Matches($OmittedTail, $pat)) {
+            $n = [string]$m.Groups[1].Value
+            if ([string]::IsNullOrWhiteSpace($n)) { continue }
+            if ($seen.Add($n)) {
+                [void]$names.Add($n)
+                if ($names.Count -ge $MaxNames) {
+                    return @($names.ToArray())
+                }
+            }
+        }
+    }
+    return @($names.ToArray())
+}
+
+function New-MetraInspectTruncateMarker {
+    <#
+    .SYNOPSIS
+        Visibility marker for per-file truncation (chars, omitted lines, optional unverified symbols).
+    #>
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory)][AllowEmptyString()][string]$OriginalContent,
+        [Parameter(Mandatory)][int]$VisibleChars
+    )
+
+    if ($VisibleChars -lt 0) { $VisibleChars = 0 }
+    if ($VisibleChars -gt $OriginalContent.Length) { $VisibleChars = $OriginalContent.Length }
+
+    $omitted = ''
+    if ($VisibleChars -lt $OriginalContent.Length) {
+        $omitted = $OriginalContent.Substring($VisibleChars)
+    }
+    $omittedLines = 0
+    if ($omitted.Length -gt 0) {
+        $omittedLines = @($omitted -split "`r?`n").Count
+    }
+
+    $lines = New-Object System.Collections.Generic.List[string]
+    [void]$lines.Add(("[truncated: visible {0}/{1} chars; ~{2} lines omitted]" -f $VisibleChars, $OriginalContent.Length, $omittedLines))
+    [void]$lines.Add('[do not assume remaining implementation]')
+
+    $symbols = @(Get-MetraInspectOmittedTailSymbols -OmittedTail $omitted -MaxNames 12)
+    if ($symbols.Count -gt 0) {
+        [void]$lines.Add(('[symbols after truncate (unverified): {0}]' -f ($symbols -join ', ')))
+    }
+
+    return ($lines -join "`n")
+}
+
 function Reduce-MetraInspectDiffFiles {
     <#
     .SYNOPSIS
@@ -1170,45 +1244,63 @@ function Reduce-MetraInspectDiffFiles {
             continue
         }
         $content = [string]$f.content
+        $originalChars = $content.Length
+        $fileTruncated = $false
+        $visibleChars = $originalChars
         if ($content.Length -gt $MaxBytesPerFile) {
-            $content = $content.Substring(0, $MaxBytesPerFile) + "`n...[truncated]..."
+            $visibleChars = $MaxBytesPerFile
+            $marker = New-MetraInspectTruncateMarker -OriginalContent $content -VisibleChars $MaxBytesPerFile
+            $content = $content.Substring(0, $MaxBytesPerFile) + "`n" + $marker
+            $fileTruncated = $true
         }
         [void]$reduced.Add([PSCustomObject]@{
-                path     = [string]$f.path
-                pathFrom = $(if ($f.pathFrom) { [string]$f.pathFrom } else { $null })
-                content  = $content
-                class    = [string]$f.class
+                path          = [string]$f.path
+                pathFrom      = $(if ($f.pathFrom) { [string]$f.pathFrom } else { $null })
+                content       = $content
+                class         = [string]$f.class
+                truncated     = $fileTruncated
+                originalChars = $originalChars
+                visibleChars  = $visibleChars
             })
     }
 
     # If only docs changed, include one collapsed summary entry.
     if ($reduced.Count -eq 0 -and $docsCollapsed.Count -gt 0) {
         [void]$reduced.Add([PSCustomObject]@{
-                path    = '(docs)'
-                content = "Documentation-only changes:`n- " + ($docsCollapsed -join "`n- ")
-                class   = 'docs'
+                path          = '(docs)'
+                content       = "Documentation-only changes:`n- " + ($docsCollapsed -join "`n- ")
+                class         = 'docs'
+                truncated     = $false
+                originalChars = 0
+                visibleChars  = 0
             })
     }
     # docs-collapsed is an intentional sidecar; MaxFiles applies to primary files only.
     elseif ($docsCollapsed.Count -gt 0) {
         [void]$reduced.Add([PSCustomObject]@{
-                path    = '(docs-collapsed)'
-                content = "Collapsed docs paths:`n- " + ($docsCollapsed -join "`n- ")
-                class   = 'docs'
+                path          = '(docs-collapsed)'
+                content       = "Collapsed docs paths:`n- " + ($docsCollapsed -join "`n- ")
+                class         = 'docs'
+                truncated     = $false
+                originalChars = 0
+                visibleChars  = 0
             })
     }
 
     if ($outsideTouch.Count -gt 0) {
         [void]$reduced.Add([PSCustomObject]@{
-                path    = '(outside-touch-set)'
-                content = ("Outside touch set (names only; no bodies attached):`n- " + ($outsideTouch -join "`n- "))
-                class   = 'docs'
+                path          = '(outside-touch-set)'
+                content       = ("Outside touch set (names only; no bodies attached):`n- " + ($outsideTouch -join "`n- "))
+                class         = 'docs'
+                truncated     = $false
+                originalChars = 0
+                visibleChars  = 0
             })
     }
 
     $truncatedAny = $false
     foreach ($rf in $reduced) {
-        if ([string]$rf.content -match '\[truncated\]') { $truncatedAny = $true; break }
+        if ([bool](Get-MetraProp -Object $rf -Name 'truncated' -Default $false)) { $truncatedAny = $true; break }
     }
 
     return [PSCustomObject]@{
@@ -1477,10 +1569,13 @@ function ConvertTo-MetraInspectScrubbedDiffParts {
             throw ("Diff content refused by secrets scrub ($path): {0}" -f $scrub.Reason)
         }
         [void]$scrubbed.Add([PSCustomObject]@{
-                path     = $path
-                pathFrom = [string](Get-MetraProp -Object $rf -Name 'pathFrom' -Default '')
-                content  = [string]$scrub.Text
-                class    = [string](Get-MetraProp -Object $rf -Name 'class' -Default '')
+                path          = $path
+                pathFrom      = [string](Get-MetraProp -Object $rf -Name 'pathFrom' -Default '')
+                content       = [string]$scrub.Text
+                class         = [string](Get-MetraProp -Object $rf -Name 'class' -Default '')
+                truncated     = [bool](Get-MetraProp -Object $rf -Name 'truncated' -Default $false)
+                originalChars = [int](Get-MetraProp -Object $rf -Name 'originalChars' -Default 0)
+                visibleChars  = [int](Get-MetraProp -Object $rf -Name 'visibleChars' -Default 0)
             })
     }
     return @($scrubbed.ToArray())
@@ -2571,6 +2666,84 @@ function Get-MetraInspectPesterTestCatalogText {
     return $sb.ToString().TrimEnd()
 }
 
+function Format-MetraInspectEvidenceFidelityBlock {
+    <#
+    .SYNOPSIS
+        Markdown Evidence fidelity section for Bing packs (grades A/B/C + coverage).
+    #>
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory)][ValidateSet('full', 'partial')][string]$Fidelity,
+        [int]$FilesIncluded = 0,
+        [int]$BodyChars = 0,
+        [int]$VisibleChars = 0,
+        [int]$SourceChars = 0,
+        [double]$BodyCoveragePercent = -1,
+        [int]$TruncatedFiles = 0,
+        [int]$OmittedByFileCap = 0,
+        [string[]]$FileFidelityLines = @()
+    )
+
+    $sb = New-Object System.Text.StringBuilder
+    [void]$sb.AppendLine('## Evidence fidelity')
+    [void]$sb.AppendLine("fidelity: $Fidelity")
+    [void]$sb.AppendLine("filesIncluded: $FilesIncluded")
+    [void]$sb.AppendLine("bodyChars: $BodyChars")
+    [void]$sb.AppendLine("visibleChars: $VisibleChars")
+    [void]$sb.AppendLine("sourceChars: $SourceChars")
+    if ($BodyCoveragePercent -ge 0) {
+        [void]$sb.AppendLine(('bodyCoverage: {0:N1}%' -f $BodyCoveragePercent))
+    }
+    [void]$sb.AppendLine("truncatedFiles: $TruncatedFiles")
+    [void]$sb.AppendLine("omittedByFileCap: $OmittedByFileCap")
+    [void]$sb.AppendLine('Warning: source bodies may be truncated or scrubbed. Do not infer missing protections from Grade B/C files.')
+    [void]$sb.AppendLine('')
+    [void]$sb.AppendLine('File fidelity:')
+    if (@($FileFidelityLines).Count -eq 0) {
+        [void]$sb.AppendLine('- (none)')
+    }
+    else {
+        foreach ($line in @($FileFidelityLines)) {
+            [void]$sb.AppendLine("- $line")
+        }
+    }
+    return $sb.ToString().TrimEnd()
+}
+
+function Get-MetraInspectPackFileSpans {
+    <#
+    .SYNOPSIS
+        Computes start/end char offsets for each scrubbed file segment in a joined pack body.
+    #>
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory)][AllowEmptyCollection()][object[]]$ScrubbedFiles
+    )
+
+    $spans = New-Object System.Collections.Generic.List[object]
+    $cursor = 0
+    $i = 0
+    foreach ($sf in @($ScrubbedFiles)) {
+        if ($i -gt 0) { $cursor += 2 } # join "`n`n"
+        $chunk = "### $($sf.path) [$($sf.class)]`n$($sf.content)"
+        $start = $cursor
+        $end = $cursor + $chunk.Length
+        [void]$spans.Add([PSCustomObject]@{
+                path          = [string]$sf.path
+                class         = [string]$sf.class
+                truncated     = [bool](Get-MetraProp -Object $sf -Name 'truncated' -Default $false)
+                originalChars = [int](Get-MetraProp -Object $sf -Name 'originalChars' -Default 0)
+                visibleChars  = [int](Get-MetraProp -Object $sf -Name 'visibleChars' -Default 0)
+                content       = [string]$sf.content
+                start         = $start
+                end           = $end
+            })
+        $cursor = $end
+        $i++
+    }
+    return @($spans.ToArray())
+}
+
 function Format-MetraInspectPackManifest {
     [CmdletBinding()]
     param(
@@ -2583,7 +2756,8 @@ function Format-MetraInspectPackManifest {
         [string[]]$OmittedByFileCap = @(),
         [string[]]$DocsCollapsed = @(),
         [switch]$PackBodyTruncated,
-        [int]$PackBodyChars = 0
+        [int]$PackBodyChars = 0,
+        [string]$EvidenceFidelity = ''
     )
 
     $sb = New-Object System.Text.StringBuilder
@@ -2600,6 +2774,10 @@ function Format-MetraInspectPackManifest {
     }
     if (@($FilesIncluded).Count -gt 0) {
         [void]$sb.AppendLine(('Files in appendix: ' + (($FilesIncluded | ForEach-Object { $_ }) -join ', ')))
+    }
+    if (-not [string]::IsNullOrWhiteSpace($EvidenceFidelity)) {
+        [void]$sb.AppendLine('')
+        [void]$sb.AppendLine($EvidenceFidelity.TrimEnd())
     }
     return $sb.ToString().TrimEnd()
 }
@@ -2627,32 +2805,179 @@ function Build-MetraInspectPackDiffAppendix {
     $reduced = Reduce-MetraInspectDiffFiles -Files $Files -MaxFiles $maxFiles -MaxBytesPerFile $maxBytesPerFile -IncludeDocs:$includeDocs
     $scrubbedFiles = @(ConvertTo-MetraInspectScrubbedDiffParts -Files $reduced.Files)
     $packFileList = @($scrubbedFiles | ForEach-Object { $_.path })
+
+    $spans = @(Get-MetraInspectPackFileSpans -ScrubbedFiles $scrubbedFiles)
     $packBody = (
         $scrubbedFiles | ForEach-Object {
             "### $($_.path) [$($_.class)]`n$($_.content)"
         }
     ) -join "`n`n"
 
+    $fullBodyChars = $packBody.Length
     $packBodyTruncated = $false
+    $effectiveBodyLen = $fullBodyChars
     if ($maxPackBodyChars -gt 0 -and $packBody.Length -gt $maxPackBodyChars) {
-        $packBody = $packBody.Substring(0, $maxPackBodyChars) + "`n...[truncated]..."
+        $cutoffMarker = "[truncated: pack body cutoff at $maxPackBodyChars chars]`n[do not assume remaining implementation]"
+        $packBody = $packBody.Substring(0, $maxPackBodyChars) + "`n" + $cutoffMarker
         $packBodyTruncated = $true
+        $effectiveBodyLen = $maxPackBodyChars
     }
 
     $perFileTruncated = @(
         $scrubbedFiles |
-            Where-Object { [string]$_.content -match '\[truncated\]' } |
+            Where-Object {
+                [bool](Get-MetraProp -Object $_ -Name 'truncated' -Default $false)
+            } |
             ForEach-Object { [string]$_.path }
     )
+
+    $omittedByFileCap = @($(Get-MetraProp -Object $reduced -Name 'OmittedByFileCap' -Default @()) | ForEach-Object { $_ })
+    $docsCollapsed = @($(Get-MetraProp -Object $reduced -Name 'DocsCollapsed' -Default @()) | ForEach-Object { $_ })
+
+    $sidecarNames = @('(docs)', '(docs-collapsed)', '(outside-touch-set)')
+    $fileFidelityLines = New-Object System.Collections.Generic.List[string]
+    $truncatedFileCount = 0
+    $anyNonA = $false
+
+    foreach ($span in $spans) {
+        $path = [string]$span.path
+        $fileTrunc = [bool]$span.truncated
+        if ($fileTrunc) { $truncatedFileCount++ }
+
+        $packPartial = $false
+        $packOmitted = $false
+        if ($packBodyTruncated) {
+            if ([int]$span.start -ge $effectiveBodyLen) {
+                $packOmitted = $true
+            }
+            elseif ([int]$span.end -gt $effectiveBodyLen) {
+                $packPartial = $true
+            }
+        }
+
+        $gradeLine = $null
+        if ($sidecarNames -contains $path) {
+            $gradeLine = "${path}: Grade C (summary only)"
+            $anyNonA = $true
+        }
+        elseif ($packOmitted) {
+            $gradeLine = "${path}: Grade C (omitted by pack body cap)"
+            $anyNonA = $true
+        }
+        elseif ($packPartial -and $fileTrunc) {
+            $gradeLine = "${path}: Grade B (file truncated; pack cutoff)"
+            $anyNonA = $true
+        }
+        elseif ($packPartial) {
+            $gradeLine = "${path}: Grade B (pack cutoff)"
+            $anyNonA = $true
+        }
+        elseif ($fileTrunc) {
+            $gradeLine = "${path}: Grade B (file truncated)"
+            $anyNonA = $true
+        }
+        else {
+            $gradeLine = "${path}: Grade A"
+        }
+        [void]$fileFidelityLines.Add($gradeLine)
+    }
+
+    foreach ($omitPath in $omittedByFileCap) {
+        [void]$fileFidelityLines.Add("${omitPath}: Grade C (omitted by file cap)")
+        $anyNonA = $true
+    }
+    foreach ($docPath in $docsCollapsed) {
+        # Paths already represented by (docs-collapsed) sidecar; still list Grade C for reviewer scan.
+        if ($packFileList -contains $docPath) { continue }
+        [void]$fileFidelityLines.Add("${docPath}: Grade C (docs collapsed)")
+        $anyNonA = $true
+    }
+
+    if (@($omittedByFileCap).Count -gt 0) { $anyNonA = $true }
+
+    $sourceChars = 0
+    $visibleChars = 0
+    foreach ($span in $spans) {
+        if ($sidecarNames -contains [string]$span.path) { continue }
+
+        $oc = [int]$span.originalChars
+        if ($oc -le 0) {
+            $oc = ([string]$span.content).Length
+        }
+        $sourceChars += $oc
+
+        $vc = [int]$span.visibleChars
+        if ($vc -le 0) {
+            $vc = $oc
+        }
+        if ($vc -gt $oc) { $vc = $oc }
+
+        $packPartial = $false
+        $packOmitted = $false
+        if ($packBodyTruncated) {
+            if ([int]$span.start -ge $effectiveBodyLen) {
+                $packOmitted = $true
+            }
+            elseif ([int]$span.end -gt $effectiveBodyLen) {
+                $packPartial = $true
+            }
+        }
+
+        if ($packOmitted) {
+            continue
+        }
+        if ($packPartial) {
+            # Approximate visible source chars from how much of this segment fit before pack cutoff.
+            $headerLen = ("### $($span.path) [$($span.class)]`n").Length
+            $fit = [math]::Max(0, $effectiveBodyLen - [int]$span.start - $headerLen)
+            if ($fit -lt $vc) { $vc = $fit }
+        }
+        $visibleChars += $vc
+    }
+    # Include omitted-by-cap originals when present on input Files
+    $inputByPath = @{}
+    foreach ($f in @($Files)) {
+        $p = ([string](Get-MetraProp -Object $f -Name 'path' -Default '')).Replace('\', '/')
+        if (-not [string]::IsNullOrWhiteSpace($p)) {
+            $inputByPath[$p] = [string](Get-MetraProp -Object $f -Name 'content' -Default '')
+        }
+    }
+    foreach ($omitPath in $omittedByFileCap) {
+        $norm = ([string]$omitPath).Replace('\', '/')
+        if ($inputByPath.ContainsKey($norm)) {
+            $sourceChars += $inputByPath[$norm].Length
+        }
+    }
+
+    $coverage = -1.0
+    if ($sourceChars -gt 0) {
+        $pct = 100.0 * $visibleChars / $sourceChars
+        if ($pct -gt 100.0) { $pct = 100.0 }
+        $coverage = [math]::Round($pct, 1)
+    }
+
+    $fidelity = if ($anyNonA -or $packBodyTruncated) { 'partial' } else { 'full' }
+
+    $evidenceBlock = Format-MetraInspectEvidenceFidelityBlock `
+        -Fidelity $fidelity `
+        -FilesIncluded $packFileList.Count `
+        -BodyChars $packBody.Length `
+        -VisibleChars $visibleChars `
+        -SourceChars $sourceChars `
+        -BodyCoveragePercent $coverage `
+        -TruncatedFiles $truncatedFileCount `
+        -OmittedByFileCap @($omittedByFileCap).Count `
+        -FileFidelityLines @($fileFidelityLines.ToArray())
 
     $allPaths = @($Files | ForEach-Object { ([string]$_.path).Replace('\', '/') })
     $testCatalog = Get-MetraInspectPesterTestCatalogText -Root $Root -RelativePaths $allPaths
     $manifest = Format-MetraInspectPackManifest -Profile $Profile `
         -MaxFiles $maxFiles -MaxBytesPerFile $maxBytesPerFile -MaxPackBodyChars $maxPackBodyChars `
         -FilesIncluded $packFileList -PerFileTruncated $perFileTruncated `
-        -OmittedByFileCap @($(Get-MetraProp -Object $reduced -Name 'OmittedByFileCap' -Default @()) | ForEach-Object { $_ }) `
-        -DocsCollapsed @($(Get-MetraProp -Object $reduced -Name 'DocsCollapsed' -Default @()) | ForEach-Object { $_ }) `
-        -PackBodyTruncated:$packBodyTruncated -PackBodyChars $packBody.Length
+        -OmittedByFileCap $omittedByFileCap `
+        -DocsCollapsed $docsCollapsed `
+        -PackBodyTruncated:$packBodyTruncated -PackBodyChars $packBody.Length `
+        -EvidenceFidelity $evidenceBlock
 
     return [PSCustomObject]@{
         Body              = $packBody
@@ -2662,6 +2987,8 @@ function Build-MetraInspectPackDiffAppendix {
         PackBodyTruncated = $packBodyTruncated
         Reduced           = $reduced
         ScrubbedFiles     = $scrubbedFiles
+        EvidenceFidelity  = $evidenceBlock
+        Fidelity          = $fidelity
     }
 }
 
@@ -2853,13 +3180,20 @@ function Format-MetraInspectPackMarkdown {
     }
     [void]$sb.AppendLine('')
     if ($Mode -eq 'diff') {
-        [void]$sb.AppendLine('Bing preamble: harden for validation, ShouldProcess honesty, path safety, fail-closed edges, credential exposure, error handling. Inspect loop regression revert is fingerprint/touch-set based (not whole-tree High/Medium counts) and manifest-only plus warn on extras (not auto-delete unlisted files) by design.')
+        [void]$sb.AppendLine('Bing preamble: classify every concern as exactly one of:')
+        [void]$sb.AppendLine('1. Observed - cite visible pack text only; may be defects with severity.')
+        [void]$sb.AppendLine('2. Missing visibility - Grade B/C or truncated/cutoff marker; state what cannot be determined. A finding classified as Missing visibility must not also be reported as a defect.')
+        [void]$sb.AppendLine('3. Recommendation - optional; must not be reported as a defect when the implementation body is not visible.')
+        [void]$sb.AppendLine('Do not report missing protections when the implementation body is not visible. Do not infer missing protections from Grade B/C files.')
+        [void]$sb.AppendLine('Review topics (not a license to invent): validation, ShouldProcess honesty, path safety, fail-closed edges, credential exposure, error handling. Inspect loop regression revert is fingerprint/touch-set based (not whole-tree High/Medium counts) and manifest-only plus warn on extras (not auto-delete unlisted files) by design.')
     }
     elseif ($Mode -eq 'agents') {
-        [void]$sb.AppendLine('Bing preamble: review A2 desk split - stub under line budget, playbook index and safety ceilings in stub only, loadWhen/front matter on playbooks, provenance lines, content parity with pre-split AGENTS (done-when / On hard stop preserved), no procedure warehouse in stub, playbook bodies not always-on.')
+        [void]$sb.AppendLine('Bing preamble: classify concerns as Observed, Missing visibility, or Recommendation. A finding classified as Missing visibility must not also be reported as a defect. Do not report missing protections when the implementation body is not visible.')
+        [void]$sb.AppendLine('Review A2 desk split - stub under line budget, playbook index and safety ceilings in stub only, loadWhen/front matter on playbooks, provenance lines, content parity with pre-split AGENTS (done-when / On hard stop preserved), no procedure warehouse in stub, playbook bodies not always-on.')
     }
     else {
-        [void]$sb.AppendLine('Bing preamble: review plan for scope discipline, root isolation, recommend-only / no auto-act, naming collisions, phase boundaries, fail-closed edges, acceptance criteria.')
+        [void]$sb.AppendLine('Bing preamble: classify concerns as Observed, Missing visibility, or Recommendation. A finding classified as Missing visibility must not also be reported as a defect. Do not report missing protections when plan text is truncated or not visible.')
+        [void]$sb.AppendLine('Review plan for scope discipline, root isolation, recommend-only / no auto-act, naming collisions, phase boundaries, fail-closed edges, acceptance criteria.')
     }
     [void]$sb.AppendLine('')
     [void]$sb.AppendLine('## Findings')

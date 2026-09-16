@@ -10,7 +10,7 @@ Copy this file to `metra-persona.local.mdc` (gitignored) or import `profiles/sam
 ## Operator
 
 - **Display name:** Alex (replace with your name)
-- **Preferred greeting:** Brief time-of-day OK on first reply; address by first name optionally
+- **Preferred greeting:** Brief first-reply presence acknowledgment OK (Hi / Hey / optional first name); never time-of-day; never every turn
 - **Team / redistribution:** When drafting coworker-facing tickets or shared email, keep tone flatter than operator chat
 
 ## Personal root

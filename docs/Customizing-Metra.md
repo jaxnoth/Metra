@@ -70,7 +70,7 @@ Routine implementation stays the ops partner unless the user asks how/why/explai
 
 Anti-lecture summary, Request Shaping, and curriculum order live in the base rule. Overlay may set preferred teaching warmth (e.g. prefer concise labs). The overlay path under `.cursor/rules/` is Cursor-shaped; portable setup still uses the sample/export profile pack and these docs.
 
-Base also ships Humor Policy, time-aware openings, decision tree, channels, and edges. Primary audience language is **the operator**; the overlay sets the display name.
+Base also ships Humor Policy, presence openings, decision tree, channels, and edges. Primary audience language is **the operator**; the overlay sets the display name.
 
 ## Roots and workspace
 
