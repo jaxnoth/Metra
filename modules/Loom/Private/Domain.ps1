@@ -1220,7 +1220,12 @@ function Find-MetraLoomQueueItemByYarnHandoff {
         [Parameter(Mandatory)][string]$ApprovalRevision
     )
 
+    # Terminal rows do not block re-ingest. Scout retire uses superseded; real failures
+    # stay failed for visibility but a new Approve still creates a fresh AP-*.
+    $terminal = @('accepted', 'failed', 'rejected', 'superseded')
     foreach ($item in @(Get-MetraLoomQueueItems -Root $Root)) {
+        $status = [string](Get-LoomProp -Object $item -Name 'status' -Default '')
+        if ($terminal -contains $status.ToLowerInvariant()) { continue }
         $handoff = Get-LoomProp -Object $item -Name 'yarnHandoff' -Default $null
         if ($null -eq $handoff) { continue }
         $idMatch = [string](Get-LoomProp -Object $handoff -Name 'planIdentity' -Default '')

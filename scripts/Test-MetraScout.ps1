@@ -1,6 +1,7 @@
 # Metra Scout fixture tooling - permanent path inspection helper.
 # -Probe (default): read-only health of Ask/Loom/Yarn against the Scout plan leaf.
-# -Reset -Confirm: retire this Scout leaf only (clear Approve marks, drop Yarn row, fail Loom item).
+# -Reset -Confirm: retire this Scout leaf only (clear Approve marks, drop Yarn row, supersede Loom item).
+# Scout success path never uses Loom status failed - retire is superseded so the next Approve can enqueue.
 
 [CmdletBinding(DefaultParameterSetName = 'Probe')]
 param(
@@ -346,28 +347,30 @@ function Invoke-ScoutReset {
         [void]$actions.Add([PSCustomObject]@{ step = 'yarn-backlog'; result = 'absent' })
     }
 
-    # 3) Fail matching Loom queue items (frees Metra lane)
-    $failedIds = @()
+    # 3) Supersede matching Loom queue items (frees Metra lane; not a failure).
+    # Terminal failed/rejected/accepted/superseded rows are left alone. Next Approve + ingest
+    # creates a fresh AP-* because Yarn handoff lookup skips terminal queue rows.
+    $supersededIds = @()
     $loomRootCmd = Get-Command Resolve-MetraLoomRoot -ErrorAction SilentlyContinue
     if ($loomRootCmd -and (Get-Command Get-MetraLoomQueueItems -ErrorAction SilentlyContinue)) {
         $loomRootPath = [string]((Resolve-MetraLoomRoot).Path)
         $items = @(Get-MetraLoomQueueItems -Root $loomRootPath)
         foreach ($qi in $items) {
             $status = [string](Get-ScoutProp -Object $qi -Name 'status' -Default '')
-            if ($status -match '(?i)^(accepted|failed|rejected)$') { continue }
+            if ($status -match '(?i)^(accepted|failed|rejected|superseded)$') { continue }
             $yh = Get-ScoutProp -Object $qi -Name 'yarnHandoff' -Default $null
             $pi = [string](Get-ScoutProp -Object $yh -Name 'planIdentity' -Default '')
             if (-not $pi -or -not $pi.ToLowerInvariant().Contains($planFull.ToLowerInvariant())) { continue }
-            $qi | Add-Member -NotePropertyName status -NotePropertyValue 'failed' -Force
+            $qi | Add-Member -NotePropertyName status -NotePropertyValue 'superseded' -Force
             $qi | Add-Member -NotePropertyName laneHeld -NotePropertyValue $false -Force
             $qi | Add-Member -NotePropertyName lastError -NotePropertyValue 'scout-retire' -Force
             $qi | Add-Member -NotePropertyName updatedAt -NotePropertyValue ((Get-Date).ToUniversalTime().ToString('o')) -Force
             Save-MetraLoomQueueItem -Root $loomRootPath -Item $qi
-            $failedIds += [string]$qi.id
+            $supersededIds += [string]$qi.id
         }
     }
-    if ($failedIds.Count -gt 0) {
-        [void]$actions.Add([PSCustomObject]@{ step = 'loom-queue'; result = 'failed'; ids = $failedIds; reason = 'scout-retire' })
+    if ($supersededIds.Count -gt 0) {
+        [void]$actions.Add([PSCustomObject]@{ step = 'loom-queue'; result = 'superseded'; ids = $supersededIds; reason = 'scout-retire' })
     }
     else {
         [void]$actions.Add([PSCustomObject]@{ step = 'loom-queue'; result = 'absent-or-terminal' })

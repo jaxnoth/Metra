@@ -18,6 +18,16 @@ Entry shape:
 
 ---
 
+## 2026-09-15 - Plan harden: no silent collapse; stubs over drip-ship
+
+- Decision: Bing review and Metra plan harden must **not silently collapse** multi-phase or multi-slice intent into a narrower ship (for example rewriting overview to "Phase 0+1 only" and cancelling the rest) without an explicit operator-visible disposition.
+- Decision: Every dropped phase, later slice, or deferred capability must be either (a) **fully fleshed** as pending todos + doneWhen in the same plan, or (b) cut into a **named follow-up plan** (stub OK: stem, owner projectKey, objective, reopen trigger). Cancelled-without-successor is a review defect.
+- Decision: **Follow-up stubs are the default** when scope is deferred, provided they are called out in doneWhen and visible at Inspect / Bing pack / Approve so the operator sees what is in-ship versus parked.
+- Decision: Surveyor **Approve Plan** means implement **all pending** todos for that plan. Cancelled todos are out of scope for that approval only when a follow-up plan (or Decision Registry entry) already owns them.
+- Decision: Bing must **not over-parse** an implementable change set into a multi-week drip of tiny Approves. Prefer one coherent first-pass ship (pending scope complete enough to land) over serial micro-slices that burn calendar time without reducing real risk. Stubs capture true deferrals; they are not a license to strip a one-session implement into many Approves.
+- Why: Ticket watch desk showed the failure mode - Bing/harden casualties narrowed Phase 0+1 and cancelled later work without follow-up stubs, so Approve looked whole-plan while the artifact was already partial. Operator expectation is whole pending plan on Approve, with honest deferrals tracked - not silent shrink or death-by-a-thousand slices.
+- See: `docs/playbooks/yarn.md`, `docs/playbooks/loom.md`, Surveyor Approve Plan; scar plan `ticket_watch_desk_97f6eee6.plan.md`
+
 ## 2026-09-12 - Yarn content-bound desk marks (Surveyor Pack/Approve)
 
 - Decision: Loom handoff eligibility is **content-bound**: `externalReviewed` + `externalReviewHash` (Yarn `review affirm`) and `approveForLoom` + `approveForLoomHash` (Surveyor Approve Plan) must all match the current canonical plan content hash. Plan edits invalidate both gates without editor integration.
