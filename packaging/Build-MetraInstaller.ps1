@@ -41,16 +41,23 @@ if ([string]::IsNullOrWhiteSpace($version)) {
 }
 
 function Find-MetraIscc {
-    $localPrograms = Join-Path $env:LOCALAPPDATA 'Programs\Inno Setup 6\ISCC.exe'
-    $candidates = @(
-        ${env:METRA_ISCC},
-        $localPrograms,
-        (Join-Path ${env:ProgramFiles(x86)} 'Inno Setup 6\ISCC.exe'),
-        (Join-Path $env:ProgramFiles 'Inno Setup 6\ISCC.exe')
-    )
+    $candidates = New-Object System.Collections.Generic.List[string]
+    if (-not [string]::IsNullOrWhiteSpace(${env:METRA_ISCC})) {
+        [void]$candidates.Add(${env:METRA_ISCC})
+    }
+    if (-not [string]::IsNullOrWhiteSpace($env:LOCALAPPDATA)) {
+        [void]$candidates.Add((Join-Path $env:LOCALAPPDATA 'Programs\Inno Setup 6\ISCC.exe'))
+    }
+    $pf86 = ${env:ProgramFiles(x86)}
+    if (-not [string]::IsNullOrWhiteSpace($pf86)) {
+        [void]$candidates.Add((Join-Path $pf86 'Inno Setup 6\ISCC.exe'))
+    }
+    if (-not [string]::IsNullOrWhiteSpace($env:ProgramFiles)) {
+        [void]$candidates.Add((Join-Path $env:ProgramFiles 'Inno Setup 6\ISCC.exe'))
+    }
     $cmd = Get-Command iscc.exe -ErrorAction SilentlyContinue
     if ($cmd) {
-        $candidates += $cmd.Source
+        [void]$candidates.Add($cmd.Source)
     }
 
     foreach ($c in @($candidates | Where-Object { -not [string]::IsNullOrWhiteSpace($_) })) {
