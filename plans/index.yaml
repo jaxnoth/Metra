@@ -46,6 +46,11 @@ plans:
     authority: repo
     repoPath: new-use-case-for-metra-sort-of-dedicated-server.plan.md
     updatedAt: '2026-09-10T14:49:05.2327366Z'
+  - stem: orion-alert-desk
+    cursorLeaf: orion_alert_desk_9a6fc33e.plan.md
+    authority: cursor
+    repoPath: null
+    updatedAt: '2026-09-17T18:41:45.0081185Z'
   - stem: routing-graph-evolution
     cursorLeaf: null
     authority: repo
