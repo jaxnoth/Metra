@@ -20,6 +20,7 @@ Governed execution harness (queue, journal, triage, branch runner). Metra hosts 
 .\metra.ps1 loom triage
 .\metra.ps1 loom plans list
 .\metra.ps1 loom enqueue -FromPlan -Path <plan.md>
+.\metra.ps1 loom retry -Id <AP-...>                 # failed -> queued (operator requeue)
 .\metra.ps1 loom run -Id <AP-...> -DryRun
 .\metra.ps1 loom run -Id <AP-...> -Confirm          # implement + auto-chain review (Slice 4)
 .\metra.ps1 loom run -Id <AP-...> -Confirm -NoChainReview   # implement only; stop at reviewing
@@ -70,7 +71,7 @@ Morning handoff unchanged: `loom daily` → pack-diff review → `daily approve 
 |------|--------|
 | Host | Metra exports `Invoke-MetraLoomImplementer` (not Ask `/v1/complete`) |
 | Process | One-shot `engines/cursor/implementer-run.mjs --request <absolute request.json>` |
-| I/O | stdout = one contract JSON object (`ok` / `completed` / `failed`); stderr = diagnostics only. Node emits `ok` or `completed` when the SDK reports that status; as a compatibility fallback, a non-empty `changedFiles` / `changedPaths` signal also counts as success (still without requiring status). Non-empty freeform text alone is never success. Host accepts both `ok` and `completed` (Runner same). Path policy stays with the Runner. |
+| I/O | stdout = one contract JSON object (`ok` / `completed` / `failed`); stderr = diagnostics only. Node emits `ok` or `completed` when the SDK reports `ok`, `completed`, or `finished` (`finished` maps to the `completed` envelope). As a compatibility fallback, a non-empty `changedFiles` / `changedPaths` signal also counts as success (still without requiring status). Non-empty freeform text alone is never success. Host accepts both `ok` and `completed` (Runner same). Path policy stays with the Runner. |
 | cwd | Absolute canonical `ProjectRoot` (not `RunDir`) |
 | Prompt vs policy | Agent prompt may cite allowed/forbidden/doneWhen as guidance; **Runner** `Test-LoomChangedPathsAllowed` remains fail-closed enforcement |
 | Adapter | Loom-only sessions import Metra via `Import-LoomMetraHostModule` once before `adapter-unavailable` |

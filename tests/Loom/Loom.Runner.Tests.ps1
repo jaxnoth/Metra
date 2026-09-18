@@ -75,6 +75,11 @@ Describe 'Loom Slice 3 transitions' {
         Test-MetraLoomTransition -From 'completed' -To 'implementing' | Should -BeTrue
         Test-MetraLoomTransition -From 'completed' -To 'queued' | Should -BeFalse
     }
+    It 'allows operator retry from failed to queued' {
+        Test-MetraLoomTransition -From 'failed' -To 'queued' | Should -BeTrue
+        Test-MetraLoomTransition -From 'failed' -To 'implementing' | Should -BeFalse
+        Test-MetraLoomTransition -From 'failed' -To 'claimed' | Should -BeFalse
+    }
 }
 
 Describe 'Loom run dry-run' {

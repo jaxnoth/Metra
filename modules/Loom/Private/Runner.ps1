@@ -14,7 +14,7 @@ function Get-LoomActiveTransitionMap {
         'completed'               = @('accepted-pending-commit', 'blocked', 'implementing')
         'accepted-pending-commit' = @('accepted', 'blocked')
         'accepted'                = @()
-        'failed'                  = @()
+        'failed'                  = @('queued')
         'rejected'                = @()
         'needsManualTest'         = @()
         'superseded'              = @()

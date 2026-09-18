@@ -1632,6 +1632,25 @@ function Invoke-LoomCommand {
             if ([string]::IsNullOrWhiteSpace($id)) { throw 'loom block -Id <AP-...> [-Reason "..."]' }
             return Invoke-MetraLoomStateChange -Root $Root -ItemId $id -From 'queued' -To 'blocked' -Reason $reason
         }
+        'retry' {
+            $id = $null
+            $reason = 'operator-retry-failed'
+            for ($i = 0; $i -lt @($ArgsRest).Count; $i++) {
+                if ($ArgsRest[$i] -eq '-Id' -and ($i + 1) -lt $ArgsRest.Count) { $id = [string]$ArgsRest[$i + 1]; $i++ }
+                elseif ($ArgsRest[$i] -eq '-Reason' -and ($i + 1) -lt $ArgsRest.Count) { $reason = [string]$ArgsRest[$i + 1]; $i++ }
+            }
+            if ([string]::IsNullOrWhiteSpace($id)) { throw 'loom retry -Id <AP-...> [-Reason "..."]' }
+            return Invoke-MetraLoomStateChange -Root $Root -ItemId $id -From 'failed' -To 'queued' -Reason $reason -Mutator {
+                param($i)
+                if ($i.PSObject.Properties['lastError']) {
+                    $i.PSObject.Properties.Remove('lastError')
+                }
+                if ($i.PSObject.Properties['laneHeld']) {
+                    $i.laneHeld = $false
+                }
+                return $i
+            }
+        }
         'enqueue' {
             $candidateId = $null
             $fromPlan = $false
@@ -1811,7 +1830,7 @@ function Invoke-LoomCommand {
             }
         }
         default {
-            throw "Unknown loom subcommand: $Subcommand. Use triage|enqueue|plans|status|show|block|run|review|loop|daily|pattern|migrate."
+            throw "Unknown loom subcommand: $Subcommand. Use triage|enqueue|plans|status|show|block|retry|run|review|loop|daily|pattern|migrate."
         }
     }
 }
