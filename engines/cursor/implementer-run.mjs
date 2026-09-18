@@ -111,7 +111,8 @@ function extractResultText(result) {
 }
 
 /**
- * Success requires an explicit SDK status of ok|completed (not merely non-empty text).
+ * Success requires an explicit SDK status of ok|completed|finished (not merely non-empty text).
+ * `finished` is the Cursor SDK run-end status (same family as Ask engine); map to completed.
  * Optional changed-file signals also count when status is absent but files were reported.
  * Tree delta enforcement stays with the Loom Runner (authoritative path policy).
  */
@@ -128,7 +129,7 @@ function resolveSdkSuccess(result) {
     return { ok: false, reason: detail }
   }
 
-  if (status === 'ok' || status === 'completed') {
+  if (status === 'ok' || status === 'completed' || status === 'finished') {
     return { ok: true, envelopeStatus: status === 'ok' ? 'ok' : 'completed' }
   }
 
@@ -145,7 +146,7 @@ function resolveSdkSuccess(result) {
     return {
       ok: false,
       reason:
-        'SDK did not report status=ok|completed (non-empty text alone is not success).',
+        'SDK did not report status=ok|completed|finished (non-empty text alone is not success).',
     }
   }
 

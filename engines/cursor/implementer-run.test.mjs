@@ -116,6 +116,15 @@ test('SDK success with status=completed returns completed envelope', () => {
   assert.equal(body.status, 'completed')
 })
 
+test('SDK success with status=finished returns completed envelope', () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'metra-impl-'))
+  const p = writeRequest(dir)
+  const r = runNode(['--request', p], { METRA_IMPLEMENTER_MOCK_MODE: 'success-finished' })
+  assert.equal(r.status, 0)
+  const body = parseStdoutJson(r.stdout)
+  assert.equal(body.status, 'completed')
+})
+
 test('SDK changedFiles without status still succeeds', () => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'metra-impl-'))
   const p = writeRequest(dir)
@@ -125,14 +134,14 @@ test('SDK changedFiles without status still succeeds', () => {
   assert.equal(body.status, 'completed')
 })
 
-test('SDK text without status=ok|completed fails', () => {
+test('SDK text without status=ok|completed|finished fails', () => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'metra-impl-'))
   const p = writeRequest(dir)
   const r = runNode(['--request', p], { METRA_IMPLEMENTER_MOCK_MODE: 'text-only' })
   assert.notEqual(r.status, 0)
   const body = parseStdoutJson(r.stdout)
   assert.equal(body.status, 'failed')
-  assert.match(body.message, /status=ok\|completed|non-empty text alone/i)
+  assert.match(body.message, /status=ok\|completed\|finished|non-empty text alone/i)
 })
 
 test('SDK empty response fails', () => {
@@ -142,7 +151,7 @@ test('SDK empty response fails', () => {
   assert.notEqual(r.status, 0)
   const body = parseStdoutJson(r.stdout)
   assert.equal(body.status, 'failed')
-  assert.match(body.message, /status=ok\|completed|not an object|explicit success/i)
+  assert.match(body.message, /status=ok\|completed\|finished|not an object|explicit success/i)
 })
 
 test('authentication response fails', () => {

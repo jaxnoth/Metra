@@ -1050,9 +1050,18 @@ switch ($Command) {
         if ($Rest.Count -gt 1) {
             $subArgs = @($Rest[1..($Rest.Count - 1)])
         }
-        # Top-level -Id binds on metra.ps1 and is stripped from RemainingArguments.
+        # Top-level -Id / -Path bind on metra.ps1 and are stripped from RemainingArguments.
         if (-not [string]::IsNullOrWhiteSpace($Id) -and ($subArgs -notcontains '-Id')) {
             $subArgs = @('-Id', [string]$Id) + @($subArgs)
+        }
+        # Append -Path only for subcommands that consume it (do not prepend - that steals plans show|list).
+        if (-not [string]::IsNullOrWhiteSpace($Path) -and ($subArgs -notcontains '-Path')) {
+            $needsPath =
+                ($sub -ieq 'enqueue') -or
+                ($sub -ieq 'plans' -and $subArgs.Count -gt 0 -and [string]$subArgs[0] -ieq 'show')
+            if ($needsPath) {
+                $subArgs = @($subArgs) + @('-Path', [string]$Path)
+            }
         }
         $subArgs = Add-MetraLoomConfirmForward -Sub $sub -SubArgs $subArgs -ConfirmPresent:$Confirm.IsPresent
         $result = Invoke-MetraLoomCommand -Subcommand $sub -ArgsRest $subArgs
@@ -1087,6 +1096,16 @@ switch ($Command) {
         $subArgs = @()
         if ($Rest.Count -gt 1) {
             $subArgs = @($Rest[1..($Rest.Count - 1)])
+        }
+        # Top-level -Path binds on metra.ps1 and is stripped from RemainingArguments.
+        if (-not [string]::IsNullOrWhiteSpace($Path) -and ($subArgs -notcontains '-Path')) {
+            $needsPath =
+                ($sub -ieq 'pack') -or
+                ($sub -ieq 'plan' -and $subArgs.Count -gt 0 -and [string]$subArgs[0] -ieq 'approve') -or
+                ($sub -ieq 'review' -and $subArgs.Count -gt 0 -and [string]$subArgs[0] -ieq 'affirm')
+            if ($needsPath) {
+                $subArgs = @($subArgs) + @('-Path', [string]$Path)
+            }
         }
         $subArgs = Add-MetraYarnConfirmForward -Sub $sub -SubArgs $subArgs -ConfirmPresent:$Confirm.IsPresent
         $result = Invoke-MetraYarnCommand -Subcommand $sub -ArgsRest $subArgs

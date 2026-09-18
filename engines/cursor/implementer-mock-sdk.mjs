@@ -1,7 +1,7 @@
 /**
  * Mock Cursor SDK for implementer-run.mjs Node tests (no network).
  * Controlled by METRA_IMPLEMENTER_MOCK_MODE:
- *   success | success-completed | text-only | changed-files | empty | auth | licensing | transient | missing-create
+ *   success | success-completed | success-finished | text-only | changed-files | empty | auth | licensing | transient | missing-create
  */
 function mode() {
   return String(process.env.METRA_IMPLEMENTER_MOCK_MODE || 'success').trim().toLowerCase()
@@ -62,6 +62,13 @@ export const Agent = {
           return {
             async wait() {
               return { status: 'completed', result: 'implemented fixture changes' }
+            },
+          }
+        }
+        if (m === 'success-finished') {
+          return {
+            async wait() {
+              return { status: 'finished', result: 'implemented fixture changes' }
             },
           }
         }
