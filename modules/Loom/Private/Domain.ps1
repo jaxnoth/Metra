@@ -1634,16 +1634,28 @@ function Invoke-LoomCommand {
         }
         'retry' {
             $id = $null
-            $reason = 'operator-retry-failed'
+            $reason = 'operator-retry'
             for ($i = 0; $i -lt @($ArgsRest).Count; $i++) {
                 if ($ArgsRest[$i] -eq '-Id' -and ($i + 1) -lt $ArgsRest.Count) { $id = [string]$ArgsRest[$i + 1]; $i++ }
                 elseif ($ArgsRest[$i] -eq '-Reason' -and ($i + 1) -lt $ArgsRest.Count) { $reason = [string]$ArgsRest[$i + 1]; $i++ }
             }
             if ([string]::IsNullOrWhiteSpace($id)) { throw 'loom retry -Id <AP-...> [-Reason "..."]' }
-            return Invoke-MetraLoomStateChange -Root $Root -ItemId $id -From 'failed' -To 'queued' -Reason $reason -Mutator {
+            $current = Get-MetraLoomQueueItem -Root $Root -Id $id
+            if (-not $current) { throw "Queue item not found: $id" }
+            $fromStatus = [string]$current.status
+            if ($fromStatus -notin @('failed', 'blocked')) {
+                throw "loom retry expects status failed|blocked (item $id is '$fromStatus')"
+            }
+            if ([string]::IsNullOrWhiteSpace($reason) -or $reason -eq 'operator-retry') {
+                $reason = "operator-retry-$fromStatus"
+            }
+            return Invoke-MetraLoomStateChange -Root $Root -ItemId $id -From $fromStatus -To 'queued' -Reason $reason -Mutator {
                 param($i)
                 if ($i.PSObject.Properties['lastError']) {
                     $i.PSObject.Properties.Remove('lastError')
+                }
+                if ($i.PSObject.Properties['blockedFrom']) {
+                    $i.PSObject.Properties.Remove('blockedFrom')
                 }
                 if ($i.PSObject.Properties['laneHeld']) {
                     $i.laneHeld = $false

@@ -20,7 +20,7 @@ Governed execution harness (queue, journal, triage, branch runner). Metra hosts 
 .\metra.ps1 loom triage
 .\metra.ps1 loom plans list
 .\metra.ps1 loom enqueue -FromPlan -Path <plan.md>
-.\metra.ps1 loom retry -Id <AP-...>                 # failed -> queued (operator requeue)
+.\metra.ps1 loom retry -Id <AP-...>                 # failed|blocked -> queued (operator requeue)
 .\metra.ps1 loom run -Id <AP-...> -DryRun
 .\metra.ps1 loom run -Id <AP-...> -Confirm          # implement + auto-chain review (Slice 4)
 .\metra.ps1 loom run -Id <AP-...> -Confirm -NoChainReview   # implement only; stop at reviewing
@@ -55,7 +55,7 @@ Governed execution harness (queue, journal, triage, branch runner). Metra hosts 
 |------|--------|
 | Scope | Prefer one successful item per invocation; on run failure after claim, move to `blocked` with `laneHeld=false` and **continue** to the next eligible queued item in the same session |
 | Selection | Atomic claim among free `projectKey` lanes (see A4) |
-| Policy | Fail closed: missing `classification` rejects; code-only; routing >= 0.85; verify commands present; **non-empty `project.root` required** at ingest/eligibility. Clean git baseline required except **`kind: Scout`** (dirty tree is a recorded finding; branch isolation/hard-reset skipped so operator WIP is preserved; path scope uses a content fingerprint **run delta** vs the pre-run dirty snapshot, not the whole dirty tree) |
+| Policy | Fail closed: missing `classification` rejects; code-only; routing >= 0.85; verify commands present; **non-empty `project.root` required** at ingest/eligibility. Clean git baseline required except (1) **`kind: Scout`** (dirty tree is a recorded finding; branch isolation/hard-reset skipped so operator WIP is preserved; path scope uses a content fingerprint **run delta** vs the pre-run dirty snapshot, not the whole dirty tree) and (2) affiliation-only dirt limited to `plans/index.yaml` (Yarn/Surveyor upserts must not block a build lane) |
 | Pause | Tier 1 engine faults set `loopPaused`, `pausedAtUtc`, `pauseReason` in `state.json` |
 | Pause enforcement | Subsequent `loom loop` emits reason + age; **no dequeue** while paused |
 | Supervised path | `loom run -Id <AP-...> -Confirm` (same claim authority) |
