@@ -46,6 +46,11 @@ plans:
     authority: repo
     repoPath: new-use-case-for-metra-sort-of-dedicated-server.plan.md
     updatedAt: '2026-09-10T14:49:05.2327366Z'
+  - stem: ops-itsm-ui-mining
+    cursorLeaf: ops_itsm_ui_mining_4b04b1ae.plan.md
+    authority: cursor
+    repoPath: null
+    updatedAt: '2026-09-18T01:41:46.5844354Z'
   - stem: orion-alert-desk
     cursorLeaf: orion_alert_desk_9a6fc33e.plan.md
     authority: cursor

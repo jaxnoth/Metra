@@ -9,7 +9,7 @@ function Get-LoomActiveTransitionMap {
         'queued'                  = @('claimed', 'blocked')
         'claimed'                 = @('implementing', 'blocked', 'failed')
         'implementing'            = @('reviewing', 'blocked', 'failed', 'claimed')
-        'blocked'                 = @()
+        'blocked'                 = @('queued')
         'reviewing'               = @('completed', 'implementing', 'blocked')
         'completed'               = @('accepted-pending-commit', 'blocked', 'implementing')
         'accepted-pending-commit' = @('accepted', 'blocked')
@@ -228,17 +228,39 @@ function Test-LoomForbiddenPathMatch {
     )
 }
 
+function Test-LoomGitPathIgnoredForBaseline {
+    <#
+    .SYNOPSIS
+        Affiliation-only dirt that must not fail closed a Loom clean-tree baseline.
+        Yarn/Surveyor may upsert plans/index.yaml without that being implementer WIP.
+    #>
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory)][string]$RelativePath
+    )
+
+    $norm = ([string]$RelativePath).Replace('\', '/').Trim().TrimStart('./').TrimEnd('/')
+    if ([string]::IsNullOrWhiteSpace($norm)) { return $false }
+    # Exact affiliation index only - not other plans/*.plan.md scars or docs.
+    return ($norm -eq 'plans/index.yaml')
+}
+
 function Test-LoomGitWorkingTreeClean {
     [CmdletBinding()]
     param(
         [Parameter(Mandatory)][string]$ProjectRoot
     )
 
-    $r = Invoke-LoomGit -ProjectRoot $ProjectRoot -GitArgs @('status', '--porcelain')
+    $r = Invoke-LoomGit -ProjectRoot $ProjectRoot -GitArgs @('status', '--porcelain', '-uall')
     if ($r.ExitCode -ne 0) {
         throw "git status failed in ${ProjectRoot}: $(Get-LoomGitErrorDetail $r)"
     }
-    return [string]::IsNullOrWhiteSpace($r.Stdout)
+    if ([string]::IsNullOrWhiteSpace($r.Stdout)) { return $true }
+
+    $material = @(Get-LoomGitChangedPaths -ProjectRoot $ProjectRoot | Where-Object {
+            -not (Test-LoomGitPathIgnoredForBaseline -RelativePath $_)
+        })
+    return ($material.Count -eq 0)
 }
 
 function Get-LoomGitHeadCommit {

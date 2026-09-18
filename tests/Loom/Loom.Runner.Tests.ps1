@@ -80,6 +80,47 @@ Describe 'Loom Slice 3 transitions' {
         Test-MetraLoomTransition -From 'failed' -To 'implementing' | Should -BeFalse
         Test-MetraLoomTransition -From 'failed' -To 'claimed' | Should -BeFalse
     }
+    It 'allows operator retry from blocked to queued' {
+        Test-MetraLoomTransition -From 'blocked' -To 'queued' | Should -BeTrue
+        Test-MetraLoomTransition -From 'blocked' -To 'claimed' | Should -BeFalse
+        Test-MetraLoomTransition -From 'blocked' -To 'implementing' | Should -BeFalse
+    }
+}
+
+Describe 'Loom dirty-git baseline ignore' {
+    It 'treats plans/index.yaml-only dirt as clean for baseline' {
+        InModuleScope Loom {
+            $proj = Join-Path ([IO.Path]::GetTempPath()) ('ap-idx-' + [guid]::NewGuid().ToString('n'))
+            try {
+                New-Item -ItemType Directory -Path $proj -Force | Out-Null
+                Push-Location $proj
+                try {
+                    git init 2>$null | Out-Null
+                    git config user.email 'autoprogram@test.local' 2>$null | Out-Null
+                    git config user.name 'Loom Test' 2>$null | Out-Null
+                    Set-Content -Path (Join-Path $proj 'README.md') -Value '# idx baseline'
+                    git add README.md 2>$null | Out-Null
+                    git commit -m 'init' 2>$null | Out-Null
+                    $plans = Join-Path $proj 'plans'
+                    New-Item -ItemType Directory -Path $plans -Force | Out-Null
+                    Set-Content -Path (Join-Path $plans 'index.yaml') -Value "schemaVersion: 1`nproject: Metra`nplans: []`n"
+                    git add plans/index.yaml 2>$null | Out-Null
+                    git commit -m 'index' 2>$null | Out-Null
+                    Test-LoomGitWorkingTreeClean -ProjectRoot $proj | Should -BeTrue
+                    Set-Content -Path (Join-Path $plans 'index.yaml') -Value "schemaVersion: 1`nproject: Metra`nplans:`n  - stem: demo`n    cursorLeaf: demo.plan.md`n    authority: cursor`n    repoPath: null`n    updatedAt: '2026-01-01T00:00:00Z'`n"
+                    Test-LoomGitWorkingTreeClean -ProjectRoot $proj | Should -BeTrue
+                    Set-Content -Path (Join-Path $proj 'README.md') -Value '# dirty real file'
+                    Test-LoomGitWorkingTreeClean -ProjectRoot $proj | Should -BeFalse
+                }
+                finally {
+                    Pop-Location
+                }
+            }
+            finally {
+                Remove-Item -LiteralPath $proj -Recurse -Force -ErrorAction SilentlyContinue
+            }
+        }
+    }
 }
 
 Describe 'Loom run dry-run' {
