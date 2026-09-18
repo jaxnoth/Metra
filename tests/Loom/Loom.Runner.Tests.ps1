@@ -154,8 +154,14 @@ Describe 'Loom run live (git + implementer override)' {
             Initialize-MetraLoomLayout -Root $root
             $item = New-LoomTestQueueItem -Root $root -ProjectRoot $proj
             { Invoke-MetraLoomRun -Root $root -ItemId $item.id -Confirm -ChainReview:$false } |
-                Should -Throw '*not clean*'
-            (Get-MetraLoomQueueItem -Root $root -Id $item.id).status | Should -Be 'blocked'
+                Should -Throw '*dirty.txt*'
+            $blocked = Get-MetraLoomQueueItem -Root $root -Id $item.id
+            $blocked.status | Should -Be 'blocked'
+            [string]$blocked.lastError | Should -Match 'dirty\.txt'
+            $codes = @($blocked.evidence | ForEach-Object { [string]$_.code })
+            $codes | Should -Contain 'dirty-git-baseline'
+            $find = @($blocked.evidence | Where-Object { [string]$_.code -eq 'dirty-git-baseline' } | Select-Object -First 1)
+            [string]$find.message | Should -Match 'dirty\.txt'
         }
         finally {
             Remove-Item -LiteralPath $root -Recurse -Force -ErrorAction SilentlyContinue

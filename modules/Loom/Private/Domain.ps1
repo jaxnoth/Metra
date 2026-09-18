@@ -703,6 +703,80 @@ function Read-MetraLoomPlanFile {
     }
 }
 
+function Resolve-MetraLoomAllowedPathsFromPlan {
+    <#
+    .SYNOPSIS
+        Default scripts/tests/docs plus curated roots/files named in the plan (overview, todos, body).
+        Teaching ingest: if the plan says touch AGENTS.md / modules / engines / etc., allow those paths.
+    #>
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory)]$Plan,
+        [string]$PlanText = ''
+    )
+
+    $defaults = @('scripts', 'tests', 'docs')
+    # Curated extenders only - never invent arbitrary filesystem roots from free text.
+    $extend = @(
+        'AGENTS.md',
+        'README.md',
+        'CLAUDE.md',
+        'modules',
+        'engines',
+        'src',
+        'Public',
+        'catalog',
+        'hosts',
+        'config',
+        'build',
+        'tools',
+        '.cursor/rules'
+    )
+
+    $parts = New-Object System.Collections.Generic.List[string]
+    foreach ($p in @([string](Get-LoomProp -Object $Plan -Name 'overview' -Default ''), [string](Get-LoomProp -Object $Plan -Name 'name' -Default ''))) {
+        if (-not [string]::IsNullOrWhiteSpace($p)) { [void]$parts.Add($p) }
+    }
+    foreach ($t in @($(Get-LoomProp -Object $Plan -Name 'todos' -Default @()))) {
+        $c = [string](Get-LoomProp -Object $t -Name 'content' -Default '')
+        if (-not [string]::IsNullOrWhiteSpace($c)) { [void]$parts.Add($c) }
+    }
+    if (-not [string]::IsNullOrWhiteSpace($PlanText)) {
+        [void]$parts.Add($PlanText)
+    }
+    else {
+        $planPath = [string](Get-LoomProp -Object $Plan -Name 'path' -Default '')
+        if (-not [string]::IsNullOrWhiteSpace($planPath) -and (Test-Path -LiteralPath $planPath)) {
+            try {
+                [void]$parts.Add([System.IO.File]::ReadAllText($planPath, (Get-LoomUtf8NoBomEncoding)))
+            }
+            catch { }
+        }
+    }
+
+    $corpus = ($parts -join "`n")
+    $found = New-Object System.Collections.Generic.List[string]
+    foreach ($d in $defaults) { [void]$found.Add($d) }
+
+    foreach ($e in $extend) {
+        $escaped = [regex]::Escape($e)
+        if ($e -match '\.') {
+            $pattern = "(?i)(?<![A-Za-z0-9_./\\])$escaped(?![A-Za-z0-9_])"
+        }
+        else {
+            $pattern = "(?i)(?<![A-Za-z0-9_])$escaped(?:[/\\]|(?![A-Za-z0-9_]))"
+        }
+        if ($corpus -match $pattern) {
+            $already = $false
+            foreach ($f in $found) {
+                if ([string]::Equals($f, $e, [StringComparison]::OrdinalIgnoreCase)) { $already = $true; break }
+            }
+            if (-not $already) { [void]$found.Add($e) }
+        }
+    }
+    return @($found.ToArray())
+}
+
 function Resolve-MetraLoomPlanProject {
     [CmdletBinding()]
     param(
@@ -1092,7 +1166,7 @@ function Invoke-MetraLoomTriage {
         }
         $contract = [PSCustomObject]@{
             objective      = [string]$plan.overview
-            allowedPaths   = @('scripts', 'tests', 'docs')
+            allowedPaths   = @(Resolve-MetraLoomAllowedPathsFromPlan -Plan $plan)
             forbiddenPaths = @('docs/Decisions.md')
             doneWhen       = @($plan.doneWhen)
             verifyCommands = @($plan.verifyCommands)
@@ -1354,7 +1428,7 @@ function Invoke-MetraLoomIngestApprovedPlan {
     }
     $contract = [PSCustomObject]@{
         objective      = [string]$plan.overview
-        allowedPaths   = @('scripts', 'tests', 'docs')
+        allowedPaths   = @(Resolve-MetraLoomAllowedPathsFromPlan -Plan $plan)
         forbiddenPaths = @('docs/Decisions.md')
         doneWhen       = @($(if (@($plan.doneWhen).Count -gt 0) { $plan.doneWhen } else { 'Plan slice acceptance criteria met.' }))
         verifyCommands = @($(if (@($plan.verifyCommands).Count -gt 0) { $plan.verifyCommands } else { '.\metra.ps1 verify' }))
@@ -1500,7 +1574,7 @@ function Invoke-MetraLoomEnqueueFromPlan {
     $scoresIn = @{ impact = 4; confidence = 5; userTestBurden = 1; autoVerifiable = 5; dependencyValue = 3 }
     $contract = [PSCustomObject]@{
         objective      = [string]$plan.overview
-        allowedPaths   = @('scripts', 'tests', 'docs')
+        allowedPaths   = @(Resolve-MetraLoomAllowedPathsFromPlan -Plan $plan)
         forbiddenPaths = @('docs/Decisions.md')
         doneWhen       = @($(if (@($plan.doneWhen).Count -gt 0) { $plan.doneWhen } else { 'Plan slice acceptance criteria met.' }))
         verifyCommands = @($(if (@($plan.verifyCommands).Count -gt 0) { $plan.verifyCommands } else { '.\metra.ps1 verify' }))
@@ -1774,7 +1848,7 @@ function Invoke-LoomCommand {
             $untilGate = $ArgsRest -contains '-UntilDailyGate'
             $dry = $ArgsRest -contains '-DryRun'
             if (-not $untilGate) {
-                throw 'loom loop requires -UntilDailyGate [-DryRun] [-Confirm]'
+                throw 'loom loop requires -UntilDailyGate [-DryRun] [-Confirm] [-ScoutOnly]'
             }
             $params = @{
                 Root            = $Root
@@ -1783,6 +1857,7 @@ function Invoke-LoomCommand {
             }
             if ($dry) { $params['DryRun'] = $true }
             if ($ArgsRest -contains '-Confirm') { $params['Confirm'] = $true }
+            if ($ArgsRest -contains '-ScoutOnly') { $params['ScoutOnly'] = $true }
             return Invoke-MetraLoomLoop @params
         }
         'migrate' {

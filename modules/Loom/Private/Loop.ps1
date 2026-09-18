@@ -153,11 +153,12 @@ function Test-LoomUnattendedPolicy {
 function Get-LoomEligibleQueuedItems {
     [CmdletBinding()]
     param(
-        [Parameter(Mandatory)][string]$Root
+        [Parameter(Mandatory)][string]$Root,
+        [switch]$ScoutOnly
     )
 
     $busy = @(Get-MetraLoomBusyProjectKeys -Root $Root)
-    $items = @(Get-MetraLoomEligibleQueuedForClaim -Root $Root -BusyProjectKeys $busy)
+    $items = @(Get-MetraLoomEligibleQueuedForClaim -Root $Root -BusyProjectKeys $busy -ScoutOnly:$ScoutOnly)
     $eligible = New-Object System.Collections.Generic.List[object]
     foreach ($item in $items) {
         [void]$eligible.Add([PSCustomObject]@{
@@ -267,6 +268,7 @@ function Invoke-MetraLoomLoop {
     <#
     .SYNOPSIS
         Slice 6 unattended loop: one eligible queued item through run+review to completed; stop at daily gate.
+        -ScoutOnly: claim only kind: Scout items (Pulse schedule uses this; Daily does not).
     #>
     [CmdletBinding()]
     param(
@@ -275,6 +277,7 @@ function Invoke-MetraLoomLoop {
         [switch]$DryRun,
         [switch]$Confirm,
         [switch]$UntilDailyGate,
+        [switch]$ScoutOnly,
         [scriptblock]$RunOverride
     )
 
@@ -391,12 +394,13 @@ function Invoke-MetraLoomLoop {
         $engine = [PSCustomObject]@{ healthy = $true; tier = 'ok'; reason = 'dry-run-skipped' }
     }
 
-    $candidates = @(Get-LoomEligibleQueuedItems -Root $Root)
+    $candidates = @(Get-LoomEligibleQueuedItems -Root $Root -ScoutOnly:$ScoutOnly)
     if ($DryRun) {
         if (@($candidates).Count -eq 0) {
             return [PSCustomObject]@{
-                outcome = 'idle'
-                message = 'No eligible queued items'
+                outcome   = 'idle'
+                scoutOnly = [bool]$ScoutOnly
+                message   = $(if ($ScoutOnly) { 'No eligible Scout queued items' } else { 'No eligible queued items' })
             }
         }
         $selected = $candidates[0]
@@ -409,19 +413,22 @@ function Invoke-MetraLoomLoop {
             created        = $selected.created
             policy         = $policy
             eligibleCount  = @($candidates).Count
+            scoutOnly      = [bool]$ScoutOnly
         }
     }
 
     $processed = New-Object System.Collections.Generic.List[object]
     $sessionDir = $null
+    $claimReason = if ($ScoutOnly) { 'until-daily-gate-scout-only' } else { 'until-daily-gate' }
 
     while ($true) {
-        $claim = Invoke-MetraLoomClaimNextEligible -Root $Root -Actor 'harness-loop' -Reason 'until-daily-gate'
+        $claim = Invoke-MetraLoomClaimNextEligible -Root $Root -Actor 'harness-loop' -Reason $claimReason -ScoutOnly:$ScoutOnly
         if (-not $claim.claimed) {
             if ($processed.Count -eq 0) {
                 return [PSCustomObject]@{
-                    outcome = 'idle'
-                    message = ('No eligible queued items ({0})' -f [string]$claim.reason)
+                    outcome   = 'idle'
+                    scoutOnly = [bool]$ScoutOnly
+                    message   = ('No eligible queued items ({0})' -f [string]$claim.reason)
                 }
             }
             return [PSCustomObject]@{
@@ -444,8 +451,8 @@ function Invoke-MetraLoomLoop {
             from    = 'loop'
             to      = 'dequeue'
             actor   = 'harness-loop'
-            reason  = 'until-daily-gate'
-            message = ("score={0};claim={1}" -f (Get-LoomProp -Object $item.scores -Name 'total' -Default 0), $claim.reason)
+            reason  = $claimReason
+            message = ("score={0};claim={1};scoutOnly={2}" -f (Get-LoomProp -Object $item.scores -Name 'total' -Default 0), $claim.reason, [bool]$ScoutOnly)
         }
 
         $runResult = $null

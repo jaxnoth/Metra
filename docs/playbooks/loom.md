@@ -47,7 +47,7 @@ Governed execution harness (queue, journal, triage, branch runner). Metra hosts 
 | Atomic claim | `run` and `loop` share claim helpers under the `loom_queue` namespace lock: reload → busy lanes → select → `queued`→`claimed` → persist and journal → unlock |
 | Selection | Among free lanes: `scores.total` desc → `effectiveImpact` desc → `createdAt` asc → `id` asc |
 | Acceptance | `completed` → `accepted-pending-commit` (human ACCEPT; lane busy) → `accepted` after observe-only local commit verification. No commit/push/merge in verify. Verified `accepted` fail-open notifies Yarn Plan Board (Shipped); `accepted-pending-commit` does not. |
-| Ritual split | Triage no longer promotes Capture→candidate. Daily §3 points plan review at Yarn. Manual `loom enqueue -FromPlan` remains break-glass for Approved plans only. Allowed roots include `%USERPROFILE%\.cursor\plans`, `<project>\plans` (index + `authority: repo` scars), and legacy `<project>\docs`. Prefer `Resolve-MetraPlanPath` / WorkingPath over raw dual-home picks when a stem is known. |
+| Ritual split | Triage no longer promotes Capture→candidate. Daily §3 points plan review at Yarn. Manual `loom enqueue -FromPlan` remains break-glass for Approved plans only. Allowed roots include `%USERPROFILE%\.cursor\plans`, `<project>\plans` (index + `authority: repo` scars), and legacy `<project>\docs`. Prefer `Resolve-MetraPlanPath` / WorkingPath over raw dual-home picks when a stem is known. Ingest/enqueue `allowedPaths` starts at `scripts`/`tests`/`docs` and adds curated roots/files the plan names (`AGENTS.md`, `modules`, `engines`, …). |
 
 ## Slice 6 loop (unattended to daily gate)
 
@@ -55,7 +55,8 @@ Governed execution harness (queue, journal, triage, branch runner). Metra hosts 
 |------|--------|
 | Scope | Prefer one successful item per invocation; on run failure after claim, move to `blocked` with `laneHeld=false` and **continue** to the next eligible queued item in the same session |
 | Selection | Atomic claim among free `projectKey` lanes (see A4) |
-| Policy | Fail closed: missing `classification` rejects; code-only; routing >= 0.85; verify commands present; **non-empty `project.root` required** at ingest/eligibility. Clean git baseline required except (1) **`kind: Scout`** (dirty tree is a recorded finding; branch isolation/hard-reset skipped so operator WIP is preserved; path scope uses a content fingerprint **run delta** vs the pre-run dirty snapshot, not the whole dirty tree) and (2) affiliation-only dirt limited to `plans/index.yaml` (Yarn/Surveyor upserts must not block a build lane) |
+| Policy | Fail closed: missing `classification` rejects; code-only; routing >= 0.85; verify commands present; **non-empty `project.root` required** at ingest/eligibility. Clean git baseline required except (1) **`kind: Scout`** (dirty tree is a recorded finding; branch isolation/hard-reset skipped so operator WIP is preserved; path scope uses a content fingerprint **run delta** vs the pre-run dirty snapshot, not the whole dirty tree) and (2) affiliation-only dirt limited to `plans/index.yaml` (Yarn/Surveyor upserts must not block a build lane). Non-Scout dirty blocks record material dirty paths on `evidence` + `lastError` |
+| Pulse vs Daily | `MetraYarnLoomPulse` runs `loom loop -UntilDailyGate -ScoutOnly` (Scout canary only). Daily omits `-ScoutOnly` and may claim any eligible item |
 | Pause | Tier 1 engine faults set `loopPaused`, `pausedAtUtc`, `pauseReason` in `state.json` |
 | Pause enforcement | Subsequent `loom loop` emits reason + age; **no dequeue** while paused |
 | Supervised path | `loom run -Id <AP-...> -Confirm` (same claim authority) |

@@ -157,7 +157,8 @@ function Get-MetraLoomEligibleQueuedForClaim {
     [CmdletBinding()]
     param(
         [Parameter(Mandatory)][string]$Root,
-        [string[]]$BusyProjectKeys = @()
+        [string[]]$BusyProjectKeys = @(),
+        [switch]$ScoutOnly
     )
 
     $busy = New-Object 'System.Collections.Generic.HashSet[string]' ([StringComparer]::OrdinalIgnoreCase)
@@ -173,6 +174,7 @@ function Get-MetraLoomEligibleQueuedForClaim {
         if ($busy.Contains($key.Trim())) { continue }
         $policy = Test-LoomUnattendedPolicy -Root $Root -Item $item
         if (-not $policy.eligible) { continue }
+        if ($ScoutOnly -and -not (Test-LoomItemIsScout -Item $item)) { continue }
         [void]$candidates.Add($item)
     }
     return @(Sort-MetraLoomEligibleQueuedItems -Candidates @($candidates.ToArray()))
@@ -187,18 +189,19 @@ function Invoke-MetraLoomClaimNextEligible {
     param(
         [Parameter(Mandatory)][string]$Root,
         [string]$Actor = 'harness',
-        [string]$Reason = 'atomic-claim'
+        [string]$Reason = 'atomic-claim',
+        [switch]$ScoutOnly
     )
 
     return Invoke-LoomWithNamedMutex -Name 'loom_queue' -Script {
         $busy = @(Get-MetraLoomBusyProjectKeys -Root $Root)
-        $eligible = @(Get-MetraLoomEligibleQueuedForClaim -Root $Root -BusyProjectKeys $busy)
+        $eligible = @(Get-MetraLoomEligibleQueuedForClaim -Root $Root -BusyProjectKeys $busy -ScoutOnly:$ScoutOnly)
         if ($eligible.Count -eq 0) {
             return [PSCustomObject]@{
                 claimed     = $false
                 queueItemId = $null
                 item        = $null
-                reason      = 'no-eligible'
+                reason      = $(if ($ScoutOnly) { 'no-scout-eligible' } else { 'no-eligible' })
             }
         }
 
