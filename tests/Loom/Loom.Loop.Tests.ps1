@@ -281,3 +281,37 @@ Describe 'Loom daily intake loop paused section' {
         }
     }
 }
+
+Describe 'Loom loop ScoutOnly filter' {
+    It 'dry-run ScoutOnly skips non-Scout queued items' {
+        $root = New-LoomLoopTestRoot
+        try {
+            New-LoomLoopTestItem -Root $root -Id 'AP-20260902-0090' -Score 99 | Out-Null
+            $r = Invoke-MetraLoomLoop -Root $root -UntilDailyGate -DryRun -ScoutOnly
+            $r.outcome | Should -Be 'idle'
+            $r.scoutOnly | Should -BeTrue
+            $r.message | Should -Match 'Scout'
+        }
+        finally {
+            if (Test-Path $root) { Remove-Item -LiteralPath $root -Recurse -Force -ErrorAction SilentlyContinue }
+        }
+    }
+
+    It 'dry-run ScoutOnly selects Scout item over higher-score non-Scout' {
+        $root = New-LoomLoopTestRoot
+        try {
+            New-LoomLoopTestItem -Root $root -Id 'AP-20260902-0091' -Score 99 | Out-Null
+            $scout = New-LoomLoopTestItem -Root $root -Id 'AP-20260902-0092' -Score 1
+            $scout.summary = 'Scout'
+            $scout.source = [PSCustomObject]@{ type = 'formal-plan'; path = 'C:\fake\Scout.plan.md' }
+            Save-MetraLoomQueueItem -Root $root -Item $scout
+            $r = Invoke-MetraLoomLoop -Root $root -UntilDailyGate -DryRun -ScoutOnly
+            $r.outcome | Should -Be 'dry-run'
+            $r.selectedItemId | Should -Be 'AP-20260902-0092'
+            $r.scoutOnly | Should -BeTrue
+        }
+        finally {
+            if (Test-Path $root) { Remove-Item -LiteralPath $root -Recurse -Force -ErrorAction SilentlyContinue }
+        }
+    }
+}

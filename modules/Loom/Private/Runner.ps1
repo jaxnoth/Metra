@@ -257,10 +257,40 @@ function Test-LoomGitWorkingTreeClean {
     }
     if ([string]::IsNullOrWhiteSpace($r.Stdout)) { return $true }
 
-    $material = @(Get-LoomGitChangedPaths -ProjectRoot $ProjectRoot | Where-Object {
+    $material = @(Get-LoomGitMaterialDirtyPaths -ProjectRoot $ProjectRoot)
+    return ($material.Count -eq 0)
+}
+
+function Get-LoomGitMaterialDirtyPaths {
+    <#
+    .SYNOPSIS
+        Porcelain paths that fail the Loom clean-tree baseline (after affiliation carve-outs).
+    #>
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory)][string]$ProjectRoot
+    )
+
+    return @(Get-LoomGitChangedPaths -ProjectRoot $ProjectRoot | Where-Object {
             -not (Test-LoomGitPathIgnoredForBaseline -RelativePath $_)
         })
-    return ($material.Count -eq 0)
+}
+
+function Format-LoomDirtyPathsPreview {
+    [CmdletBinding()]
+    param(
+        [string[]]$Paths,
+        [int]$MaxPaths = 15
+    )
+
+    $list = @($Paths | Where-Object { -not [string]::IsNullOrWhiteSpace($_) })
+    if ($list.Count -eq 0) { return '(none listed)' }
+    $take = [Math]::Min($MaxPaths, $list.Count)
+    $preview = ($list[0..($take - 1)] -join '; ')
+    if ($list.Count -gt $MaxPaths) {
+        $preview += ('; ...(+{0} more)' -f ($list.Count - $MaxPaths))
+    }
+    return $preview
 }
 
 function Get-LoomGitHeadCommit {
@@ -771,21 +801,28 @@ function Invoke-MetraLoomRun {
     # isolation + hard-reset restore so operator WIP is not wiped. Non-Scout still fail closed.
     $skipGitIsolation = $false
     if ($startedDirty) {
+        $dirtyPaths = @(Get-LoomGitMaterialDirtyPaths -ProjectRoot $projectRoot)
+        $dirtyPreview = Format-LoomDirtyPathsPreview -Paths $dirtyPaths
+        $dirtyMsg = ('Dirty working tree ({0} path(s)): {1}' -f $dirtyPaths.Count, $dirtyPreview)
         if (-not $isScout) {
             $fromStatus = if ($AlreadyClaimed) { 'claimed' } else { 'queued' }
+            $errDetail = ('dirty-git-baseline: {0}' -f $dirtyPreview)
+            if ($errDetail.Length -gt 400) { $errDetail = $errDetail.Substring(0, 400) }
             $null = Invoke-MetraLoomStateChange -Root $Root -ItemId $ItemId -From $fromStatus -To 'blocked' `
                 -Reason 'dirty-git-baseline' -Mutator {
                 param($qi)
                 $qi | Add-Member -NotePropertyName laneHeld -NotePropertyValue $false -Force
                 $qi | Add-Member -NotePropertyName blockedFrom -NotePropertyValue $fromStatus -Force
-                $qi | Add-Member -NotePropertyName lastError -NotePropertyValue 'dirty-git-baseline' -Force
+                $qi | Add-Member -NotePropertyName lastError -NotePropertyValue $errDetail -Force
+                $qi = Add-LoomItemEvidenceFinding -Item $qi -Code 'dirty-git-baseline' `
+                    -Message $dirtyMsg -Severity 'error'
                 return $qi
             }
-            throw "Git working tree is not clean in $projectRoot; item blocked."
+            throw ("Git working tree is not clean in {0}; item blocked. {1}" -f $projectRoot, $dirtyMsg)
         }
         $skipGitIsolation = $true
         $item = Add-LoomItemEvidenceFinding -Item $item -Code 'dirty-git-scout-allowed' `
-            -Message 'Scout allowed on dirty working tree; git branch isolation skipped to protect WIP.' -Severity 'warn'
+            -Message ("Scout allowed on dirty working tree; git branch isolation skipped to protect WIP. {0}" -f $dirtyMsg) -Severity 'warn'
         Save-MetraLoomQueueItem -Root $Root -Item $item
         Add-MetraLoomJournalEntry -Root $Root -Entry @{
             itemId  = $ItemId
@@ -793,7 +830,7 @@ function Invoke-MetraLoomRun {
             to      = [string]$item.status
             actor   = 'harness-run'
             reason  = 'dirty-git-scout-allowed'
-            message = 'Scout proceeding without clean-tree baseline; isolation skipped.'
+            message = ('Scout proceeding without clean-tree baseline; isolation skipped. {0}' -f $dirtyMsg)
         }
     }
 

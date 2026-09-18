@@ -49,8 +49,8 @@ function Invoke-MetraYarnLoomSchedule {
     <#
     .SYNOPSIS
         Scheduled stages for Daily or Pulse mode.
-        Daily: yarn scan -> yarn daily -Reconcile -> loom loop -UntilDailyGate -Confirm.
-        Pulse: yarn scan -> loom loop -UntilDailyGate -Confirm (skips reconcile).
+        Daily: yarn scan -> yarn daily -Reconcile -> loom loop -UntilDailyGate -Confirm (all eligible plans).
+        Pulse: yarn scan -> loom loop -UntilDailyGate -ScoutOnly -Confirm (Scout canary only; skips reconcile).
         Exit codes: 0 ok/daily-gate, 1 failure, 2 validation blocked, 3 unexpected loom pause, 4 lock held.
     #>
     [CmdletBinding()]
@@ -154,6 +154,7 @@ function Invoke-MetraYarnLoomSchedule {
             $loomRootCmd = Get-Command Resolve-MetraLoomRoot -ErrorAction SilentlyContinue
             $loomRoot = if ($loomRootCmd) { [string]((& $loomRootCmd).Path) } else { $null }
             $loopParams = @{ UntilDailyGate = $true; Confirm = $true }
+            if ($Mode -eq 'Pulse') { $loopParams['ScoutOnly'] = $true }
             if ($loomRoot) { $loopParams['Root'] = $loomRoot }
             $loop = & $loomCmd @loopParams
             $loopOutcome = [string](Get-YarnProp -Object $loop -Name 'outcome' -Default '')
@@ -161,17 +162,18 @@ function Invoke-MetraYarnLoomSchedule {
             if ([string]::IsNullOrWhiteSpace($stopReason)) {
                 $stopReason = [string](Get-YarnProp -Object $loop -Name 'reason' -Default $loopOutcome)
             }
+            $scoutTag = if ($Mode -eq 'Pulse') { ' scoutOnly=true' } else { '' }
             if ($stopReason -match '(?i)daily.?gate' -or $loopOutcome -match '(?i)daily.?gate') {
-                Write-YarnScheduleLog -LogPath $logPath -Message 'Stage=LoomLoop Result=DailyGate'
+                Write-YarnScheduleLog -LogPath $logPath -Message ("Stage=LoomLoop Result=DailyGate{0}" -f $scoutTag)
                 if ($exitCode -eq 0) { $outcome = 'daily-gate' }
             }
             elseif ($stopReason -match '(?i)pause' -or $loopOutcome -match '(?i)pause') {
-                Write-YarnScheduleLog -LogPath $logPath -Message ("Stage=LoomLoop Result=UnexpectedPause reason=$stopReason")
+                Write-YarnScheduleLog -LogPath $logPath -Message ("Stage=LoomLoop Result=UnexpectedPause reason=$stopReason$scoutTag")
                 $exitCode = 3
                 $outcome = 'loom-unexpected-pause'
             }
             else {
-                Write-YarnScheduleLog -LogPath $logPath -Message ("Stage=LoomLoop Result=Success outcome=$loopOutcome")
+                Write-YarnScheduleLog -LogPath $logPath -Message ("Stage=LoomLoop Result=Success outcome=$loopOutcome$scoutTag")
                 if ($exitCode -eq 0) { $outcome = 'completed' }
             }
         }

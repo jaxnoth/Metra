@@ -14,7 +14,7 @@ Describe 'Loom transitions (Phase A + Slice 3 + Slice 5)' {
             Test-MetraLoomTransition -From 'queued' -To 'blocked' | Should -BeTrue
             Test-MetraLoomTransition -From 'queued' -To 'claimed' | Should -BeTrue
             Test-MetraLoomTransition -From 'queued' -To 'accepted' | Should -BeFalse
-            Test-MetraLoomTransition -From 'blocked' -To 'queued' | Should -BeFalse
+            Test-MetraLoomTransition -From 'blocked' -To 'queued' | Should -BeTrue
             Test-MetraLoomTransition -From 'completed' -To 'accepted-pending-commit' | Should -BeTrue
             Test-MetraLoomTransition -From 'accepted-pending-commit' -To 'accepted' | Should -BeTrue
             Test-MetraLoomTransition -From 'completed' -To 'accepted' | Should -BeFalse
@@ -519,6 +519,81 @@ bingReviewed: false
                 Remove-Item -LiteralPath $root -Recurse -Force -ErrorAction SilentlyContinue
                 Remove-Item -LiteralPath $planRoot -Recurse -Force -ErrorAction SilentlyContinue
             }
+        }
+    }
+
+    It "teaches allowedPaths from plan mentions (AGENTS.md)" {
+        InModuleScope Loom {
+            $root = Join-Path ([IO.Path]::GetTempPath()) ("metra-loom-yarn-" + [guid]::NewGuid().ToString("n"))
+            $metraRoot = Get-LoomHostRoot
+            $planRoot = Join-Path $metraRoot ("docs\.yarn-ingest-" + [guid]::NewGuid().ToString("n"))
+            try {
+                New-Item -ItemType Directory -Path $planRoot -Force | Out-Null
+                $planPath = Join-Path $planRoot "agents-paths.plan.md"
+                Write-LoomAtomicUtf8Text -Path $planPath -Text @"
+---
+name: Paths Teach
+overview: "Update AGENTS.md playbook row and modules helpers"
+status: Approved
+bingReviewed: true
+todos:
+  - id: 1
+    content: "Touch AGENTS.md and engines/cursor implementer"
+    status: pending
+---
+
+# Paths Teach
+Also edits under ``modules/`` for Loom.
+"@
+                $snap = [PSCustomObject]@{ total = 2; effectiveImpact = 1; completionReady = 1; rubricVersion = "yarn-rank-v1"; rankReasons = @("x") }
+                $a = Invoke-MetraLoomIngestApprovedPlan -Root $root -PlanPath $planPath -ProjectKey "Metra" -ApprovalRevision "rev-paths" -ApprovalId "ya-paths" -RankSnapshot $snap -HandoffContractVersion 1 -MetraRoot $metraRoot
+                $a.outcome | Should -Be "enqueued"
+                $paths = @($a.item.contract.allowedPaths)
+                $paths | Should -Contain 'scripts'
+                $paths | Should -Contain 'tests'
+                $paths | Should -Contain 'docs'
+                $paths | Should -Contain 'AGENTS.md'
+                $paths | Should -Contain 'modules'
+                $paths | Should -Contain 'engines'
+            }
+            finally {
+                Remove-Item -LiteralPath $root -Recurse -Force -ErrorAction SilentlyContinue
+                Remove-Item -LiteralPath $planRoot -Recurse -Force -ErrorAction SilentlyContinue
+            }
+        }
+    }
+
+    It "does not learn arbitrary filesystem roots from plan text" {
+        InModuleScope Loom {
+            $plan = [PSCustomObject]@{
+                name     = 'Negative Paths'
+                overview = 'Touch c:\temp and Update secrets; Modify random-folder'
+                todos    = @(
+                    [PSCustomObject]@{
+                        id      = '1'
+                        content = 'Write to C:\Windows\Temp\out and open secrets/local.json'
+                        status  = 'pending'
+                    }
+                )
+                path     = ''
+            }
+            $paths = @(Resolve-MetraLoomAllowedPathsFromPlan -Plan $plan -PlanText @'
+# Negative
+Also edit random-folder/foo and drop files under c:\temp.
+Do not invent path: secrets
+'@)
+            $paths | Should -Contain 'scripts'
+            $paths | Should -Contain 'tests'
+            $paths | Should -Contain 'docs'
+            $paths | Should -Not -Contain 'c:\temp'
+            $paths | Should -Not -Contain 'C:\temp'
+            $paths | Should -Not -Contain 'C:\Windows\Temp\out'
+            $paths | Should -Not -Contain 'random-folder'
+            $paths | Should -Not -Contain 'secrets'
+            $paths | Should -Not -Contain 'secrets/local.json'
+            # Curated list must not expand just because the word appears mid-prose without path token shape
+            $extra = @($paths | Where-Object { $_ -notin @('scripts', 'tests', 'docs') })
+            $extra.Count | Should -Be 0
         }
     }
 }

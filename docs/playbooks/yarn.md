@@ -77,14 +77,14 @@ Two tasks share the same runner and a single schedule lock (they never overlap):
 
 | Task | Cadence | Stages |
 |------|---------|--------|
-| `MetraYarnLoomDaily` | Once daily (default `02:00`) | scan → daily -Reconcile → loom loop |
-| `MetraYarnLoomPulse` | Every N minutes (default 15; range 5-120) | scan → loom loop (skips reconcile) |
+| `MetraYarnLoomDaily` | Once daily (default `02:00`) | scan → daily -Reconcile → loom loop (all eligible) |
+| `MetraYarnLoomPulse` | Every N minutes (default 15; range 5-120) | scan → loom loop **-ScoutOnly** (Scout canary only; skips reconcile) |
 
 Runner: `scripts/Invoke-MetraYarnLoomSchedule.ps1 -Mode Daily|Pulse`. Exit codes: 0 ok/daily-gate, 1 failure, 2 validation blocked, 3 unexpected loom pause, 4 lock held. Logs: `%LOCALAPPDATA%\Metra\yarn\schedule-logs\`.
 
 Install registers `pwsh -WindowStyle Hidden` so Interactive logon does not steal focus (Pulse especially). `yarn schedule status` reports `mismatch` if Hidden is missing - re-run `install` / `pulse install` with `-Confirm` to refresh.
 
-**Approve does not start Yarn/Loom immediately.** Surveyor only writes content-bound marks. The next Pulse (or Daily, or `yarn schedule run` / `pulse run`) enrolls and builds. Prefer Pulse for desk-speed after Approve; keep Daily for overnight reconcile + full gate.
+**Approve does not start Yarn/Loom immediately.** Surveyor only writes content-bound marks. The next Pulse (or Daily, or `yarn schedule run` / `pulse run`) enrolls and builds. Prefer Pulse for **Scout** desk-speed after Approve; keep Daily for overnight reconcile + full non-Scout builds.
 
 Still human: Surveyor Approve Plan (and morning Loom ACCEPT). Affirm is optional when Approve is used.
 
@@ -191,8 +191,8 @@ Desk vocabulary: Surveyor dispatches → Yarn routes → Loom works → Scout pr
 |-------|------|
 | Cursor plan | `%USERPROFILE%\.cursor\plans\Scout.plan.md` (Approve = build order; twin `Scout.md` is display-only) |
 | Tooling | `scripts/Test-MetraScout.ps1` (-Probe / -Reset -Confirm) - permanent; not rebuilt each run |
-| Cadence | Operator Approve → `MetraYarnLoomPulse` (or `yarn schedule pulse run`); not Daily alone |
-| Dirty git | Scout may run on a dirty Metra tree (`dirty-git-scout-allowed` finding); non-Scout items still block |
+| Cadence | Operator Approve → `MetraYarnLoomPulse` (Scout-only loop) or `yarn schedule pulse run`; non-Scout builds wait for Daily (or manual `loom loop` / `loom run`) |
+| Dirty git | Scout may run on a dirty Metra tree (`dirty-git-scout-allowed` finding); non-Scout items still block (block evidence lists dirty paths) |
 
 ```powershell
 pwsh -File .\scripts\Test-MetraScout.ps1 -Probe
