@@ -8,7 +8,7 @@ loadWhen:
   - remote install satellite
 ceiling:
   - First clone + PowerShell 7 install stays in the installer / remote session
-  - OrgBrand campus hosts pin is Windows-only (see tailscale-campus.md)
+  - Campus hosts pin is Windows-only (see tailscale-campus.md)
 ---
 
 # Satellite remote install
@@ -33,7 +33,7 @@ Copy-Item .\docs\examples\client-auth.example.json (Join-Path $env:LOCALAPPDATA 
 
 Break-glass only if needed: `pwsh -NoProfile -File .\metra.ps1 profile issue-sync-token -Force`
 
-HQ `opsBaseUrl` should be the HTTPS Serve URL, e.g. `https://jumpbox.lab.example.ts.net`.
+HQ `opsBaseUrl` should be the HTTPS Serve URL, e.g. `https://jumpbox.hq.example.ts.net`.
 
 ## Satellite (one command)
 
@@ -42,7 +42,7 @@ Always use `pwsh -NoProfile -File` when double-clicking `.ps1` opens VS Code.
 ```bash
 cd ~/Developer/Metra
 pwsh -NoProfile -File ./metra.ps1 satellite connect \
-  -OpsBaseUrl https://jumpbox.lab.example.ts.net
+  -OpsBaseUrl https://jumpbox.hq.example.ts.net
 ```
 
 Happy path pairs over Tailscale (no `-SyncToken`). If pair is pending, Approve on HQ Ops Settings, then re-run connect/sync.
@@ -51,7 +51,7 @@ Break-glass override:
 
 ```bash
 pwsh -NoProfile -File ./metra.ps1 satellite connect \
-  -OpsBaseUrl https://jumpbox.lab.example.ts.net \
+  -OpsBaseUrl https://jumpbox.hq.example.ts.net \
   -SyncToken '<token>'
 ```
 
@@ -60,18 +60,18 @@ pwsh -NoProfile -File ./metra.ps1 satellite connect \
 ## Verify
 
 ```bash
-curl -sI https://jumpbox.lab.example.ts.net/api/settings
+curl -sI https://jumpbox.hq.example.ts.net/api/settings
 pwsh -NoProfile -File ./metra.ps1 profile status
 ```
 
-Browser: `https://jumpbox.lab.example.ts.net`
+Browser: `https://jumpbox.hq.example.ts.net`
 
 ## Optional follow-ups
 
 | Need | Command |
 |------|---------|
 | Re-sync after HQ changes | `pwsh -NoProfile -File ./metra.ps1 profile sync -Force` |
-| OrgBrand campus Windows | [tailscale-campus.md](tailscale-campus.md) |
+| Campus Windows DNS-filter | [tailscale-campus.md](tailscale-campus.md) |
 | Nonstandard checkout layout | Edit `metra.config.json` roots, then `profile sync -Force` |
 
 ## Done when

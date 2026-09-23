@@ -3,7 +3,7 @@
 **Status:** Phase 1 spike **smoke-passed** (2026-08-29); next = Phase 1.5 trial week  
 **Parent:** [ios-companion-app.plan.md](ios-companion-app.plan.md)  
 **Parallel (not a blocker):** [tailscale-identity-auth.plan.md](tailscale-identity-auth.plan.md)  
-**Build machine:** OrgBrand Mac `build-host-01-mac` (`100.101.163.18`) - Xcode 26.6 / Swift 6.3.3 verified  
+**Build machine:** build Mac `build-mac01` (`100.64.1.10`) - Xcode 26.6 / Swift 6.3.3 verified  
 **Code home:** `clients/ios` (bundle `app.metra.companion`, min iOS 18)
 
 ## Locked defaults
@@ -23,7 +23,7 @@
 | Field | Value |
 |-------|--------|
 | Method / path | `POST /api/ask` |
-| Base URL (lab) | Operator Settings - e.g. `https://jumpbox.lab.example.ts.net` |
+| Base URL (lab) | Operator Settings - e.g. `https://jumpbox.hq.example.ts.net` |
 | Headers | `Content-Type: application/json; charset=utf-8`, `X-Metra-Client: ops-ios`, `X-Metra-Device: <stub>` |
 | Body | `{ "prompt", "sessionId"?, "client": "ops-ios", "clientHint": "phone" }` |
 | Response (key fields) | `message`, `sessionId`, `answered`, plus entry/handoff/engine metadata |
@@ -90,7 +90,7 @@ Do not spend trial energy “using” Attend alone. Note open / chat patterns; f
 | Date | Change |
 |------|--------|
 | 2026-08-29 | Official spike from Cursor plan; Bing amendments folded; Ask contract verified on live Ops. |
-| 2026-08-29 | Phase 1 sources + xcodeproj landed; simulator build succeeded on OrgBrand Mac. |
+| 2026-08-29 | Phase 1 sources + xcodeproj landed; simulator build succeeded on build Mac. |
 | 2026-08-29 | Operator smoke screenshots reviewed - Phase 1 **passed**; next = Phase 1.5 trial week. |
 | 2026-08-29 | Trial finding: merge Attend into Ask pane (reactive presence); enlarge for voice-only later. Drop Attend-as-destination tab. |
 | 2026-08-29 | User chrome: home is **Metra** (not Ask); no main-surface tabs; Settings = gear mark only. |

@@ -39,7 +39,11 @@ $denyContent = @(
     '(?i)(api[_-]?key|secret|password|token)\s*[=:]\s*[''"][^''"]{8,}',
     '(?i)BEGIN (RSA |OPENSSH |EC )?PRIVATE KEY',
     '(?i)\b(ghp_|github_pat_|sk-live-|sk-proj-|xox[baprs]-)[A-Za-z0-9_\-]{10,}',
-    '(?i)ORGNET\\[^\\\s]+\\',
+    ('(?i)' + 'IW' + 'U' + 'NET\\[^\\\s]+\\'),
+    ('(?i)\b' + 'IW' + 'U' + '\b'),
+    ('(?i)ind' + 'wes'),
+    ('(?i)\bPente' + 'gra\b'),
+    ('(?i)\bDM-' + 'Employee\b'),
     '(?i)Bearer\s+[A-Za-z0-9\-._~+/]+=*'
 )
 

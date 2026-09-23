@@ -1,6 +1,6 @@
-# Security notes (OrgBrand Coworker marketplace pack)
+# Security notes (Metra Coworker marketplace pack)
 
-This folder is meant to publish as a **standalone GitHub repo** whose root is the marketplace (`.cursor-plugin/marketplace.json` at repo root). Cursor Team Marketplace (e.g. **OrgBrand SDT Market**) imports that repo.
+This folder is meant to publish as a **standalone GitHub repo** whose root is the marketplace (`.cursor-plugin/marketplace.json` at repo root). Cursor Team Marketplace (e.g. **Metra Team Market**) imports that repo.
 
 ## What is allowed to publish
 
@@ -31,7 +31,7 @@ From this folder:
 .\scripts\Assert-PublishSafe.ps1
 ```
 
-Fix any finding before push. Prefer a **private** GitHub repo readable by the OrgBrand Cursor team until dry-run 2.
+Fix any finding before push. Prefer a **private** GitHub repo readable by the Cursor team until dry-run 2.
 
 ## Path portability
 

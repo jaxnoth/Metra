@@ -56,7 +56,7 @@ function Test-MetraNarrativeCrossCarCue {
     if ($p -match '(?<![A-Za-z0-9])\d{6,8}(?![A-Za-z0-9])') { return $true }
     if ($p -match '(?i)\bR8[A-Z0-9]{6,}\b') { return $true }
     # Live / investigate vocabulary
-    if ($p -match '(?i)\b(check|investigate|look\s+at|debug|troubleshoot)\b.{0,60}\b(sql|replication|orion|solarwinds|alert|outage|colleague|stuck\s+session|jitterbit|etl-host)\b') {
+    if ($p -match '(?i)\b(check|investigate|look\s+at|debug|troubleshoot)\b.{0,60}\b(sql|replication|orion|solarwinds|alert|outage|colleague|stuck\s+session|jitterbit|automation-host)\b') {
         return $true
     }
     if ($p -match '(?i)\b(live\s+investigate|open\s+ticket|ticket\s+\d{6,8})\b') { return $true }

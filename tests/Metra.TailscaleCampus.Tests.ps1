@@ -1,4 +1,4 @@
-# Metra Tailscale campus hosts (OrgBrand DNSFilter bypass)
+# Metra Tailscale campus hosts (campus DNS-filter bypass)
 
 Describe 'Metra Tailscale campus hosts' {
     BeforeAll {

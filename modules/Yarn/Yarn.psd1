@@ -3,9 +3,9 @@
     ModuleVersion     = '0.4.0'
     GUID              = 'b9d1f3e5-8c02-4e4f-a017-3d2b6c9e5f81'
     Author            = 'Metra'
-    CompanyName       = 'OrgBrand'
+    CompanyName       = 'Metra'
     Copyright         = '(c) Metra'
-    Description       = 'Yarn: L1.5 intake — ranked backlog, synthesize, pack freshness, human approve + Loom handoff (A0-A3).'
+    Description       = 'Yarn: L1.5 intake - ranked backlog, synthesize, pack freshness, human approve + Loom handoff (A0-A3).'
     PowerShellVersion = '5.1'
     FunctionsToExport = @(
         'Invoke-YarnCommand'

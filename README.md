@@ -255,20 +255,20 @@ After Metra is installed, coworkers install real **Station** trees (TicketTracke
 
 See [docs/playbooks/station-updates.md](docs/playbooks/station-updates.md) and Decision **2026-09-07 - Stations use independent GitHub Release channels via Metra Ops**.
 
-### Cursor coworker plugins (OrgBrand)
+### Cursor coworker plugins
 
-Optional Cursor **Team Marketplace** skills for OrgBrand coworkers. They do **not** replace Station installs, `.\metra.ps1 routing`, Metra persona, or TicketTracker write gates. Skills are procedure garnish only - TicketTracker and Codex CLIs still require Station (or Git) checkouts. Install only what you need; leave plugins **Default Off** / opt-in until your team promotes them.
+Optional Cursor **Team Marketplace** skills for Metra coworkers. They do **not** replace Station installs, `.\metra.ps1 routing`, Metra persona, or TicketTracker write gates. Skills are procedure garnish only - TicketTracker and Codex CLIs still require Station (or Git) checkouts. Install only what you need; leave plugins **Default Off** / opt-in until your team promotes them.
 
 | Plugin | Use when |
 |--------|----------|
-| **OrgBrand Coworker Desk** (`coworker-desk`) | First Metra onboarding, missing-station honesty, ticket-ops vs one investigate hop |
-| **OrgBrand Tickets** (`tickets`) | TicketTracker `brief` / `assess` / Recommend Preview / durable text shape |
-| **OrgBrand Codex** (`codex`) | Codex KB search and cite; surfaces Provider/Mode; no ticket writes |
+| **Coworker Desk** (`coworker-desk`) | First Metra onboarding, missing-station honesty, ticket-ops vs one investigate hop |
+| **Tickets** (`tickets`) | TicketTracker `brief` / `assess` / Recommend Preview / durable text shape |
+| **Codex** (`codex`) | Codex KB search and cite; surfaces Provider/Mode; no ticket writes |
 
 **Team import (preferred for coworkers):**
 
-1. Open Cursor **Dashboard → Plugins** (team marketplace - e.g. **OrgBrand SDT Market**).
-2. Point **Plugin Repository** at [jaxnoth/OrgBrand-coworker-marketplace](https://github.com/jaxnoth/OrgBrand-coworker-marketplace) (private; team-readable) and **Refresh**.
+1. Open Cursor **Dashboard → Plugins** (team marketplace).
+2. Point **Plugin Repository** at [jaxnoth/metra-coworker-marketplace](https://github.com/jaxnoth/metra-coworker-marketplace) (private; team-readable) and **Refresh**.
 3. **Add** `coworker-desk`, `tickets`, and/or `codex` as needed. Do not set **Required** until dry-run 2 passes.
 4. Reload the Cursor window. Skills stay procedure-only; CLIs still own Live writes.
 

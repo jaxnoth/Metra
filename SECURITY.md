@@ -17,6 +17,40 @@ The tracked pack under `profiles/sample/` is intentional and anonymized. Do not 
 
 Tracked Cursor hooks under `.cursor/hooks/` are safe to commit (no secrets). Do not put secrets in `shared/` and then `apply` them across projects. Do not commit TicketTracker caches, Orion inventory dumps, or credential stores into this repo. Never commit API keys or tokens from environment variables.
 
+## Public surface (structural disclosure)
+
+This section covers **structural information** in tracked GitHub trees (public Metra and private stations), not credential hunting. Secrets remain covered by Ask scrub and the lists above.
+
+### Classification
+
+| Class | Examples | Tracked GitHub OK? |
+|-------|----------|--------------------|
+| PublicSafe | Generic product docs, MIT license, placeholder hosts (`hq.example.ts.net`), synthetic vendors (`VendorX`) | Yes |
+| InternalTopology | Org names, AD paths (`DOMAIN\...`), internal hosts/shares, campus security-bypass framed to a named org, full local stack maps, lab MagicDNS ids | No |
+| RestrictedDataMap | HR object maps (datamart/DB census helpers such as `dbo.fn_ExampleLookup`), SSN join recipes, named staff in durable docs, vendor+HR process write-ups that teach where to pull restricted data | No |
+
+Org scars and ticket work maps belong in gitignored locals (`docs/*.local.md`, `docs/decision-registry.json`, `projects.local.json`, station `documentation/work/` when ignored) - not in tracked product docs.
+
+Placeholders for docs and tests: `hq.example.ts.net`, `automation-host`, `DOMAIN\svc.account`, `VendorX`, `dbo.fn_ExampleLookup`, `DM-Sample`.
+
+### Allowlist governance
+
+Deny patterns are the default (`.\metra.ps1 security-audit`). Any allowlist exception in `config/security-surface-allowlist.json` requires all of: `rationale`, `approvedBy`, `sourceFile`, `expiresOn` (ISO date), and usually `patternId`. Incomplete or expired entries do not suppress FAIL. No silent permanent exceptions.
+
+### Audit
+
+```powershell
+.\metra.ps1 security-audit
+.\metra.ps1 security-audit -Path C:\path\to\TicketTracker
+.\metra.ps1 verify   # includes security-audit FAIL as verify FAIL
+```
+
+Scan scope: **tracked files** (`git ls-files`) including `site/**` and `packaging/**` source. Built installer binaries are not scanned; rebuild after scrub.
+
+### Stage 2 history rewrite
+
+Forward-only scrub is the default. History rewrite is **not** implied by Stage 1 completion. Proceed only if security review requests purge, public indexing of pre-scrub blobs is evidenced, or consumers accept coordinated re-clone impact.
+
 ## Operator commands
 
 `.\metra.ps1 run <command>` executes operator-provided shell text inside selected project folders (via `Invoke-Expression`). That is intentional portfolio tooling - not a sandbox.

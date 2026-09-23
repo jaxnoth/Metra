@@ -418,7 +418,7 @@ function Invoke-MetraSatelliteConnect {
         }
         if (-not $Quiet -and $campus -and $campus.NeedsWrite) {
             Write-Host ''
-            Write-Host 'OrgBrand campus: run elevated campus-hosts before Tailscale Serve admin pages:' -ForegroundColor Yellow
+            Write-Host 'Campus DNS-filter: run elevated campus-hosts before Tailscale Serve admin pages:' -ForegroundColor Yellow
             Write-Host '  pwsh -NoProfile -File .\metra.ps1 tailscale campus-hosts -Force' -ForegroundColor DarkGray
         }
     }
@@ -465,7 +465,7 @@ function Show-MetraSatelliteCli {
     switch ($Subcommand) {
         'connect' {
             if ([string]::IsNullOrWhiteSpace($OpsBaseUrl)) {
-                throw 'connect requires -OpsBaseUrl (HTTPS HQ Tailscale Serve URL). Example: .\metra.ps1 satellite connect -OpsBaseUrl https://jumpbox.lab.example.ts.net'
+                throw 'connect requires -OpsBaseUrl (HTTPS HQ Tailscale Serve URL). Example: .\metra.ps1 satellite connect -OpsBaseUrl https://jumpbox.hq.example.ts.net'
             }
             if ($Preview) {
                 if (-not $Quiet) {
@@ -494,7 +494,7 @@ Metra satellite onboarding (HQ Client / Desk Mode B):
 
   pwsh -NoProfile -File .\metra.ps1 satellite repair-roots [-Preview]
 
-On OrgBrand campus Windows hosts, connect previews campus-hosts; run elevated if NeededWrite.
+On campus Windows hosts, connect previews campus-hosts; run elevated if NeededWrite.
 
 See docs/playbooks/satellite-remote-install.md
 '@

@@ -17,7 +17,7 @@ cd C:\Projects\_meta\plugins\coworker-marketplace
 .\scripts\Sync-TicketsSkill.ps1
 ```
 
-Then **Developer: Reload Window**. Team import: publish **`coworker-marketplace/` as its own GitHub repo root** (see that folder's README + SECURITY.md), point **OrgBrand SDT Market** (or similar) at that repo, Refresh. Run `.\scripts\Assert-PublishSafe.ps1` before push.
+Then **Developer: Reload Window**. Team import: publish **`coworker-marketplace/` as its own GitHub repo root** (see that folder's README + SECURITY.md), point **Metra Team Market** (or similar) at that repo, Refresh. Run `.\scripts\Assert-PublishSafe.ps1` before push.
 
 ## Hard offs (all plugins)
 

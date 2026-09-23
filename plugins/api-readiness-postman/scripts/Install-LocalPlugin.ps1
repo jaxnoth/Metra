@@ -6,7 +6,7 @@
 [CmdletBinding(SupportsShouldProcess = $true, ConfirmImpact = 'Medium')]
 param(
     [ValidatePattern('^(?!\.{1,2}$)[a-zA-Z0-9][a-zA-Z0-9._-]*$')]
-    [string]$PluginName = 'OrgBrand-api-readiness',
+    [string]$PluginName = 'Metra-api-readiness',
     [switch]$Force
 )
 
@@ -37,7 +37,20 @@ if ($replaceExisting) {
     if (-not $PSCmdlet.ShouldProcess($linkPath, 'Replace plugin symbolic link')) {
         return
     }
-    Remove-Item -LiteralPath $linkPath -Force -Recurse
+    $existing = Get-Item -LiteralPath $linkPath -Force
+    $isReparse = [bool]($existing.Attributes -band [System.IO.FileAttributes]::ReparsePoint)
+    if ($isReparse) {
+        # Never Remove-Item -Recurse on a directory symlink (can delete the target tree).
+        if ($existing.PSIsContainer) {
+            [System.IO.Directory]::Delete($linkPath)
+        }
+        else {
+            [System.IO.File]::Delete($linkPath)
+        }
+    }
+    else {
+        Remove-Item -LiteralPath $linkPath -Force -Recurse
+    }
 }
 elseif (-not $PSCmdlet.ShouldProcess($linkPath, 'Create symbolic link')) {
     return

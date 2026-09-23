@@ -1,12 +1,12 @@
 {
   "name": "codex",
-  "displayName": "OrgBrand Codex",
+  "displayName": "Codex",
   "version": "0.1.0",
-  "description": "OrgBrand Metra Codex KB search and cite procedures with provider/mode honesty. No ticket writes.",
+  "description": "Metra Codex KB search and cite procedures with provider/mode honesty. No ticket writes.",
   "logo": "assets/logo.svg",
   "license": "UNLICENSED",
-  "keywords": ["OrgBrand", "codex", "kb", "knowledge-base", "cite"],
+  "keywords": ["Metra", "codex", "kb", "knowledge-base", "cite"],
   "author": {
-    "name": "OrgBrand Metra"
+    "name": "Metra"
   }
 }

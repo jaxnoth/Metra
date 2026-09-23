@@ -13,21 +13,21 @@ ceiling:
   - Hosts write requires elevation
 ---
 
-# Tailscale on OrgBrand campus (DNSFilter)
+# Tailscale behind DNS-filter MITM (campus hosts)
 
 ## Symptom
 
 Edge/Chrome opens `https://login.tailscale.com/...` (Serve enable, admin) and shows:
 
 - `NET::ERR_CERT_AUTHORITY_INVALID`
-- Issuer **DNSFilter Root CA** (campus MITM)
+- Issuer **DNSFilter Root CA** (or similar campus MITM CA)
 - HSTS blocks "proceed anyway"
 
 Ops on jumpbox may still run on loopback. Mac/phone cannot use MagicDNS/Serve until Serve is enabled and/or Tailscale URL ACLs exist for the **personal** tailnet IP.
 
 ## Cause
 
-Campus DNSFilter rewrites or intercepts `login.tailscale.com` (often to a VIP such as `203.0.113.10`). Real Tailscale coordination anycast is `192.200.0.0/24` with Let's Encrypt certificates.
+Some campus DNS-filter products rewrite or intercept `login.tailscale.com` (and sometimes related admin hostnames), terminating TLS with a local root CA instead of Tailscale's public cert. Real Tailscale coordination anycast is `192.200.0.0/24` with Let's Encrypt certificates.
 
 `controlplane.tailscale.com` is often already pinned; **`login.tailscale.com` usually is not**.
 
@@ -58,7 +58,7 @@ Or keep Ops on loopback and front it with Serve only (HTTPS share URL).
 
 ## Done when
 
-- `https://login.tailscale.com/` shows a Let's Encrypt (or Tailscale) cert, not DNSFilter
+- `https://login.tailscale.com/` shows a Let's Encrypt (or Tailscale) cert, not the campus DNS-filter CA
 - `tailscale serve status` shows a configured handler
 - Mac can `curl` the jumpbox Ops share URL on the personal tailnet
 

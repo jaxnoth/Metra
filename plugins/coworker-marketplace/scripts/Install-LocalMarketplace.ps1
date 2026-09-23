@@ -1,7 +1,7 @@
 #Requires -Version 5.1
 <#
 .SYNOPSIS
-  Symlink OrgBrand Coworker marketplace plugins into Cursor local plugins for testing.
+  Symlink Metra Coworker marketplace plugins into Cursor local plugins for testing.
 #>
 [CmdletBinding(SupportsShouldProcess = $true, ConfirmImpact = 'Medium')]
 param(
@@ -92,4 +92,4 @@ Write-Host ''
 Write-Host 'Next:'
 Write-Host '  1. Developer: Reload Window in Cursor'
 Write-Host '  2. Customize -> Plugins / Skills -> verify coworker-desk, tickets, codex'
-Write-Host '  3. Team: point OrgBrand SDT Market (or similar) at the GitHub repo whose root is this folder, then Refresh'
+Write-Host '  3. Team: point Metra Team Market (or similar) at the GitHub repo whose root is this folder, then Refresh'

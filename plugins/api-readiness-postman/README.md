@@ -2,9 +2,9 @@
 
 Metra **A15** standards pilot - prospect **P1**. Portable [Agent Plugins](https://agent-plugins.org) bundle: agent-readiness knowledge + scan workflow + optional Postman MCP.
 
-Thin OrgBrand-local wrapper focused on **API documentation and testing**, not headless pass-through automation. Optional marketplace **postman** plugin adds `/postman:test`, `/postman:docs`, and more commands.
+Thin Metra-local wrapper focused on **API documentation and testing**, not headless pass-through automation. Optional marketplace **postman** plugin adds `/postman:test`, `/postman:docs`, and more commands.
 
-## Team intent (OrgBrand)
+## Team intent
 
 | Use | Supported here |
 |-----|----------------|
@@ -80,5 +80,5 @@ Do **not** commit API keys. Tracked `mcp.json` uses env placeholder only.
 
 ## License / attribution
 
-- Plugin scaffold: OrgBrand Metra pilot (tracked in `_meta`)
+- Plugin scaffold: Metra pilot (tracked in `_meta`)
 - Pillar reference text: adapted from Postman Cursor plugin `agent-ready-apis` (Apache-2.0)

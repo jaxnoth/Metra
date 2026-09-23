@@ -2103,7 +2103,7 @@ Describe 'HTML Ops desk payload' {
     }
 
     It 'recommends TicketTracker for ticket intake and teaches what happens there' {
-        $p = Get-MetraDeskPlaceRecommendation -Text 'Helpdesk ticket about disk alert on prd-example'
+        $p = Get-MetraDeskPlaceRecommendation -Text 'Helpdesk ticket about disk alert on sql-host01'
         $p.ok | Should -BeTrue
         $p.homeId | Should -Be 'tickettracker'
         $p.whatHappensThere | Should -Match 'TicketTracker'
@@ -2245,10 +2245,10 @@ Describe 'HTML Ops desk payload' {
 
     It 'Tailscale binding prefers HTTPS share when Serve URL is provided' {
         InModuleScope Metra {
-            Mock Get-MetraOpsTailscaleDnsName { 'dev-jmp01.lab.example.ts.net' }
-            $b = Get-MetraOpsTailscaleBinding -Address '100.64.1.2' -Port 7380 -ServeHttpsUrl 'https://dev-jmp01.lab.example.ts.net/'
+            Mock Get-MetraOpsTailscaleDnsName { 'dev-jmp01.dev-hq.example.ts.net' }
+            $b = Get-MetraOpsTailscaleBinding -Address '100.64.1.2' -Port 7380 -ServeHttpsUrl 'https://dev-jmp01.dev-hq.example.ts.net/'
             $b.Serve | Should -BeTrue
-            $b.ShareUrl | Should -Be 'https://dev-jmp01.lab.example.ts.net/'
+            $b.ShareUrl | Should -Be 'https://dev-jmp01.dev-hq.example.ts.net/'
             $b.OperatorUrl | Should -Be 'http://127.0.0.1:7380/'
             (Get-MetraOpsOperatorOpenUrl -Binding $b) | Should -Be 'http://127.0.0.1:7380/'
             @($b.ListenerPrefixes) | Should -Be @('http://127.0.0.1:7380/')
@@ -3303,8 +3303,8 @@ Describe 'Metra routing concept and multi-hop' {
                 version = 1
                 concepts = @(
                     @{
-                        id = 'payroll-run'
-                        tokens = @('payroll', 'payrun')
+                        id = 'batch-run'
+                        tokens = @('batch job', 'overnight run')
                         stem = 'IWUDATA'
                         preferProject = 'IWUDATA-Automation'
                         notes = 'test'
@@ -3323,14 +3323,14 @@ Describe 'Metra routing concept and multi-hop' {
                 MatchedTokens = @('iwudata'); HayLower = 'iwudata-sql iwudata sql'
             }
             $out = @(Update-MetraScoredRoutingWithConceptCues `
-                    -Query 'iwudata payroll status' `
+                    -Query 'iwudata overnight run status' `
                     -Scored @($auto, $sql) `
                     -LexiconPath $lexPath)
             $autoOut = $out | Where-Object Name -eq 'IWUDATA-Automation' | Select-Object -First 1
             $sqlOut = $out | Where-Object Name -eq 'IWUDATA-SQL' | Select-Object -First 1
             [int]$autoOut.Score | Should -Be 5
             [int]$sqlOut.Score | Should -Be 2
-            $autoOut.MatchedTokens | Should -Contain 'concept:payroll-run'
+            $autoOut.MatchedTokens | Should -Contain 'concept:batch-run'
             @($sqlOut.MatchedTokens | Where-Object { $_ -like 'concept:*' }).Count | Should -Be 0
         }
     }
@@ -3343,14 +3343,14 @@ Describe 'Metra routing concept and multi-hop' {
                 version = 1
                 concepts = @(
                     @{
-                        id = 'ghost-payroll'
-                        tokens = @('zzqxpayrollonly')
+                        id = 'ghost-batch'
+                        tokens = @('zzqxbatchonly')
                         preferProject = 'NotARealProject-ZZQX'
                         notes = 'must not invent'
                     },
                     @{
-                        id = 'metra-payroll'
-                        tokens = @('zzqxpayrollonly')
+                        id = 'metra-batch'
+                        tokens = @('zzqxbatchonly')
                         preferProject = 'Metra'
                         notes = 'registry exists but no haystack row'
                     }
@@ -3358,7 +3358,7 @@ Describe 'Metra routing concept and multi-hop' {
             } | ConvertTo-Json -Depth 6 | Set-Content -LiteralPath $lexPath -Encoding utf8
 
             $out = @(Update-MetraScoredRoutingWithConceptCues `
-                    -Query 'zzqxpayrollonly please' `
+                    -Query 'zzqxbatchonly please' `
                     -Scored @() `
                     -LexiconPath $lexPath)
             $out.Count | Should -Be 0
@@ -3369,7 +3369,7 @@ Describe 'Metra routing concept and multi-hop' {
                 MatchedTokens = @('trivia'); HayLower = 'trivia fun'
             }
             $out2 = @(Update-MetraScoredRoutingWithConceptCues `
-                    -Query 'zzqxpayrollonly trivia' `
+                    -Query 'zzqxbatchonly trivia' `
                     -Scored @($hay) `
                     -LexiconPath $lexPath)
             @($out2 | Where-Object Name -eq 'Metra').Count | Should -Be 0
@@ -4752,7 +4752,7 @@ Describe 'Snapshot git detection' {
     It 'reports counts from a nested repo when the project root is not one' {
         InModuleScope Metra {
             $root = Join-Path ([IO.Path]::GetTempPath()) ("metra-git-" + [guid]::NewGuid().ToString('n'))
-            $nested = Join-Path $root 'OrgBrand.Sample'
+            $nested = Join-Path $root 'Metra.Sample'
             New-Item -ItemType Directory -Path $nested -Force | Out-Null
             try {
                 Push-Location $nested
@@ -4764,9 +4764,9 @@ Describe 'Snapshot git detection' {
 
                 $git = Get-MetraProjectGitCounts -Path $root
                 $git.isGit | Should -BeTrue
-                $git.repoPath | Should -Be 'OrgBrand.Sample'
+                $git.repoPath | Should -Be 'Metra.Sample'
                 $git.dirty | Should -BeGreaterThan 0
-                $git.summary | Should -Match 'OrgBrand\.Sample'
+                $git.summary | Should -Match 'Metra\.Sample'
             }
             finally {
                 Remove-Item -LiteralPath $root -Recurse -Force -ErrorAction SilentlyContinue
@@ -5429,14 +5429,14 @@ Describe 'Secure Ops webview bridge and Tailscale session' {
     It 'prefers MagicDNS for share URL and listens on both names' {
         InModuleScope Metra {
             Mock Get-MetraOpsTailscaleServeStatus { [pscustomobject]@{ Ok = $false; ShareUrl = $null; Reason = 'off' } }
-            $b = Get-MetraOpsTailscaleBinding -Address '100.64.1.2' -Port 80 -DnsName 'dev-jmp01.lab.example.ts.net.'
-            $b.BrowserUrl | Should -Be 'http://dev-jmp01.lab.example.ts.net/'
-            $b.ShareUrl | Should -Be 'http://dev-jmp01.lab.example.ts.net/'
-            $b.DnsName | Should -Be 'dev-jmp01.lab.example.ts.net'
+            $b = Get-MetraOpsTailscaleBinding -Address '100.64.1.2' -Port 80 -DnsName 'dev-jmp01.dev-hq.example.ts.net.'
+            $b.BrowserUrl | Should -Be 'http://dev-jmp01.dev-hq.example.ts.net/'
+            $b.ShareUrl | Should -Be 'http://dev-jmp01.dev-hq.example.ts.net/'
+            $b.DnsName | Should -Be 'dev-jmp01.dev-hq.example.ts.net'
             $b.TailscaleIp | Should -Be '100.64.1.2'
             @($b.ListenerPrefixes) | Should -Contain 'http://127.0.0.1:80/'
             @($b.ListenerPrefixes) | Should -Contain 'http://100.64.1.2:80/'
-            @($b.ListenerPrefixes) | Should -Contain 'http://dev-jmp01.lab.example.ts.net:80/'
+            @($b.ListenerPrefixes) | Should -Contain 'http://dev-jmp01.dev-hq.example.ts.net:80/'
         }
     }
 
@@ -5444,7 +5444,7 @@ Describe 'Secure Ops webview bridge and Tailscale session' {
         InModuleScope Metra {
             Mock Get-MetraDeskPreferences { [pscustomobject]@{ opsPort = 80; browserHost = '100.64.1.2'; bindTailscale = $true } }
             Mock Get-MetraOpsTailscaleIPv4 { '100.64.1.2' }
-            Mock Get-MetraOpsTailscaleDnsName { 'dev-jmp01.lab.example.ts.net' }
+            Mock Get-MetraOpsTailscaleDnsName { 'dev-jmp01.dev-hq.example.ts.net' }
             Mock Get-MetraOpsTailscaleServeStatus { [pscustomobject]@{ Ok = $false; ShareUrl = $null; Reason = 'off' } }
             Mock Test-MetraHostsEntry { $false }
 
@@ -5452,8 +5452,8 @@ Describe 'Secure Ops webview bridge and Tailscale session' {
             $b.Tailscale | Should -BeTrue
             @($b.ListenerPrefixes) | Should -Contain 'http://100.64.1.2:80/'
             @($b.ListenerPrefixes) | Should -Contain 'http://127.0.0.1:80/'
-            @($b.ListenerPrefixes) | Should -Contain 'http://dev-jmp01.lab.example.ts.net:80/'
-            $b.BrowserUrl | Should -Be 'http://dev-jmp01.lab.example.ts.net/'
+            @($b.ListenerPrefixes) | Should -Contain 'http://dev-jmp01.dev-hq.example.ts.net:80/'
+            $b.BrowserUrl | Should -Be 'http://dev-jmp01.dev-hq.example.ts.net/'
         }
     }
 
@@ -5706,5 +5706,83 @@ Describe 'Ask image intake - Ladder 3' {
             $ask.scrubbedPrompt | Should -Match 'REDACTED'
             $ask.secretsScrubbed | Should -BeTrue
         }
+    }
+}
+
+Describe 'Ops Ask sidecar stability (reach)' {
+    It 'OpsServer owns 45s Ask health poll measured from prior completion' {
+        $src = Get-Content -LiteralPath (Join-Path (Get-MetraRoot) 'scripts\private\OpsServer.ps1') -Raw
+        $src | Should -Match 'function Sync-MetraOpsAskSidecarHealthPoll'
+        $src | Should -Match 'IntervalSec = 45'
+        $src | Should -Match 'MetraOpsAskHealthNextUtc = \[datetime\]::UtcNow\.AddSeconds'
+        $src | Should -Match 'Invoke-MetraAskCursorSidecarEnsure'
+        $src | Should -Match 'function Get-MetraOpsAskMetaSummary'
+        $src | Should -Match 'serveOk'
+        $src | Should -Match 'askEngine'
+        $src | Should -Match 'Set-MetraOpsHostPendingBalloon'
+    }
+
+    It 'VisionAsk passes TimeoutSec 180 and maps cursor auth/usage/model reasons' {
+        $src = Get-Content -LiteralPath (Join-Path (Get-MetraRoot) 'scripts\private\VisionAsk.ps1') -Raw
+        $src | Should -Match 'TimeoutSec 180'
+        $src | Should -Match "cursor_auth_error"
+        $src | Should -Match "cursor_usage_limit"
+        $src | Should -Match "cursor_model_unavailable"
+        InModuleScope Metra {
+            @(Get-MetraVisionAskErrorCodes) | Should -Contain 'cursor_auth_error'
+            @(Get-MetraVisionAskErrorCodes) | Should -Contain 'cursor_usage_limit'
+            @(Get-MetraVisionAskErrorCodes) | Should -Contain 'cursor_model_unavailable'
+            (Get-MetraVisionAskHttpStatusCode -Envelope ([pscustomobject]@{ status = 'unavailable'; reason = 'cursor_auth_error' })) | Should -Be 502
+            (Get-MetraVisionAskHttpStatusCode -Envelope ([pscustomobject]@{ status = 'unavailable'; reason = 'cursor_usage_limit' })) | Should -Be 502
+            (Get-MetraVisionAskHttpStatusCode -Envelope ([pscustomobject]@{ status = 'unavailable'; reason = 'cursor_model_unavailable' })) | Should -Be 502
+        }
+    }
+
+    It 'Get-MetraOpsAskMetaSummary returns additive Ask fields without secrets' {
+        InModuleScope Metra {
+            Mock Get-MetraAskSettings {
+                [PSCustomObject]@{
+                    engine     = 'none'
+                    enabled    = $false
+                    cursorPort = 7381
+                }
+            }
+            $meta = Get-MetraOpsAskMetaSummary
+            $meta.PSObject.Properties.Name | Should -Contain 'selected'
+            $meta.PSObject.Properties.Name | Should -Contain 'healthy'
+            $meta.PSObject.Properties.Name | Should -Contain 'degradedCode'
+            $meta.PSObject.Properties.Name | Should -Contain 'engine'
+            $meta.selected | Should -BeFalse
+        }
+    }
+
+    It 'MetraOpsDesk WhatIf documents LSA credential storage and does not register' {
+        InModuleScope Metra {
+            $sec = ConvertTo-SecureString 'not-a-real-password' -AsPlainText -Force
+            $cred = [PSCredential]::new('hq\metra-whatif', $sec)
+            $result = Install-MetraOpsDeskTask -Credential $cred -WhatIf
+            $result.WhatIf | Should -BeTrue
+            $result.Message | Should -Match 'Task Scheduler'
+            $taskSrc = Get-Content -LiteralPath (Join-Path (Get-MetraRoot) 'scripts\private\OpsDeskTask.ps1') -Raw
+            $taskSrc | Should -Match 'LSA'
+            $taskSrc | Should -Match 'Never write under Metra LOCALAPPDATA or User env'
+            $taskSrc | Should -Not -Match 'ops-desk-task\.password'
+            $taskSrc | Should -Not -Match 'Set-Content.*Password'
+        }
+    }
+
+    It 'iOS OpsAskClient uses 195s timeout and splits timedOut from offline' {
+        $ask = Get-Content -LiteralPath (Join-Path (Get-MetraRoot) 'clients\ios\MetraCompanion\Services\AskClient.swift') -Raw
+        $ops = Get-Content -LiteralPath (Join-Path (Get-MetraRoot) 'clients\ios\MetraCompanion\Services\OpsAskClient.swift') -Raw
+        $ask | Should -Match 'requestTimedOut'
+        $ask | Should -Match 'cursorAuthError'
+        $ask | Should -Match 'cursorUsageLimit'
+        $ask | Should -Match 'cursorModelUnavailable'
+        $ops | Should -Match 'askTimeoutInterval: TimeInterval = 195'
+        $ops | Should -Match 'urlError\.code == \.timedOut'
+        $ops | Should -Match 'AskClientError\.requestTimedOut'
+        $ops | Should -Match 'isEarlyReachabilityFailure'
+        $ops | Should -Match 'probeMeta'
+        $ops | Should -Match '/api/meta'
     }
 }

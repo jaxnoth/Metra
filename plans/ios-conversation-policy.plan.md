@@ -5,7 +5,9 @@
 **Owner surface:** Metra iOS companion conversation brain  
 **Related:** [ios-presence-behavior.plan.md](ios-presence-behavior.plan.md) (face + voice **events** only), Brand.md iOS companion presence; humor-desk Warmth kernel  
 **Not this plan:** TTS voice picker identity (presence Appendix A.0); face morph cadence; Ops HTML desk copy; Swift silence timer runtime  
-**Next bite:** wire with iOS chat/voice (presence controller may proceed in parallel)
+**Next bite:** partial wire landed 2026-09-18 (presence check-ins → Company / capability_only on Ops Ask). Remaining: full policy engine on iOS chat/voice (telemetry-first Phase 4), LocalAssist `executionTarget=local`, spark-or-quiet runtime. Presence controller may proceed in parallel.
+
+**Vision Cursor Identity Stack (2026-09-18):** Phone uses Vision Ask contract (`contractVersion=1`) with Conversation Identity Stack on HQ (same Cursor persona / allowlisted add-ons). CE `vision_phone_default` removed - fix forward on Vision. See Cursor plan `vision_cursor_identity_stack_6d6d4e42`.
 
 ---
 

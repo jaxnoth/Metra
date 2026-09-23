@@ -1,12 +1,12 @@
 {
   "name": "tickets",
-  "displayName": "OrgBrand Tickets",
+  "displayName": "Tickets",
   "version": "0.1.0",
-  "description": "OrgBrand TicketTracker desk skill: brief, assess, Recommend Preview, durable text shape. Zero write authority in the skill; CLI owns gates.",
+  "description": "TicketTracker desk skill: brief, assess, Recommend Preview, durable text shape. Zero write authority in the skill; CLI owns gates.",
   "logo": "assets/logo.svg",
   "license": "UNLICENSED",
-  "keywords": ["OrgBrand", "tickettracker", "isupport", "helpdesk", "assess"],
+  "keywords": ["Metra", "tickettracker", "isupport", "helpdesk", "assess"],
   "author": {
-    "name": "OrgBrand Metra"
+    "name": "Metra"
   }
 }

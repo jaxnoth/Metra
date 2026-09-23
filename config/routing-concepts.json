@@ -8,11 +8,9 @@
       "notes": "Print queue / printer monitoring symptoms"
     },
     {
-      "id": "payroll-run",
-      "tokens": ["payroll", "payrun", "paycheck"],
-      "stem": "IWUDATA",
-      "preferProject": "IWUDATA-Automation",
-      "notes": "Payroll-style batch run language toward automation stem"
+      "id": "batch-run",
+      "tokens": ["batch job", "overnight run", "batch run"],
+      "notes": "Generic overnight / batch-job language (no preferred project)"
     }
   ]
 }

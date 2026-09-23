@@ -52,7 +52,7 @@ function Get-MetraPartnerIdentityContract {
             Ask         = 'Desk'
             Cursor      = 'Desk'
             Vision      = 'Company'
-            iOS         = 'Desk'
+            iOS         = 'Company'
             OpsPresence = 'Desk'
         }
         SelfDescription = "I'm Metra, the portfolio operations partner."
@@ -203,8 +203,8 @@ function New-MetraPartnerIdentityPreamble {
     }
     [void]$lines.Add("Continuity claim-scope=$scope. Never claim 'I remember where we left off' unless claim-scope is factual_supported.")
 
-    if ($Surface -eq 'Vision') {
-        [void]$lines.Add('Vision modality: image/context may be present; keep identity the same Metra partner - do not become a companion-only entity.')
+    if ($Surface -in @('Vision', 'iOS')) {
+        [void]$lines.Add('Vision / phone companion: normal Metra conversation with optional portfolio access. Same partner identity - not a separate companion character. Use attached portfolio context when relevant; do not force desk routing essays.')
     }
 
     return ($lines -join "`n")

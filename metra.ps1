@@ -8,7 +8,7 @@
     .\metra.ps1 pull
     .\metra.ps1 new MyApp -Description "Demo app"
     .\metra.ps1 run "git status -sb"
-    .\metra.ps1 run -Filter "OrgBrand*" "git pull --ff-only"
+    .\metra.ps1 run -Filter "Ticket*" "git pull --ff-only"
     .\metra.ps1 apply .\shared\.editorconfig -RelativePath .editorconfig
     .\metra.ps1 workspace
     .\metra.ps1 workspace -Months 6
@@ -37,7 +37,7 @@ param(
     [ValidateSet(
         'list', 'status', 'pull', 'fetch', 'run', 'new', 'apply', 'workspace',
         'audit', 'snapshot', 'selfdoc', 'ops', 'host', 'chats', 'roots', 'routing',
-        'export-profile', 'import-profile', 'ctx', 'setup', 'verify', 'unblock', 'tailscale', 'satellite', 'desk', 'profile', 'decisions', 'coverage', 'ask', 'capture', 'narrative', 'watch', 'inspect', 'azdo', 'atlas', 'loom', 'yarn', 'plan-board', 'autoprogram', 'help'
+        'export-profile', 'import-profile', 'ctx', 'setup', 'verify', 'security-audit', 'unblock', 'tailscale', 'satellite', 'desk', 'profile', 'decisions', 'coverage', 'ask', 'capture', 'narrative', 'watch', 'inspect', 'azdo', 'atlas', 'loom', 'yarn', 'plan-board', 'autoprogram', 'help'
     )]
     [string]$Command = 'help',
 
@@ -189,6 +189,9 @@ Usage:
   .\metra.ps1 host [-Port 7380] [-NoBrowser] [-NoRefresh] [-Quick] [-Stop] [-ForceLocal]
       User-session tray host so Metra stays alive without a console. Host starts Ops only (Ops owns Ask).
       Second launch opens the browser when the desk is already up. Mode B refuses unless -ForceLocal.
+  .\metra.ps1 host task status|install|uninstall [-Confirm]
+      MetraOpsDesk Scheduled Task for unattended Ops+Ask reach. install stores the HQ password in
+      Task Scheduler/LSA only (never Metra files or User env next to CURSOR_API_KEY).
   .\metra.ps1 chats [-Name ProjA,ProjB] [-Query 'terms'] [-Ticket 12345] [-Days 90] [-Limit 10] [-IncludeMetra]
   .\metra.ps1 roots
   .\metra.ps1 routing [-Name ProjA] [-Query 'terms'] [-SharedOnly] [-MissingOnly]
@@ -218,7 +221,7 @@ Usage:
   .\metra.ps1 unblock [-Preview]
       Clear mark-of-the-web from checkout script files (ZIP / OneDrive / email). Supports -Preview.
   .\metra.ps1 tailscale campus-hosts [-Preview] [-Force]
-      OrgBrand campus: pin Tailscale login/controlplane hosts past DNSFilter MITM (elevation required).
+      Campus DNS-filter: pin Tailscale login/controlplane hosts past DNSFilter MITM (elevation required).
       Use -Force in elevated Windows PowerShell (Start menu), not VS Code integrated terminal.
   .\metra.ps1 satellite connect -OpsBaseUrl https://<hq>.ts.net [-SyncToken ...] [-Force] [-Preview]
   .\metra.ps1 satellite repair-roots [-Preview]
@@ -280,6 +283,7 @@ Usage:
   .\metra.ps1 plan-board sync|sync -DryRun|status|inventory|inventory apply -Confirm
       Notion Plan Board projection catch-up + Bing inventory pack (Yarn/Loom remain authoritative; fail-open).
   .\metra.ps1 verify
+  .\metra.ps1 security-audit [-Path <repo>] [-Force]
 
 Roots:
   Projects can live in more than one folder (see roots in metra.config.json).
@@ -304,7 +308,7 @@ Examples:
   .\metra.ps1 run 'git remote -v' -GitOnly
   .\metra.ps1 new ReportingOps -Description 'Ops scripts for reporting'
   .\metra.ps1 new SermonNotes -Root personal
-  .\metra.ps1 apply .\shared\.gitignore -RelativePath .gitignore -Filter 'OrgBrand*'
+  .\metra.ps1 apply .\shared\.gitignore -RelativePath .gitignore -Filter 'Ticket*'
   .\metra.ps1 workspace
   .\metra.ps1 workspace -Months 3 -Preview
   .\metra.ps1 audit -Name Solarwinds,TicketTracker
@@ -323,7 +327,7 @@ Examples:
   .\metra.ps1 profile show
   .\metra.ps1 profile familiarity show
   .\metra.ps1 profile familiarity analyze-nudge -SessionPeak Familiar -SessionFloor Warming -Direction Up -Sustained -Note 'sustained collaborative project brainstorming'
-  .\metra.ps1 decisions search 'etl-host'
+  .\metra.ps1 decisions search 'automation-host'
   .\metra.ps1 decisions harvest -Preview
   .\metra.ps1 ctx
   .\metra.ps1 ctx -Query 'ticket disk'
@@ -340,7 +344,7 @@ Examples:
   .\metra.ps1 unblock -Preview
   .\metra.ps1 tailscale campus-hosts -Preview
   .\metra.ps1 tailscale campus-hosts
-  pwsh -NoProfile -File .\metra.ps1 satellite connect -OpsBaseUrl https://jumpbox.lab.example.ts.net
+  pwsh -NoProfile -File .\metra.ps1 satellite connect -OpsBaseUrl https://jumpbox.hq.example.ts.net
   .\metra.ps1 verify
 "@ | Write-Host
 }
@@ -516,6 +520,32 @@ switch ($Command) {
     }
 
     'host' {
+        if ($Rest -and $Rest.Count -gt 0 -and [string]$Rest[0] -eq 'task') {
+            $taskSub = if ($Rest.Count -gt 1) { [string]$Rest[1] } else { 'status' }
+            switch ($taskSub.ToLowerInvariant()) {
+                'status' {
+                    Get-MetraOpsDeskTaskStatus
+                    return
+                }
+                'install' {
+                    if (-not $Confirm) {
+                        throw 'host task install requires -Confirm (registers MetraOpsDesk; password goes to Task Scheduler/LSA only).'
+                    }
+                    Install-MetraOpsDeskTask -Confirm:$true
+                    return
+                }
+                'uninstall' {
+                    if (-not $Confirm) {
+                        throw 'host task uninstall requires -Confirm.'
+                    }
+                    Uninstall-MetraOpsDeskTask -Confirm:$true
+                    return
+                }
+                default {
+                    throw "host task: unknown subcommand '$taskSub'. Use status|install|uninstall."
+                }
+            }
+        }
         if ($Stop -and ($Quick -or $NoBrowser -or $NoRefresh -or $ForceLocal)) {
             throw 'host: -Stop cannot be combined with startup options.'
         }
@@ -659,6 +689,34 @@ switch ($Command) {
         Write-Host ("VerifyVersion={0} PASS={1} WARN={2} FAIL={3}" -f $ver, $report.PassCount, $report.WarnCount, $report.FailCount)
         if (-not $report.Ok) {
             exit 1
+        }
+    }
+
+    'security-audit' {
+        $auditParams = @{
+            FailOnFindings = [bool]$Force
+            Quiet          = [bool]$Quiet
+            Json           = ($Format -eq 'json')
+        }
+        if ($Path) { $auditParams.Path = $Path }
+        if ($Rest -contains '-IncludeUntracked' -or $Rest -contains 'IncludeUntracked') {
+            $auditParams.IncludeUntracked = $true
+        }
+        $audit = Show-MetraSecurityAuditCli @auditParams
+        if ($Force) {
+            $auditOk = $false
+            if ($audit -is [string]) {
+                try {
+                    $auditOk = [bool](($audit | ConvertFrom-Json).Ok)
+                } catch {
+                    $auditOk = $false
+                }
+            } elseif ($null -ne $audit) {
+                $auditOk = [bool]$audit.Ok
+            }
+            if (-not $auditOk) {
+                exit 1
+            }
         }
     }
 

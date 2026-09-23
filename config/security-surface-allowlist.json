@@ -1,0 +1,5 @@
+{
+  "schemaVersion": 1,
+  "note": "Deny patterns are the default. Each allowlist entry must include rationale, approvedBy, sourceFile, and expiresOn (ISO date). Empty at ship.",
+  "entries": []
+}

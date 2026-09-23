@@ -166,6 +166,20 @@ Opt-in tone dials under `profiles/addons/`. They raise chat color without changi
 
 Guardrails: add-ons may alter tone only - not routing, project selection, root isolation, evidence hierarchy, professional artifacts, or incident defaults. Catalog and suggested later dials: [profiles/addons/README.md](../profiles/addons/README.md). Single-file paths: copy `metra-humor.local.example.mdc` or `metra-teaching-gentle.local.example.mdc` to the matching `.local.mdc` name.
 
+### Vision Conversation Identity Stack
+
+Vision (phone companion on the real Vision Ask contract) loads the same conversational identity Cursor uses, via a **frozen allowlisted manifest** (`Get-MetraConversationIdentityManifest` / `Get-MetraConversationIdentityPrompt`):
+
+partner → persona → overlay → OCC → humor → teaching → vision brief → narrative face
+
+- **Allowlist only:** unknown `metra-*.local.mdc` files are never loaded. New add-ons require a manifest edit.
+- **Loader sole authority** for `TeachingActive` / `HumorActive`. VisionAsk does not re-decide packs.
+- **Teaching:** Vision Company includes teaching-gentle when installed; Desk only when `context.teachingWanted=true`; DeskStrict never.
+- **Telemetry / diagnostics:** `identityHash` (after frontmatter strip + budget), pack ids - not prompt bodies.
+- iOS always sends `contractVersion=1` with mode=vision. Phone CE `vision_phone_default` was removed - fix forward on Vision.
+
+HQ must have add-on `.local.mdc` files present for packs to activate (export-profile already copies humor/teaching when present).
+
 ### Desk familiarity (humor-desk companion)
 
 Numeric **working-together register** for humor-desk (session vs durable). Not OCC, not Decision Registry, not Notion.

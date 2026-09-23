@@ -2,7 +2,7 @@
 
 # VerifyVersion bumps when the check set changes (automation can detect suite growth).
 # v1-v2: routing-centric smoke. v3: + snapshot, desk payload, selfdoc routes, updates, Ask.
-$script:MetraVerifyVersion = 3
+$script:MetraVerifyVersion = 4
 
 function Invoke-MetraVerify {
     <#
@@ -354,6 +354,43 @@ function Invoke-MetraVerify {
     }
     catch {
         Add-VerifyResult -Name 'ask capability' -Status 'FAIL' -Detail $_.Exception.Message -Category 'ask'
+    }
+
+    # Public surface structural audit (tracked files)
+    try {
+        $surface = Invoke-MetraSecuritySurfaceAudit -Root $metraRoot -FailOnFindings
+        if ($surface.Ok) {
+            Add-VerifyResult -Name 'security surface audit' -Status 'PASS' -Detail (
+                "scanned={0}; fail={1}" -f $surface.ScannedFiles, $surface.FailCount
+            ) -Category 'security'
+        }
+        else {
+            $sample = @($surface.Findings | Where-Object { $_.Severity -eq 'FAIL' -and -not $_.Allowlisted } |
+                    Select-Object -First 3 |
+                    ForEach-Object { '{0}:{1}:{2}' -f $_.RelativePath, $_.Line, $_.PatternId }) -join '; '
+            Add-VerifyResult -Name 'security surface audit' -Status 'FAIL' -Detail (
+                "fail={0}; sample={1}" -f $surface.FailCount, $sample
+            ) -Category 'security'
+        }
+    }
+    catch {
+        Add-VerifyResult -Name 'security surface audit' -Status 'FAIL' -Detail $_.Exception.Message -Category 'security'
+    }
+
+    try {
+        $sharedOnly = Test-MetraTrackedSelfDocSharedOnly -Root $metraRoot
+        if ($sharedOnly.Ok) {
+            Add-VerifyResult -Name 'selfdoc shared-only embeds' -Status 'PASS' -Detail (
+                "shared=({0})" -f ($sharedOnly.SharedNames -join ',')
+            ) -Category 'security'
+        }
+        else {
+            $v = @($sharedOnly.Violations | Select-Object -First 5 | ForEach-Object { '{0}:{1}' -f $_.Path, $_.Project }) -join '; '
+            Add-VerifyResult -Name 'selfdoc shared-only embeds' -Status 'FAIL' -Detail $v -Category 'security'
+        }
+    }
+    catch {
+        Add-VerifyResult -Name 'selfdoc shared-only embeds' -Status 'FAIL' -Detail $_.Exception.Message -Category 'security'
     }
 
     $pass = @($results | Where-Object Status -eq 'PASS').Count

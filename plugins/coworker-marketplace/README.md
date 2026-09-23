@@ -1,14 +1,14 @@
-# OrgBrand Coworker marketplace pack
+# Metra Coworker marketplace pack
 
-Standalone Cursor Team Marketplace pack for OrgBrand coworker dry-runs (desk + tickets + Codex).
+Standalone Cursor Team Marketplace pack for Metra Coworker dry-runs (desk + tickets + Codex).
 
 **Does not replace** Metra `.\metra.ps1 routing`, persona, inspect, ticket write gates, or **Station** installs (TicketTracker / Codex trees via Ops **Station Updates**). Skills are procedure garnish only.
 
 **Glossary:** In Metra Ops Updates language, TicketTracker and Codex are **Stations** (destinations). This marketplace still uses Cursor's "plugin" / "satellite plugin" words for skill packs - that is not the Station release channel.
 
-Import this repository into the Cursor team marketplace (e.g. **OrgBrand SDT Market**). The GitHub repo **root must be this folder** so `.cursor-plugin/marketplace.json` is at the repo root.
+Import this repository into the Cursor team marketplace (e.g. **Metra Team Market**). The GitHub repo **root must be this folder** so `.cursor-plugin/marketplace.json` is at the repo root.
 
-**Published repo (private):** https://github.com/jaxnoth/OrgBrand-coworker-marketplace
+**Published repo (private):** https://github.com/jaxnoth/metra-coworker-marketplace
 
 
 ## Plugins (v1)
@@ -21,7 +21,7 @@ Import this repository into the Cursor team marketplace (e.g. **OrgBrand SDT Mar
 
 Planned later (same pack, separate plugins): M365, Colleague, EllucianWebService, IWUDATA-SQL, Reporting, Solarwinds.
 
-## Publish to OrgBrand SDT Market
+## Publish to Metra Team Market
 
 1. Create a GitHub repo (prefer **private**, team-readable).
 2. Push **this folder as the repo root** (not the parent Metra tree).
@@ -31,7 +31,7 @@ Planned later (same pack, separate plugins): M365, Colleague, EllucianWebService
 .\scripts\Assert-PublishSafe.ps1
 ```
 
-4. In Cursor Dashboard → team marketplace (**OrgBrand SDT Market**) → set **Plugin Repository** to that GitHub URL → **Refresh**.
+4. In Cursor Dashboard → team marketplace (**Metra Team Market**) → set **Plugin Repository** to that GitHub URL → **Refresh**.
 5. Keep plugins **Default Off** until coworker dry-run 2. Do not Required yet.
 6. Coworkers: Customize → install `coworker-desk`, `tickets`, `codex` as needed.
 
@@ -46,7 +46,7 @@ cd <path-to-this-folder>
 git init
 git add .
 .\scripts\Assert-PublishSafe.ps1
-git commit -m "Initial OrgBrand coworker marketplace pack"
+git commit -m "Initial Metra Coworker marketplace pack"
 git remote add origin <github-repo-url>
 git push -u origin main
 ```
@@ -71,10 +71,10 @@ Refresh `tickets` from TicketTracker source of truth (maintainer machine with a 
 
 ## Naming
 
-- Pack slug (`marketplace.json` `name`): `OrgBrand-coworker`
-- Pack display name: `OrgBrand Coworker`
-- Cursor **team marketplace** name (Dashboard): whatever you created (e.g. OrgBrand SDT Market) - that is separate from the pack slug
-- Plugin ids stay lowercase kebab-case; `displayName` carries the OrgBrand prefix
+- Pack slug (`marketplace.json` `name`): `metra-coworker`
+- Pack display name: `Metra Coworker`
+- Cursor **team marketplace** name (Dashboard): whatever you created (e.g. Metra Team Market) - that is separate from the pack slug
+- Plugin ids stay lowercase kebab-case; `displayName` carries the Metra prefix
 
 Icons and title casing in the Cursor UI may not honor `logo` / `displayName` yet; skills still install.
 

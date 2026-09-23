@@ -1,12 +1,12 @@
 {
   "name": "coworker-desk",
-  "displayName": "OrgBrand Coworker Desk",
+  "displayName": "Coworker Desk",
   "version": "0.1.0",
-  "description": "Thin OrgBrand coworker onboarding for Metra: routing pointer, Overview, missing-station honesty, ticket-ops vs investigate hop. Does not replace metra.ps1 or Station Updates.",
+  "description": "Thin coworker onboarding for Metra: routing pointer, Overview, missing-station honesty, ticket-ops vs investigate hop. Does not replace metra.ps1 or Station Updates.",
   "logo": "assets/logo.svg",
   "license": "UNLICENSED",
-  "keywords": ["OrgBrand", "metra", "coworker", "onboarding", "routing"],
+  "keywords": ["Metra", "metra", "coworker", "onboarding", "routing"],
   "author": {
-    "name": "OrgBrand Metra"
+    "name": "Metra"
   }
 }

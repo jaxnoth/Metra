@@ -1,12 +1,12 @@
 {
-  "name": "OrgBrand-coworker",
-  "displayName": "OrgBrand Coworker",
+  "name": "metra-coworker",
+  "displayName": "Metra Coworker",
   "owner": {
-    "name": "OrgBrand Metra",
+    "name": "Metra",
     "email": ""
   },
   "metadata": {
-    "description": "OrgBrand Coworker desk onboarding plus Station procedure plugins (TicketTracker, Codex first; more later). Default Off. Does not replace metra.ps1 routing or Station Updates installs.",
+    "description": "Coworker Desk onboarding plus Station procedure plugins (TicketTracker, Codex first; more later). Default Off. Does not replace metra.ps1 routing or Station Updates installs.",
     "version": "0.1.0",
     "pluginRoot": "plugins"
   },
@@ -14,19 +14,19 @@
     {
       "name": "coworker-desk",
       "source": "coworker-desk",
-      "description": "OrgBrand thin onboarding: Metra install/routing pointer, Overview, missing-station honesty, ticket-ops vs investigate hop",
+      "description": "Thin onboarding: Metra install/routing pointer, Overview, missing-station honesty, ticket-ops vs investigate hop",
       "logo": "coworker-desk/assets/logo.svg"
     },
     {
       "name": "tickets",
       "source": "tickets",
-      "description": "OrgBrand TicketTracker desk skill: brief, assess, Recommend Preview, durable text shape",
+      "description": "TicketTracker desk skill: brief, assess, Recommend Preview, durable text shape",
       "logo": "tickets/assets/logo.svg"
     },
     {
       "name": "codex",
       "source": "codex",
-      "description": "OrgBrand Codex KB search/cite path with provider/mode honesty; no ticket writes",
+      "description": "Codex KB search/cite path with provider/mode honesty; no ticket writes",
       "logo": "codex/assets/logo.svg"
     }
   ]

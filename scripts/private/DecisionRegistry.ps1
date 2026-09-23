@@ -1147,30 +1147,9 @@ function Get-MetraDecisionRegistrySeedCatalog {
     <#
     .SYNOPSIS
         Curated operational-scar seeds for local backfill (not product policy).
+        Host/share/AD scars stay out of the shipped catalog - promote from local AGENTS via decisions.
     #>
     @(
-        [PSCustomObject]@{
-            Title = 'Start-Automation runs on etl-host only'
-            Decision = 'Never run Start-Automation from the local workstation or via UNC Scripts.'
-            Why = 'Jobs need the automation host profile and ORGNET\sql.admin credential store on that server.'
-            Project = 'IWUDATA-Automation'
-            Tags = @('etl', 'start-automation', 'etl-host')
-            See = @('etsnc etl-host ORGNET\sql.admin', 'AGENTS.md')
-            Source = 'IWUDATA-Automation/AGENTS.md'
-            Confidence = 'high'
-            Evidence = @('IWUDATA-Automation/AGENTS.md', 'Operator confirmed')
-        },
-        [PSCustomObject]@{
-            Title = 'Scripts Jobs alphabetical; Logs newest-first'
-            Decision = 'On UNC-automation-host/Scripts, sort Jobs alphabetically and Logs newest-first.'
-            Why = 'Operators lose runs when both folders share one sort habit; logs need recency, jobs need stable names.'
-            Project = 'IWUDATA-Automation'
-            Tags = @('scripts', 'jobs', 'logs')
-            See = @('UNC-automation-host/Scripts', 'AGENTS.md')
-            Source = 'IWUDATA-Automation/AGENTS.md'
-            Confidence = 'high'
-            Evidence = @('IWUDATA-Automation/AGENTS.md')
-        },
         [PSCustomObject]@{
             Title = 'Prefer TicketTracker brief over show'
             Decision = 'Prefer TicketTracker brief over show for triage.'
@@ -1249,12 +1228,12 @@ function Get-MetraDecisionRegistrySeedCatalog {
             Evidence = @('Trivia/AGENTS.md', 'Operator confirmed')
         },
         [PSCustomObject]@{
-            Title = 'Jitterbit pushes from OrgBrand.Jitterbit folder'
-            Decision = 'Push Jitterbit git changes from the OrgBrand.Jitterbit/ remote folder, not the parent exports tree.'
+            Title = 'Jitterbit pushes from module folder'
+            Decision = 'Push Jitterbit git changes from the Jitterbit/module remote folder, not the parent exports tree.'
             Why = 'The parent folder is not the git root; pushing there misses the remote or commits the wrong tree.'
             Project = 'Jitterbit'
             Tags = @('git', 'jitterbit')
-            See = @('OrgBrand.Jitterbit/', 'AGENTS.md')
+            See = @('Jitterbit/module/', 'AGENTS.md')
             Source = 'Jitterbit/AGENTS.md'
             Confidence = 'high'
             Evidence = @('Jitterbit/AGENTS.md')

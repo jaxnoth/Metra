@@ -15,6 +15,7 @@
 | Brand iOS vs Ops | [Brand.md](Brand.md) | iOS face OK; Ops desk faceless |
 | Client identity auth | [tailscale-identity-auth.plan.md](tailscale-identity-auth.plan.md) | Approved direction - implement pending |
 | Parked reach / phases | Future-Development “Metra iOS app”; Cursor plan `metra_ios_no-mac_ce17481e` | Parked pending Mac / reach |
+| Vision Cursor Identity Stack | Cursor plan `vision_cursor_identity_stack_6d6d4e42` | Shipped 2026-09-18 (Vision contract + identity stack; CE phone bridge removed) |
 
 **Not this plan:** Implementing Xcode today; shipping sibling apps in the Metra MSI; girlfriend-mode companions.
 
@@ -145,7 +146,7 @@ This preserves: phone is a client of Metra; relational continuity does not requi
 
 **Done-when:**
 
-- Xcode project (SwiftUI) on OrgBrand work Mac (or approved Mac fallback).
+- Xcode project (SwiftUI) on build Mac (or approved Mac fallback).
 - App talks to Ops host over Tailscale (ask + sessionId).
 - **Device registration token** in Keychain; host rejects unknown devices.
 - Shows **MARK → warm/attend** presence (static poses OK).
@@ -199,8 +200,8 @@ No voice work until this trial produces notes (even short).
 
 | Need | Why | Status (2026-08-29) |
 |------|-----|---------------------|
-| **Mac with Xcode** (OrgBrand work Mac) | Native iOS app | **Verified** on `build-host-01-mac` / `build-host-01-mac` (`100.101.163.18`). Operator paste: macOS **26.6.2** (25G83), Xcode **26.6** (17F113), Swift **6.3.3** arm64, `xcode-select` → `/Applications/Xcode.app/Contents/Developer`. Shell user `operator.local`; cwd showed existing `Metra` folder. |
-| Jumpbox SSH to Mac | Optional remote verify / agent help | **Works** (2026-08-29): key auth `operator.local@100.101.163.18` from jumpbox (`id_ed25519` in Mac `authorized_keys`). Jumpbox `known_hosts` ACL fixed; Mac host key merged. **Tailscale SSH:** Mac has App Store / sandboxed Tailscale - `sudo tailscale set --ssh` reports SSH server does not run in sandboxed GUI builds. Need standalone Tailscale pkg for Tailscale SSH, or keep classic SSH. |
+| **Mac with Xcode** (build Mac) | Native iOS app | **Verified** on `build-mac01` (`100.64.1.10`). Operator paste: macOS **26.6.2** (25G83), Xcode **26.6** (17F113), Swift **6.3.3** arm64, `xcode-select` → `/Applications/Xcode.app/Contents/Developer`. Shell user `operator`; cwd showed existing `Metra` folder. |
+| Jumpbox SSH to Mac | Optional remote verify / agent help | **Works** (2026-08-29): key auth `operator@100.64.1.10` from jumpbox (`id_ed25519` in Mac `authorized_keys`). Jumpbox `known_hosts` ACL fixed; Mac host key merged. **Tailscale SSH:** Mac has App Store / sandboxed Tailscale - `sudo tailscale set --ssh` reports SSH server does not run in sandboxed GUI builds. Need standalone Tailscale pkg for Tailscale SSH, or keep classic SSH. |
 | Metra Ops host reachable on phone (Tailscale) | Ask/Capture APIs | Confirm when phone testing |
 | Stable `/api/ask` (+ capture/journal as needed) | Already mostly shipped for Ops | Assumed available on Ops host |
 | Operator Apple ID / signing for device runs | Device install | Operator-side |
@@ -211,7 +212,7 @@ No voice work until this trial produces notes (even short).
 Working jumpbox smoke test (key auth, no password):
 
 ```powershell
-ssh operator.local@100.101.163.18 "hostname"
+ssh operator@100.64.1.10 "hostname"
 ```
 
 Password prompts mean the client is not offering the jumpbox `id_ed25519` (or that pubkey is missing from Mac `~/.ssh/authorized_keys`). Add the client pubkey, or SSH from the jumpbox.
@@ -267,7 +268,7 @@ No Mac → stay on Phase 0 PWA or pause native; do not pretend Windows Cursor ca
 
 ## 8. Open questions for operator
 
-1. ~~Xcode on OrgBrand Mac~~ - verified.
+1. ~~Xcode on build Mac~~ - verified.
 2. ~~Native-first vs PWA~~ - **native-first** (Bing + operator lean).
 3. ~~Exact path~~ - **`Metra/clients/ios`** (Mac: `~/Developer/Metra/clients/ios`).
 4. ~~Min iOS~~ - **18+**.
@@ -283,9 +284,9 @@ No Mac → stay on Phase 0 PWA or pause native; do not pretend Windows Cursor ca
 | Date | Change |
 |------|--------|
 | 2026-08-29 | Umbrella plan: unify parked iOS phases with presence, conversation policy, and Siri Voice 4; define next = Mac path + Phase 1 spike. |
-| 2026-08-29 | Mac Tailscale reach confirmed (`build-host-01-mac`); SSH from jumpbox blocked. |
+| 2026-08-29 | Mac Tailscale reach confirmed (`build-mac01`); SSH from jumpbox blocked. |
 | 2026-08-29 | **Xcode verified** via operator paste: macOS 26.6.2, Xcode 26.6, Swift 6.3.3; Phase 1 tooling unblocked. |
-| 2026-08-29 | Jumpbox classic SSH to Mac works (`operator.local@100.101.163.18`); dedicated `metra_known_hosts` because default known_hosts ACL denies write. |
+| 2026-08-29 | Jumpbox classic SSH to Mac works (`operator@100.64.1.10`); dedicated `metra_known_hosts` because default known_hosts ACL denies write. |
 | 2026-08-29 | Jumpbox `known_hosts` ACL fixed + Mac host key merged; plain `ssh` key auth OK. Tailscale SSH blocked on sandboxed/App Store Tailscale - classic SSH is the path. |
 | 2026-08-29 | **Bing: Approve with minor amendments.** Folded: session authority, offline contract, Phase 1 device token, Phase 0.5 rename (Identity sync), Phase 1.5 operator trial, Phase 4 policy telemetry-first, open Qs (native-first, iOS 18+, Tailscale-only, clients/ios), centering scar “phone is not a second Metra.” Status → Approved with minor amendments. |
 | 2026-08-29 | Client auth direction: Tailscale WhoIs + allowlist (+ optional host-minted device token). Linked `tailscale-identity-auth.plan.md` and Decision 2026-08-29. |

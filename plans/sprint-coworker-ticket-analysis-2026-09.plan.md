@@ -57,7 +57,7 @@ Fresh shell; no Metra state; no TT clone first (then repeat with TT). Capture PS
 
 ## Cursor team skills
 
-**Publish (S2b) if S1a passes:** OrgBrand Coworker marketplace (`coworker-desk`, `tickets`, `codex`) Default Off - see `_meta/plugins/coworker-marketplace/`
+**Publish (S2b) if S1a passes:** Metra Coworker marketplace (`coworker-desk`, `tickets`, `codex`) Default Off - see `_meta/plugins/coworker-marketplace/`
 
 **Draft only / post-ship:** `metra-routing-bridge` (_meta)
 

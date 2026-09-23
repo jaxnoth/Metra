@@ -488,7 +488,7 @@ Do not call this L4 (no specialist merge). Do not grant L5 because Snapshot or H
 | Completeness | incomplete |
 | Evidence quality | adequate today; authoritative when health + TranDb agree after action |
 | Loop form | turn-based today; target goal-based (judge = health + TranDb after Clear) |
-| Evidence (current) | Playbook + done-when/On hard stop in `OrgBrand.Jitterbit/README.md` and `Jitterbit/AGENTS.md` (2026-08-06 G1): Find -> Health -> Stop -> TranDb get/clear; post-check health + Harmony + TranDb |
+| Evidence (current) | Playbook + done-when/On hard stop in `Jitterbit/module/README.md` and `Jitterbit/AGENTS.md` (2026-08-06 G1): Find -> Health -> Stop -> TranDb get/clear; post-check health + Harmony + TranDb |
 | On hard stop | PE down or counts not improved; cite health/TranDb tables; next: operator fixes PE or confirms Clear - never soft-cancel live work blindly |
 | Gaps to target | 1. Prove judges on next live stuck-ops run. 2. Bound retry when Harmony/health flakes. |
 | Next bite | Next stuck-ops: refuse "complete" until post-check passes (G2 desk shipped 2026-08-15) |

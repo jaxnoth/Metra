@@ -139,15 +139,17 @@ function Get-MetraSelfDocRouteExamples {
         Featured order comes from registry routing.featuredProjects and/or project featured:true.
         Each sampleAsk is confirmed against the live routing engine so docs match ticket precedence,
         home fallback, and scoring - not raw trigger[0] guesswork.
+        Use -SharedOnly when writing tracked Overview / canvas template so local-only projects never ship.
     #>
     [CmdletBinding()]
     param(
         [int]$DiagramLimit = 3,
-        [int]$TableLimit = 8
+        [int]$TableLimit = 8,
+        [switch]$SharedOnly
     )
 
-    $registry = Get-MetraProjectRegistry
-    $table = @(Get-MetraRoutingTable)
+    $registry = Get-MetraProjectRegistry -SharedOnly:$SharedOnly
+    $table = @(Get-MetraRoutingTable -SharedOnly:$SharedOnly)
     $presentByName = @{}
     foreach ($row in $table) {
         if (-not $row.Present) { continue }
@@ -155,15 +157,21 @@ function Get-MetraSelfDocRouteExamples {
     }
 
     $regByName = @{}
+    $shareOk = @{}
     foreach ($p in @($registry.projects)) {
         $n = [string](Get-MetraProp -Object $p -Name 'name' -Default '')
-        if ($n) { $regByName[$n] = $p }
+        if (-not $n) { continue }
+        $regByName[$n] = $p
+        $shareProp = Get-MetraProp -Object $p -Name 'share' -Default $true
+        $shareOk[$n] = [bool]$shareProp
     }
 
     $featuredNames = @(Get-MetraSelfDocFeaturedNames -Registry $registry)
     $orderedNames = [System.Collections.Generic.List[string]]::new()
     $seen = @{}
     foreach ($name in $featuredNames) {
+        if ($SharedOnly -and $shareOk.ContainsKey($name) -and -not $shareOk[$name]) { continue }
+        if ($SharedOnly -and -not $regByName.ContainsKey($name)) { continue }
         if (-not $presentByName.ContainsKey($name)) { continue }
         $key = $name.ToLowerInvariant()
         if ($seen.ContainsKey($key)) { continue }
@@ -171,6 +179,8 @@ function Get-MetraSelfDocRouteExamples {
         [void]$orderedNames.Add($name)
     }
     foreach ($name in @($presentByName.Keys | Sort-Object)) {
+        if ($SharedOnly -and -not $regByName.ContainsKey($name)) { continue }
+        if ($SharedOnly -and $shareOk.ContainsKey($name) -and -not $shareOk[$name]) { continue }
         $key = $name.ToLowerInvariant()
         if ($seen.ContainsKey($key)) { continue }
         $seen[$key] = $true
@@ -237,6 +247,7 @@ function Get-MetraSelfDocRouteExamples {
             'registry-score',
             'home-default'
         )
+        sharedOnly  = [bool]$SharedOnly
     }
 }
 
@@ -506,6 +517,7 @@ function Update-MetraSelfDocumentation {
 
     $metraRoot = Get-MetraRoot
     $payload = Get-MetraSelfDocRouteExamples -DiagramLimit $DiagramLimit -TableLimit $TableLimit
+    $payloadShared = Get-MetraSelfDocRouteExamples -DiagramLimit $DiagramLimit -TableLimit $TableLimit -SharedOnly
     $behavior = Get-MetraSelfDocBehaviorExamples -RoutePayload $payload
 
     $jsonPath = Get-MetraSelfDocRoutesPath
@@ -523,13 +535,15 @@ function Update-MetraSelfDocumentation {
         $embedOk = Update-MetraSelfDocCanvasEmbed -CanvasPath $canvasPath -Payload $payload
     }
 
-    $overviewOk = Update-MetraSelfDocOverview -Payload $payload
-
-    # Keep tracked template in sync only when the live canvas embed succeeded.
+    # Tracked Overview + template use shared-registry payload only (never local-present topology).
+    $overviewOk = Update-MetraSelfDocOverview -Payload $payloadShared
     $templatePath = Join-Path $metraRoot 'integrations\cursor\metra-self-documentation.canvas.tsx.template'
-    if ($embedOk -and (Test-Path -LiteralPath $templatePath) -and (Test-Path -LiteralPath $canvasPath)) {
-        Copy-Item -LiteralPath $canvasPath -Destination $templatePath -Force
-        Write-Host ("Synced self-doc template from live canvas: {0}" -f $templatePath) -ForegroundColor Green
+    $templateOk = $false
+    if (Test-Path -LiteralPath $templatePath) {
+        $templateOk = Update-MetraSelfDocCanvasEmbed -CanvasPath $templatePath -Payload $payloadShared
+        if ($templateOk) {
+            Write-Host ("Wrote shared-only self-doc template: {0}" -f $templatePath) -ForegroundColor Green
+        }
     }
 
     return [PSCustomObject]@{
@@ -540,7 +554,9 @@ function Update-MetraSelfDocumentation {
         CanvasReady           = [bool]$canvasReady
         EmbedUpdated          = [bool]$embedOk
         OverviewUpdated       = [bool]$overviewOk
+        TemplateUpdated       = [bool]$templateOk
         RouteCount            = @($payload.routes).Count
+        SharedRouteCount      = @($payloadShared.routes).Count
         GeneratedAt           = [string]$payload.generatedAt
         Source                = [string]$payload.source
     }

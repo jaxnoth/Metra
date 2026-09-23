@@ -41,7 +41,7 @@ Entry: `.\metra.ps1`. Inspect detail: [inspect-loop.md](inspect-loop.md).
 .\metra.ps1 profile show
 .\metra.ps1 profile note "Prefer terse verdicts before detail."
 .\metra.ps1 profile promote "Prefer terse verdicts before detail."
-.\metra.ps1 decisions search "etl-host"
+.\metra.ps1 decisions search "automation-host"
 .\metra.ps1 decisions harvest -Preview
 .\metra.ps1 decisions review
 .\metra.ps1 ask sessions
@@ -73,6 +73,10 @@ Entry: `.\metra.ps1`. Inspect detail: [inspect-loop.md](inspect-loop.md).
 .\metra.ps1 azdo status|repos|get|gaps|tree|search|ideas
 .\metra.ps1 atlas health|search|put|sync|publish|notion|write
 .\metra.ps1 ops
+.\metra.ps1 host
+.\metra.ps1 host task status
+.\metra.ps1 host task install -Confirm
+.\metra.ps1 host task uninstall -Confirm
 .\metra.ps1 unblock
 .\metra.ps1 tailscale campus-hosts
 .\metra.ps1 tailscale campus-hosts -Preview

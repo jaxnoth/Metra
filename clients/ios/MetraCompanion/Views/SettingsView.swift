@@ -7,6 +7,8 @@ struct SettingsView: View {
     @AppStorage("voiceLayoutPreview") private var voiceLayoutPreview: Bool = false
 
     @State private var deviceTokenPreview: String = ""
+    @State private var metaStatus: String = ""
+    @State private var metaProbeBusy: Bool = false
 
     var body: some View {
         Form {
@@ -18,12 +20,21 @@ struct SettingsView: View {
                 Text("Enter the Tailscale MagicDNS / Serve HTTPS URL. Confirm it opens in Safari on this phone first.")
                     .font(.footnote)
                     .foregroundStyle(.secondary)
+                Button(metaProbeBusy ? "Checking…" : "Check Ops reach") {
+                    Task { await probeOpsMeta() }
+                }
+                .disabled(metaProbeBusy || opsBaseURL.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+                if !metaStatus.isEmpty {
+                    Text(metaStatus)
+                        .font(.footnote)
+                        .foregroundStyle(.secondary)
+                }
             }
 
             Section("Mode") {
                 Toggle("Vision mode", isOn: $visionMode)
                     .disabled(true)
-                Text("Phase 1 is Vision-only. Bounded comes later.")
+                Text("Phase 1 is Vision-only. Bounded comes later. Asks always use the Vision contract.")
                     .font(.footnote)
                     .foregroundStyle(.secondary)
             }
@@ -49,6 +60,24 @@ struct SettingsView: View {
         .navigationBarTitleDisplayMode(.inline)
         .onAppear {
             deviceTokenPreview = DeviceTokenStore.read() ?? ""
+        }
+    }
+
+    @MainActor
+    private func probeOpsMeta() async {
+        metaProbeBusy = true
+        defer { metaProbeBusy = false }
+        do {
+            let result = try await OpsAskClient.probeMeta(baseURLString: opsBaseURL)
+            if let warning = result.statusMessage {
+                metaStatus = warning
+            } else {
+                metaStatus = "Ops reachable. Serve OK. Ask engine looks healthy."
+            }
+        } catch let error as AskClientError {
+            metaStatus = error.errorDescription ?? "Ops probe failed."
+        } catch {
+            metaStatus = error.localizedDescription
         }
     }
 }

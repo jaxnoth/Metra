@@ -39,22 +39,16 @@ AI at work usually lands in one of two bad places:
 |---------|--------------|-----|---------|
 | TicketTracker | ticket | trigger-phrase | Local ticket assistant for iSupport and future helpdesk systems - sync, search, notes, recommendations. |
 | Solarwinds | solarwinds | trigger-phrase | Orion platform-as-code - alerts, monitors, templates, dashboards, dependencies. |
-| Trivia | trivia | trigger-phrase | Fun Committee / IT get-together printables - trivia drafts, theme sheets, and word-search generators under C:\Projects\Trivia. |
-| Colleague | colleague | trigger-phrase | PowerShell module for Ellucian Colleague admin - WAGC, WAFM, PRQM, EDQM, listeners, sessions. |
-| IWUDATA-Automation | iwudata automation | trigger-phrase | PowerShell automation that populates IWUDATA warehouse databases. |
-| Reporting | reporting | trigger-phrase | Reporting assets, SSRS/related report work, and ops scripts. |
-| Jitterbit | jitterbit | trigger-phrase | Harmony Studio exports, private agents, and OrgBrand.Jitterbit operation-log monitoring module. |
-| Atlas | atlas | trigger-phrase | Metra Atlas - portfolio knowledge bus (Stub + Notion); document exchange, two-way sync, StableIds; not institutional KB (Codex) and not OCC/Decision authority. |
 
 Precedence (live engine): ticket id > helpdesk vocabulary > solutions keywords > registry score; weak signals stay at Metra.
 Example: ask `1035666` -> TicketTracker (ticket-id), even when no project name appears in the ask.
 
-Generated 2026-09-07T13:27:35.4305532-04:00 by `.\metra.ps1 selfdoc` from live `Get-MetraRoutingAmbiguity` (present projects only).
+Generated 2026-09-07T13:27:35.4305532-04:00 by `.\metra.ps1 selfdoc` from live `Get-MetraRoutingAmbiguity` (present projects only; trimmed for public Overview).
 <!-- metra-selfdoc-routes-end -->
 
 Metra picks the matching place before work starts. It does not replace judgment, Cursor, iSupport, or Orion. After routing, it keeps help useful for the person doing the work, and keeps durable writing (tickets, commits, emails to others) ordinary and professional.
 
-- **Route first.** An ask is matched to one project home (for example TicketTracker for helpdesk, Solarwinds for Orion, Trivia for Fun Committee). That project's habits apply. Wrong home is a routing miss - not "the model decided to explore."
+- **Route first.** An ask is matched to one project home (for example TicketTracker for helpdesk, Solarwinds for Orion). That project's habits apply. Wrong home is a routing miss - not "the model decided to explore."
 - **More than chat.** The core is a PowerShell CLI (`.\metra.ps1`) that routes, audits, and builds context with no AI required. Metra Ops is a home screen on the same map. Ask is optional. If the AI engine is off, the command line still works.
 - **You stay in charge.** Day to day, Metra answers and guides. Durable changes - regenerating a printable, posting work history to iSupport - happen when the operator asks, not because the tool decided to.
 - **Two voices.** Chat with the operator can sound like a calm coworker. What lands in a ticket, commit, or mail to others goes through a professional sink - ordinary work prose, no Metra branding.
@@ -111,7 +105,7 @@ Metra stays small on purpose. Depth lives in each project's own tools and rules.
 ```powershell
 .\metra.ps1 routing -Query "ticket disk"
 .\metra.ps1 ctx -Query "ticket disk"
-.\metra.ps1 audit -Name TicketTracker,Solarwinds,Trivia
+.\metra.ps1 audit -Name TicketTracker,Solarwinds
 .\metra.ps1 list
 ```
 
@@ -130,7 +124,7 @@ Tray host  ->  Ops desk  ->  Ask engine   (all optional)
 
 The CLI works alone. The tray supervises the desk. The desk owns the AI engine. Cursor is one swappable engine behind a small loopback contract - not the product. If Ask is down, routing, context, and classify still work.
 
-**Map stays data, not a second brain.** Shared stubs (TicketTracker, Solarwinds, Trivia, and others) live in a small registry the team can ship. Private folders stay local. Missing optional projects get honest advice instead of fake folders.
+**Map stays data, not a second brain.** Shared stubs (TicketTracker, Solarwinds, and others) live in a small registry the team can ship. Private folders stay local. Missing optional projects get honest advice instead of fake folders.
 
 **What Metra deliberately does not do**
 
@@ -176,4 +170,4 @@ Fine. Optional stubs give advice when a folder is missing instead of pretending 
 - Visual primary (in Cursor): open the **Metra self-documentation** canvas beside chat
 - Public overview: [https://jaxnoth.github.io/Metra/](https://jaxnoth.github.io/Metra/)
 - Product repo and operator docs: ask the Metra steward for the current clone or installer path
-- Cursor coworker plugins (OrgBrand desk / tickets / Codex): see [README Quick start - Cursor coworker plugins](../README.md#cursor-coworker-plugins-OrgBrand) and the team marketplace (**OrgBrand SDT Market**)
+- Cursor coworker plugins (desk / tickets / Codex): see [README Quick start - Cursor coworker plugins](../README.md#cursor-coworker-plugins) and the team marketplace

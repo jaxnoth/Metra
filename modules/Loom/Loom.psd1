@@ -3,9 +3,9 @@
     ModuleVersion     = '0.6.0'
     GUID              = 'a8c0e2f4-7b91-4d3e-9f06-2c1a5b8d4e70'
     Author            = 'Metra'
-    CompanyName       = 'OrgBrand'
+    CompanyName       = 'Metra'
     Copyright         = '(c) Metra'
-    Description       = 'Loom: governed plan execution — queue, journal, triage, runner.'
+    Description       = 'Loom: governed plan execution - queue, journal, triage, runner.'
     PowerShellVersion = '5.1'
     FunctionsToExport = @(
         'Invoke-LoomCommand'

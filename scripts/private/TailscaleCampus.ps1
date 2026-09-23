@@ -1,6 +1,6 @@
-# OrgBrand campus DNSFilter MITMs Tailscale admin hostnames (login.tailscale.com).
+# Campus DNS-filter MITMs Tailscale admin hostnames (login.tailscale.com).
 # Pin public Tailscale coordination anycast (192.200.0.0/24) in the Windows hosts file
-# so HTTPS reaches Let's Encrypt-backed endpoints instead of DNSFilter Root CA.
+# so HTTPS reaches Let's Encrypt-backed endpoints instead of the campus MITM Root CA.
 
 $script:MetraTailscaleCampusHostMarkerStart = '# MetraTailscaleCampusStart'
 $script:MetraTailscaleCampusHostMarkerEnd = '# MetraTailscaleCampusEnd'
@@ -237,9 +237,9 @@ function Get-MetraTailscaleCampusHostsPlan {
 function Repair-MetraTailscaleCampusHosts {
     <#
     .SYNOPSIS
-        Pins Tailscale admin hostnames in the Windows hosts file for OrgBrand DNSFilter bypass.
+        Pins Tailscale admin hostnames in the Windows hosts file for campus DNS-filter bypass.
     .DESCRIPTION
-        login.tailscale.com is MITMed on campus (DNSFilter Root CA + HSTS). This writes a
+        login.tailscale.com is MITMed on some campus networks (local Root CA + HSTS). This writes a
         managed hosts block for login/controlplane using public DNS 192.200.0.0/24 anycast.
         Requires elevation to modify the hosts file. Use -Preview to print the plan only.
     #>
@@ -378,7 +378,7 @@ function Repair-MetraTailscaleCampusHosts {
     }
     if ($out.Count -gt 0) { [void]$out.Add('') }
     [void]$out.Add($plan.MarkerStart)
-    [void]$out.Add('# OrgBrand DNSFilter bypass - Tailscale coordination anycast (Metra).')
+    [void]$out.Add('# Metra DNS-filter bypass - Tailscale coordination anycast.')
     foreach ($line in $plan.DesiredLines) { [void]$out.Add($line) }
     [void]$out.Add($plan.MarkerEnd)
 
@@ -448,11 +448,11 @@ function Show-MetraTailscaleCli {
         }
         default {
             Write-Host @'
-Metra Tailscale helpers (OrgBrand campus):
+Metra Tailscale helpers (campus DNS-filter):
 
   .\metra.ps1 tailscale campus-hosts [-Preview] [-Force]
       Pin login.tailscale.com / controlplane.tailscale.com to public Tailscale
-      anycast (192.200.0.0/24) so campus DNSFilter cannot MITM admin HTTPS.
+      anycast (192.200.0.0/24) so campus DNS-filter cannot MITM admin HTTPS.
 
 When Serve enable fails with ERR_CERT_AUTHORITY_INVALID / HSTS on login.tailscale.com,
 run campus-hosts (elevated), refresh the Serve enable page, then:
