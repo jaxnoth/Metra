@@ -78,8 +78,9 @@ Entry: `.\metra.ps1`. Inspect detail: [inspect-loop.md](inspect-loop.md).
 .\metra.ps1 host task install -Confirm
 .\metra.ps1 host task uninstall -Confirm
 .\metra.ps1 unblock
-.\metra.ps1 tailscale campus-hosts
 .\metra.ps1 tailscale campus-hosts -Preview
+.\metra.ps1 tailscale campus-hosts -Force
+# Requires enabled local config: docs/examples/tailscale-campus.local.example.json
 .\packaging\Build-MetraInstaller.ps1
 .\metra.ps1 routing -Name TicketTracker
 .\metra.ps1 routing -Query "gateway msal"

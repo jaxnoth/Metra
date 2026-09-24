@@ -61,6 +61,7 @@ docs/profile-sync.local.json
 docs/client-auth.local.json
 docs/ticket-watch.local.json
 docs/desk-familiarity.local.json
+docs/tailscale-campus.local.json
 docs/*.local.log
 !docs/examples/client-auth.example.json
 !docs/examples/ticket-watch.local.example.json
@@ -69,6 +70,8 @@ docs/*.local.log
 !docs/examples/notion.local.example.json
 !docs/examples/operator-contract.example.json
 !docs/examples/decision-registry.example.json
+!docs/examples/tailscale-campus.local.example.json
+!docs/examples/routing-concepts.local.example.json
 
 # Ops desk: track dist for end users; ignore node_modules via ops/.gitignore + root rule
 ops/node_modules/
@@ -77,6 +80,7 @@ runtimes/node/
 
 # Operator-private notes (not for public/team clones)
 docs/*.local.md
+config/routing-concepts.local.json
 
 # Editor
 .vs/

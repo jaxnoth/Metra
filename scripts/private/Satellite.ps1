@@ -418,7 +418,7 @@ function Invoke-MetraSatelliteConnect {
         }
         if (-not $Quiet -and $campus -and $campus.NeedsWrite) {
             Write-Host ''
-            Write-Host 'Campus DNS-filter: run elevated campus-hosts before Tailscale Serve admin pages:' -ForegroundColor Yellow
+            Write-Host 'Campus DNS-filter: enable local campus config, then run elevated campus-hosts before Tailscale Serve admin pages:' -ForegroundColor Yellow
             Write-Host '  pwsh -NoProfile -File .\metra.ps1 tailscale campus-hosts -Force' -ForegroundColor DarkGray
         }
     }

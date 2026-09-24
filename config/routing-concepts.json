@@ -4,8 +4,7 @@
     {
       "id": "print-queue",
       "tokens": ["print", "queue", "printer", "spooler"],
-      "preferProject": "Solarwinds",
-      "notes": "Print queue / printer monitoring symptoms"
+      "notes": "Print queue / printer monitoring symptoms (PreferProject via local overlay only)"
     },
     {
       "id": "batch-run",

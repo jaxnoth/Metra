@@ -1,15 +1,197 @@
-# Campus DNS-filter MITMs Tailscale admin hostnames (login.tailscale.com).
-# Pin public Tailscale coordination anycast (192.200.0.0/24) in the Windows hosts file
-# so HTTPS reaches Let's Encrypt-backed endpoints instead of the campus MITM Root CA.
+# Optional campus Tailscale hosts pin (DNS-filter MITM of Tailscale admin FQDNs).
+# Apply path requires a local enabled config - see docs/examples/tailscale-campus.local.example.json.
+# Engine helpers remain public; station-specific enablement stays off the tracked tree.
 
 $script:MetraTailscaleCampusHostMarkerStart = '# MetraTailscaleCampusStart'
 $script:MetraTailscaleCampusHostMarkerEnd = '# MetraTailscaleCampusEnd'
+# Built-in defaults used only when a caller passes -HostName (tests) or local config omits fields.
 $script:MetraTailscaleCampusDefaultHosts = @(
     'login.tailscale.com'
     'controlplane.tailscale.com'
 )
 $script:MetraTailscaleCampusPreferredCidr = '192.200.0.0/24'
 $script:MetraTailscaleCampusDnsServers = @('1.1.1.1', '8.8.8.8', '9.9.9.9')
+
+function Get-MetraTailscaleCampusLocalConfigPath {
+    <#
+    .SYNOPSIS
+        Preferred path for operator campus Tailscale config (AppData, else docs/*.local.json).
+    #>
+    [CmdletBinding()]
+    param()
+
+    $app = Join-Path $env:LOCALAPPDATA 'Metra\tailscale-campus.local.json'
+    if (Test-Path -LiteralPath $app -PathType Leaf) { return $app }
+
+    $repo = Join-Path (Get-MetraRoot) 'docs\tailscale-campus.local.json'
+    if (Test-Path -LiteralPath $repo -PathType Leaf) { return $repo }
+
+    return $app
+}
+
+function Get-MetraTailscaleCampusLocalConfig {
+    <#
+    .SYNOPSIS
+        Loads local campus Tailscale config. Missing/disabled => Enabled false (apply refuses).
+    #>
+    [CmdletBinding()]
+    param(
+        [string]$Path
+    )
+
+    $path = if (-not [string]::IsNullOrWhiteSpace($Path)) {
+        [string]$Path
+    } else {
+        Get-MetraTailscaleCampusLocalConfigPath
+    }
+
+    $empty = [PSCustomObject]@{
+        Path          = $path
+        Loaded        = $false
+        Enabled       = $false
+        HostNames     = @()
+        PreferredCidr = $script:MetraTailscaleCampusPreferredCidr
+        DnsServers    = @($script:MetraTailscaleCampusDnsServers)
+        Error         = $null
+    }
+
+    if (-not (Test-Path -LiteralPath $path -PathType Leaf)) {
+        $empty.Error = "No local campus config at $path. Copy docs/examples/tailscale-campus.local.example.json and set enabled=true."
+        return $empty
+    }
+
+    try {
+        $doc = Get-Content -LiteralPath $path -Raw -Encoding UTF8 | ConvertFrom-Json -ErrorAction Stop
+    }
+    catch {
+        $empty.Error = "Invalid campus config JSON: $($_.Exception.Message)"
+        return $empty
+    }
+
+    $enabled = $false
+    $enRaw = Get-MetraProp -Object $doc -Name 'enabled' -Default $false
+    if ($enRaw -is [bool]) { $enabled = [bool]$enRaw }
+    elseif ("$enRaw" -match '^(?i)true|1|yes$') { $enabled = $true }
+
+    $hosts = New-Object System.Collections.Generic.List[string]
+    foreach ($h in @(Get-MetraProp -Object $doc -Name 'hostNames' -Default @())) {
+        $s = ([string]$h).Trim()
+        if (-not [string]::IsNullOrWhiteSpace($s)) { [void]$hosts.Add($s) }
+    }
+    if ($hosts.Count -eq 0) {
+        foreach ($h in @($script:MetraTailscaleCampusDefaultHosts)) { [void]$hosts.Add($h) }
+    }
+
+    $cidr = [string](Get-MetraProp -Object $doc -Name 'preferredCidr' -Default $script:MetraTailscaleCampusPreferredCidr).Trim()
+    if ([string]::IsNullOrWhiteSpace($cidr)) { $cidr = $script:MetraTailscaleCampusPreferredCidr }
+
+    $dns = New-Object System.Collections.Generic.List[string]
+    foreach ($d in @(Get-MetraProp -Object $doc -Name 'dnsServers' -Default @())) {
+        $s = ([string]$d).Trim()
+        if (-not [string]::IsNullOrWhiteSpace($s)) { [void]$dns.Add($s) }
+    }
+    if ($dns.Count -eq 0) {
+        foreach ($d in @($script:MetraTailscaleCampusDnsServers)) { [void]$dns.Add($d) }
+    }
+
+    return [PSCustomObject]@{
+        Path          = $path
+        Loaded        = $true
+        Enabled       = $enabled
+        HostNames     = @($hosts.ToArray())
+        PreferredCidr = $cidr
+        DnsServers    = @($dns.ToArray())
+        Error         = $(if ($enabled) { $null } else { "Campus config loaded but enabled=false ($path)." })
+    }
+}
+
+function Resolve-MetraTailscaleCampusApplySettings {
+    <#
+    .SYNOPSIS
+        Resolves host/DNS/CIDR for campus-hosts apply. Explicit -HostName skips enabled gate (tests).
+    #>
+    [CmdletBinding()]
+    param(
+        [string[]]$HostName,
+        [string[]]$DnsServer,
+        [string]$PreferredCidr,
+        [string]$ConfigPath
+    )
+
+    $explicitHosts = $PSBoundParameters.ContainsKey('HostName') -and $null -ne $HostName -and @($HostName).Count -gt 0
+    $cfg = Get-MetraTailscaleCampusLocalConfig -Path $ConfigPath
+
+    if ($explicitHosts) {
+        $names = @($HostName | ForEach-Object { ([string]$_).Trim() } | Where-Object { $_ })
+        foreach ($n in $names) {
+            if (-not (Test-MetraFqdnHostName -Name $n)) {
+                return [PSCustomObject]@{
+                    Ok            = $false
+                    HostNames     = @()
+                    DnsServers    = @()
+                    PreferredCidr = $null
+                    ConfigPath    = $cfg.Path
+                    Error         = "Invalid Tailscale campus hostname: $n"
+                }
+            }
+        }
+        $dns = if ($PSBoundParameters.ContainsKey('DnsServer') -and $DnsServer) {
+            @($DnsServer)
+        } elseif ($cfg.Loaded) {
+            @($cfg.DnsServers)
+        } else {
+            @($script:MetraTailscaleCampusDnsServers)
+        }
+        $cidr = if (-not [string]::IsNullOrWhiteSpace($PreferredCidr)) {
+            $PreferredCidr
+        } elseif ($cfg.Loaded) {
+            $cfg.PreferredCidr
+        } else {
+            $script:MetraTailscaleCampusPreferredCidr
+        }
+        return [PSCustomObject]@{
+            Ok            = $true
+            HostNames     = $names
+            DnsServers    = $dns
+            PreferredCidr = $cidr
+            ConfigPath    = $cfg.Path
+            Error         = $null
+        }
+    }
+
+    if (-not $cfg.Loaded -or -not $cfg.Enabled) {
+        return [PSCustomObject]@{
+            Ok            = $false
+            HostNames     = @()
+            DnsServers    = @()
+            PreferredCidr = $null
+            ConfigPath    = $cfg.Path
+            Error         = $(if ($cfg.Error) { $cfg.Error } else { 'Campus hosts apply requires local enabled config.' })
+        }
+    }
+
+    foreach ($n in @($cfg.HostNames)) {
+        if (-not (Test-MetraFqdnHostName -Name $n)) {
+            return [PSCustomObject]@{
+                Ok            = $false
+                HostNames     = @()
+                DnsServers    = @()
+                PreferredCidr = $null
+                ConfigPath    = $cfg.Path
+                Error         = "Invalid Tailscale campus hostname in local config: $n"
+            }
+        }
+    }
+
+    return [PSCustomObject]@{
+        Ok            = $true
+        HostNames     = @($cfg.HostNames)
+        DnsServers    = @($cfg.DnsServers)
+        PreferredCidr = $cfg.PreferredCidr
+        ConfigPath    = $cfg.Path
+        Error         = $null
+    }
+}
 
 function Test-MetraFqdnHostName {
     <#
@@ -237,18 +419,20 @@ function Get-MetraTailscaleCampusHostsPlan {
 function Repair-MetraTailscaleCampusHosts {
     <#
     .SYNOPSIS
-        Pins Tailscale admin hostnames in the Windows hosts file for campus DNS-filter bypass.
+        Pins Tailscale admin hostnames in the Windows hosts file when local campus config is enabled.
     .DESCRIPTION
-        login.tailscale.com is MITMed on some campus networks (local Root CA + HSTS). This writes a
-        managed hosts block for login/controlplane using public DNS 192.200.0.0/24 anycast.
-        Requires elevation to modify the hosts file. Use -Preview to print the plan only.
+        Some networks MITM Tailscale admin HTTPS. This writes a managed hosts block using public DNS
+        resolution into a preferred CIDR from local config. Requires elevation to modify the hosts file.
+        Without an enabled local config (see docs/examples/tailscale-campus.local.example.json), apply is a no-op fail.
+        Use -Preview to print the plan only. Pass -HostName explicitly only for tests/advanced use.
     #>
     [CmdletBinding(SupportsShouldProcess, ConfirmImpact = 'Medium')]
     param(
-        [string[]]$HostName = $script:MetraTailscaleCampusDefaultHosts,
+        [string[]]$HostName,
         [switch]$Preview,
         [switch]$Force,
-        [switch]$Quiet
+        [switch]$Quiet,
+        [string]$ConfigPath
     )
 
     if (-not (Test-MetraHostIsWindows)) {
@@ -261,11 +445,35 @@ function Repair-MetraTailscaleCampusHosts {
             DesiredLines = @()
             StaleLines   = @()
             Resolved     = @()
+            ConfigPath   = $null
             Error        = 'Tailscale campus hosts is Windows-only (hosts file pin).'
         }
     }
 
-    $plan = Get-MetraTailscaleCampusHostsPlan -HostName $HostName
+    $resolveParams = @{}
+    if ($PSBoundParameters.ContainsKey('HostName')) { $resolveParams.HostName = $HostName }
+    if (-not [string]::IsNullOrWhiteSpace($ConfigPath)) { $resolveParams.ConfigPath = $ConfigPath }
+    $settings = Resolve-MetraTailscaleCampusApplySettings @resolveParams
+    if (-not $settings.Ok) {
+        if (-not $Quiet) {
+            Write-Host $settings.Error -ForegroundColor Yellow
+            Write-Host 'Example: docs/examples/tailscale-campus.local.example.json -> %LOCALAPPDATA%\Metra\tailscale-campus.local.json' -ForegroundColor DarkGray
+        }
+        return [PSCustomObject]@{
+            Ok           = $false
+            Preview      = [bool]$Preview
+            Changed      = $false
+            NeedsWrite   = $false
+            HostsPath    = $null
+            DesiredLines = @()
+            StaleLines   = @()
+            Resolved     = @()
+            ConfigPath   = $settings.ConfigPath
+            Error        = $settings.Error
+        }
+    }
+
+    $plan = Get-MetraTailscaleCampusHostsPlan -HostName $settings.HostNames -DnsServer $settings.DnsServers -PreferredCidr $settings.PreferredCidr
     if (-not $plan.Ok) {
         return [PSCustomObject]@{
             Ok           = $false
@@ -276,6 +484,7 @@ function Repair-MetraTailscaleCampusHosts {
             DesiredLines = @($plan.DesiredLines)
             StaleLines   = @($plan.StaleLines)
             Resolved     = @($plan.Resolved)
+            ConfigPath   = $settings.ConfigPath
             Error        = $plan.Error
         }
     }
@@ -294,6 +503,7 @@ function Repair-MetraTailscaleCampusHosts {
             DesiredLines = @($plan.DesiredLines)
             StaleLines   = @($plan.StaleLines)
             Resolved     = @($plan.Resolved)
+            ConfigPath   = $settings.ConfigPath
             Error        = $null
         }
     }
@@ -301,6 +511,7 @@ function Repair-MetraTailscaleCampusHosts {
     if ($Preview -or $WhatIfPreference) {
         if (-not $Quiet) {
             Write-Host 'Tailscale campus hosts plan (Preview):' -ForegroundColor Cyan
+            Write-Host "  Config: $($settings.ConfigPath)" -ForegroundColor DarkGray
             Write-Host "  Hosts: $($plan.HostsPath)" -ForegroundColor DarkGray
             if ($plan.StaleLines.Count -gt 0) {
                 Write-Host '  Remove stale:' -ForegroundColor Yellow
@@ -320,6 +531,7 @@ function Repair-MetraTailscaleCampusHosts {
             DesiredLines = @($plan.DesiredLines)
             StaleLines   = @($plan.StaleLines)
             Resolved     = @($plan.Resolved)
+            ConfigPath   = $settings.ConfigPath
             Error        = $null
         }
     }
@@ -337,6 +549,7 @@ function Repair-MetraTailscaleCampusHosts {
             DesiredLines = @($plan.DesiredLines)
             StaleLines   = @($plan.StaleLines)
             Resolved     = @($plan.Resolved)
+            ConfigPath   = $settings.ConfigPath
             Error        = 'Cancelled.'
         }
     }
@@ -403,6 +616,7 @@ function Repair-MetraTailscaleCampusHosts {
             DesiredLines = @($plan.DesiredLines)
             StaleLines   = @($plan.StaleLines)
             Resolved     = @($plan.Resolved)
+            ConfigPath   = $settings.ConfigPath
             Error        = $msg
         }
     }
@@ -422,6 +636,7 @@ function Repair-MetraTailscaleCampusHosts {
         DesiredLines = @($plan.DesiredLines)
         StaleLines   = @($plan.StaleLines)
         Resolved     = @($plan.Resolved)
+        ConfigPath   = $settings.ConfigPath
         Error        = $null
     }
 }
@@ -448,14 +663,19 @@ function Show-MetraTailscaleCli {
         }
         default {
             Write-Host @'
-Metra Tailscale helpers (campus DNS-filter):
+Metra Tailscale helpers (optional campus DNS-filter pin):
+
+  Requires local config (gitignored / AppData), enabled=true:
+    %LOCALAPPDATA%\Metra\tailscale-campus.local.json
+    or docs/tailscale-campus.local.json
+  Example: docs/examples/tailscale-campus.local.example.json
 
   .\metra.ps1 tailscale campus-hosts [-Preview] [-Force]
-      Pin login.tailscale.com / controlplane.tailscale.com to public Tailscale
-      anycast (192.200.0.0/24) so campus DNS-filter cannot MITM admin HTTPS.
+      Pin configured Tailscale admin FQDNs to public anycast via the hosts file
+      so a network DNS-filter cannot MITM those admin HTTPS endpoints.
 
 When Serve enable fails with ERR_CERT_AUTHORITY_INVALID / HSTS on login.tailscale.com,
-run campus-hosts (elevated), refresh the Serve enable page, then:
+enable local campus config, run campus-hosts (elevated), refresh Serve enable, then:
   tailscale serve --bg http://127.0.0.1:80
 '@
             return [PSCustomObject]@{ Ok = $true; Subcommand = 'help' }

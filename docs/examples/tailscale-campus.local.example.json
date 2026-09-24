@@ -1,0 +1,14 @@
+{
+  "schemaVersion": 1,
+  "enabled": false,
+  "hostNames": [
+    "login.tailscale.com",
+    "controlplane.tailscale.com"
+  ],
+  "preferredCidr": "192.200.0.0/24",
+  "dnsServers": [
+    "1.1.1.1",
+    "8.8.8.8",
+    "9.9.9.9"
+  ]
+}

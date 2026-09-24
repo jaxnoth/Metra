@@ -33,7 +33,7 @@ todos:
 
 **Bing (2026-09-07):** Approved — deterministic evolution not embedding routing; concept assist not sole authority; depth≤2 + cycle detection. Folded: multi-hop MinCount in Acceptance.
 
-**Operator promote (2026-09-07):** Authorize **Gate B implement** of this contract as part of the parent full-set session. Intent: ship P6 now so the portfolio does not park concept/multi-hop for a later return. P5 soak ([`metra_routing_graph_p5_soak.plan.md`](C:\Users\admin.sswan\.cursor\plans\metra_routing_graph_p5_soak.plan.md)) still runs **before** P6 code for evidence; soak zero-candidate does **not** cancel P6 build.
+**Operator promote (2026-09-07):** Authorize **Gate B implement** of this contract as part of the parent full-set session. Intent: ship P6 now so the portfolio does not park concept/multi-hop for a later return. P5 soak ([`metra_routing_graph_p5_soak.plan.md`](%USERPROFILE%\.cursor\plans\metra_routing_graph_p5_soak.plan.md)) still runs **before** P6 code for evidence; soak zero-candidate does **not** cancel P6 build.
 
 Depends on: Phase 5 Review shipped; contract Bing-affirmed; parent Gate B execute. Seed scar: Decision Registry `d9b91b622c7`.
 

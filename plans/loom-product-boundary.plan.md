@@ -38,7 +38,7 @@ todos:
 atlasStableId: null
 synthesizedAt: null
 relatedPlans:
-  - path: C:\Users\admin.sswan\.cursor\plans\metra_auto-programming_loop_0e30e91c.plan.md
+  - path: %USERPROFILE%\.cursor\plans\metra_auto-programming_loop_0e30e91c.plan.md
     role: execution-roadmap
   - path: C:\Projects\_meta\plans\routing-graph-phase5-review.plan.md
     role: separate-track
@@ -486,7 +486,7 @@ M2 partial acceptance requires this gate **green** for: contract validation, sta
 2. Add ADR: **Dependency direction** ΓÇö Loom ΓåÆ Adapters ΓåÆ Metra; forbidden direct private imports (Section 6 verbatim policy).
 3. Add portfolio scar: **Completion is evidence. Acceptance is authority.** ΓÇö applies to Loom, TicketWatch, Atlas promotion, future agentic surfaces; machine `completed` Γëá operator `accepted`.
 4. Update [`docs/portfolio-memory-path.md`](portfolio-memory-path.md) one-line cheat sheet (optional cross-link).
-5. Update roadmap plan [`.cursor/plans/metra_auto-programming_loop_0e30e91c.plan.md`](../../Users/admin.sswan/.cursor/plans/metra_auto-programming_loop_0e30e91c.plan.md): link boundary plan; clarify Phase A vs Slice 3.
+5. Update roadmap plan [`.cursor/plans/metra_auto-programming_loop_0e30e91c.plan.md`](~/.cursor/plans/metra_auto-programming_loop_0e30e91c.plan.md): link boundary plan; clarify Phase A vs Slice 3.
 6. Document **non-goals:** move to Forge; sibling repo now; autonomous accept/merge/push; Notion queue backend.
 7. Document **extraction triggers** (Section 15).
 
@@ -636,7 +636,7 @@ Until then: **Metra-hosted module**, not separate repo.
 
 | Artifact | Role |
 |----------|------|
-| [metra_auto-programming_loop plan](file:///C:/Users/admin.sswan/.cursor/plans/metra_auto-programming_loop_0e30e91c.plan.md) | Execution roadmap (Slices 1ΓÇô8) |
+| [metra_auto-programming_loop plan](file:///%USERPROFILE%/.cursor/plans/metra_auto-programming_loop_0e30e91c.plan.md) | Execution roadmap (Slices 1ΓÇô8) |
 | [routing-graph-phase5-review.plan.md](routing-graph-phase5-review.plan.md) | Separate Metra track ΓÇö not Loom |
 | [portfolio-memory-path.md](portfolio-memory-path.md) | Atlas / Metra memory layers |
 

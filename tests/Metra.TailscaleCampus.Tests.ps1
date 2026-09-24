@@ -1,4 +1,4 @@
-# Metra Tailscale campus hosts (campus DNS-filter bypass)
+# Metra Tailscale campus hosts (optional DNS-filter pin)
 
 Describe 'Metra Tailscale campus hosts' {
     BeforeAll {
@@ -25,7 +25,7 @@ Describe 'Metra Tailscale campus hosts' {
         }
     }
 
-    It 'Get-MetraTailscaleCampusHostsPlan pins preferred anycast and drops DNSFilter VIP' {
+    It 'Get-MetraTailscaleCampusHostsPlan pins preferred anycast and drops MITM VIP' {
         InModuleScope Metra {
             $tmp = Join-Path $env:TEMP ('metra-ts-hosts-' + [guid]::NewGuid().ToString('N'))
             $hostsFile = Join-Path $tmp 'hosts'
@@ -37,7 +37,10 @@ Describe 'Metra Tailscale campus hosts' {
                     '192.200.0.108 controlplane.tailscale.com'
                 ) | Set-Content -LiteralPath $hostsFile -Encoding ascii
 
-                $plan = Get-MetraTailscaleCampusHostsPlan -HostsPath $hostsFile
+                $plan = Get-MetraTailscaleCampusHostsPlan -HostsPath $hostsFile -HostName @(
+                    'login.tailscale.com'
+                    'controlplane.tailscale.com'
+                )
                 $plan.Ok | Should -BeTrue
                 $plan.NeedsWrite | Should -BeTrue
                 $plan.DesiredLines.Count | Should -BeGreaterThan 0
@@ -53,18 +56,40 @@ Describe 'Metra Tailscale campus hosts' {
         }
     }
 
-    It 'Repair-MetraTailscaleCampusHosts -Preview does not write' {
+    It 'Repair without enabled local config refuses apply' {
         InModuleScope Metra {
-            $result = Repair-MetraTailscaleCampusHosts -Preview -Quiet
+            $missing = Join-Path $env:TEMP ('metra-campus-missing-' + [guid]::NewGuid().ToString('N') + '.json')
+            $result = Repair-MetraTailscaleCampusHosts -Preview -Quiet -ConfigPath $missing
+            $result.Ok | Should -BeFalse
+            $result.Error | Should -Match 'local campus config|enabled'
+        }
+    }
+
+    It 'Repair -Preview with explicit HostName does not write' {
+        InModuleScope Metra {
+            $result = Repair-MetraTailscaleCampusHosts -Preview -Quiet -HostName @(
+                'login.tailscale.com'
+                'controlplane.tailscale.com'
+            )
             $result.Ok | Should -BeTrue
             $result.Preview | Should -BeTrue
             $result.Changed | Should -BeFalse
         }
     }
 
-    It 'Show-MetraTailscaleCli campus-hosts -Preview returns a plan object' {
-        $result = Show-MetraTailscaleCli -Subcommand campus-hosts -Preview -Quiet
-        $result.Ok | Should -BeTrue
-        $result.Preview | Should -BeTrue
+    It 'CLI campus-hosts refuses when seeded AppData config is disabled for the call' {
+        # Show-MetraTailscaleCli has no -ConfigPath; exercise Repair gate used by CLI.
+        InModuleScope Metra {
+            $tmp = Join-Path $env:TEMP ('metra-campus-disabled-' + [guid]::NewGuid().ToString('N') + '.json')
+            @{ schemaVersion = 1; enabled = $false; hostNames = @('login.tailscale.com') } |
+                ConvertTo-Json | Set-Content -LiteralPath $tmp -Encoding utf8
+            try {
+                $result = Repair-MetraTailscaleCampusHosts -Preview -Quiet -ConfigPath $tmp
+                $result.Ok | Should -BeFalse
+            }
+            finally {
+                Remove-Item -LiteralPath $tmp -Force -ErrorAction SilentlyContinue
+            }
+        }
     }
 }

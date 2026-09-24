@@ -917,7 +917,18 @@ function Get-MetraRoutingDurableGraphPath {
 function Get-MetraRoutingConceptsPath {
     <#
     .SYNOPSIS
-        Concept lexicon path: machine-local first, else repo config (may be missing).
+        Shared (tracked) concept lexicon path under the Metra checkout.
+    #>
+    [CmdletBinding()]
+    param()
+
+    Join-Path (Get-MetraRoot) 'config\routing-concepts.json'
+}
+
+function Get-MetraRoutingConceptsLocalPath {
+    <#
+    .SYNOPSIS
+        Operator overlay for PreferProject / concept tweaks (machine-local or gitignored repo file).
     #>
     [CmdletBinding()]
     param()
@@ -927,9 +938,9 @@ function Get-MetraRoutingConceptsPath {
         return $local
     }
 
-    $repo = Join-Path (Get-MetraRoot) 'config\routing-concepts.json'
-    if (Test-Path -LiteralPath $repo -PathType Leaf) {
-        return $repo
+    $repoLocal = Join-Path (Get-MetraRoot) 'config\routing-concepts.local.json'
+    if (Test-Path -LiteralPath $repoLocal -PathType Leaf) {
+        return $repoLocal
     }
 
     return $local
@@ -938,69 +949,117 @@ function Get-MetraRoutingConceptsPath {
 function Get-MetraRoutingConceptLexicon {
     <#
     .SYNOPSIS
-        Loads concept lexicon (fail-soft empty; never invents concepts).
+        Loads shared concept lexicon, then merges operator-local overlay by concept id (fail-soft).
+    .DESCRIPTION
+        Tracked config/routing-concepts.json stays PublicSafe (no PreferProject product maps).
+        Station PreferProject hints live in %LOCALAPPDATA%\Metra\routing\concepts.json or
+        config/routing-concepts.local.json (gitignored).
     #>
     [CmdletBinding()]
     param(
-        [string]$Path
+        [string]$Path,
+        [string]$LocalPath
     )
 
     $empty = [PSCustomObject]@{ version = 1; concepts = @() }
-    $path = if (-not [string]::IsNullOrWhiteSpace($Path)) { [string]$Path } else { Get-MetraRoutingConceptsPath }
-    if (-not (Test-Path -LiteralPath $path -PathType Leaf)) {
-        return $empty
+
+    function Read-MetraRoutingConceptDoc {
+        param([string]$FilePath)
+        if ([string]::IsNullOrWhiteSpace($FilePath) -or -not (Test-Path -LiteralPath $FilePath -PathType Leaf)) {
+            return $null
+        }
+        try {
+            return (Get-Content -LiteralPath $FilePath -Raw -Encoding UTF8 | ConvertFrom-Json -ErrorAction Stop)
+        }
+        catch {
+            return $null
+        }
     }
 
-    try {
-        $raw = [System.IO.File]::ReadAllText($path)
+    function Convert-MetraRoutingConceptRows {
+        param($Doc)
+        $valid = New-Object System.Collections.Generic.List[object]
+        if (-not $Doc) { return @($valid.ToArray()) }
+        $version = [int](Get-MetraProp -Object $Doc -Name 'version' -Default 0)
+        if ($version -lt 1) { return @($valid.ToArray()) }
+        $conceptRaw = Get-MetraProp -Object $Doc -Name 'concepts' -Default $null
+        if ($null -eq $conceptRaw) { return @($valid.ToArray()) }
+        foreach ($concept in @($conceptRaw)) {
+            $id = [string](Get-MetraProp -Object $concept -Name 'id' -Default '').Trim()
+            if ([string]::IsNullOrWhiteSpace($id)) { continue }
+            $tokenList = New-Object System.Collections.Generic.List[string]
+            foreach ($tok in @(Get-MetraProp -Object $concept -Name 'tokens' -Default @())) {
+                $s = [string]$tok
+                if (-not [string]::IsNullOrWhiteSpace($s)) {
+                    [void]$tokenList.Add($s.Trim())
+                }
+            }
+            $tokens = [string[]]@($tokenList.ToArray())
+            $stem = [string](Get-MetraProp -Object $concept -Name 'stem' -Default '').Trim()
+            $prefer = [string](Get-MetraProp -Object $concept -Name 'preferProject' -Default '').Trim()
+            $notes = [string](Get-MetraProp -Object $concept -Name 'notes' -Default '')
+            [void]$valid.Add([PSCustomObject]@{
+                    id            = $id
+                    tokens        = $tokens
+                    stem          = $stem
+                    preferProject = $prefer
+                    notes         = $notes
+                })
+        }
+        return @($valid.ToArray())
     }
-    catch {
-        return $empty
+
+    $pathBound = $PSBoundParameters.ContainsKey('Path') -and -not [string]::IsNullOrWhiteSpace($Path)
+    $localBound = $PSBoundParameters.ContainsKey('LocalPath')
+    $sharedPath = if ($pathBound) { [string]$Path } else { Get-MetraRoutingConceptsPath }
+    # Explicit -Path alone is isolated (tests); ambient overlay only when loading defaults,
+    # or when -LocalPath is bound (including empty string to force no overlay).
+    $overlayPath = $null
+    if ($localBound) {
+        $overlayPath = [string]$LocalPath
+    }
+    elseif (-not $pathBound) {
+        $overlayPath = Get-MetraRoutingConceptsLocalPath
     }
 
-    if ([string]::IsNullOrWhiteSpace($raw)) { return $empty }
-
-    try {
-        $doc = $raw | ConvertFrom-Json -ErrorAction Stop
+    $sharedDoc = Read-MetraRoutingConceptDoc -FilePath $sharedPath
+    $byId = @{}
+    $order = New-Object System.Collections.Generic.List[string]
+    foreach ($row in @(Convert-MetraRoutingConceptRows -Doc $sharedDoc)) {
+        if ($row.tokens.Count -eq 0) { continue }
+        $byId[$row.id] = $row
+        [void]$order.Add($row.id)
     }
-    catch {
-        return $empty
-    }
 
-    $version = [int](Get-MetraProp -Object $doc -Name 'version' -Default 0)
-    if ($version -lt 1) { return $empty }
-
-    $conceptRaw = Get-MetraProp -Object $doc -Name 'concepts' -Default $null
-    if ($null -eq $conceptRaw) { return $empty }
-
-    $valid = New-Object System.Collections.Generic.List[object]
-    foreach ($concept in @($conceptRaw)) {
-        $id = [string](Get-MetraProp -Object $concept -Name 'id' -Default '').Trim()
-        if ([string]::IsNullOrWhiteSpace($id)) { continue }
-        $tokenList = New-Object System.Collections.Generic.List[string]
-        foreach ($tok in @(Get-MetraProp -Object $concept -Name 'tokens' -Default @())) {
-            $s = [string]$tok
-            if (-not [string]::IsNullOrWhiteSpace($s)) {
-                [void]$tokenList.Add($s.Trim())
+    if (-not [string]::IsNullOrWhiteSpace($overlayPath)) {
+        $localDoc = Read-MetraRoutingConceptDoc -FilePath $overlayPath
+        foreach ($row in @(Convert-MetraRoutingConceptRows -Doc $localDoc)) {
+            if ($byId.ContainsKey($row.id)) {
+                $base = $byId[$row.id]
+                $mergedTokens = if ($row.tokens.Count -gt 0) { $row.tokens } else { $base.tokens }
+                if ($mergedTokens.Count -eq 0) { continue }
+                $byId[$row.id] = [PSCustomObject]@{
+                    id            = $row.id
+                    tokens        = $mergedTokens
+                    stem          = $(if ($row.stem) { $row.stem } else { $base.stem })
+                    preferProject = $(if ($row.preferProject) { $row.preferProject } else { $base.preferProject })
+                    notes         = $(if ($row.notes) { $row.notes } else { $base.notes })
+                }
+            }
+            else {
+                if ($row.tokens.Count -eq 0) { continue }
+                $byId[$row.id] = $row
+                [void]$order.Add($row.id)
             }
         }
-        if ($tokenList.Count -eq 0) { continue }
-        $tokens = [string[]]@($tokenList.ToArray())
-        $stem = [string](Get-MetraProp -Object $concept -Name 'stem' -Default '').Trim()
-        $prefer = [string](Get-MetraProp -Object $concept -Name 'preferProject' -Default '').Trim()
-        $notes = [string](Get-MetraProp -Object $concept -Name 'notes' -Default '')
-        [void]$valid.Add([PSCustomObject]@{
-                id            = $id
-                tokens        = $tokens
-                stem          = $stem
-                preferProject = $prefer
-                notes         = $notes
-            })
     }
 
+    if ($order.Count -eq 0) { return $empty }
+
+    $concepts = foreach ($id in $order) { $byId[$id] }
     return [PSCustomObject]@{
-        version  = $version
-        concepts = @($valid.ToArray())
+        version  = 1
+        concepts = @($concepts)
     }
 }
 

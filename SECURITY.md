@@ -31,6 +31,13 @@ This section covers **structural information** in tracked GitHub trees (public M
 
 Org scars and ticket work maps belong in gitignored locals (`docs/*.local.md`, `docs/decision-registry.json`, `projects.local.json`, station `documentation/work/` when ignored) - not in tracked product docs.
 
+Station-only desk behavior (keep functionality, keep it off GitHub):
+
+| Capability | Tracked | Local (gitignored / AppData) |
+|------------|---------|------------------------------|
+| Campus Tailscale hosts pin | Engine + example; apply refuses until enabled | `%LOCALAPPDATA%\Metra\tailscale-campus.local.json` or `docs/tailscale-campus.local.json` |
+| Routing PreferProject maps | Shared `config/routing-concepts.json` has tokens only | `%LOCALAPPDATA%\Metra\routing\concepts.json` or `config/routing-concepts.local.json` |
+
 Placeholders for docs and tests: `hq.example.ts.net`, `automation-host`, `DOMAIN\svc.account`, `VendorX`, `dbo.fn_ExampleLookup`, `DM-Sample`.
 
 ### Allowlist governance
