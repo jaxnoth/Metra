@@ -113,3 +113,15 @@ Rules:
 - `.\metra.ps1 inspect budget -Name <Project>` — no engine call; estimates prompt payload chars and band before inspect.
 - Round 1 assess: full collapsed reduced diff. Verify rounds: touch-set bodies only; outside paths are names-only indicators.
 - Rename collapse (`git-rename`, `suffix-pair`) runs before the file cap; ambiguous pairs stay uncollapsed.
+
+## Project lane desk hop (Metra only)
+
+When Metra product work lands via the Cursor **Project** (not Loom claim):
+
+1. Code-complete -> `.\metra.ps1 porter handoff set -Stem <stem>` (implement freeze).
+2. Automation (`MetraYarnLoomPulse` -> `porter prep`) invokes `inspect prepare-bing -Name Metra` (soft-fail). Operator is not the prepare-bing glue.
+3. On `readyForBing=true`, handoff advances to `ready-for-bing`.
+4. **Human gate only:** Bing review + `inspect gate affirm` (or reject / emergency skip). Never auto-affirm.
+5. After ship: `porter handoff clear -Stem <stem>`.
+
+Porter stores handoff state; it does not run Inspect engines. See [project-lane.md](project-lane.md).

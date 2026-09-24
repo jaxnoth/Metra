@@ -18,20 +18,45 @@ Entry shape:
 
 ---
 
+## 2026-09-24 - Porter continuity smoke (Project lane gaps)
+
+- Decision: Continuity path leaf → Approve → Porter → Context sync mandate → handoff → Pulse Inspect prep → Bing is validated by `tests/Invoke-PorterContinuitySmoke.ps1` (no Stage 2 purge execute). Happy path does not require the operator to manually start prepare-bing; Pulse `porter prep` owns that hop. Bing affirm remains human.
+- Why: Close Project Loom-lane gap plan without treating Future-Dev as continuity backlog.
+- See: `tests/Invoke-PorterContinuitySmoke.ps1`; `docs/playbooks/project-lane.md`
+
+## 2026-09-24 - Porter transport vs Handoff state vs Inspect prep
+
+- Decision: **Porter remains a transport product.** It copies Approved Metra-product Cursor plan leaves into `porter/plans/` (byte-identical mirrors), writes `OPEN-PLANS.md`, and may **store** DESK-HANDOFF workflow state files in the pack. Porter is **not** the authority for implementation lifecycle, ship status, or Bing decisions. Never hand-edit `porter/plans/*`.
+- Decision: **Handoff** (concept) owns states `awaiting-prepare-bing` | `ready-for-bing` | `cleared` | `stale`. Files may live under `porter/`. On `handoff set`, Project coding for that stem is frozen until cleared or stale.
+- Decision: **`MetraYarnLoomPulse`** after Porter **observes** `awaiting-prepare-bing` and **invokes** `inspect prepare-bing -Name Metra` (soft-fail). On success, handoff advances to `ready-for-bing`. Porter scripts do **not** call Inspect engines. Automation may advance work through evidence generation; human authority is required only for judgment, risk acceptance, or durable shipment (`inspect gate affirm` / commit).
+- Decision: Track `porter/OPEN-PLANS.md` and `porter/plans/*.plan.md` in git so cloud clones see mirrors; keep `manifest.json` and handoff machine state gitignored. Still **no** Pulse auto-commit - operator (or `porter publish`) stages/commits the pack when Project should see updates.
+- Why: Cursor Project continuity needed transport without making Porter a quiet workflow engine, and without making the operator the prepare-bing button-pusher.
+- See: `porter/README.md`; `docs/playbooks/project-lane.md`; `docs/Cursor-Project-Metra-Charter.md`; `modules/Yarn/Private/Schedule.ps1`
+
+## 2026-09-24 - Metra Cursor Project lane (dual-path, Context sync, complete != shipped)
+
+- Decision: The Metra Cursor **Project** is the continuous **implement lane** for Metra-product plans (long context). Yarn Surveyor Approve still enrolls. Loom remains queue authority when a stem is `implementing` / `reviewing` / `completed` (not yet accepted) - Project must not parallel-implement that stem. If Loom has no active claim, Project may implement.
+- Decision: **Project code-complete and handoff set are not shipped.** `ready-for-bing` is not shipped. Ship requires desk Inspect evidence (often Pulse-driven prepare-bing) plus operator Bing affirm (or declared emergency skip).
+- Decision: Continuity sources for Project: Decisions, Charter, Voice, `porter/OPEN-PLANS.md`, Approved Porter mirrors. Not Future-Dev as the Project backlog.
+- Decision: Enrollment body is the Cursor `.plan.md` leaf (Approve marks). Porter mirrors are cloud-visible transport. Project Context `/cursor/stores/self/docs/` plans may coexist; on implement start, when OPEN-PLANS lists a leaf for the stem, the **Project agent must overwrite** the Context docs plan body from `porter/plans/<leaf>` (Porter wins on drift). Context-only files are never enrollment. No requirement to archive Context docs.
+- Decision: Default Metra product planning conversation prefers the Project; formalization to a desk Cursor leaf + Approve remains required for Yarn/Loom. Escape hatches: tip fixes, desk firefights, Pulse/Inspect repair, charter hard offs.
+- Why: Project contract Q&A (2026-09-24) confirmed Context vs leaf vs gitignored-pack gaps; dual-path and sync mandate close forked truth without operator unpin chores.
+- See: `docs/Cursor-Project-Metra-Charter.md`; `docs/playbooks/project-lane.md`; `docs/playbooks/yarn.md`; `docs/playbooks/loom.md`
+
 ## 2026-09-24 - Porter transports Cursor Project continuity
 
 - Decision: Name the Metra-product file transport **Porter**. Pack lives under `porter/`; runner is `scripts/Invoke-MetraPorter.ps1`; local mirror is `%LOCALAPPDATA%\Metra\porter\`. Replaces the interim `cloud-context` / `Sync-MetraCloudContext` names.
-- Decision: Porter stays Metra-product-only (`porter/scope.json` deny-by-default). No auto-commit. Porter runs on **`MetraYarnLoomPulse`** (same 15-minute Scout pulse task) after the Scout-only loom loop; soft-fail so Scout exit codes stay authoritative. No separate `MetraPorterPulse` task.
+- Decision: Porter stays Metra-product-only (`porter/scope.json` deny-by-default). No auto-commit. Porter runs on **`MetraYarnLoomPulse`** (same 15-minute Scout pulse task) after the Scout-only loom loop; soft-fail so Scout exit codes stay authoritative. No separate `MetraPorterPulse` task. Cursor-directory discovery transports in-scope leaves with Approved / `approveForLoom` only when the stem is not already indexed.
 - Why: Bing and operator preferred Porter as the transport name. Keeps Yarn/Loom/Atlas-style product naming without overloading Scout or Surveyor. One pulse window avoids a second Interactive task.
 - See: `porter/README.md`; `scripts/Invoke-MetraPorter.ps1`; `modules/Yarn/Private/Schedule.ps1`; `docs/Cursor-Project-Metra-Charter.md`
 
 ## 2026-09-24 - Cursor Project for Metra product continuity
 
-- Decision: Use one long-lived Cursor **Project** for **Metra product development only** (`_meta` / Metra checkout). Purpose is multi-month continuity (plans, Future-Dev, current slices, ship habits). It does not replace Yarn, Loom, Inspect, or portfolio routing.
+- Decision: Use one long-lived Cursor **Project** for **Metra product development only** (`_meta` / Metra checkout). Purpose is multi-month continuity (plans, current slices, ship habits). It does not replace Yarn, Loom, Inspect, or portfolio routing. Superseded in part by the Project lane Decision above for dual-path / Context sync / complete != shipped.
 - Decision: Hard offs stay: no ticket durable writes, no campus Live mutations, no sibling-repo implementation from this Project. Sibling products may get their own Cursor Projects later ("mini Metras").
 - Decision: Project shared context is a **working mirror**. Repo docs, `docs/Decisions.md`, OCC, and Atlas remain source of record. Refresh the pack from the charter seed list; do not invent a parallel policy home inside Project chat.
 - Decision: Project **chat** with Stephen uses Metra voice via a curated overlay mirror (`docs/Cursor-Project-Metra-Voice.md`) plus tracked base persona and humor-desk addon paths. Gitignored `*.local.mdc` overlays do not reach Cloud Agents - the Voice file is the intentional export. Durable artifacts stay professional prose. OCC promote still uses `metra.ps1 profile`; confirmed guidelines that should affect Project workers are mirrored into the Voice file.
-- Decision: Continuity transport is **Porter** (see 2026-09-24 Porter entry). Interim `cloud-context` naming is retired.
+- Decision: Continuity transport is **Porter** (see Porter entries). Interim `cloud-context` naming is retired.
 - Why: Cursor Projects bind to one cloud repo and grow shared context over months. That fits Metra-the-product continuity; it does not fit the multi-root portfolio desk. Stephen is developing Metra persona and product together - ticket-flat voice would fight that work; raw local overlays cannot ship to the cloud VM. Cursor working plans under the user profile are invisible to cloud clones unless transported into a pack Metra owns.
 - See: `docs/Cursor-Project-Metra-Charter.md`; `docs/Cursor-Project-Metra-Voice.md`; `porter/README.md`; `scripts/Invoke-MetraPorter.ps1`; https://cursor.com/docs/agent/projects
 

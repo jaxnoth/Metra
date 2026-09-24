@@ -105,9 +105,10 @@ host/MetraHost/bin/
 host/MetraHost/obj/
 host/MetraHost/publish/
 
-# Porter pack (generated plan snapshots + freshness)
+# Porter pack: track OPEN-PLANS + plan mirrors for cloud clone visibility.
+# Manifest + handoff machine state stay local/generated.
 porter/manifest.json
-porter/OPEN-PLANS.md
-porter/plans/**
-!porter/plans/README.md
+porter/handoff.json
+porter/DESK-HANDOFF.md
+# plans/*.plan.md and OPEN-PLANS.md are tracked (byte-identical mirrors; do not hand-edit)
 

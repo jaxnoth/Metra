@@ -37,7 +37,7 @@ param(
     [ValidateSet(
         'list', 'status', 'pull', 'fetch', 'run', 'new', 'apply', 'workspace',
         'audit', 'snapshot', 'selfdoc', 'ops', 'host', 'chats', 'roots', 'routing',
-        'export-profile', 'import-profile', 'ctx', 'setup', 'verify', 'security-audit', 'unblock', 'tailscale', 'satellite', 'desk', 'profile', 'decisions', 'coverage', 'ask', 'capture', 'narrative', 'watch', 'inspect', 'azdo', 'atlas', 'loom', 'yarn', 'plan-board', 'autoprogram', 'help'
+        'export-profile', 'import-profile', 'ctx', 'setup', 'verify', 'security-audit', 'unblock', 'tailscale', 'satellite', 'desk', 'profile', 'decisions', 'coverage', 'ask', 'capture', 'narrative', 'watch', 'inspect', 'azdo', 'atlas', 'loom', 'yarn', 'plan-board', 'porter', 'autoprogram', 'help'
     )]
     [string]$Command = 'help',
 
@@ -106,6 +106,7 @@ param(
     [string]$CueClass,
     [string]$Target,
     [string]$Note,
+    [string]$PrUrl,
     [string]$Id,
     [string]$Via
 )
@@ -280,6 +281,8 @@ Usage:
       Governed plan execution queue (code daily / accept).
   .\metra.ps1 yarn status|scan|backlog|daily|synthesize|pack|reconcile|pending|plan-board
       L1.5 intake: ranked backlog, template synth, pack freshness (approval in A3).
+  .\metra.ps1 porter refresh|publish|prep|handoff ...
+      Porter pack: refresh mirrors, stage tracked pack files, handoff state, Pulse Inspect prep.
   .\metra.ps1 plan-board sync|sync -DryRun|status|inventory|inventory apply -Confirm
       Notion Plan Board projection catch-up + Bing inventory pack (Yarn/Loom remain authoritative; fail-open).
   .\metra.ps1 verify
@@ -1175,6 +1178,38 @@ switch ($Command) {
             else {
                 $result | Format-Table -AutoSize
             }
+        }
+        else {
+            $result | Format-List
+        }
+    }
+
+    'porter' {
+        $porterCli = Join-Path $PSScriptRoot 'scripts\Invoke-MetraPorterCli.ps1'
+        if (-not (Test-Path -LiteralPath $porterCli)) {
+            throw "Porter CLI missing: $porterCli"
+        }
+        $action = if ($Rest -and $Rest.Count -gt 0) { [string]$Rest[0] } else { 'help' }
+        $handoffVerb = ''
+        if ($action -ieq 'handoff' -and $Rest.Count -gt 1) {
+            $handoffVerb = [string]$Rest[1]
+        }
+        $porterParams = @{
+            Action    = $action
+            MetraRoot = $PSScriptRoot
+        }
+        if ($handoffVerb) { $porterParams.HandoffVerb = $handoffVerb }
+        if (-not [string]::IsNullOrWhiteSpace($Stem)) { $porterParams.Stem = $Stem }
+        if (-not [string]::IsNullOrWhiteSpace($Path)) { $porterParams.CursorLeaf = $Path }
+        if (-not [string]::IsNullOrWhiteSpace($Note)) { $porterParams.Notes = $Note }
+        if (-not [string]::IsNullOrWhiteSpace($PrUrl)) { $porterParams.PrUrl = $PrUrl }
+        if (-not [string]::IsNullOrWhiteSpace($Id)) { $porterParams.Sha = $Id }
+        if ($WhatIf) { $porterParams.WhatIf = $true }
+        if ($Confirm) { $porterParams.Confirm = $true }
+        $result = & $porterCli @porterParams
+        if ($null -eq $result) { return }
+        if ($result -is [System.Array]) {
+            $result | Format-Table -AutoSize
         }
         else {
             $result | Format-List

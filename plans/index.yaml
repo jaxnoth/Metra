@@ -41,6 +41,11 @@ plans:
     authority: repo
     repoPath: loom-product-boundary.plan.md
     updatedAt: '2026-09-10T14:49:05.1646420Z'
+  - stem: metra-stage-2-purge
+    cursorLeaf: metra_stage_2_purge_26f5e856.plan.md
+    authority: cursor
+    repoPath: null
+    updatedAt: '2026-09-24T15:56:45.0776240Z'
   - stem: new-use-case-for-metra-sort-of-dedicated-server
     cursorLeaf: null
     authority: repo

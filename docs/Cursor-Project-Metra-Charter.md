@@ -8,7 +8,7 @@ This file is source of record in-repo; Project shared context is a working mirro
 
 ## Purpose
 
-Maintain continuity across Metra product work that outlives a single Agent chat: plans, Future-Dev themes, current slices, desk habits, and how Metra is shipped. The Project coordinator plans and delegates; it does not replace Yarn, Loom, Inspect, or operator approval gates.
+Maintain continuity across Metra product work that outlives a single Agent chat: plans, current slices, desk habits, and how Metra is shipped. The Project is the continuous **implement lane** for Metra-product plans (long context). The coordinator plans and delegates; it does **not** replace Yarn Approve, Loom queue/accept, Inspect evidence, or operator Bing affirm.
 
 ## Scope
 
@@ -18,7 +18,7 @@ Maintain continuity across Metra product work that outlives a single Agent chat:
 - Persona, routing rules, OCC, Decision Registry, registry / profiles
 - Yarn, Loom, Inspect, Surveyor handoff points that live in or are owned by Metra
 - Station update packaging when Metra is the packer
-- Metra plans under Cursor plans / Metra `plans/` / Future-Dev themes for this product
+- Metra plans under Cursor plans / Metra `plans/` / Porter pack mirrors
 - Docs and playbooks under this checkout that govern Metra behavior
 
 **Out (hard offs)**
@@ -26,25 +26,43 @@ Maintain continuity across Metra product work that outlives a single Agent chat:
 - TicketTracker durable writes (`post` / `recommend` / `resolve`, iSupport)
 - Campus Live systems (Colleague Live, Start-Automation, Orion SWIS mutations, warehouse apply)
 - Sibling-repo implementation (TicketTracker, Solarwinds, IWUDATA-*, Colleague, etc.)
-- Portfolio-wide “fix this ticket” or multi-root investigate as if this Project were the desk
+- Portfolio-wide "fix this ticket" or multi-root investigate as if this Project were the desk
 - OCC promote, Decision Registry append, or Atlas publish without operator-affirmed Metra CLI
 - Inventing durable policy only inside Project chat without writing it back to repo docs / Decisions
+- Claiming Metra enrollment from Project chat or Context docs alone (Surveyor Approve on a Cursor leaf required)
 
-Sibling products may get their own Cursor Projects (“mini Metras”) later. This Project does not own them.
+Sibling products may get their own Cursor Projects ("mini Metras") later. This Project does not own them.
 
 ## Authority split
 
 | Concern | Authority |
 |---------|-----------|
 | Route, sticky primary, root isolation | Metra always-on rules + `metra.ps1 routing` / `ctx` |
-| Capture → formal plan → Approve | Yarn + Surveyor Approve Plan |
-| Queue, lane, implement, review, daily accept | Loom |
-| Meaningful code ship gate | Inspect prepare-bing + Bing affirm (operator) |
+| Capture → formal plan → Approve (enrollment) | Yarn + Surveyor Approve Plan on Cursor `.plan.md` leaf |
+| Queue, lane, implement, review, daily accept (when claimed) | Loom |
+| Continuity / Metra-only long context + implement when Loom idle | This Cursor Project lane |
+| Plan body (enrollment) | Cursor `%USERPROFILE%\.cursor\plans\*.plan.md` leaf |
+| Cloud-visible plan mirror | Porter `porter/plans/` (byte-identical transport; do not hand-edit) |
+| Context `/cursor/stores/self/docs/` plans | Continuity copy only; sync from Porter on implement start |
+| Continuity transport + handoff **state storage** | Porter pack (not lifecycle / ship / Bing authority) |
+| Evidence generation (prepare-bing) | Inspect; Pulse may invoke after handoff |
+| Meaningful code ship gate | Operator Bing affirm (or declared emergency skip) |
 | Durable portfolio scars | `docs/Decisions.md`, Decision Registry, Atlas (declared home) |
 | Soft collaboration prefs | OCC via `metra.ps1 profile` (operator promote) |
-| Parallel cloud implement / PR-CI gardening | This Cursor Project (within Scope) |
 
 If Project workers and Metra desk disagree on policy, **repo docs and Decisions win**. Update shared context from the repo; do not silently override.
+
+### Dual-path (Loom vs Project)
+
+For an in-scope Metra stem: if Loom has an active item in `implementing` / `reviewing` / `completed` (not yet accepted), **Loom owns** - Project must not start parallel implement. If Loom has no active claim, **Project may implement**.
+
+### Complete ≠ shipped
+
+Project code-complete, Context sync, and `porter handoff set` (`awaiting-prepare-bing`) are **not** shipped. `ready-for-bing` is not shipped. Ship requires Inspect evidence plus operator Bing affirm (or declared emergency skip) before commit when hooks require it.
+
+### Continuity sources
+
+Prefer: Decisions → Charter → Voice → `porter/OPEN-PLANS.md` → Approved Porter mirrors. Do **not** use Future-Dev as the Project backlog.
 
 ## Coordinator brief (first message)
 
@@ -55,15 +73,28 @@ You are the coordinator for the Metra product Cursor Project. Workspace is the M
 
 Charter: docs/Cursor-Project-Metra-Charter.md
 Voice: docs/Cursor-Project-Metra-Voice.md
+Lane playbook: docs/playbooks/project-lane.md
 
-Read both and keep them in shared context. You are Metra developing Metra with Stephen - use the Voice pack for chat (persona, OCC mirror, humor-desk). Durable artifacts stay professional prose.
+Read those and keep them in shared context. You are Metra developing Metra with Stephen - use the Voice pack for chat (persona, OCC mirror, humor-desk). Durable artifacts stay professional prose.
 
-Your job: maintain long-running context for Metra product development (plans, Future-Dev, current slices, persona, how we ship). Plan and delegate implementation inside this repo. Do not write tickets, touch campus Live systems, or implement sibling projects.
+Your job: maintain long-running context for Metra product development (plans, current slices, persona, how we ship). Prefer this Project for Metra product planning conversation. Formalize enrollment as a Cursor .plan.md leaf on the desk (Save / yarn synthesize) then Surveyor Approve - Context docs/ are continuity only, never enrollment. Pin porter/ for OPEN-PLANS and plan mirrors.
 
-Authority: Yarn Approve and Loom / Inspect still gate ship. Prefer metra.ps1 over inventing parallel workflows. Shared context is a working mirror of repo truth - seed and refresh from AGENTS.md, Voice + Charter, porter/ (Porter pack), docs/playbooks (yarn, loom, inspect-loop), .cursor/rules/metra-persona.mdc, profiles/addons/humor-desk when needed, docs/Decisions.md (relevant entries), and open Metra plans. Do not create a second home for policy.
+On implement start: if porter/OPEN-PLANS.md lists a leaf for the stem, overwrite any Context docs/ plan body from porter/plans/<leaf> (Porter wins on drift). Do not parallel-implement a stem Loom already owns. After code-complete: ask desk for .\metra.ps1 porter handoff set -Stem <stem> (or run it if you have a jumpbox worker) and stop coding that stem until cleared/stale.
+
+Authority: Yarn Approve and Loom / Inspect still gate ship. Pulse may run prepare-bing after handoff; operator Bing affirm ships. Prefer metra.ps1 over inventing parallel workflows. Shared context is a working mirror of repo truth - seed from AGENTS.md, Voice + Charter, porter/, docs/playbooks (yarn, loom, inspect-loop, project-lane), .cursor/rules/metra-persona.mdc, profiles/addons/humor-desk when needed, docs/Decisions.md (relevant entries). Do not create a second home for policy.
 
 When you learn a durable preference or scar, propose the correct Metra home (Decisions, OCC via profile note/promote, playbook, or AGENTS) instead of only storing it in Project chat. If an OCC-shaped preference is confirmed for Project workers, also update docs/Cursor-Project-Metra-Voice.md so cloud context stays in sync.
 ```
+
+## Plans: leaf, Porter, Context
+
+| Surface | Role |
+|---------|------|
+| Cursor `.plan.md` leaf | Enrollment + Approve |
+| `porter/OPEN-PLANS.md` + `porter/plans/<leaf>` | Byte-identical mirror for Project/cloud (tracked; commit after Porter when Project should see updates) |
+| Context docs under `/cursor/stores/self/docs/` | Allowed continuity copy; sync from Porter on implement start; never Approve target |
+
+Porter remains a **transport** product. DESK-HANDOFF workflow state may live in the pack; Porter is not authority for lifecycle, ship, or Bing. Mirrors must stay byte-identical to the Approved leaf - never hand-edit `porter/plans/*`.
 
 ## Plan and context visibility (cloud) - Porter
 
@@ -71,42 +102,36 @@ Cursor working plans live under `%USERPROFILE%\.cursor\plans` and are **not** on
 
 | Target | Path | Commit? |
 |--------|------|---------|
-| Repo pack | `porter/` | Structure tracked; generated snapshots gitignored by default |
+| Repo pack | `porter/` | Structure + OPEN-PLANS + plan mirrors tracked; manifest/handoff machine state gitignored |
 | Local mirror | `%LOCALAPPDATA%\Metra\porter\` | Never in git |
-| Product shared context | Cursor Project UI file set | Coordinator pins `porter/`; **MetraYarnLoomPulse** refreshes the pack every N minutes |
-
-Refresh:
+| Product shared context | Cursor Project UI file set | Coordinator pins `porter/`; Pulse refreshes the pack every N minutes |
 
 ```powershell
 pwsh -File .\scripts\Invoke-MetraPorter.ps1
+.\metra.ps1 porter publish   # stage tracked pack files for commit (no auto-commit)
 ```
 
-Filter: `porter/scope.json` - **Metra product stems only** (deny by default). Portfolio plans in Metra's index (Orion, TicketWatch, etc.) are not transported.
-
-Repo scars under `plans/` with `authority: repo` are already clone-visible when in scope. Porter copies **Cursor-local** bodies for in-scope stems into `porter/plans/`. No auto-commit.
+Filter: `porter/scope.json` - Metra product stems only (deny by default). Approved Cursor leaves are transported even without an index row (Approved-only discovery). Index wins for metadata when both exist.
 
 ## Shared context seed (minimum)
 
-Keep these concepts available to workers (paths relative to Metra checkout):
-
 | Artifact | Why |
 |----------|-----|
-| `porter/` | Porter pack + plan snapshots + freshness (see README there) |
+| `porter/` | Porter pack + OPEN-PLANS + mirrors + handoff docs |
 | `AGENTS.md` | Desk index, ceilings, playbook triggers |
 | `docs/Cursor-Project-Metra-Charter.md` | This charter |
-| `docs/Cursor-Project-Metra-Voice.md` | Stephen overlays mirror (OCC, greeting, humor defaults) for Cloud Agents |
+| `docs/Cursor-Project-Metra-Voice.md` | Stephen overlays mirror for Cloud Agents |
+| `docs/playbooks/project-lane.md` | Lane, Context sync, formalize, handoff |
 | `.cursor/rules/metra-persona.mdc` | Base persona (tracked) |
-| `profiles/addons/humor-desk/.cursor/rules/metra-humor.local.mdc` | Full humor-desk addon (tracked source) |
+| `profiles/addons/humor-desk/.cursor/rules/metra-humor.local.mdc` | Humor-desk addon |
 | `docs/playbooks/yarn.md` | Intake / Approve / plan homes |
 | `docs/playbooks/loom.md` | Queue, lanes, loop, accept |
-| `docs/playbooks/inspect-loop.md` | Prepare-bing, Bing gate, engine independence |
-| `.cursor/rules/project-routing.mdc` | Route-first, root isolation (summary OK if full file is large) |
-| Relevant newest entries in `docs/Decisions.md` | Active scars that affect current work |
-| Open Metra plan stems / Future-Dev themes in scope | Continuity across months |
+| `docs/playbooks/inspect-loop.md` | Prepare-bing, Bing gate |
+| `.cursor/rules/project-routing.mdc` | Route-first, root isolation |
+| Relevant newest entries in `docs/Decisions.md` | Active scars |
+| Open Metra stems via `porter/OPEN-PLANS.md` | Continuity across months |
 
 Do not seed gitignored `.cursor/rules/metra-*.local.mdc` into the repo. Use the Voice file as the cloud-safe mirror.
-
-Refresh after major Approves or Decision appends. Prefer summaries plus pointers over dumping entire trees into shared context. Run Porter (`Invoke-MetraPorter.ps1`) for plan snapshot freshness.
 
 ## Subscriptions (allowed vs deferred)
 
@@ -124,17 +149,19 @@ Refresh after major Approves or Decision appends. Prefer summaries plus pointers
 
 ## Done-when for a Metra ship from this Project
 
-A delegated implement slice is not “done” for Metra ship until:
+A delegated implement slice is not "done" for Metra ship until:
 
 1. Changes stay inside Metra product paths (or explicitly documented Metra-owned paths).
-2. Operator (or Loom review path) runs Inspect / verify as required for meaningful code.
-3. Bing affirm (or declared emergency skip) before commit when hooks require it.
-4. Durable policy learned mid-flight is written to the correct Metra home, not only Project notes.
+2. Context docs (if any) were synced from Porter when a mirror existed; dual-path respected.
+3. Handoff set (implement frozen); Pulse or cloud prepared Inspect evidence to `ready-for-bing` (operator is not the prepare-bing glue).
+4. Operator Bing affirm (or declared emergency skip) before commit when hooks require it.
+5. Durable policy learned mid-flight is written to the correct Metra home, not only Project notes.
 
 ## Related
 
 - [Cursor Projects docs](https://cursor.com/docs/agent/projects)
 - `porter/README.md` (Porter pack for Project continuity)
-- `docs/Cursor-Project-Metra-Voice.md` (Stephen overlay mirror for Project chat)
-- `docs/Decisions.md` (Cursor Project Metra-dev entry)
+- `docs/playbooks/project-lane.md`
+- `docs/Cursor-Project-Metra-Voice.md`
+- `docs/Decisions.md` (Cursor Project / Porter entries)
 - `docs/Agentic-Maturity.md` (L4 delegation vs L5 control loops)

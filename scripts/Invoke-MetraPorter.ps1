@@ -1,10 +1,12 @@
 # Porter - transport Metra Cursor Project pack (Cursor Project continuity)
-
+#
 # Writes:
 # - <MetraRoot>\porter\manifest.json
 # - <MetraRoot>\porter\OPEN-PLANS.md
-# - <MetraRoot>\porter\plans\<cursorLeaf> (when present)
+# - <MetraRoot>\porter\plans\<cursorLeaf> (index cursorLeaf or Approved Cursor-discovered)
 # - %LOCALAPPDATA%\Metra\porter\ (mirror stamp)
+#
+# Sources: plans/index.yaml (in-scope) + Approved Cursor leaves not already indexed.
 
 [CmdletBinding(SupportsShouldProcess = $true)]
 param(
@@ -108,6 +110,75 @@ function Test-MetraPorterPathUnderRoot {
     return $candidateFull.StartsWith($prefix, [StringComparison]::OrdinalIgnoreCase)
 }
 
+function Get-MetraPorterNormalizeStem {
+    <#
+    .SYNOPSIS
+        Leaf/title -> stem. Parity with Yarn Get-YarnPlanBoardInventoryNormalizeStem / Surveyor normalizePlanStem.
+    #>
+    param([string]$Text)
+    $s = [string]$Text
+    if ([string]::IsNullOrWhiteSpace($s)) { return '' }
+    $s = $s.ToLowerInvariant().Trim()
+    $s = $s -replace '\.plan\.md$', ''
+    $s = $s -replace '_[0-9a-f]{8}$', ''
+    $s = $s -replace '-[0-9a-f]{8}$', ''
+    $s = $s -replace '[^a-z0-9]+', '-'
+    $s = $s.Trim('-')
+    return $s
+}
+
+function Get-MetraPorterPlanFrontmatterMap {
+    param([Parameter(Mandatory)][string]$Path)
+    if (-not (Test-Path -LiteralPath $Path)) { return @{} }
+    try {
+        $raw = [System.IO.File]::ReadAllText($Path)
+    }
+    catch {
+        Write-Warning "Porter: could not read plan frontmatter from $Path ($($_.Exception.Message))"
+        return @{}
+    }
+    if ($raw -notmatch '(?s)\A---\r?\n(.*?)\r?\n---') {
+        return @{}
+    }
+    $map = @{}
+    foreach ($line in ($Matches[1] -split "`r?`n")) {
+        if ($line -match '^\s*([A-Za-z0-9_]+)\s*:\s*(.*?)\s*$') {
+            $map[$Matches[1]] = (Get-YamlScalar $Matches[2])
+        }
+    }
+    return $map
+}
+
+function Test-MetraPorterYamlTruthy {
+    param([string]$Value)
+    if ([string]::IsNullOrWhiteSpace($Value)) { return $false }
+    switch ($Value.Trim().ToLowerInvariant()) {
+        'true' { return $true }
+        'yes' { return $true }
+        '1' { return $true }
+        default { return $false }
+    }
+}
+
+function Test-MetraPorterPlanApproved {
+    <#
+    .SYNOPSIS
+        Cursor-discovered leaves need Approved (or comparable affirmed terminal) before transport.
+    .NOTES
+        Affirmed when status is Approved (case-insensitive) OR approveForLoom is truthy.
+        Index-driven rows do not use this gate (index implies intentional affiliation).
+    #>
+    param([Parameter(Mandatory)][string]$Path)
+    $fm = Get-MetraPorterPlanFrontmatterMap -Path $Path
+    $status = if ($fm.ContainsKey('status')) { [string]$fm['status'] } else { '' }
+    if (-not [string]::IsNullOrWhiteSpace($status) -and
+        $status.Trim().Equals('Approved', [StringComparison]::OrdinalIgnoreCase)) {
+        return $true
+    }
+    $approve = if ($fm.ContainsKey('approveForLoom')) { [string]$fm['approveForLoom'] } else { '' }
+    return (Test-MetraPorterYamlTruthy -Value $approve)
+}
+
 $porterRoot = Join-Path $MetraRoot 'porter'
 $plansOut = Join-Path $porterRoot 'plans'
 $indexPath = Join-Path $MetraRoot 'plans\index.yaml'
@@ -146,15 +217,26 @@ $copied = 0
 $repoAuth = 0
 $missing = 0
 $unsafeLeaf = 0
+$cursorDiscovered = 0
+$cursorSkippedNotApproved = 0
+$cursorSkippedOutOfScope = 0
 $keptLeaves = New-Object 'System.Collections.Generic.HashSet[string]' ([StringComparer]::OrdinalIgnoreCase)
+$indexStems = New-Object 'System.Collections.Generic.HashSet[string]' ([StringComparer]::OrdinalIgnoreCase)
 $rows = New-Object System.Collections.Generic.List[string]
 [void]$rows.Add('# Metra-product plans (porter scope)')
 [void]$rows.Add('')
 [void]$rows.Add("Generated: $stampUtc")
 [void]$rows.Add("Scope: porter/scope.json (Metra product only; $skipped index entries skipped)")
+[void]$rows.Add('Sources: plans/index.yaml + Approved Cursor leaves under %USERPROFILE%\.cursor\plans (in-scope, not already indexed)')
 [void]$rows.Add('')
 [void]$rows.Add('| Stem | Authority | Cursor leaf | Repo path | Snapshot |')
 [void]$rows.Add('|------|-----------|-------------|-----------|----------|')
+
+foreach ($ie in $allEntries) {
+    if (-not [string]::IsNullOrWhiteSpace([string]$ie.stem)) {
+        [void]$indexStems.Add([string]$ie.stem)
+    }
+}
 
 foreach ($e in $entries) {
     $snap = '-'
@@ -192,6 +274,53 @@ foreach ($e in $entries) {
     [void]$rows.Add("| $($e.stem) | $($e.authority) | $leafCol | $repoCol | $snap |")
 }
 
+# Cursor-directory discovery: in-scope Approved leaves whose stem is not already indexed.
+if (Test-Path -LiteralPath $cursorPlansDir) {
+    Get-ChildItem -LiteralPath $cursorPlansDir -File -Filter '*.plan.md' -ErrorAction SilentlyContinue |
+        ForEach-Object {
+            $safeLeaf = Resolve-MetraPorterCursorLeafName -CursorLeaf $_.Name
+            if (-not $safeLeaf) {
+                $unsafeLeaf++
+                return
+            }
+            if ($keptLeaves.Contains($safeLeaf)) { return }
+
+            $stem = Get-MetraPorterNormalizeStem -Text $safeLeaf
+            if ([string]::IsNullOrWhiteSpace($stem)) { return }
+            if ($indexStems.Contains($stem)) { return }
+
+            if (-not (Test-MetraPorterStem -Stem $stem -IncludePrefixes $includePrefixes -ExcludePrefixes $excludePrefixes)) {
+                $cursorSkippedOutOfScope++
+                return
+            }
+
+            $src = $_.FullName
+            if (-not (Test-MetraPorterPathUnderRoot -RootDirectory $cursorPlansDir -CandidatePath $src)) {
+                $unsafeLeaf++
+                return
+            }
+
+            if (-not (Test-MetraPorterPlanApproved -Path $src)) {
+                $cursorSkippedNotApproved++
+                return
+            }
+
+            $dest = Join-Path $plansOut $safeLeaf
+            if (-not (Test-MetraPorterPathUnderRoot -RootDirectory $plansOut -CandidatePath $dest)) {
+                $unsafeLeaf++
+                return
+            }
+
+            if ($PSCmdlet.ShouldProcess($dest, "Copy Approved Cursor-discovered plan $safeLeaf")) {
+                Copy-Item -LiteralPath $src -Destination $dest -Force
+            }
+            [void]$keptLeaves.Add($safeLeaf)
+            $copied++
+            $cursorDiscovered++
+            [void]$rows.Add("| $stem | cursor | $safeLeaf | - | plans/$safeLeaf |")
+        }
+}
+
 $removed = 0
 Get-ChildItem -LiteralPath $plansOut -File -ErrorAction SilentlyContinue |
     Where-Object { $_.Name -ne 'README.md' -and -not $keptLeaves.Contains($_.Name) } |
@@ -211,18 +340,22 @@ $manifest = [ordered]@{
         metraRoot       = $MetraRoot
         cursorPlansDir  = $cursorPlansDir
         planIndex       = 'plans/index.yaml'
+        cursorDiscovery = 'Approved in-scope Cursor leaves not already in index'
     }
     counts          = [ordered]@{
-        indexEntries           = $allEntries.Count
-        inScope                = $entries.Count
-        skippedOutOfScope      = $skipped
-        cursorBodiesCopied     = $copied
-        orphanSnapshotsRemoved = $removed
-        repoAuthority          = $repoAuth
-        missingCursorLeaf      = $missing
-        unsafeCursorLeaf       = $unsafeLeaf
+        indexEntries               = $allEntries.Count
+        inScope                    = $entries.Count
+        skippedOutOfScope          = $skipped
+        cursorBodiesCopied         = $copied
+        cursorDiscovered           = $cursorDiscovered
+        cursorSkippedNotApproved   = $cursorSkippedNotApproved
+        cursorSkippedOutOfScope    = $cursorSkippedOutOfScope
+        orphanSnapshotsRemoved     = $removed
+        repoAuthority              = $repoAuth
+        missingCursorLeaf          = $missing
+        unsafeCursorLeaf           = $unsafeLeaf
     }
-    notes           = 'Generated by scripts/Invoke-MetraPorter.ps1. Metra-product filter via scope.json. Do not hand-edit.'
+    notes           = 'Generated by scripts/Invoke-MetraPorter.ps1. Metra-product filter via scope.json. Cursor discovery requires Approved (or approveForLoom). Do not hand-edit.'
 }
 
 $manifestPath = Join-Path $porterRoot 'manifest.json'
@@ -231,7 +364,7 @@ $mirrorManifest = Join-Path $localMirror 'manifest.json'
 $mirrorReadme = Join-Path $localMirror 'README.md'
 
 if (-not $PSCmdlet.ShouldProcess($manifestPath, 'Write Porter manifest and OPEN-PLANS')) {
-    Write-Host "WhatIf: inScope=$($entries.Count) skipped=$skipped wouldCopy=$copied"
+    Write-Host "WhatIf: inScope=$($entries.Count) skipped=$skipped wouldCopy=$copied cursorDiscovered=$cursorDiscovered"
     return
 }
 
@@ -242,18 +375,19 @@ Copy-Item -LiteralPath $manifestPath -Destination $mirrorManifest -Force
     '# Metra Cursor Project local mirror (Porter)'
     ''
     "lastRefreshUtc: $stampUtc"
-    "inScope: $($entries.Count) (skipped $skipped)"
+    "inScope: $($entries.Count) (skipped $skipped); cursorDiscovered: $cursorDiscovered"
     ''
     'Primary pack (repo working tree):'
     $porterRoot
     ''
     'Filter: porter/scope.json (Metra product only)'
+    'Cursor discovery: Approved (or approveForLoom) in-scope leaves not in plans/index.yaml'
     ''
     'Regenerate: pwsh -File <MetraRoot>\scripts\Invoke-MetraPorter.ps1'
     'Also runs on MetraYarnLoomPulse after Scout.'
 ) -join "`n" | Set-Content -LiteralPath $mirrorReadme -Encoding utf8
 
-Write-Host "Porter refreshed: inScope=$($entries.Count) skipped=$skipped copied=$copied removedOrphans=$removed missingLeaf=$missing"
+Write-Host "Porter refreshed: inScope=$($entries.Count) skipped=$skipped copied=$copied cursorDiscovered=$cursorDiscovered notApproved=$cursorSkippedNotApproved removedOrphans=$removed missingLeaf=$missing"
 Write-Host "  $manifestPath"
 Write-Host "  $openPlansPath"
 Write-Host "  mirror: $localMirror"

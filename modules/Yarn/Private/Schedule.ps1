@@ -1,6 +1,6 @@
 # Yarn+Loom scheduled runners + Windows Scheduled Task install.
 # Daily (MetraYarnLoomDaily): overnight scan -> reconcile -> loom until daily gate.
-# Pulse (MetraYarnLoomPulse): frequent scan -> loom ScoutOnly (no reconcile) -> Porter (Metra-product plan pack).
+# Pulse (MetraYarnLoomPulse): frequent scan -> loom ScoutOnly (no reconcile) -> Porter -> Inspect prep (handoff awaiting).
 
 function Get-YarnScheduleTaskName {
     return 'MetraYarnLoomDaily'
@@ -50,9 +50,9 @@ function Invoke-MetraYarnLoomSchedule {
     .SYNOPSIS
         Scheduled stages for Daily or Pulse mode.
         Daily: yarn scan -> yarn daily -Reconcile -> loom loop -UntilDailyGate -Confirm (all eligible plans).
-        Pulse: yarn scan -> loom loop -UntilDailyGate -ScoutOnly -Confirm (Scout canary) -> Porter (Metra-product plan pack; skips reconcile).
+        Pulse: yarn scan -> loom loop -UntilDailyGate -ScoutOnly -Confirm (Scout canary) -> Porter -> Inspect prep when handoff awaiting.
         Exit codes: 0 ok/daily-gate, 1 failure, 2 validation blocked, 3 unexpected loom pause, 4 lock held.
-        Porter soft-fails on Pulse (logged; does not change exit code).
+        Porter and Inspect prep soft-fail on Pulse (logged; do not change exit code). Never Bing-affirm.
     #>
     [CmdletBinding()]
     param(
@@ -197,9 +197,32 @@ function Invoke-MetraYarnLoomSchedule {
                 # Soft-fail: Scout pulse should still complete; Porter is continuity transport.
                 Write-YarnScheduleLog -LogPath $logPath -Message ("Stage=Porter Result=Failure error=$($_.Exception.Message)")
             }
+
+            # Handoff concept owns awaiting/ready; Pulse invokes Inspect. Porter.ps1 does not call Inspect.
+            Write-YarnScheduleLog -LogPath $logPath -Message 'Stage=InspectPrep Result=Starting'
+            try {
+                $porterCli = Join-Path $MetraRoot 'scripts\Invoke-MetraPorterCli.ps1'
+                if (-not (Test-Path -LiteralPath $porterCli)) {
+                    throw "Porter CLI missing: $porterCli"
+                }
+                $prepResult = & $porterCli -Action prep -MetraRoot $MetraRoot
+                $ready = $false
+                $skipped = $false
+                if ($null -ne $prepResult -and $prepResult.PSObject.Properties['readyForBing']) {
+                    $ready = [bool]$prepResult.readyForBing
+                }
+                if ($null -ne $prepResult -and $prepResult.PSObject.Properties['skipped']) {
+                    $skipped = [bool]$prepResult.skipped
+                }
+                Write-YarnScheduleLog -LogPath $logPath -Message ("Stage=InspectPrep Result=Success skipped=$skipped readyForBing=$ready")
+            }
+            catch {
+                Write-YarnScheduleLog -LogPath $logPath -Message ("Stage=InspectPrep Result=Failure error=$($_.Exception.Message)")
+            }
         }
         else {
             Write-YarnScheduleLog -LogPath $logPath -Message 'Stage=Porter Result=Skipped mode=Daily'
+            Write-YarnScheduleLog -LogPath $logPath -Message 'Stage=InspectPrep Result=Skipped mode=Daily'
         }
 
         Write-YarnScheduleLog -LogPath $logPath -Message ("Stage=Complete Result=Success exitCode=$exitCode mode=$Mode")

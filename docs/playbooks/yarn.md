@@ -78,7 +78,7 @@ Two tasks share the same runner and a single schedule lock (they never overlap):
 | Task | Cadence | Stages |
 |------|---------|--------|
 | `MetraYarnLoomDaily` | Once daily (default `02:00`) | scan → daily -Reconcile → loom loop (all eligible) |
-| `MetraYarnLoomPulse` | Every N minutes (default 15; range 5-120) | scan → loom loop **-ScoutOnly** → **Porter** (Metra-product plan pack; skips reconcile). Porter soft-fails. |
+| `MetraYarnLoomPulse` | Every N minutes (default 15; range 5-120) | scan → loom loop **-ScoutOnly** → **Porter** → **Inspect prep** when handoff `awaiting-prepare-bing` (soft-fail; never Bing-affirm; skips reconcile). |
 
 Runner: `scripts/Invoke-MetraYarnLoomSchedule.ps1 -Mode Daily|Pulse`. Exit codes: 0 ok/daily-gate, 1 failure, 2 validation blocked, 3 unexpected loom pause, 4 lock held. Logs: `%LOCALAPPDATA%\Metra\yarn\schedule-logs\`.
 
@@ -204,3 +204,5 @@ Retire clears Approve marks on the Scout leaf only, drops its Yarn backlog/plan-
 ## Related
 
 Loom owns queue execution after handoff (A4: one active lane per `projectKey`, atomic claim, `accepted-pending-commit` + local commit verify). Verified accept also notifies Plan Board (Shipped). See [loom.md](loom.md). Slice 7 Phase C AutoProgram leftovers are closed (naming/docs only; alias/migrate stay in the Loom playbook).
+
+Metra Cursor **Project** continuity (Porter pack, Context sync, dual-path when Loom idle): [project-lane.md](project-lane.md). Enrollment remains Surveyor Approve on a Cursor leaf - Context docs and Project chat are not Approve.

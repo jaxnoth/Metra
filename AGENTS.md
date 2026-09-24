@@ -50,6 +50,7 @@ Triggers: Metra home, routing, ctx, registry, inspect, profile, decisions, works
 | projects.json, profiles, import-profile | [docs/playbooks/registry-profiles.md](docs/playbooks/registry-profiles.md) |
 | metra.ps1 commands | [docs/playbooks/cli-reference.md](docs/playbooks/cli-reference.md) |
 | inspect loop, pack, Bing lane, A2 pack | [docs/playbooks/inspect-loop.md](docs/playbooks/inspect-loop.md) |
+| Cursor Project lane, Porter, Context sync, handoff | [docs/playbooks/project-lane.md](docs/playbooks/project-lane.md) |
 | station install/update, TicketTracker/Codex releases | [docs/playbooks/station-updates.md](docs/playbooks/station-updates.md) |
 | pack station zip after TT/Codex ship | station project `AGENTS.md` Station release + `docs/Station-Release.md`; `build/Pack-Release.ps1` |
 | grep scope, cloud chats, token discipline | [docs/playbooks/token-rules.md](docs/playbooks/token-rules.md) |
