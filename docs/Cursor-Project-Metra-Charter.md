@@ -86,29 +86,30 @@ Authority: Yarn Approve and Loom / Inspect still gate ship. Pulse may run prepar
 When you learn a durable preference or scar, propose the correct Metra home (Decisions, OCC via profile note/promote, playbook, or AGENTS) instead of only storing it in Project chat. If an OCC-shaped preference is confirmed for Project workers, also update docs/Cursor-Project-Metra-Voice.md so cloud context stays in sync.
 ```
 
-## Plans: leaf, Porter, Context
+## Plans: leaf, Porter, Agent Store
 
 | Surface | Role |
 |---------|------|
-| Cursor `.plan.md` leaf | Enrollment + Approve |
-| `porter/OPEN-PLANS.md` + `porter/plans/<leaf>` | Byte-identical mirror for Project/cloud (tracked; commit after Porter when Project should see updates) |
-| Context docs under `/cursor/stores/self/docs/` | Allowed continuity copy; sync from Porter on implement start; never Approve target |
+| Cursor `.plan.md` leaf | Enrollment + Surveyor Approve |
+| Agent Store `docs/plans/<stem>.plan.md` | Project-visible shelf; Porter write-backs Approved bodies here |
+| `porter/OPEN-PLANS.md` + `porter/plans/<leaf>` | Interim shuttle / pin until write-back is the durable Project path |
+| Other Context `docs/` | Continuity notes only; never Approve target |
 
-Porter remains a **transport** product. DESK-HANDOFF workflow state may live in the pack; Porter is not authority for lifecycle, ship, or Bing. Mirrors must stay byte-identical to the Approved leaf - never hand-edit `porter/plans/*`.
+Porter remains a **transport** product (desk writer). DESK-HANDOFF state may live in the pack; Porter is not authority for lifecycle, ship, or Bing. Write-back requires `projectId` + `projectKey=Metra` in `%LOCALAPPDATA%\Metra\porter\cursor-project.local.json`. Never hand-edit `porter/plans/*`.
 
 ## Plan and context visibility (cloud) - Porter
 
-Cursor working plans live under `%USERPROFILE%\.cursor\plans` and are **not** on the cloud VM by default. **Porter** transports Metra-product continuity into:
+Cursor working plans live under `%USERPROFILE%\.cursor\plans` and are **not** on the cloud VM by default. **Porter** bridges:
 
 | Target | Path | Commit? |
 |--------|------|---------|
-| Repo pack | `porter/` | Structure + OPEN-PLANS + plan mirrors tracked; manifest/handoff machine state gitignored |
+| Agent Store shelf | `files/docs/plans/<stem>.plan.md` | Cloud sync via Cursor Project store (write-back on Pulse) |
+| Repo pack (interim) | `porter/` | OPEN-PLANS + plan mirrors tracked; manifest/handoff gitignored |
 | Local mirror | `%LOCALAPPDATA%\Metra\porter\` | Never in git |
-| Product shared context | Cursor Project UI file set | Coordinator pins `porter/`; Pulse refreshes the pack every N minutes |
 
 ```powershell
 pwsh -File .\scripts\Invoke-MetraPorter.ps1
-.\metra.ps1 porter publish   # stage tracked pack files for commit (no auto-commit)
+.\metra.ps1 porter publish   # stage interim pack files for commit (no auto-commit)
 ```
 
 Filter: `porter/scope.json` - Metra product stems only (deny by default). Approved Cursor leaves are transported even without an index row (Approved-only discovery). Index wins for metadata when both exist.

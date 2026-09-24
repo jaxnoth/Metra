@@ -110,5 +110,6 @@ host/MetraHost/publish/
 porter/manifest.json
 porter/handoff.json
 porter/DESK-HANDOFF.md
+porter/*.local.json
 # plans/*.plan.md and OPEN-PLANS.md are tracked (byte-identical mirrors; do not hand-edit)
 

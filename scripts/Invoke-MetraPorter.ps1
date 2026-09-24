@@ -4,13 +4,18 @@
 # - <MetraRoot>\porter\manifest.json
 # - <MetraRoot>\porter\OPEN-PLANS.md
 # - <MetraRoot>\porter\plans\<cursorLeaf> (index cursorLeaf or Approved Cursor-discovered)
-# - %LOCALAPPDATA%\Metra\porter\ (mirror stamp)
+# - %LOCALAPPDATA%\Metra\porter\ (mirror stamp + writeback-ledger.json)
+# - Agent Store docs/plans/<stem>.plan.md (Approved write-back when projectId+projectKey valid)
 #
 # Sources: plans/index.yaml (in-scope) + Approved Cursor leaves not already indexed.
 
 [CmdletBinding(SupportsShouldProcess = $true)]
 param(
-    [string]$MetraRoot = (Resolve-Path (Join-Path $PSScriptRoot '..')).Path
+    [string]$MetraRoot = (Resolve-Path (Join-Path $PSScriptRoot '..')).Path,
+    [string]$CursorProjectConfigPath,
+    [string]$AgentStoresRoot,
+    [string]$WritebackLedgerPath,
+    [string]$CursorPlansDir
 )
 
 Set-StrictMode -Version Latest
@@ -167,6 +172,7 @@ function Test-MetraPorterPlanApproved {
     .NOTES
         Affirmed when status is Approved (case-insensitive) OR approveForLoom is truthy.
         Index-driven rows do not use this gate (index implies intentional affiliation).
+        Agent Store write-back always requires this gate (B: never clobber drafts).
     #>
     param([Parameter(Mandatory)][string]$Path)
     $fm = Get-MetraPorterPlanFrontmatterMap -Path $Path
@@ -179,11 +185,371 @@ function Test-MetraPorterPlanApproved {
     return (Test-MetraPorterYamlTruthy -Value $approve)
 }
 
+function Get-MetraPorterContentHash {
+    param([Parameter(Mandatory)][string]$Path)
+    $bytes = [System.IO.File]::ReadAllBytes($Path)
+    $sha = [System.Security.Cryptography.SHA256]::Create()
+    try {
+        $hash = $sha.ComputeHash($bytes)
+        return ([BitConverter]::ToString($hash) -replace '-', '').ToLowerInvariant()
+    }
+    finally {
+        $sha.Dispose()
+    }
+}
+
+function Resolve-MetraPorterCursorProjectConfig {
+    param(
+        [string]$LocalAppData,
+        [string]$ConfigPath
+    )
+    $path = $ConfigPath
+    if ([string]::IsNullOrWhiteSpace($path)) {
+        $path = Join-Path $LocalAppData 'Metra\porter\cursor-project.local.json'
+    }
+    if (-not (Test-Path -LiteralPath $path)) {
+        return [pscustomobject]@{
+            Ok       = $false
+            Reason   = 'missing-config'
+            Path     = $path
+            ProjectId = $null
+            ProjectKey = $null
+        }
+    }
+    try {
+        $rawText = Get-Content -LiteralPath $path -Raw -ErrorAction Stop
+        if ([string]::IsNullOrWhiteSpace($rawText)) {
+            return [pscustomobject]@{
+                Ok         = $false
+                Reason     = 'unreadable-config:null-or-empty'
+                Path       = $path
+                ProjectId  = $null
+                ProjectKey = $null
+            }
+        }
+        $doc = $rawText | ConvertFrom-Json
+    }
+    catch {
+        return [pscustomobject]@{
+            Ok       = $false
+            Reason   = "unreadable-config:$($_.Exception.Message)"
+            Path     = $path
+            ProjectId = $null
+            ProjectKey = $null
+        }
+    }
+    if ($null -eq $doc) {
+        return [pscustomobject]@{
+            Ok         = $false
+            Reason     = 'unreadable-config:null-or-empty'
+            Path       = $path
+            ProjectId  = $null
+            ProjectKey = $null
+        }
+    }
+    $id = if ($doc.PSObject.Properties['projectId']) { [string]$doc.projectId } else { '' }
+    $key = if ($doc.PSObject.Properties['projectKey']) { [string]$doc.projectKey } else { '' }
+    if ([string]::IsNullOrWhiteSpace($id)) {
+        return [pscustomobject]@{
+            Ok       = $false
+            Reason   = 'missing-projectId'
+            Path     = $path
+            ProjectId = $null
+            ProjectKey = $key
+        }
+    }
+    if ([string]::IsNullOrWhiteSpace($key) -or -not $key.Trim().Equals('Metra', [StringComparison]::OrdinalIgnoreCase)) {
+        return [pscustomobject]@{
+            Ok       = $false
+            Reason   = 'projectKey-mismatch'
+            Path     = $path
+            ProjectId = $id.Trim()
+            ProjectKey = $key
+        }
+    }
+    return [pscustomobject]@{
+        Ok         = $true
+        Reason     = 'ok'
+        Path       = $path
+        ProjectId  = $id.Trim()
+        ProjectKey = 'Metra'
+    }
+}
+
+function Resolve-MetraPorterAgentStorePlansDir {
+    param(
+        [Parameter(Mandatory)][string]$ProjectId,
+        [string]$AgentStoresRoot,
+        [string]$LocalAppData
+    )
+    $id = $ProjectId.Trim()
+    if ($id -notmatch '^[a-zA-Z0-9_-]+$') {
+        throw "Porter write-back: invalid projectId (must be alphanumeric/_/- only): $ProjectId"
+    }
+    $root = $AgentStoresRoot
+    if ([string]::IsNullOrWhiteSpace($root)) {
+        $root = Join-Path $LocalAppData 'Cursor\AgentStores\cursor_agent_stores'
+    }
+    $storeRoot = Join-Path $root $id
+    if (-not (Test-MetraPorterPathUnderRoot -RootDirectory $root -CandidatePath $storeRoot)) {
+        throw "Porter write-back: projectId escapes AgentStoresRoot."
+    }
+    $filesRoot = Join-Path $storeRoot 'files'
+    $plansDir = Join-Path $filesRoot 'docs\plans'
+    $markerCharter = Join-Path $filesRoot 'docs\metra-charter.md'
+    $markerContext = Join-Path $filesRoot 'docs\project-context.md'
+    $markerOk = (Test-Path -LiteralPath $markerCharter) -or (Test-Path -LiteralPath $markerContext)
+    return [pscustomobject]@{
+        AgentStoresRoot = $root
+        StoreRoot       = $storeRoot
+        FilesRoot       = $filesRoot
+        PlansDir        = $plansDir
+        MarkerPresent   = $markerOk
+        StoreExists     = (Test-Path -LiteralPath $storeRoot)
+    }
+}
+
+function Read-MetraPorterWritebackLedger {
+    param([string]$Path)
+    if (-not (Test-Path -LiteralPath $Path)) {
+        return [ordered]@{ schemaVersion = 1; updatedUtc = $null; stems = @{} }
+    }
+    try {
+        $rawText = Get-Content -LiteralPath $Path -Raw -ErrorAction Stop
+        if ([string]::IsNullOrWhiteSpace($rawText)) {
+            return [ordered]@{ schemaVersion = 1; updatedUtc = $null; stems = @{} }
+        }
+        $raw = $rawText | ConvertFrom-Json
+        if ($null -eq $raw) {
+            return [ordered]@{ schemaVersion = 1; updatedUtc = $null; stems = @{} }
+        }
+        $stems = @{}
+        if ($null -ne $raw.stems) {
+            foreach ($p in $raw.stems.PSObject.Properties) {
+                $stems[$p.Name] = [ordered]@{
+                    contentHash = [string]$p.Value.contentHash
+                    writtenUtc  = $(if ($p.Value.PSObject.Properties['writtenUtc']) { [string]$p.Value.writtenUtc } else { $null })
+                    cursorLeaf  = $(if ($p.Value.PSObject.Properties['cursorLeaf']) { [string]$p.Value.cursorLeaf } else { $null })
+                }
+            }
+        }
+        return [ordered]@{
+            schemaVersion = 1
+            updatedUtc    = $(if ($raw.PSObject.Properties['updatedUtc']) { [string]$raw.updatedUtc } else { $null })
+            stems         = $stems
+        }
+    }
+    catch {
+        Write-Warning "Porter write-back: ledger unreadable ($($_.Exception.Message)); treating as empty."
+        return [ordered]@{ schemaVersion = 1; updatedUtc = $null; stems = @{} }
+    }
+}
+
+function Write-MetraPorterWritebackLedger {
+    param(
+        [string]$Path,
+        $Ledger
+    )
+    $Ledger['updatedUtc'] = [datetime]::UtcNow.ToString('o')
+    $stemObj = [ordered]@{}
+    foreach ($k in @($Ledger.stems.Keys)) {
+        $stemObj[$k] = $Ledger.stems[$k]
+    }
+    $payload = [ordered]@{
+        schemaVersion = 1
+        updatedUtc    = $Ledger.updatedUtc
+        stems         = $stemObj
+    }
+    $dir = Split-Path -Parent $Path
+    if (-not [string]::IsNullOrWhiteSpace($dir) -and -not (Test-Path -LiteralPath $dir)) {
+        New-Item -ItemType Directory -Force -Path $dir | Out-Null
+    }
+    [System.IO.File]::WriteAllText($Path, (($payload | ConvertTo-Json -Depth 6) + "`n"), [System.Text.UTF8Encoding]::new($false))
+}
+
+function Invoke-MetraPorterAgentStoreWriteback {
+    param(
+        [string]$CursorPlansDir,
+        [System.Collections.Generic.HashSet[string]]$KeptLeaves,
+        [string]$LocalAppData,
+        [string]$CursorProjectConfigPath,
+        [string]$AgentStoresRoot,
+        [string]$WritebackLedgerPath
+    )
+
+    $counters = [ordered]@{
+        wouldWrite                 = 0
+        wouldWriteDriftCorrected   = 0
+        written                    = 0
+        writtenDriftCorrected      = 0
+        skippedUnchanged           = 0
+        skippedNotApproved         = 0
+        skippedNoProjectId         = 0
+        skippedProjectKeyMismatch  = 0
+        skippedMissingStore        = 0
+        skippedUnsafe              = 0
+        softFailErrors             = 0
+        writebackEnabled           = $false
+        projectId                  = $null
+        plansDir                   = $null
+        markerPresent              = $false
+        skipReason                 = $null
+    }
+
+    $cfg = Resolve-MetraPorterCursorProjectConfig -LocalAppData $LocalAppData -ConfigPath $CursorProjectConfigPath
+    if (-not $cfg.Ok) {
+        if ($cfg.Reason -eq 'projectKey-mismatch') {
+            $counters.skippedProjectKeyMismatch = 1
+            $counters.skipReason = $cfg.Reason
+            Write-Warning "Porter write-back skipped: projectKey must be Metra (config=$($cfg.Path))."
+        }
+        else {
+            $counters.skippedNoProjectId = 1
+            $counters.skipReason = $cfg.Reason
+            Write-Host "Porter write-back skipped: $($cfg.Reason) (config=$($cfg.Path))."
+        }
+        return [pscustomobject]$counters
+    }
+
+    try {
+        $store = Resolve-MetraPorterAgentStorePlansDir -ProjectId $cfg.ProjectId -AgentStoresRoot $AgentStoresRoot -LocalAppData $LocalAppData
+    }
+    catch {
+        $counters.skippedUnsafe = 1
+        $counters.skipReason = "invalid-projectId:$($_.Exception.Message)"
+        Write-Warning "Porter write-back skipped: $($_.Exception.Message)"
+        return [pscustomobject]$counters
+    }
+    $counters.projectId = $cfg.ProjectId
+    $counters.plansDir = $store.PlansDir
+    $counters.markerPresent = [bool]$store.MarkerPresent
+    if (-not $store.MarkerPresent) {
+        Write-Host 'Porter write-back: store-content Metra marker (metra-charter.md / project-context.md) not found; projectKey=Metra accepted.'
+    }
+    if (-not $store.StoreExists) {
+        $counters.skippedMissingStore = 1
+        $counters.skipReason = 'missing-store'
+        Write-Warning "Porter write-back skipped: Agent Store not found at $($store.StoreRoot)."
+        return [pscustomobject]$counters
+    }
+
+    $counters.writebackEnabled = $true
+    $ledgerPath = $WritebackLedgerPath
+    if ([string]::IsNullOrWhiteSpace($ledgerPath)) {
+        $ledgerPath = Join-Path $LocalAppData 'Metra\porter\writeback-ledger.json'
+    }
+    $ledger = Read-MetraPorterWritebackLedger -Path $ledgerPath
+    $ledgerDirty = $false
+
+    foreach ($safeLeaf in @($KeptLeaves)) {
+        if ([string]::IsNullOrWhiteSpace($safeLeaf) -or $safeLeaf -eq 'README.md') { continue }
+        $src = Join-Path $CursorPlansDir $safeLeaf
+        if (-not (Test-Path -LiteralPath $src)) { continue }
+        if (-not (Test-MetraPorterPathUnderRoot -RootDirectory $CursorPlansDir -CandidatePath $src)) {
+            $counters.skippedUnsafe++
+            continue
+        }
+        if (-not (Test-MetraPorterPlanApproved -Path $src)) {
+            $counters.skippedNotApproved++
+            continue
+        }
+
+        $stem = Get-MetraPorterNormalizeStem -Text $safeLeaf
+        if ([string]::IsNullOrWhiteSpace($stem)) {
+            $counters.skippedUnsafe++
+            continue
+        }
+        $destName = "$stem.plan.md"
+        $dest = Join-Path $store.PlansDir $destName
+        if (-not (Test-MetraPorterPathUnderRoot -RootDirectory $store.FilesRoot -CandidatePath $dest)) {
+            $counters.skippedUnsafe++
+            continue
+        }
+
+        try {
+            $sourceHash = Get-MetraPorterContentHash -Path $src
+        }
+        catch {
+            $counters.softFailErrors++
+            Write-Warning "Porter write-back: hash failed for $safeLeaf ($($_.Exception.Message))"
+            continue
+        }
+
+        $destinationHash = $null
+        if (Test-Path -LiteralPath $dest) {
+            try {
+                $destinationHash = Get-MetraPorterContentHash -Path $dest
+            }
+            catch {
+                $counters.softFailErrors++
+                Write-Warning "Porter write-back: dest hash failed for $destName ($($_.Exception.Message))"
+                continue
+            }
+        }
+
+        $ledgerHash = $null
+        if ($ledger.stems.ContainsKey($stem)) {
+            $ledgerHash = [string]$ledger.stems[$stem].contentHash
+        }
+
+        # B+A: skip only when ledger, source, and destination all agree. Source-only
+        # ledger match must not leave post-Approve Agent Store drift in place.
+        if ($ledgerHash -eq $sourceHash -and $destinationHash -eq $sourceHash) {
+            $counters.skippedUnchanged++
+            continue
+        }
+
+        $isDriftCorrect = ($null -ne $destinationHash -and $destinationHash -ne $sourceHash -and $ledgerHash -eq $sourceHash)
+
+        if ($PSCmdlet.ShouldProcess($dest, "Write-back Approved plan $destName to Agent Store")) {
+            try {
+                if (-not (Test-Path -LiteralPath $store.PlansDir)) {
+                    New-Item -ItemType Directory -Force -Path $store.PlansDir | Out-Null
+                }
+                Copy-Item -LiteralPath $src -Destination $dest -Force
+                $ledger.stems[$stem] = [ordered]@{
+                    contentHash = $sourceHash
+                    writtenUtc  = [datetime]::UtcNow.ToString('o')
+                    cursorLeaf  = $safeLeaf
+                }
+                $ledgerDirty = $true
+                $counters.written++
+                if ($isDriftCorrect) { $counters.writtenDriftCorrected++ }
+            }
+            catch {
+                $counters.softFailErrors++
+                Write-Warning "Porter write-back: failed $dest ($($_.Exception.Message))"
+            }
+        }
+        else {
+            $counters.wouldWrite++
+            if ($isDriftCorrect) { $counters.wouldWriteDriftCorrected++ }
+        }
+    }
+
+    if ($ledgerDirty -and -not $WhatIfPreference) {
+        try {
+            Write-MetraPorterWritebackLedger -Path $ledgerPath -Ledger $ledger
+        }
+        catch {
+            Write-Warning "Porter write-back: ledger save failed ($($_.Exception.Message))"
+            $counters.softFailErrors++
+        }
+    }
+
+    return [pscustomobject]$counters
+}
+
 $porterRoot = Join-Path $MetraRoot 'porter'
 $plansOut = Join-Path $porterRoot 'plans'
 $indexPath = Join-Path $MetraRoot 'plans\index.yaml'
 $scopePath = Join-Path $porterRoot 'scope.json'
-$cursorPlansDir = Join-Path $env:USERPROFILE '.cursor\plans'
+$cursorPlansDir = if (-not [string]::IsNullOrWhiteSpace($CursorPlansDir)) {
+    $CursorPlansDir
+}
+else {
+    Join-Path $env:USERPROFILE '.cursor\plans'
+}
 $localAppData = [Environment]::GetFolderPath([Environment+SpecialFolder]::LocalApplicationData)
 if ([string]::IsNullOrWhiteSpace($localAppData)) {
     $localAppData = Join-Path $env:USERPROFILE 'AppData\Local'
@@ -355,7 +721,7 @@ $manifest = [ordered]@{
         missingCursorLeaf          = $missing
         unsafeCursorLeaf           = $unsafeLeaf
     }
-    notes           = 'Generated by scripts/Invoke-MetraPorter.ps1. Metra-product filter via scope.json. Cursor discovery requires Approved (or approveForLoom). Do not hand-edit.'
+    notes           = 'Generated by scripts/Invoke-MetraPorter.ps1. Metra-product filter via scope.json. Cursor discovery requires Approved (or approveForLoom). Agent Store write-back requires projectId+projectKey=Metra. Do not hand-edit.'
 }
 
 $manifestPath = Join-Path $porterRoot 'manifest.json'
@@ -363,8 +729,34 @@ $openPlansPath = Join-Path $porterRoot 'OPEN-PLANS.md'
 $mirrorManifest = Join-Path $localMirror 'manifest.json'
 $mirrorReadme = Join-Path $localMirror 'README.md'
 
+$writeback = Invoke-MetraPorterAgentStoreWriteback `
+    -CursorPlansDir $cursorPlansDir `
+    -KeptLeaves $keptLeaves `
+    -LocalAppData $localAppData `
+    -CursorProjectConfigPath $CursorProjectConfigPath `
+    -AgentStoresRoot $AgentStoresRoot `
+    -WritebackLedgerPath $WritebackLedgerPath
+
+$manifest.counts['writebackWritten'] = [int]$writeback.written
+$manifest.counts['writebackWrittenDriftCorrected'] = [int]$writeback.writtenDriftCorrected
+$manifest.counts['writebackWouldWrite'] = [int]$writeback.wouldWrite
+$manifest.counts['writebackWouldWriteDriftCorrected'] = [int]$writeback.wouldWriteDriftCorrected
+$manifest.counts['writebackSkippedUnchanged'] = [int]$writeback.skippedUnchanged
+$manifest.counts['writebackSkippedNotApproved'] = [int]$writeback.skippedNotApproved
+$manifest.counts['writebackSkippedNoProjectId'] = [int]$writeback.skippedNoProjectId
+$manifest.counts['writebackSkippedProjectKeyMismatch'] = [int]$writeback.skippedProjectKeyMismatch
+$manifest.counts['writebackSkippedMissingStore'] = [int]$writeback.skippedMissingStore
+$manifest.counts['writebackSoftFailErrors'] = [int]$writeback.softFailErrors
+$manifest['agentStoreWriteback'] = [ordered]@{
+    enabled       = [bool]$writeback.writebackEnabled
+    projectId     = $writeback.projectId
+    plansDir      = $writeback.plansDir
+    markerPresent = [bool]$writeback.markerPresent
+    skipReason    = $writeback.skipReason
+}
+
 if (-not $PSCmdlet.ShouldProcess($manifestPath, 'Write Porter manifest and OPEN-PLANS')) {
-    Write-Host "WhatIf: inScope=$($entries.Count) skipped=$skipped wouldCopy=$copied cursorDiscovered=$cursorDiscovered"
+    Write-Host "WhatIf: inScope=$($entries.Count) skipped=$skipped wouldCopy=$copied cursorDiscovered=$cursorDiscovered writebackWouldWrite=$($writeback.wouldWrite) writebackSkip=$($writeback.skipReason)"
     return
 }
 
@@ -382,12 +774,14 @@ Copy-Item -LiteralPath $manifestPath -Destination $mirrorManifest -Force
     ''
     'Filter: porter/scope.json (Metra product only)'
     'Cursor discovery: Approved (or approveForLoom) in-scope leaves not in plans/index.yaml'
+    'Agent Store write-back: Approved desk leaves -> docs/plans/<stem>.plan.md (projectId+projectKey=Metra; skip only when source+dest+ledger hashes match)'
     ''
     'Regenerate: pwsh -File <MetraRoot>\scripts\Invoke-MetraPorter.ps1'
     'Also runs on MetraYarnLoomPulse after Scout.'
 ) -join "`n" | Set-Content -LiteralPath $mirrorReadme -Encoding utf8
 
 Write-Host "Porter refreshed: inScope=$($entries.Count) skipped=$skipped copied=$copied cursorDiscovered=$cursorDiscovered notApproved=$cursorSkippedNotApproved removedOrphans=$removed missingLeaf=$missing"
+Write-Host "  write-back: written=$($writeback.written) driftCorrected=$($writeback.writtenDriftCorrected) unchanged=$($writeback.skippedUnchanged) notApproved=$($writeback.skippedNotApproved) skip=$($writeback.skipReason)"
 Write-Host "  $manifestPath"
 Write-Host "  $openPlansPath"
 Write-Host "  mirror: $localMirror"

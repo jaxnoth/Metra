@@ -33,26 +33,28 @@ For an in-scope Metra stem:
 
 | Surface | Role |
 |---------|------|
-| Cursor leaf | Enrollment + Approve |
-| `porter/plans/<leaf>` | Byte-identical mirror (tracked after publish/commit; never hand-edit) |
-| Context `/cursor/stores/self/docs/` | Continuity copy only |
+| Cursor leaf | Enrollment + Surveyor Approve |
+| Agent Store `docs/plans/<stem>.plan.md` | Project-visible shelf (drafts; Approved write-back from Porter) |
+| `porter/plans/<leaf>` | Interim shuttle / pin (not long-term SoT) |
+| Context other `docs/` | Continuity notes only; never enrollment |
 
-## Implement prelude (Context sync mandate)
+## Implement prelude (shelf sync)
 
 On Project implement start for a stem:
 
-1. Read `porter/OPEN-PLANS.md` for that stem / leaf.
-2. If a Porter mirror exists under `porter/plans/`, **overwrite** any Context docs plan body from that mirror (Porter wins on drift).
-3. Do not treat Context-only docs as enrollment.
-4. Do not archive or unpin Context docs as a chore - sync is enough.
+1. Prefer Agent Store `docs/plans/<stem>.plan.md` when present (Approved write-back or Project draft).
+2. Else read `porter/OPEN-PLANS.md` / `porter/plans/` interim mirror if listed.
+3. Do not treat Context-only notes as enrollment.
+4. Post-Approve, treat Agent Store Approved bodies as Porter-owned mirrors (B+A); do not fight overwrite with parallel draft edits on that stem.
 
 ## Formalize from Project chat
 
 Project chat is not Approve. To enroll:
 
-1. Save / synthesize a Cursor `.plan.md` leaf on the desk.
-2. Surveyor Approve (content-bound marks).
-3. Next Pulse/Daily scan enrolls; Porter transports Approved mirrors.
+1. Draft may live in Agent Store `docs/plans/` (Project shelf).
+2. Save / synthesize to desk `%USERPROFILE%\.cursor\plans\` for Surveyor.
+3. Surveyor Approve (content-bound marks).
+4. Next Pulse Porter refresh write-backs Approved body to the same Agent Store path (when `cursor-project.local.json` is seeded).
 
 ## Handoff freeze (code-complete)
 

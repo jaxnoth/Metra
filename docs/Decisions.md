@@ -18,6 +18,15 @@ Entry shape:
 
 ---
 
+## 2026-09-24 - Porter Agent Store write-back (single shelf + B+A)
+
+- Decision: Agent Store `docs/plans/` is the Project-visible plan shelf. Surveyor Approve stays on desk `%USERPROFILE%\.cursor\plans`. After Approve, Porter write-back copies the Approved desk body into the **same** Agent Store `docs/plans/<stem>.plan.md` path (Pulse / `porter refresh`).
+- Decision: Conflict policy **B+A** - pre-Approve Project may write drafts; post-Approve Porter owns overwrite; skip via `%LOCALAPPDATA%\Metra\porter\writeback-ledger.json` only when ledger source hash, current Approved desk hash, and Agent Store destination hash all match (destination drift is rewritten).
+- Decision: Write-back requires `%LOCALAPPDATA%\Metra\porter\cursor-project.local.json` with `projectId` and `projectKey` equal to `Metra` (case-insensitive). Soft-fail and skip all write-back on missing config, wrong key, or missing Agent Store. Never hardcode a forever Project id in tracked source.
+- Decision: `porter/plans/` remains an **interim** shuttle/pin until write-back is proven; not long-term SoT. Soft-fail; no auto-commit; no auto-affirm.
+- Why: Project cannot see desk `.cursor\plans`; pinning gitignored Porter mirrors was a weak bridge. Write-back puts Approved truth on the Project shelf while keeping Surveyor on the desk leaf. `projectKey` validation prevents stale config from writing Metra plans into another Project's store.
+- See: `porter/README.md`; `scripts/Invoke-MetraPorter.ps1`; `docs/playbooks/project-lane.md`; `porter/cursor-project.local.example.json`
+
 ## 2026-09-24 - Porter continuity smoke (Project lane gaps)
 
 - Decision: Continuity path leaf → Approve → Porter → Context sync mandate → handoff → Pulse Inspect prep → Bing is validated by `tests/Invoke-PorterContinuitySmoke.ps1` (no Stage 2 purge execute). Happy path does not require the operator to manually start prepare-bing; Pulse `porter prep` owns that hop. Bing affirm remains human.

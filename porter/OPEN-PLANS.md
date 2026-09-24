@@ -1,6 +1,6 @@
 # Metra-product plans (porter scope)
 
-Generated: 2026-09-24T18:12:30.8137762Z
+Generated: 2026-09-24T19:58:59.2150085Z
 Scope: porter/scope.json (Metra product only; 6 index entries skipped)
 Sources: plans/index.yaml + Approved Cursor leaves under %USERPROFILE%\.cursor\plans (in-scope, not already indexed)
 
