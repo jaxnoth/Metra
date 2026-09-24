@@ -16,8 +16,9 @@ internal sealed class OpsBridge
 
     public OpsBridge(string metraRoot)
     {
-        _metraRoot = metraRoot;
-        _bridgeScript = Path.Combine(metraRoot, "scripts", "bootstrap", "Invoke-MetraOpsHostBridge.ps1");
+        // Trim trailing separators so quoted -MetraRoot paths do not escape the closing quote.
+        _metraRoot = Path.GetFullPath(metraRoot).TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar);
+        _bridgeScript = Path.Combine(_metraRoot, "scripts", "bootstrap", "Invoke-MetraOpsHostBridge.ps1");
         if (!File.Exists(_bridgeScript))
         {
             throw new FileNotFoundException("Missing Ops host bridge script.", _bridgeScript);
@@ -28,28 +29,9 @@ internal sealed class OpsBridge
 
     public BridgeResult Invoke(string action, int port, IDictionary<string, string>? extra = null)
     {
-        var args = new StringBuilder();
-        args.Append("-NoProfile -ExecutionPolicy Bypass -File ");
-        args.Append('"').Append(_bridgeScript).Append('"');
-        args.Append(" -Action ").Append(action);
-        args.Append(" -Port ").Append(port);
-        args.Append(" -MetraRoot ").Append('"').Append(_metraRoot).Append('"');
-        if (extra != null)
-        {
-            foreach (var kv in extra)
-            {
-                args.Append(' ').Append(kv.Key);
-                if (!string.IsNullOrEmpty(kv.Value))
-                {
-                    args.Append(' ').Append(kv.Value);
-                }
-            }
-        }
-
         var psi = new ProcessStartInfo
         {
             FileName = _shellExe,
-            Arguments = args.ToString(),
             WorkingDirectory = _metraRoot,
             UseShellExecute = false,
             CreateNoWindow = true,
@@ -58,6 +40,35 @@ internal sealed class OpsBridge
             StandardOutputEncoding = Encoding.UTF8,
             StandardErrorEncoding = Encoding.UTF8,
         };
+
+        // ArgumentList avoids manual quoting bugs for spaces and trailing backslashes.
+        psi.ArgumentList.Add("-NoProfile");
+        psi.ArgumentList.Add("-ExecutionPolicy");
+        psi.ArgumentList.Add("Bypass");
+        psi.ArgumentList.Add("-File");
+        psi.ArgumentList.Add(_bridgeScript);
+        psi.ArgumentList.Add("-Action");
+        psi.ArgumentList.Add(action);
+        psi.ArgumentList.Add("-Port");
+        psi.ArgumentList.Add(port.ToString());
+        psi.ArgumentList.Add("-MetraRoot");
+        psi.ArgumentList.Add(_metraRoot);
+        if (extra != null)
+        {
+            foreach (var kv in extra)
+            {
+                if (string.IsNullOrWhiteSpace(kv.Key))
+                {
+                    continue;
+                }
+
+                psi.ArgumentList.Add(kv.Key);
+                if (!string.IsNullOrEmpty(kv.Value))
+                {
+                    psi.ArgumentList.Add(kv.Value);
+                }
+            }
+        }
 
         using var proc = Process.Start(psi)
                          ?? throw new InvalidOperationException("Failed to start Ops bridge PowerShell.");

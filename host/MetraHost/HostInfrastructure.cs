@@ -57,6 +57,9 @@ internal static class HostPaths
             {
                 return rooted;
             }
+
+            throw new InvalidOperationException(
+                "Explicit Metra root is invalid (expected metra.ps1 and scripts\\Metra.psd1): " + rooted);
         }
 
         var env = Environment.GetEnvironmentVariable("METRA_ROOT");

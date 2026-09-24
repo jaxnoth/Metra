@@ -16,6 +16,8 @@ internal sealed class TrayApp : ApplicationContext
 
     private int? _childPid;
     private bool _deskStopped;
+    private bool _cleanedUp;
+    private bool _intentionalExit;
     private bool _shortcutsPending = true;
     private DateTime _nextAttemptUtc = DateTime.MinValue;
     private DateTime _nextUpdateCheckUtc = DateTime.UtcNow;
@@ -72,8 +74,11 @@ internal sealed class TrayApp : ApplicationContext
         _timer.Tick += (_, _) => OnTick();
         _timer.Start();
 
-        Application.ApplicationExit += (_, _) => Cleanup(writeUnsupervised: true);
+        Application.ApplicationExit += OnApplicationExit;
     }
+
+    private void OnApplicationExit(object? sender, EventArgs e) =>
+        Cleanup(writeUnsupervised: !_intentionalExit);
 
     public static TrayApp Start(string[] args)
     {
@@ -371,6 +376,7 @@ internal sealed class TrayApp : ApplicationContext
             // ignore
         }
 
+        _intentionalExit = true;
         _state.Write("stopped");
         Cleanup(writeUnsupervised: false);
         ExitThread();
@@ -478,6 +484,22 @@ internal sealed class TrayApp : ApplicationContext
 
     private void Cleanup(bool writeUnsupervised)
     {
+        if (_cleanedUp)
+        {
+            return;
+        }
+
+        _cleanedUp = true;
+
+        try
+        {
+            Application.ApplicationExit -= OnApplicationExit;
+        }
+        catch
+        {
+            // ignore
+        }
+
         try
         {
             _timer.Stop();
