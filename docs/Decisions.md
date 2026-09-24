@@ -509,9 +509,9 @@ Three product scars locked with the Vision Ask contract bite. Server proof: `scr
 
 ## 2026-08-27 - DNS-filter Tailscale campus hosts pin
 
-- Decision: On networks where a DNS-filter product MITMs Tailscale admin hostnames, Metra ships `.\metra.ps1 tailscale campus-hosts` to pin `login.tailscale.com` and `controlplane.tailscale.com` to Tailscale coordination anycast (`192.200.0.0/24`) in the Windows hosts file (managed marker block). Campus DNS-filter MITM of `login.tailscale.com` (local Root CA + HSTS) blocks Tailscale Serve enable and admin HTTPS. Hosts writes require elevation. This does not restore org Entra Tailscale enrollment and does not replace Tailscale URL ACL / Serve setup for Ops reach.
+- Decision: On networks where a DNS-filter product MITMs Tailscale admin hostnames, Metra ships `.\metra.ps1 tailscale campus-hosts` to pin `login.tailscale.com` and `controlplane.tailscale.com` to Tailscale coordination anycast (`192.200.0.0/24`) in the Windows hosts file (managed marker block). The pin is optional and **local-enabled** only: tracked Metra ships the engine and example; apply refuses until `"enabled": true` in `%LOCALAPPDATA%\Metra\tailscale-campus.local.json` or gitignored `docs/tailscale-campus.local.json` (see `docs/examples/tailscale-campus.local.example.json`). Campus DNS-filter MITM of `login.tailscale.com` (local Root CA + HSTS) blocks Tailscale Serve enable and admin HTTPS. Hosts writes require elevation. This does not restore org Entra Tailscale enrollment and does not replace Tailscale URL ACL / Serve setup for Ops reach.
 - Why: Personal-tailnet Ops reach on jumpbox failed Serve enable in Edge with `NET::ERR_CERT_AUTHORITY_INVALID`; laptop already needed a hosts pin for the same class of failure.
-- See: `scripts/private/TailscaleCampus.ps1`, [docs/playbooks/tailscale-campus.md](playbooks/tailscale-campus.md), `Enable-MetraOpsTailscaleServe` hint
+- See: `scripts/private/TailscaleCampus.ps1`, [docs/playbooks/tailscale-campus.md](playbooks/tailscale-campus.md), `SECURITY.md` (local-enabled table), `Enable-MetraOpsTailscaleServe` hint
 
 ---
 
