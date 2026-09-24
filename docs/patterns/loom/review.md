@@ -53,8 +53,9 @@ Governs machine review after implementation: inspect + verify + scope, then `com
 2. Exits from `reviewing`: `completed`, `implementing`, or `blocked` only.
 3. Completion requires inspect goal, passed verify, done-when satisfaction, and in-scope paths (hub policy; adapters return evidence only).
 4. When `completionCommitPolicy` is `required`, commit on the item branch before `completed` (no push).
-5. Inspect packs use per-project slots so parallel items do not overwrite Bing packs.
-6. Recovery: `loom review -Confirm` resumes idempotently from `review.json`.
+5. After `completed`, best-effort Bing `pack-only` for the project (`Base` = item `baselineSha`, else parent of completed commit). Pack failure / adapter-unavailable never blocks `completed` or requires gate affirm; `packPath` is returned on the review result for operator Bing + `inspect gate affirm`.
+6. Inspect packs use per-project slots so parallel items do not overwrite Bing packs.
+7. Recovery: `loom review -Confirm` resumes idempotently from `review.json`.
 
 ## State or contract references
 
@@ -67,6 +68,7 @@ Governs machine review after implementation: inspect + verify + scope, then `com
 implementing -> reviewing
   -> inspect assess + verify
   -> retry (implementing) | blocked | completed (+ commit)
+  -> best-effort Bing pack-only (soft; packPath on result)
   -> (acceptance is daily gate, not this Pattern)
 ```
 

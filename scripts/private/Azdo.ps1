@@ -164,7 +164,7 @@ function Get-MetraAzdoBaseUrl {
     return "https://dev.azure.com/$org"
 }
 
-function Normalize-MetraAzdoName {
+function ConvertTo-MetraAzdoName {
     [CmdletBinding()]
     param([AllowEmptyString()][string]$Name)
 
@@ -465,7 +465,7 @@ function Get-MetraAzdoRegistryMappings {
         $path = if ($onDisk) { [string]$disk[$key].Path } else { $null }
         [void]$rows.Add([PSCustomObject]@{
                 RegistryName   = $name
-                NormalizedName = Normalize-MetraAzdoName -Name $name
+                NormalizedName = ConvertTo-MetraAzdoName -Name $name
                 AzdoProject    = [string](Get-MetraProp -Object $reg -Name 'azdoProject' -Default '')
                 AzdoRepo       = [string](Get-MetraProp -Object $reg -Name 'azdoRepo' -Default '')
                 RemoteUrl      = [string](Get-MetraProp -Object $reg -Name 'remoteUrl' -Default '')
@@ -490,7 +490,7 @@ function Get-MetraAzdoRepoIdentity {
         Id              = [string](Get-MetraProp -Object $Repo -Name 'id' -Default '')
         Name            = [string](Get-MetraProp -Object $Repo -Name 'name' -Default '')
         Project         = $project
-        NormalizedName  = Normalize-MetraAzdoName -Name ([string](Get-MetraProp -Object $Repo -Name 'name' -Default ''))
+        NormalizedName  = ConvertTo-MetraAzdoName -Name ([string](Get-MetraProp -Object $Repo -Name 'name' -Default ''))
         WebUrl          = [string](Get-MetraProp -Object $Repo -Name 'webUrl' -Default '')
         RemoteUrl       = [string](Get-MetraProp -Object $Repo -Name 'remoteUrl' -Default '')
     }
@@ -534,7 +534,7 @@ function Find-MetraAzdoPlausibleRepos {
         }
     }
 
-    $normQuery = Normalize-MetraAzdoName -Name $QueryName
+    $normQuery = ConvertTo-MetraAzdoName -Name $QueryName
     if ([string]::IsNullOrWhiteSpace($normQuery)) { return @() }
 
     $hits = [System.Collections.Generic.List[object]]::new()

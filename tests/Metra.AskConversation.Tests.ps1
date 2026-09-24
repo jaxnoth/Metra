@@ -202,6 +202,11 @@ Describe 'Ask Conversation - intent policy depth' {
         $depth.Depth | Should -Be 'capability_only'
     }
 
+    It 'Vision phone client is identified by client headers (not utterance regex)' {
+        Test-MetraAskVisionPhoneClient -HeaderClient 'ops-ios' -BodyClient 'ops-ios' -ClientHint 'phone' | Should -BeTrue
+        Test-MetraAskVisionPhoneClient -HeaderClient 'ops-web' -BodyClient 'ops-web' -ClientHint '' | Should -BeFalse
+    }
+
     It 'untrusted policy override is rejected and does not relax' {
         $intent = Resolve-MetraAskIntent -Prompt 'Are you running well?'
         $policy = Resolve-MetraConversationPolicy -Intent $intent -RequestedPolicy 'Company' -TrustedClientContext:$false

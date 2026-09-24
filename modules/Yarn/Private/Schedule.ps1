@@ -1,6 +1,6 @@
 # Yarn+Loom scheduled runners + Windows Scheduled Task install.
 # Daily (MetraYarnLoomDaily): overnight scan -> reconcile -> loom until daily gate.
-# Pulse (MetraYarnLoomPulse): frequent scan -> loom (no reconcile) so Approve is not stuck until 02:00.
+# Pulse (MetraYarnLoomPulse): frequent scan -> loom ScoutOnly (no reconcile) -> Porter (Metra-product plan pack).
 
 function Get-YarnScheduleTaskName {
     return 'MetraYarnLoomDaily'
@@ -50,8 +50,9 @@ function Invoke-MetraYarnLoomSchedule {
     .SYNOPSIS
         Scheduled stages for Daily or Pulse mode.
         Daily: yarn scan -> yarn daily -Reconcile -> loom loop -UntilDailyGate -Confirm (all eligible plans).
-        Pulse: yarn scan -> loom loop -UntilDailyGate -ScoutOnly -Confirm (Scout canary only; skips reconcile).
+        Pulse: yarn scan -> loom loop -UntilDailyGate -ScoutOnly -Confirm (Scout canary) -> Porter (Metra-product plan pack; skips reconcile).
         Exit codes: 0 ok/daily-gate, 1 failure, 2 validation blocked, 3 unexpected loom pause, 4 lock held.
+        Porter soft-fails on Pulse (logged; does not change exit code).
     #>
     [CmdletBinding()]
     param(
@@ -180,6 +181,25 @@ function Invoke-MetraYarnLoomSchedule {
         catch {
             Write-YarnScheduleLog -LogPath $logPath -Message ("Stage=LoomLoop Result=Failure error=$($_.Exception.Message)")
             return [PSCustomObject]@{ exitCode = 1; outcome = 'loom-loop-failed'; mode = $Mode; logPath = $logPath; error = [string]$_.Exception.Message }
+        }
+
+        if ($Mode -eq 'Pulse') {
+            Write-YarnScheduleLog -LogPath $logPath -Message 'Stage=Porter Result=Starting'
+            try {
+                $porterScript = Join-Path $MetraRoot 'scripts\Invoke-MetraPorter.ps1'
+                if (-not (Test-Path -LiteralPath $porterScript)) {
+                    throw "Porter script missing: $porterScript"
+                }
+                & $porterScript -MetraRoot $MetraRoot
+                Write-YarnScheduleLog -LogPath $logPath -Message 'Stage=Porter Result=Success'
+            }
+            catch {
+                # Soft-fail: Scout pulse should still complete; Porter is continuity transport.
+                Write-YarnScheduleLog -LogPath $logPath -Message ("Stage=Porter Result=Failure error=$($_.Exception.Message)")
+            }
+        }
+        else {
+            Write-YarnScheduleLog -LogPath $logPath -Message 'Stage=Porter Result=Skipped mode=Daily'
         }
 
         Write-YarnScheduleLog -LogPath $logPath -Message ("Stage=Complete Result=Success exitCode=$exitCode mode=$Mode")

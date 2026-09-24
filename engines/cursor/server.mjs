@@ -24,6 +24,8 @@ import {
   getSession,
   putSession,
   recordRunError,
+  countsTowardHealthGate,
+  recordDegradedFailure,
   recordRunFinished,
   releaseSessionLease,
   retireSession,
@@ -743,10 +745,22 @@ async function complete({ prompt, cwd, context, sessionId, images, model }) {
 
     id = requestedId || agent.agentId || id || `local-${Date.now()}`
 
-    const wrapped = buildPrompt(promptScrub.text, ctxScrub.value || {}, {
-      includeJournalContinuity: newSession,
-      hasImages: sdkImages.length > 0,
-    })
+    const ctx = ctxScrub.value || {}
+    const visionDevice = Boolean(ctx.visionDeviceSession)
+    const identityPrefix = ctx.identityPrefix ? String(ctx.identityPrefix) : ''
+    let wrapped
+    if (visionDevice) {
+      // Phone-id agent. Identity goes out only when this agent is new (sidecar restart).
+      // Later turns are the user message only so prior context stays and tokens do not reset.
+      wrapped = newSession && identityPrefix
+        ? `${identityPrefix}\n\n${promptScrub.text}`
+        : promptScrub.text
+    } else {
+      wrapped = buildPrompt(promptScrub.text, ctx, {
+        includeJournalContinuity: newSession,
+        hasImages: sdkImages.length > 0,
+      })
+    }
 
     async function sendAndWait(activeAgent) {
       const activeRun =
@@ -806,10 +820,14 @@ async function complete({ prompt, cwd, context, sessionId, images, model }) {
       }
 
       if (result.status === 'error') {
-        recordRunError()
         const finalDetail = await extractRunErrorDetailAsync(result, run)
         const scrubbedFinal = finalDetail ? scrubSecretsText(finalDetail) : { text: '' }
         const classifiedFinal = classifyRunError(scrubbedFinal.text || '')
+        if (countsTowardHealthGate(classifiedFinal)) {
+          recordRunError()
+        } else {
+          recordDegradedFailure(classifiedFinal)
+        }
         const message = scrubbedFinal.text
           ? `The Ask engine run failed: ${scrubbedFinal.text}`
           : 'The Ask engine run failed. Try again, or use Classify for routing only.'
@@ -894,15 +912,19 @@ async function complete({ prompt, cwd, context, sessionId, images, model }) {
     }
     return payload
   } catch (err) {
-    // Any SDK/transport failure after a session is in play: count toward health and retire.
-    // CursorAgentError returns a structured body; other throws become HTTP 500 above.
-    recordRunError()
+    // SDK/transport failures count toward health unless they are auth, billing, or model-pin.
+    // Those leave the process up; retiring the session is enough.
+    const scrubbed = scrubSecretsText((err && err.message) || '')
+    const classified = classifyRunError(scrubbed.text || '')
+    if (countsTowardHealthGate(classified)) {
+      recordRunError()
+    } else {
+      recordDegradedFailure(classified)
+    }
     if (entry && id) {
       await retireSession(id, entry)
     }
     if (err instanceof CursorAgentError) {
-      const scrubbed = scrubSecretsText(err.message || '')
-      const classified = classifyRunError(scrubbed.text || '')
       return {
         message: `Ask engine could not start: ${scrubbed.text || err.message}`,
         engine: ENGINE,

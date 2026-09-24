@@ -78,7 +78,7 @@ Two tasks share the same runner and a single schedule lock (they never overlap):
 | Task | Cadence | Stages |
 |------|---------|--------|
 | `MetraYarnLoomDaily` | Once daily (default `02:00`) | scan → daily -Reconcile → loom loop (all eligible) |
-| `MetraYarnLoomPulse` | Every N minutes (default 15; range 5-120) | scan → loom loop **-ScoutOnly** (Scout canary only; skips reconcile) |
+| `MetraYarnLoomPulse` | Every N minutes (default 15; range 5-120) | scan → loom loop **-ScoutOnly** → **Porter** (Metra-product plan pack; skips reconcile). Porter soft-fails. |
 
 Runner: `scripts/Invoke-MetraYarnLoomSchedule.ps1 -Mode Daily|Pulse`. Exit codes: 0 ok/daily-gate, 1 failure, 2 validation blocked, 3 unexpected loom pause, 4 lock held. Logs: `%LOCALAPPDATA%\Metra\yarn\schedule-logs\`.
 

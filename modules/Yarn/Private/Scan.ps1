@@ -262,8 +262,9 @@ function Invoke-MetraYarnScan {
         backlogCount       = @(Get-MetraYarnBacklog -Root $Root).Count
         memoryLane         = [string]$atlasResult.memoryLane
         lastError          = $atlasResult.lastError
-        items              = @(Sort-YarnBacklogItems -Items $upserted)
+        items              = @(Get-YarnBacklogItemsSorted -Items $upserted)
         loomHandoff        = $handoff
         validationBlocked  = [int]$handoff.validationBlocked
     }
 }
+

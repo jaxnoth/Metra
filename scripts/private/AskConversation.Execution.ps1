@@ -157,6 +157,10 @@ function Invoke-MetraAskConversationExecution {
         -IsLoopback:$IsLoopback `
         -IncidentActive:$IncidentActive
 
+    # SCAR (2026-09-18): Phone CE soft-default Company via vision_phone_default was removed.
+    # Phone uses the Vision Ask contract + Conversation Identity Stack (Invoke-MetraVisionAskHandler).
+    # Desk-legacy CE no longer special-cases ops-ios. Fix forward on Vision - do not restore this bridge.
+
     # Capture: phrase only - no free write
     if ([string]$intent.IntentClass -eq 'capture') {
         $laneCap = Resolve-MetraAskLane -Prompt $safePrompt -RouteScore $routeScore -EvidenceQuality 'none' -RouteWhere $routeWhere
@@ -211,7 +215,7 @@ function Invoke-MetraAskConversationExecution {
         $capability = Start-MetraAskEngine -MetraRoot $MetraRoot
     }
 
-    # status_query health gate (capability_only depth)
+    # status_query health gate (capability_only depth).
     if ([string]$intent.IntentClass -eq 'status_query') {
         $health = Get-MetraProp -Object $capability -Name 'runtimeHealthSnapshot' -Default $null
         if ($null -eq $health) { $health = Get-MetraProp -Object $capability -Name 'health' -Default $null }
@@ -252,7 +256,7 @@ function Invoke-MetraAskConversationExecution {
         }
     }
 
-    # check_in / capability: plain answer without pack/engine when depth is capability_only
+    # check_in / capability: desk Ask may stub. Phone no longer enters this path.
     if ([string]$intent.IntentClass -in @('check_in', 'capability') -and $depth -eq 'capability_only') {
         $laneGreet = Resolve-MetraAskLane -Prompt $safePrompt -RouteScore $routeScore -EvidenceQuality 'thin' -RouteWhere $routeWhere
         $who = ($safePrompt -match '(?i)\b(who are you|what are you)\b')
@@ -359,12 +363,13 @@ function Invoke-MetraAskConversationExecution {
         if ($postureForPrompt -notin @('Desk', 'Company', 'Deliver', 'DeskStrict')) {
             $postureForPrompt = ''
         }
+        $promptSurface = 'Ask'
         $enginePrompt = New-MetraConversationPrompt `
             -Prompt $safePrompt `
             -Intent $intent `
             -Policy $policy `
             -Depth $depth `
-            -Surface Ask `
+            -Surface $promptSurface `
             -Posture $postureForPrompt `
             -PortfolioShaped:$portfolioShaped `
             -ContinuityEvidence $continuityEvidence `

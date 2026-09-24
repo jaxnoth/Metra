@@ -511,9 +511,14 @@ function Invoke-LoomInspectPackAdapter {
 
     $cmd = Get-Command Invoke-MetraInspectPackOnly -ErrorAction SilentlyContinue
     if (-not $cmd) {
+        $metraRoot = Get-LoomHostRoot
+        [void](Import-LoomMetraHostModule -MetraRoot $metraRoot)
+        $cmd = Get-Command Invoke-MetraInspectPackOnly -ErrorAction SilentlyContinue
+    }
+    if (-not $cmd) {
         return [PSCustomObject]@{
             outcome  = 'adapter-unavailable'
-            packPath = $null
+            packPath = ''
             message  = 'Invoke-MetraInspectPackOnly not loaded.'
         }
     }
@@ -534,7 +539,7 @@ function Invoke-LoomInspectPackAdapter {
     catch {
         return [PSCustomObject]@{
             outcome  = 'failed'
-            packPath = $null
+            packPath = ''
             message  = $_.Exception.Message
         }
     }

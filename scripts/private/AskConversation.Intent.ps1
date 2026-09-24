@@ -131,4 +131,3 @@ function Resolve-MetraAskIntent {
         Notes       = @($notes)
     }
 }
-

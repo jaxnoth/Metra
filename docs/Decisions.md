@@ -18,6 +18,23 @@ Entry shape:
 
 ---
 
+## 2026-09-24 - Porter transports Cursor Project continuity
+
+- Decision: Name the Metra-product file transport **Porter**. Pack lives under `porter/`; runner is `scripts/Invoke-MetraPorter.ps1`; local mirror is `%LOCALAPPDATA%\Metra\porter\`. Replaces the interim `cloud-context` / `Sync-MetraCloudContext` names.
+- Decision: Porter stays Metra-product-only (`porter/scope.json` deny-by-default). No auto-commit. Porter runs on **`MetraYarnLoomPulse`** (same 15-minute Scout pulse task) after the Scout-only loom loop; soft-fail so Scout exit codes stay authoritative. No separate `MetraPorterPulse` task.
+- Why: Bing and operator preferred Porter as the transport name. Keeps Yarn/Loom/Atlas-style product naming without overloading Scout or Surveyor. One pulse window avoids a second Interactive task.
+- See: `porter/README.md`; `scripts/Invoke-MetraPorter.ps1`; `modules/Yarn/Private/Schedule.ps1`; `docs/Cursor-Project-Metra-Charter.md`
+
+## 2026-09-24 - Cursor Project for Metra product continuity
+
+- Decision: Use one long-lived Cursor **Project** for **Metra product development only** (`_meta` / Metra checkout). Purpose is multi-month continuity (plans, Future-Dev, current slices, ship habits). It does not replace Yarn, Loom, Inspect, or portfolio routing.
+- Decision: Hard offs stay: no ticket durable writes, no campus Live mutations, no sibling-repo implementation from this Project. Sibling products may get their own Cursor Projects later ("mini Metras").
+- Decision: Project shared context is a **working mirror**. Repo docs, `docs/Decisions.md`, OCC, and Atlas remain source of record. Refresh the pack from the charter seed list; do not invent a parallel policy home inside Project chat.
+- Decision: Project **chat** with Stephen uses Metra voice via a curated overlay mirror (`docs/Cursor-Project-Metra-Voice.md`) plus tracked base persona and humor-desk addon paths. Gitignored `*.local.mdc` overlays do not reach Cloud Agents - the Voice file is the intentional export. Durable artifacts stay professional prose. OCC promote still uses `metra.ps1 profile`; confirmed guidelines that should affect Project workers are mirrored into the Voice file.
+- Decision: Continuity transport is **Porter** (see 2026-09-24 Porter entry). Interim `cloud-context` naming is retired.
+- Why: Cursor Projects bind to one cloud repo and grow shared context over months. That fits Metra-the-product continuity; it does not fit the multi-root portfolio desk. Stephen is developing Metra persona and product together - ticket-flat voice would fight that work; raw local overlays cannot ship to the cloud VM. Cursor working plans under the user profile are invisible to cloud clones unless transported into a pack Metra owns.
+- See: `docs/Cursor-Project-Metra-Charter.md`; `docs/Cursor-Project-Metra-Voice.md`; `porter/README.md`; `scripts/Invoke-MetraPorter.ps1`; https://cursor.com/docs/agent/projects
+
 ## 2026-09-16 - Inspect pack evidence fidelity (Bing lane)
 
 - Decision: Bing / external review packs must emit an **Evidence fidelity** section with pack-level `fidelity` (`full`|`partial`), coverage (`visibleChars` / `sourceChars` / `bodyCoverage` when known), and **per-path Evidence Grades A/B/C only** (no A+/D or grade confidence scores). Grade B must distinguish **file truncated** vs **pack cutoff**.
@@ -1279,6 +1296,12 @@ Three product scars locked with the Vision Ask contract bite. Server proof: `scr
 - Decision: When durable desk preferences set `machineRole` to `Hq`, `Get-MetraDeskMode` returns `Standalone` (local Ops allowed) without requiring MagicDNS/Tailscale self-match on `opsBaseUrl`. Satellite vs HQ Client remains URL-driven for non-Hq roles. HQ may keep a self MagicDNS `opsBaseUrl` for Serve reach; that URL must not classify the jumpbox as a satellite client when Tailscale CLI/path detection blips.
 - Why: Jumpbox prefs (`%LOCALAPPDATA%\Metra\ops\preferences.json`) had an empty `machineRole` after ledger migration; `opsBaseUrl` still pointed at this machine's MagicDNS. Desk Mode then depended only on Tailscale identity equality, so a failed DNS helper made HQ look like Mode B and refused local Ops. Operator restored `machineRole=Hq`; code now honors that role as the durable host authority.
 - See: `Get-MetraDeskMode` in `scripts/private/Profile.ps1`; `Set-MetraDeskPreferences`; `Test-MetraOpsBaseUrlIsLocal`; `Get-MetraOpsTailscaleDnsName`
+
+## 2026-09-23 - MetraHost.exe is the preferred tray process
+
+- Decision: The interactive Ops Host tray prefers a dedicated WinForms process `MetraHost.exe` (`host/MetraHost`) over a long-lived hidden `powershell.exe` / `pwsh.exe` message loop. Ownership stays **Host -> Ops -> Ask**; Ops start/stop/open still go through the Metra module via `Invoke-MetraOpsHostBridge.ps1`. `Metra-Ops.cmd` and `Start-MetraOpsHost` launch the exe when published (`host/MetraHost/publish`), otherwise fall back to the PowerShell tray. Crash of the tray still must not kill a busy desk (Exit/Stop menu paths stop Ops explicitly). `MetraOpsDesk` Scheduled Task remains the unattended reach layer.
+- Why: A hidden PowerShell Host shares process identity with every other script shell, ties poorly to agent/console parents, and is easier to accidental-kill. A named exe keeps Start Menu / Task Manager / supervision identity clear without turning Host into a Windows Service.
+- See: `host/MetraHost/`, `Metra-Ops.cmd`, `scripts/bootstrap/Invoke-MetraOpsHostBridge.ps1`, `scripts/private/OpsHost.ps1`, Decision 2026-08-01
 
 ## 2026-09-21 - Ops Ask reach layer may run unattended via Scheduled Task
 

@@ -18,7 +18,7 @@ Never infer that context from:
 - personal-root vs work-root
 - who might be borrowing the machine
 
-If the ask is ordinary OrgBrand ops / tickets and they did not request this mode, use base Metra (and any other installed add-ons) instead.
+If the ask is ordinary Metra ops / tickets and they did not request this mode, use base Metra (and any other installed add-ons) instead.
 
 ## Delivery (when active)
 

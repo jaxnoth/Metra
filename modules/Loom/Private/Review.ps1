@@ -320,6 +320,7 @@ function Invoke-MetraLoomReview {
         [scriptblock]$InspectScript,
         [scriptblock]$VerifyScript,
         [scriptblock]$ImplementerScript,
+        [scriptblock]$PackScript,
         [int]$MaxReviewCycles,
         [int]$MaxInspectRecoveryAttempts
     )
@@ -548,16 +549,58 @@ function Invoke-MetraLoomReview {
         return $i
     }
 
+    # Best-effort Bing pack after completed (commit-first; never block completed / never require gate affirm).
+    $packOutcome = 'skipped'
+    $packPath = ''
+    $packMessage = 'Bing pack skipped (no completed commit or registry).'
+    $packBase = ''
+    if (-not [string]::IsNullOrWhiteSpace($completedCommit) -and -not [string]::IsNullOrWhiteSpace($registry)) {
+        $itemAfter = Get-MetraLoomQueueItem -Root $Root -Id $ItemId
+        $packBase = [string](Get-LoomItemBaselineCommit -Item $itemAfter)
+        if ([string]::IsNullOrWhiteSpace($packBase)) {
+            $packBase = ($completedCommit + '^')
+        }
+        try {
+            $packResult = Invoke-LoomInspectPackAdapter -Name $registry -Base $packBase `
+                -ProjectRoot $projectRoot -PackScript $PackScript
+            $packOutcome = [string](Get-LoomProp -Object $packResult -Name 'outcome' -Default 'failed')
+            $packPath = [string](Get-LoomProp -Object $packResult -Name 'packPath' -Default '')
+            $packMessage = [string](Get-LoomProp -Object $packResult -Name 'message' -Default '')
+            if ([string]::IsNullOrWhiteSpace($packMessage)) {
+                $packMessage = "Bing pack $packOutcome (Base=$packBase)."
+            }
+            # Soft-record on run review.json only (completed -> completed is not a legal queue transition).
+            try {
+                $reviewState.packOutcome = $packOutcome
+                $reviewState.packPath = $packPath
+                $reviewState.packBase = $packBase
+                $reviewState.packMessage = $packMessage
+                Save-LoomReviewState -RunDir $runDir -State ([PSCustomObject]$reviewState) | Out-Null
+            }
+            catch {
+                # Soft: result fields still returned below.
+            }
+        }
+        catch {
+            $packOutcome = 'failed'
+            $packMessage = $_.Exception.Message
+        }
+    }
+
     $result = [PSCustomObject]@{
         schemaVersion   = 1
         outcome         = 'completed'
         dryRun          = $false
         message         = 'Review complete.'
         reviewRunId     = [string]$identity.reviewRunId
-        completedCommit   = $completedCommit
+        completedCommit = $completedCommit
         inspectOutcome  = [string]$reviewState.inspectOutcome
         verifyOutcome   = [string]$reviewState.verifyOutcome
         status          = [string]$final.status
+        packOutcome     = [string]$packOutcome
+        packPath        = $(if ($null -eq $packPath) { '' } else { [string]$packPath })
+        packBase        = $(if ($null -eq $packBase) { '' } else { [string]$packBase })
+        packMessage     = $(if ($null -eq $packMessage) { '' } else { [string]$packMessage })
     }
     Test-LoomContract -Schema 'review-result' -Object $result | Out-Null
     return $result

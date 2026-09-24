@@ -1,0 +1,31 @@
+{
+  "schemaVersion": 1,
+  "description": "Metra-product-only filter for Porter plan transport. Deny by default; stem must match an include prefix (case-insensitive). Exclude prefixes win when both could match.",
+  "includeStemPrefixes": [
+    "ask-conversation",
+    "cloud-context",
+    "cursor-project",
+    "host-",
+    "inspect-",
+    "ios-",
+    "loom-",
+    "metra",
+    "new-use-case-for-metra",
+    "ops-ask-",
+    "ops-desk-ask",
+    "partner-",
+    "persona-",
+    "porter",
+    "routing-graph-",
+    "scout",
+    "station-",
+    "tailscale-identity",
+    "yarn-"
+  ],
+  "excludeStemPrefixes": [
+    "orion-",
+    "ticket-watch-",
+    "ops-itsm-",
+    "sprint-coworker-"
+  ]
+}

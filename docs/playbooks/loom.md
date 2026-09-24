@@ -25,7 +25,7 @@ Governed execution harness (queue, journal, triage, branch runner). Metra hosts 
 .\metra.ps1 loom run -Id <AP-...> -Confirm          # implement + auto-chain review (Slice 4)
 .\metra.ps1 loom run -Id <AP-...> -Confirm -NoChainReview   # implement only; stop at reviewing
 .\metra.ps1 loom review -Id <AP-...>               # dry-run assess (no engines)
-.\metra.ps1 loom review -Id <AP-...> -Confirm      # live inspect + verify + commit + completed
+.\metra.ps1 loom review -Id <AP-...> -Confirm      # live inspect + verify + commit + completed; best-effort Bing packPath on result (no gate wait)
 .\metra.ps1 loom daily                             # intake (sections 1-3) + prior-day pack-diff
 .\metra.ps1 loom daily pack-diff                   # pack-diff manifest only
 .\metra.ps1 loom daily approve -PlanPath .\daily\2026-09-01-plan.md   # preview (no writes)

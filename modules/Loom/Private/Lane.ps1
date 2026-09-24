@@ -125,7 +125,7 @@ function Test-MetraLoomProjectLaneBusy {
     return [PSCustomObject]@{ busy = $false; reason = $null; blockingItemId = $null }
 }
 
-function Sort-MetraLoomEligibleQueuedItems {
+function Get-MetraLoomEligibleQueuedItemsSorted {
     [CmdletBinding()]
     param(
         [AllowEmptyCollection()]
@@ -177,7 +177,7 @@ function Get-MetraLoomEligibleQueuedForClaim {
         if ($ScoutOnly -and -not (Test-LoomItemIsScout -Item $item)) { continue }
         [void]$candidates.Add($item)
     }
-    return @(Sort-MetraLoomEligibleQueuedItems -Candidates @($candidates.ToArray()))
+    return @(Get-MetraLoomEligibleQueuedItemsSorted -Candidates @($candidates.ToArray()))
 }
 
 function Invoke-MetraLoomClaimNextEligible {

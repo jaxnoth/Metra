@@ -42,14 +42,19 @@ function New-MetraConversationPrompt {
     }
     [void]$lines.Add("Policy=$policyName; Objective=$objective; Intent=$intentClass; EvidenceDepth=$Depth.")
     [void]$lines.Add('Answer in plain English. Do not invent health. Do not claim Host writes completed.')
-    if ($objective -eq 'OperatorConfirm') {
-        [void]$lines.Add('OperatorConfirm: investigate or cite only after operator confirm - not a grounded write.')
+    if ($Surface -in @('Vision', 'iOS')) {
+        [void]$lines.Add('Vision companion: converse naturally as Metra. Portfolio/ops context may be attached - use it when it helps the turn; do not dump routing, AGENTS.md, or infrastructure essays unsolicited. No canned greetings; no scripted one-liners.')
     }
-    if ($intentClass -eq 'status_query') {
-        [void]$lines.Add('Status questions require current health evidence or an explicit inability to verify.')
-    }
-    if ($intentClass -eq 'check_in') {
-        [void]$lines.Add('Brief check-in only - no infrastructure essay.')
+    else {
+        if ($objective -eq 'OperatorConfirm') {
+            [void]$lines.Add('OperatorConfirm: investigate or cite only after operator confirm - not a grounded write.')
+        }
+        if ($intentClass -eq 'status_query') {
+            [void]$lines.Add('Status questions require current health evidence or an explicit inability to verify.')
+        }
+        if ($intentClass -eq 'check_in') {
+            [void]$lines.Add('Brief check-in only - no infrastructure essay.')
+        }
     }
     if ($knobs -and -not [bool](Get-MetraProp -Object $knobs -Name 'humor' -Default $false)) {
         [void]$lines.Add('Humor off for this turn.')

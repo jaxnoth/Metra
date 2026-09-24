@@ -30,7 +30,7 @@ function Get-MetraYarnBacklog {
         }
         (New-YarnPsObject -Map $map)
     }
-    return Sort-YarnBacklogItems -Items @($normalized)
+    return Get-YarnBacklogItemsSorted -Items @($normalized)
 }
 
 function Save-MetraYarnBacklogItems {
@@ -222,3 +222,4 @@ function Sync-YarnPlanLink {
     [void](Assert-YarnPlanLinksDocument -Document $doc -Path (Get-YarnPlanLinksPath -Root $Root))
     Save-YarnPlanLinksDocument -Root $Root -Document $doc
 }
+

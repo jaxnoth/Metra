@@ -407,6 +407,26 @@ function Test-MetraAskCursorHealthResponseOk {
     return $false
 }
 
+function Get-MetraAskCursorPortHealthPayload {
+    <#
+    .SYNOPSIS
+        GET /health JSON from the Cursor Ask loopback port (or $null on failure).
+    #>
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory)][int]$Port,
+        [int]$TimeoutSec = 1
+    )
+
+    try {
+        $url = "http://127.0.0.1:$Port/health"
+        return Invoke-RestMethod -Uri $url -Method Get -TimeoutSec $TimeoutSec
+    }
+    catch {
+        return $null
+    }
+}
+
 function Test-MetraAskCursorPortHealth {
     <#
     .SYNOPSIS
@@ -421,8 +441,7 @@ function Test-MetraAskCursorPortHealth {
     )
 
     try {
-        $url = "http://127.0.0.1:$Port/health"
-        $response = Invoke-RestMethod -Uri $url -Method Get -TimeoutSec $TimeoutSec
+        $response = Get-MetraAskCursorPortHealthPayload -Port $Port -TimeoutSec $TimeoutSec
         return [bool](Test-MetraAskCursorHealthResponseOk -Response $response)
     }
     catch {

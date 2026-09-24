@@ -1,0 +1,16 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <OutputType>WinExe</OutputType>
+    <TargetFramework>net8.0-windows</TargetFramework>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <UseWindowsForms>true</UseWindowsForms>
+    <AssemblyName>MetraHost</AssemblyName>
+    <RootNamespace>Metra.Host</RootNamespace>
+    <ApplicationIcon>..\..\docs\assets\metra.ico</ApplicationIcon>
+    <Version>0.1.0</Version>
+    <Description>Metra Ops tray supervisor (Host -&gt; Ops). Does not start Ask directly.</Description>
+    <!-- Distinct process identity from powershell.exe / pwsh.exe -->
+    <Product>Metra Ops Host</Product>
+  </PropertyGroup>
+</Project>

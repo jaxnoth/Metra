@@ -22,7 +22,10 @@ function Test-MetraVisionAskHandlerRegistered {
 function Get-MetraVisionAskSystemPrompt {
     <#
     .SYNOPSIS
-        Load engines/vision-ask/system.md (Vision handler ownership - Partner Identity surface).
+        Conversation Identity Stack for Vision. Consumes loader metadata; does not re-decide packs.
+    .OUTPUTS
+        PSCustomObject from Get-MetraConversationIdentityPrompt (Text + TeachingActive/HumorActive/IdentityHash/...).
+        Callers that need only the string use .Text.
     #>
     [CmdletBinding()]
     param(
@@ -30,9 +33,22 @@ function Get-MetraVisionAskSystemPrompt {
         [ValidateSet('Desk', 'Company', 'Deliver', 'DeskStrict', '')]
         [string]$Posture = '',
         [switch]$PortfolioShaped,
+        [switch]$IncidentActive,
+        [switch]$TeachingWanted,
         $ContinuityEvidence
     )
 
+    if (Get-Command Get-MetraConversationIdentityPrompt -ErrorAction SilentlyContinue) {
+        return Get-MetraConversationIdentityPrompt `
+            -MetraRoot $MetraRoot `
+            -Posture $Posture `
+            -PortfolioShaped:$PortfolioShaped `
+            -IncidentActive:$IncidentActive `
+            -TeachingWanted:$TeachingWanted `
+            -ContinuityEvidence $ContinuityEvidence
+    }
+
+    # Soft degrade if loader missing (should not happen in module load).
     $partner = if (Get-Command New-MetraPartnerIdentityPreamble -ErrorAction SilentlyContinue) {
         New-MetraPartnerIdentityPreamble `
             -Surface Vision `
@@ -43,7 +59,6 @@ function Get-MetraVisionAskSystemPrompt {
     else {
         "I'm Metra, the portfolio operations partner. Surface=Vision."
     }
-
     $path = Join-Path $MetraRoot 'engines\vision-ask\system.md'
     $body = ''
     if (Test-Path -LiteralPath $path) {
@@ -57,7 +72,40 @@ function Get-MetraVisionAskSystemPrompt {
     if ([string]::IsNullOrWhiteSpace($body)) {
         $body = 'Vision surface: same Metra partner. Portfolio grounding when portfolio-shaped. Confirm before durable writes.'
     }
-    return "$partner`n`n$body"
+    $text = "$partner`n`n$body"
+    return [pscustomobject]@{
+        Text             = $text
+        PacksIncluded     = @()
+        PacksOmitted      = @()
+        TeachingActive    = $false
+        HumorActive       = $false
+        IdentityChars     = $text.Length
+        IdentityTruncated = $false
+        IdentityHash      = ''
+        ManifestVersion   = 0
+        Posture           = $Posture
+    }
+}
+
+function Get-MetraVisionAskPresentationMood {
+    <#
+    .SYNOPSIS
+        Map Posture to presentation.mood for the Vision response envelope (handler-owned).
+    #>
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory)][AllowEmptyString()][string]$Posture,
+        [switch]$IncidentActive
+    )
+
+    if ($IncidentActive) { return 'incident' }
+    switch ($Posture.Trim()) {
+        'Company' { return 'company' }
+        'Deliver' { return 'deliver' }
+        'DeskStrict' { return 'desk_strict' }
+        'Desk' { return 'desk' }
+        default { return 'company' }
+    }
 }
 
 function Get-MetraAskRoutedTelemetryRoot {
@@ -98,6 +146,9 @@ function Get-MetraVisionAskErrorCodes {
         'write_not_allowed'
         'route_boundary_violation'
         'engine_failure'
+        'cursor_auth_error'
+        'cursor_usage_limit'
+        'cursor_model_unavailable'
     )
 }
 
@@ -172,8 +223,9 @@ function ConvertTo-MetraVisionAskRequest {
             durableWritesAllowed = $durable
         }
         context         = [pscustomobject]@{
-            client        = [string](Get-MetraProp -Object $ctx -Name 'client' -Default '')
-            clientVersion = [string](Get-MetraProp -Object $ctx -Name 'clientVersion' -Default '')
+            client         = [string](Get-MetraProp -Object $ctx -Name 'client' -Default '')
+            clientVersion  = [string](Get-MetraProp -Object $ctx -Name 'clientVersion' -Default '')
+            teachingWanted = [bool](Get-MetraProp -Object $ctx -Name 'teachingWanted' -Default $false)
         }
     }
 }
@@ -372,7 +424,9 @@ function New-MetraVisionAskAnsweredResponse {
         [bool]$PortfolioGrounded = $false,
         [bool]$EngineInvoked = $false,
         [switch]$PartnerIdentityShortCircuit,
-        $Correlation = @{}
+        $Correlation = @{},
+        $Diagnostics = $null,
+        [AllowNull()][string]$PresentationMood = $null
     )
 
     if ($Source -eq 'ops-vision' -and $AskLaneUsed) {
@@ -387,12 +441,35 @@ function New-MetraVisionAskAnsweredResponse {
         -TurnId ([string](Get-MetraProp -Object $Correlation -Name 'turnId' -Default '')) `
         -ServerRequestId ([string](Get-MetraProp -Object $Correlation -Name 'serverRequestId' -Default ''))
 
+    $diag = [ordered]@{
+        identityHash   = $null
+        packsIncluded  = @()
+        teachingActive = $null
+        humorActive    = $null
+    }
+    if ($null -ne $Diagnostics) {
+        $diag.identityHash = Get-MetraProp -Object $Diagnostics -Name 'identityHash' -Default (
+            Get-MetraProp -Object $Diagnostics -Name 'IdentityHash' -Default $null)
+        $packs = Get-MetraProp -Object $Diagnostics -Name 'packsIncluded' -Default (
+            Get-MetraProp -Object $Diagnostics -Name 'PacksIncluded' -Default @())
+        $diag.packsIncluded = @($packs)
+        $diag.teachingActive = Get-MetraProp -Object $Diagnostics -Name 'teachingActive' -Default (
+            Get-MetraProp -Object $Diagnostics -Name 'TeachingActive' -Default $null)
+        $diag.humorActive = Get-MetraProp -Object $Diagnostics -Name 'humorActive' -Default (
+            Get-MetraProp -Object $Diagnostics -Name 'HumorActive' -Default $null)
+    }
+
     return [pscustomobject]@{
         contractVersion = (Get-MetraVisionAskContractVersion)
         status          = 'answered'
         source          = $Source
         mode            = $Mode
         intent          = $Intent
+        # response.text is the contract. message + voice.display keep the installed
+        # phone client (pre-rebuild) from treating a real answer as empty.
+        message         = $Text
+        voice           = [ordered]@{ display = $Text }
+        sessionId       = [string]$corr.conversationId
         response        = [ordered]@{ text = $Text }
         grounding       = [ordered]@{
             opsReached        = $OpsReached
@@ -409,6 +486,10 @@ function New-MetraVisionAskAnsweredResponse {
             attempted    = $false
             committed    = $false
             durableWrite = 'not_attempted'
+        }
+        diagnostics     = $diag
+        presentation    = [ordered]@{
+            mood = $PresentationMood
         }
         correlation     = $corr
     }
@@ -473,7 +554,8 @@ function Add-MetraAskRoutedTelemetryEvent {
         [Parameter(Mandatory)]$Envelope,
         [string]$Result = 'answered',
         [string]$Surface = '',
-        [bool]$EngineInvoked = $false
+        [bool]$EngineInvoked = $false,
+        $IdentityMeta = $null
     )
 
     try {
@@ -486,12 +568,31 @@ function Add-MetraAskRoutedTelemetryEvent {
         $routing = Get-MetraProp -Object $Envelope -Name 'routing' -Default $null
         $grounding = Get-MetraProp -Object $Envelope -Name 'grounding' -Default $null
         $writes = Get-MetraProp -Object $Envelope -Name 'writes' -Default $null
+        $diagnostics = Get-MetraProp -Object $Envelope -Name 'diagnostics' -Default $null
         $engineFlag = if ($PSBoundParameters.ContainsKey('EngineInvoked')) {
             $EngineInvoked
         }
         else {
             [bool](Get-MetraProp -Object $routing -Name 'engineInvoked' -Default $false)
         }
+
+        $identityHash = $null
+        $identityChars = $null
+        $identityTruncated = $null
+        $packsIncluded = @()
+        $packsOmitted = @()
+        if ($null -ne $IdentityMeta) {
+            $identityHash = [string](Get-MetraProp -Object $IdentityMeta -Name 'IdentityHash' -Default '')
+            $identityChars = Get-MetraProp -Object $IdentityMeta -Name 'IdentityChars' -Default $null
+            $identityTruncated = Get-MetraProp -Object $IdentityMeta -Name 'IdentityTruncated' -Default $null
+            $packsIncluded = @(Get-MetraProp -Object $IdentityMeta -Name 'PacksIncluded' -Default @())
+            $packsOmitted = @(Get-MetraProp -Object $IdentityMeta -Name 'PacksOmitted' -Default @())
+        }
+        elseif ($null -ne $diagnostics) {
+            $identityHash = [string](Get-MetraProp -Object $diagnostics -Name 'identityHash' -Default '')
+            $packsIncluded = @(Get-MetraProp -Object $diagnostics -Name 'packsIncluded' -Default @())
+        }
+
         $event = [ordered]@{
             event                 = 'metra.ask.routed'
             ts                    = (Get-Date).ToUniversalTime().ToString('o')
@@ -509,6 +610,11 @@ function Add-MetraAskRoutedTelemetryEvent {
             result                = $Result
             turnId                = [string](Get-MetraProp -Object $corr -Name 'turnId' -Default '')
             serverRequestId       = [string](Get-MetraProp -Object $corr -Name 'serverRequestId' -Default '')
+            identityHash          = $identityHash
+            identityChars         = $identityChars
+            identityTruncated     = $identityTruncated
+            packsIncluded         = $packsIncluded
+            packsOmitted          = $packsOmitted
         }
         $line = ($event | ConvertTo-Json -Compress -Depth 6)
         # Best-effort append; concurrent writers may interleave lines - readers
@@ -525,12 +631,15 @@ function Invoke-MetraVisionAskHandler {
     .SYNOPSIS
         Online Vision handler: Ops engine + Vision system prompt. Never AskLane / Desk / Capture / TT assess.
     .PARAMETER EngineInvoker
-        Test seam. Receives ($Prompt, $MetraRoot). Returns @{ ok=bool; message=string; error=string }.
+        Test seam. Receives ($Prompt, $MetraRoot, $SessionId, $IdentityPrefix).
+        Returns @{ ok=bool; message=string; error=string }.
+        Production sends IdentityPrefix to the sidecar; the sidecar attaches it only when the phone agent is new.
     #>
     [CmdletBinding()]
     param(
         [Parameter(Mandatory)]$Request,
         [string]$MetraRoot = (Get-MetraRoot),
+        [string]$DeviceId = '',
         [scriptblock]$EngineInvoker,
         [switch]$SkipEngine,
         [switch]$SkipTelemetry
@@ -650,6 +759,10 @@ function Invoke-MetraVisionAskHandler {
     $who = ($userMessage -match '(?i)\b(who are you|what are you)\b')
     $vocativeOnly = ($userMessage -match '(?i)^\s*(hi|hello|hey)\b[,!]?\s*metra\b[.!?\s]*$' `
             -or $userMessage -match '(?i)^\s*metra\b[,!]?\s*(hi|hello|hey)\b[.!?\s]*$')
+    $presentationMood = Get-MetraVisionAskPresentationMood -Posture $resolvedPosture
+    $ctxObj = Get-MetraProp -Object $normalized -Name 'context' -Default $null
+    $teachingWanted = [bool](Get-MetraProp -Object $ctxObj -Name 'teachingWanted' -Default $false)
+
     if ($who -or $vocativeOnly) {
         $checkIn = New-MetraPartnerCheckInResponse -Surface Vision -Posture $resolvedPosture -ContinuityEvidence $continuityEvidence -WhoAreYou:$who
         $answered = New-MetraVisionAskAnsweredResponse `
@@ -664,7 +777,8 @@ function Invoke-MetraVisionAskHandler {
             -PortfolioGrounded:$false `
             -EngineInvoked:$false `
             -PartnerIdentityShortCircuit `
-            -Correlation $corr
+            -Correlation $corr `
+            -PresentationMood $presentationMood
         if (-not $SkipTelemetry) {
             Add-MetraAskRoutedTelemetryEvent -Envelope $answered -Result 'answered' -Surface $surface -EngineInvoked:$false
         }
@@ -691,18 +805,33 @@ function Invoke-MetraVisionAskHandler {
             -PortfolioGrounded:$portfolioShaped `
             -EngineInvoked:$false `
             -PartnerIdentityShortCircuit `
-            -Correlation $corr
+            -Correlation $corr `
+            -PresentationMood $presentationMood
         if (-not $SkipTelemetry) {
             Add-MetraAskRoutedTelemetryEvent -Envelope $answered -Result 'answered' -Surface $surface -EngineInvoked:$false
         }
         return $answered
     }
 
-    $systemPrompt = Get-MetraVisionAskSystemPrompt `
+    # Loader once - sole TeachingActive/HumorActive authority. Handler must not re-decide packs.
+    $identity = Get-MetraVisionAskSystemPrompt `
         -MetraRoot $MetraRoot `
         -Posture $resolvedPosture `
         -PortfolioShaped:$portfolioShaped `
+        -TeachingWanted:$teachingWanted `
         -ContinuityEvidence $continuityEvidence
+    $systemPrompt = if ($null -ne $identity -and (Test-MetraPropExists -Object $identity -Name 'Text')) {
+        [string]$identity.Text
+    }
+    else {
+        [string]$identity
+    }
+    $identityDiag = [ordered]@{
+        identityHash   = [string](Get-MetraProp -Object $identity -Name 'IdentityHash' -Default '')
+        packsIncluded  = @(Get-MetraProp -Object $identity -Name 'PacksIncluded' -Default @())
+        teachingActive = [bool](Get-MetraProp -Object $identity -Name 'TeachingActive' -Default $false)
+        humorActive    = [bool](Get-MetraProp -Object $identity -Name 'HumorActive' -Default $false)
+    }
 
     $groundingBlock = ''
     if ($portfolioShaped -and $null -ne $handoff) {
@@ -720,20 +849,29 @@ Do not invent live status beyond this handoff. Thin evidence => provisional answ
     }
 
     $enginePrompt = @"
-$systemPrompt
 $groundingBlock
-
 ---
 User turn:
 $userMessage
 "@
 
+    $deviceKey = ([string]$DeviceId).Trim()
+    if ([string]::IsNullOrWhiteSpace($deviceKey)) {
+        # No phone id: do not merge anonymous clients onto one agent.
+        $deviceKey = [string]$corr.conversationId
+    }
+    if ([string]::IsNullOrWhiteSpace($deviceKey)) { $deviceKey = 'missing' }
+    $deviceKey = ($deviceKey -replace '[^A-Za-z0-9._:-]', '')
+    if ([string]::IsNullOrWhiteSpace($deviceKey)) { $deviceKey = 'missing' }
+    # Stable per phone. conversationId must not retire this agent when DeviceId is set.
+    $agentSessionId = "vision:$deviceKey"
+
     $invoker = $EngineInvoker
     if (-not $invoker) {
         $invoker = {
-            param($Prompt, $Root)
+            param($Prompt, $Root, $SessionId, $IdentityPrefix)
             if (Get-Command -Name Invoke-MetraAskEngine -ErrorAction SilentlyContinue) {
-                $engine = Invoke-MetraAskEngine -Prompt $Prompt -Cwd $Root -Context @{
+                $engine = Invoke-MetraAskEngine -Prompt $Prompt -Cwd $Root -SessionId $SessionId -TimeoutSec 180 -Context @{
                     surface             = 'ios'
                     mode                = 'vision'
                     intent              = 'relational'
@@ -742,20 +880,23 @@ $userMessage
                     continuityEvidence  = $continuityEvidence
                     askLaneUsed         = $false
                     visionHandler       = $true
+                    visionDeviceSession = $true
+                    identityPrefix      = [string]$IdentityPrefix
                 } -MetraRoot $Root
                 return [pscustomobject]@{
-                    ok      = [bool](Get-MetraProp -Object $engine -Name 'ok' -Default $false)
-                    message = [string](Get-MetraProp -Object $engine -Name 'message' -Default '')
-                    error   = [string](Get-MetraProp -Object $engine -Name 'error' -Default '')
+                    ok        = [bool](Get-MetraProp -Object $engine -Name 'ok' -Default $false)
+                    message   = [string](Get-MetraProp -Object $engine -Name 'message' -Default '')
+                    error     = [string](Get-MetraProp -Object $engine -Name 'error' -Default '')
+                    errorCode = [string](Get-MetraProp -Object $engine -Name 'errorCode' -Default '')
                 }
             }
-            return [pscustomobject]@{ ok = $false; message = ''; error = 'engine_unavailable' }
+            return [pscustomobject]@{ ok = $false; message = ''; error = 'engine_unavailable'; errorCode = '' }
         }
     }
 
     $engineResult = $null
     try {
-        $engineResult = & $invoker $enginePrompt $MetraRoot
+        $engineResult = & $invoker $enginePrompt $MetraRoot $agentSessionId $systemPrompt
     }
     catch {
         $err = New-MetraVisionAskErrorResponse `
@@ -769,7 +910,7 @@ $userMessage
             -Correlation $corr `
             -Detail $_.Exception.Message
         if (-not $SkipTelemetry) {
-            Add-MetraAskRoutedTelemetryEvent -Envelope $err -Result 'engine_failure' -Surface $surface -EngineInvoked:$true
+            Add-MetraAskRoutedTelemetryEvent -Envelope $err -Result 'engine_failure' -Surface $surface -EngineInvoked:$true -IdentityMeta $identity
         }
         return $err
     }
@@ -792,8 +933,17 @@ $userMessage
 
     if (-not $ok -or [string]::IsNullOrWhiteSpace($text)) {
         $engineErr = [string](Get-MetraProp -Object $engineResult -Name 'error' -Default 'engine_failure')
+        $errorCode = [string](Get-MetraProp -Object $engineResult -Name 'errorCode' -Default '')
+        $reason = 'engine_failure'
+        if ($errorCode -in @('cursor_auth_error', 'cursor_usage_limit', 'cursor_model_unavailable')) {
+            $reason = $errorCode
+        }
+        $detail = $engineErr
+        if (-not [string]::IsNullOrWhiteSpace($errorCode) -and $errorCode -ne $engineErr) {
+            $detail = if ([string]::IsNullOrWhiteSpace($engineErr)) { $errorCode } else { "${errorCode}: $engineErr" }
+        }
         $err = New-MetraVisionAskErrorResponse `
-            -Reason 'engine_failure' `
+            -Reason $reason `
             -Source 'ops-vision' `
             -Mode 'vision' `
             -Intent 'relational' `
@@ -801,9 +951,9 @@ $userMessage
             -OpsReached:$true `
             -EngineInvoked:$true `
             -Correlation $corr `
-            -Detail $engineErr
+            -Detail $detail
         if (-not $SkipTelemetry) {
-            Add-MetraAskRoutedTelemetryEvent -Envelope $err -Result 'engine_failure' -Surface $surface -EngineInvoked:$true
+            Add-MetraAskRoutedTelemetryEvent -Envelope $err -Result $reason -Surface $surface -EngineInvoked:$true -IdentityMeta $identity
         }
         return $err
     }
@@ -819,10 +969,12 @@ $userMessage
         -OpsReached:$true `
         -PortfolioGrounded:$portfolioShaped `
         -EngineInvoked:$true `
-        -Correlation $corr
+        -Correlation $corr `
+        -Diagnostics $identityDiag `
+        -PresentationMood $presentationMood
 
     if (-not $SkipTelemetry) {
-        Add-MetraAskRoutedTelemetryEvent -Envelope $answered -Result 'answered' -Surface $surface -EngineInvoked:$true
+        Add-MetraAskRoutedTelemetryEvent -Envelope $answered -Result 'answered' -Surface $surface -EngineInvoked:$true -IdentityMeta $identity
     }
     return $answered
 }
@@ -845,6 +997,39 @@ function Resolve-MetraAskHttpDispatch {
     $lane = [string](Get-MetraProp -Object $Body -Name 'lane' -Default '')
 
     if ([string]::IsNullOrWhiteSpace($version) -and [string]::IsNullOrWhiteSpace($mode) -and [string]::IsNullOrWhiteSpace($lane)) {
+        # Phone still posting the pre-contract body (client ops-ios) belongs on Vision,
+        # not desk CE. Desk HTML without that client stays desk-legacy.
+        $bodyClient = [string](Get-MetraProp -Object $Body -Name 'client' -Default '')
+        $hint = [string](Get-MetraProp -Object $Body -Name 'clientHint' -Default '')
+        $isPhone = $false
+        if (Get-Command Test-MetraAskVisionPhoneClient -ErrorAction SilentlyContinue) {
+            $isPhone = Test-MetraAskVisionPhoneClient -BodyClient $bodyClient -ClientHint $hint
+        }
+        if ($isPhone) {
+            $message = [string](Get-MetraProp -Object $Body -Name 'message' -Default '')
+            if ([string]::IsNullOrWhiteSpace($message)) {
+                $message = [string](Get-MetraProp -Object $Body -Name 'prompt' -Default '')
+            }
+            $synth = [pscustomobject]@{
+                contractVersion = (Get-MetraVisionAskContractVersion)
+                surface         = 'ios'
+                mode            = 'vision'
+                intent          = 'relational'
+                message         = $message
+                conversationId  = [string](Get-MetraProp -Object $Body -Name 'conversationId' -Default (
+                        Get-MetraProp -Object $Body -Name 'sessionId' -Default ''))
+                capabilities    = [pscustomobject]@{
+                    localAssistAvailable = $false
+                    durableWritesAllowed = $false
+                }
+                context         = [pscustomobject]@{
+                    client         = 'ops-ios'
+                    teachingWanted = $false
+                }
+            }
+            $req = ConvertTo-MetraVisionAskRequest -Body $synth
+            return [pscustomobject]@{ path = 'vision'; error = $null; request = $req; detail = 'phone-legacy-promoted' }
+        }
         return [pscustomobject]@{ path = 'desk-legacy'; error = $null; request = $null; detail = $null }
     }
 
@@ -897,6 +1082,9 @@ function Get-MetraVisionAskHttpStatusCode {
         'ops_unreachable' { return 503 }
         'desk_requires_connectivity' { return 503 }
         'engine_failure' { return 502 }
+        'cursor_auth_error' { return 502 }
+        'cursor_usage_limit' { return 502 }
+        'cursor_model_unavailable' { return 502 }
         default { return 400 }
     }
 }

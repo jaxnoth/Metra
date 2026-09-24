@@ -27,6 +27,10 @@ let consecutiveRunErrors = 0
 let lastRunStatus = null
 /** @type {string | null} */
 let lastRunAt = null
+/** @type {string | null} Non-recycling failure code (auth/usage/model); cleared on one healthy finish. */
+let degradedCode = null
+/** @type {string | null} */
+let lastClassifiedError = null
 
 export function resetSessionCacheForTests() {
   sessions.clear()
@@ -34,6 +38,8 @@ export function resetSessionCacheForTests() {
   consecutiveRunErrors = 0
   lastRunStatus = null
   lastRunAt = null
+  degradedCode = null
+  lastClassifiedError = null
 }
 
 /**
@@ -212,6 +218,9 @@ export function recordRunFinished() {
   consecutiveRunErrors = 0
   lastRunStatus = 'finished'
   lastRunAt = new Date().toISOString()
+  // One successful healthy complete clears degradation (asymmetric with 2-strike ok gate).
+  degradedCode = null
+  lastClassifiedError = null
 }
 
 export function recordRunError() {
@@ -221,7 +230,23 @@ export function recordRunError() {
 }
 
 /**
+ * Record a non-recycling classified failure for /health degraded surfacing.
+ * Does not increment consecutiveRunErrors (use recordRunError when countsTowardHealthGate).
+ * @param {{ errorCode?: string, errorDetail?: string } | null | undefined} classified
+ */
+export function recordDegradedFailure(classified) {
+  const code = classified && classified.errorCode ? String(classified.errorCode) : ''
+  if (!code) return
+  degradedCode = code
+  const detail = classified && classified.errorDetail ? String(classified.errorDetail).trim() : ''
+  lastClassifiedError = detail || code
+  lastRunStatus = 'error'
+  lastRunAt = new Date().toISOString()
+}
+
+/**
  * Health ok means operationally usable (consecutive SDK errors under threshold).
+ * degradedCode is auth/billing/model visibility only - does not flip ok.
  * @param {{ engine: string, model: string, apiKeyPresent: boolean }} base
  */
 export function getHealthPayload(base) {
@@ -233,6 +258,8 @@ export function getHealthPayload(base) {
     consecutiveRunErrors,
     lastRunStatus,
     lastRunAt,
+    degradedCode,
+    lastClassifiedError,
   }
 }
 
@@ -285,6 +312,24 @@ export function classifyRunError(detailScrubbed) {
     errorDetail: detail || '',
     retryClass: opaque ? 'opaque_sdk_failure' : 'sdk_run_error',
   }
+}
+
+/**
+ * Auth, billing, and model-pin failures are credential/config problems.
+ * They must not flip /health ok=false (HEALTH_ERROR_THRESHOLD) - the sidecar
+ * process is still up; killing it does not fix the key or the model.
+ * @param {{ errorCode?: string } | null | undefined} classified
+ */
+export function countsTowardHealthGate(classified) {
+  const code = classified && classified.errorCode
+  if (
+    code === 'cursor_auth_error' ||
+    code === 'cursor_usage_limit' ||
+    code === 'cursor_model_unavailable'
+  ) {
+    return false
+  }
+  return true
 }
 
 /**

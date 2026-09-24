@@ -8,6 +8,7 @@ import {
   MAX_SESSIONS,
   acquireSessionLease,
   classifyRunError,
+  countsTowardHealthGate,
   createSessionEntry,
   disposeAgent,
   disposeAllSessions,
@@ -18,6 +19,7 @@ import {
   putSession,
   recordRunError,
   recordRunFinished,
+  recordDegradedFailure,
   releaseSessionLease,
   resetSessionCacheForTests,
   retireSession,
@@ -124,6 +126,37 @@ test('health counter and ok gate', () => {
   assert.equal(h.lastRunStatus, 'finished')
 })
 
+test('degradedCode set on auth/usage/model; clears after one successful finish', () => {
+  resetSessionCacheForTests()
+  let h = getHealthPayload({ engine: 'cursor', model: 'x', apiKeyPresent: true })
+  assert.equal(h.degradedCode, null)
+  assert.equal(h.ok, true)
+
+  const auth = classifyRunError(
+    'Authentication error If you are logged in, try logging out and back in.',
+  )
+  assert.equal(countsTowardHealthGate(auth), false)
+  recordDegradedFailure(auth)
+  h = getHealthPayload({ engine: 'cursor', model: 'x', apiKeyPresent: true })
+  assert.equal(h.ok, true)
+  assert.equal(h.degradedCode, 'cursor_auth_error')
+  assert.ok(h.lastClassifiedError)
+
+  // One healthy finish clears degradation (not N consecutive successes).
+  recordRunFinished()
+  h = getHealthPayload({ engine: 'cursor', model: 'x', apiKeyPresent: true })
+  assert.equal(h.degradedCode, null)
+  assert.equal(h.lastClassifiedError, null)
+  assert.equal(h.ok, true)
+
+  const usage = classifyRunError('Your team has reached its usage limit')
+  recordDegradedFailure(usage)
+  h = getHealthPayload({ engine: 'cursor', model: 'x', apiKeyPresent: true })
+  assert.equal(h.degradedCode, 'cursor_usage_limit')
+  recordRunFinished()
+  assert.equal(getHealthPayload({ engine: 'cursor', model: 'x', apiKeyPresent: true }).degradedCode, null)
+})
+
 test('classifyRunError opaque vs nonempty', () => {
   assert.equal(classifyRunError('').retryClass, 'opaque_sdk_failure')
   assert.equal(classifyRunError('requestId=abc').retryClass, 'opaque_sdk_failure')
@@ -143,6 +176,13 @@ test('classifyRunError opaque vs nonempty', () => {
     ).retryClass,
     'model_error',
   )
+  assert.equal(
+    countsTowardHealthGate(classifyRunError('Authentication error If you are logged in, try logging out and back in.')),
+    false,
+  )
+  assert.equal(countsTowardHealthGate(classifyRunError('Your team has reached its usage limit')), false)
+  assert.equal(countsTowardHealthGate(classifyRunError('Cannot use this model: auto-smart')), false)
+  assert.equal(countsTowardHealthGate(classifyRunError('rate limited')), true)
 })
 
 test('disposeAgent tolerates null and prefer asyncDispose once', async () => {

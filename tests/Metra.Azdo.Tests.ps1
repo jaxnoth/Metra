@@ -9,9 +9,9 @@ BeforeAll {
 Describe 'AzDO name normalization' {
     It 'collapses case, spaces, hyphens, underscores' {
         InModuleScope Metra {
-            Normalize-MetraAzdoName -Name 'Colleague Migration' | Should -Be 'colleaguemigration'
-            Normalize-MetraAzdoName -Name 'Colleague-Migration' | Should -Be 'colleaguemigration'
-            Normalize-MetraAzdoName -Name 'COLLEAGUE_MIGRATION' | Should -Be 'colleaguemigration'
+            ConvertTo-MetraAzdoName -Name 'Colleague Migration' | Should -Be 'colleaguemigration'
+            ConvertTo-MetraAzdoName -Name 'Colleague-Migration' | Should -Be 'colleaguemigration'
+            ConvertTo-MetraAzdoName -Name 'COLLEAGUE_MIGRATION' | Should -Be 'colleaguemigration'
         }
     }
 }
@@ -19,7 +19,7 @@ Describe 'AzDO name normalization' {
 Describe 'AzDO wildcard match' {
     It 'matches idea repo patterns' {
         InModuleScope Metra {
-            Test-MetraAzdoWildcardMatch -Pattern '*Experience*' -Value 'OrgBrand.Experience.Portal' | Should -BeTrue
+            Test-MetraAzdoWildcardMatch -Pattern '*Experience*' -Value 'Org.Experience.Portal' | Should -BeTrue
             Test-MetraAzdoWildcardMatch -Pattern '*Ethos*' -Value 'EthosIntegration' | Should -BeTrue
             Test-MetraAzdoWildcardMatch -Pattern '*Ethos*' -Value 'Colleague' | Should -BeFalse
         }

@@ -56,7 +56,6 @@ $export = @(
     'Assert-YarnBacklogDocument'
     'Assert-YarnPlanLinksDocument'
     'Measure-YarnRank'
-    'Sort-YarnBacklogItems'
     'Invoke-MetraYarnScan'
     'Invoke-MetraYarnSynthesize'
     'Invoke-MetraYarnPack'

@@ -132,10 +132,171 @@ Describe 'Loom review completion path' {
                     [PSCustomObject]@{ schemaVersion = 1; outcome = 'passed'; passed = $true; message = 'mock pass' }
                 }
 
-                $r = Invoke-MetraLoomReview -Root $root -ItemId $item.id -Confirm -InspectScript $inspect -VerifyScript $verify
+                $r = Invoke-MetraLoomReview -Root $root -ItemId $item.id -Confirm -InspectScript $inspect -VerifyScript $verify `
+                    -PackScript { param($Name, $Base, $ProjectRoot)
+                        [PSCustomObject]@{ outcome = 'ok'; packPath = 'C:\fake\default-pack.md'; message = 'mock' }
+                    }
                 $r.outcome | Should -Be 'completed'
                 (Get-MetraLoomQueueItem -Root $root -Id $item.id).status | Should -Be 'completed'
                 (Get-MetraLoomQueueItem -Root $root -Id $item.id).execution.completedCommit | Should -Not -BeNullOrEmpty
+            }
+            finally {
+                if ($branch -and (Test-Path $proj)) {
+                    git -C $proj checkout master 2>$null | Out-Null
+                    git -C $proj branch -D $branch 2>$null | Out-Null
+                }
+                Remove-Item -LiteralPath $root, $proj -Recurse -Force -ErrorAction SilentlyContinue
+            }
+        }
+    }
+
+    It 'emits packPath after completed when pack adapter succeeds' {
+        InModuleScope Loom {
+            $root = Join-Path ([IO.Path]::GetTempPath()) ('ap-rev-pack-' + [guid]::NewGuid().ToString('n'))
+            $proj = Join-Path ([IO.Path]::GetTempPath()) ('ap-rev-pack-p-' + [guid]::NewGuid().ToString('n'))
+            $branch = $null
+            try {
+                New-Item -ItemType Directory -Path $proj -Force | Out-Null
+                Push-Location $proj
+                git init 2>$null | Out-Null
+                git config user.email 't@test.local' 2>$null | Out-Null
+                git config user.name 'T' 2>$null | Out-Null
+                New-Item -ItemType Directory -Path (Join-Path $proj 'tests') -Force | Out-Null
+                Set-Content -Path (Join-Path $proj 'tests\ok.txt') -Value 'ok'
+                git add tests/ok.txt 2>$null | Out-Null
+                git commit -m 'init' 2>$null | Out-Null
+                Pop-Location
+
+                Initialize-MetraLoomLayout -Root $root
+                $cand = [PSCustomObject]@{
+                    id = 'CAND-20260901-0101'; summary = 'Review pack test'
+                    source = [PSCustomObject]@{ type = 'operator' }
+                    project = [PSCustomObject]@{ registryName = 'Metra'; root = $proj; routingConfidence = 0.99; routingEvidence = 'test' }
+                    classification = @{ reversibility = 'code'; crossRoot = $false; productionTouch = $false; externalSideEffect = $false; manualTestClass = 'none' }
+                    scores = [PSCustomObject]@{ impact = 4; confidence = 5; userTestBurden = 1; autoVerifiable = 5; dependencyValue = 2; total = 20; rubricVersion = 'triage-v1' }
+                    contract = [PSCustomObject]@{
+                        objective = 'review pack test'; allowedPaths = @('tests'); forbiddenPaths = @()
+                        doneWhen = @('pass')
+                        verifyCommands = @(@{ executable = 'pwsh'; arguments = @('-NoProfile', '-Command', 'exit 0'); workingDirectory = '.'; timeoutSeconds = 30 })
+                    }
+                    eligible = $true; ineligibleReasons = @()
+                }
+                $item = New-MetraLoomQueueItemFromCandidate -Root $root -Candidate $cand
+                $branch = [string]$item.execution.branch
+                git -C $proj checkout -b $branch 2>$null | Out-Null
+                if ((Get-LoomGitCurrentBranch -ProjectRoot $proj) -ne $branch) {
+                    git -C $proj checkout -B $branch 2>$null | Out-Null
+                }
+                Set-Content -Path (Join-Path $proj 'tests\change.txt') -Value 'x'
+                git -C $proj add tests/change.txt 2>$null | Out-Null
+                $runDir = Join-Path $root "runs\$($item.id)\run-001"
+                New-Item -ItemType Directory -Path $runDir -Force | Out-Null
+                Invoke-MetraLoomStateChange -Root $root -ItemId $item.id -From 'queued' -To 'claimed' -Reason 'test' | Out-Null
+                Invoke-MetraLoomStateChange -Root $root -ItemId $item.id -From 'claimed' -To 'implementing' -Reason 'test' | Out-Null
+                Invoke-MetraLoomStateChange -Root $root -ItemId $item.id -From 'implementing' -To 'reviewing' -Reason 'test' -Mutator {
+                    param($i)
+                    if (-not $i.execution) { $i | Add-Member -NotePropertyName execution -NotePropertyValue ([PSCustomObject]@{}) -Force }
+                    $i.execution | Add-Member -NotePropertyName runDir -NotePropertyValue $runDir -Force
+                    $i.execution | Add-Member -NotePropertyName runNumber -NotePropertyValue 1 -Force
+                    $i.execution | Add-Member -NotePropertyName baselineSha -NotePropertyValue (Get-LoomGitHeadCommit -ProjectRoot $proj) -Force
+                    return $i
+                } | Out-Null
+                New-LoomRunRequestPackage -Item (Get-MetraLoomQueueItem -Root $root -Id $item.id) -RunDir $runDir | Out-Null
+
+                $inspect = { param($Request, $ProjectRoot, $RunDir)
+                    [PSCustomObject]@{ schemaVersion = 1; outcome = 'passed'; goalMet = $true; message = 'mock pass' }
+                }
+                $verify = { param($Request, $ProjectRoot, $RunDir)
+                    [PSCustomObject]@{ schemaVersion = 1; outcome = 'passed'; passed = $true; message = 'mock pass' }
+                }
+                $packOk = { param($Name, $Base, $ProjectRoot)
+                    [PSCustomObject]@{ outcome = 'ok'; packPath = 'C:\fake\pack-diff.md'; message = 'mock pack' }
+                }
+                $rOk = Invoke-MetraLoomReview -Root $root -ItemId $item.id -Confirm `
+                    -InspectScript $inspect -VerifyScript $verify -PackScript $packOk
+                $rOk.outcome | Should -Be 'completed'
+                $rOk.packOutcome | Should -Be 'ok'
+                $rOk.packPath | Should -Be 'C:\fake\pack-diff.md'
+                $rOk.packBase | Should -Not -BeNullOrEmpty
+                (Get-MetraLoomQueueItem -Root $root -Id $item.id).status | Should -Be 'completed'
+            }
+            finally {
+                if ($branch -and (Test-Path $proj)) {
+                    git -C $proj checkout master 2>$null | Out-Null
+                    git -C $proj branch -D $branch 2>$null | Out-Null
+                }
+                Remove-Item -LiteralPath $root, $proj -Recurse -Force -ErrorAction SilentlyContinue
+            }
+        }
+    }
+
+    It 'still completes when Bing pack adapter is unavailable' {
+        InModuleScope Loom {
+            $root = Join-Path ([IO.Path]::GetTempPath()) ('ap-rev-packmiss-' + [guid]::NewGuid().ToString('n'))
+            $proj = Join-Path ([IO.Path]::GetTempPath()) ('ap-rev-packmiss-p-' + [guid]::NewGuid().ToString('n'))
+            $branch = $null
+            try {
+                New-Item -ItemType Directory -Path $proj -Force | Out-Null
+                Push-Location $proj
+                git init 2>$null | Out-Null
+                git config user.email 't@test.local' 2>$null | Out-Null
+                git config user.name 'T' 2>$null | Out-Null
+                New-Item -ItemType Directory -Path (Join-Path $proj 'tests') -Force | Out-Null
+                Set-Content -Path (Join-Path $proj 'tests\ok.txt') -Value 'ok'
+                git add tests/ok.txt 2>$null | Out-Null
+                git commit -m 'init' 2>$null | Out-Null
+                Pop-Location
+
+                Initialize-MetraLoomLayout -Root $root
+                $cand = [PSCustomObject]@{
+                    id = 'CAND-20260901-0102'; summary = 'Review pack unavailable'
+                    source = [PSCustomObject]@{ type = 'operator' }
+                    project = [PSCustomObject]@{ registryName = 'Metra'; root = $proj; routingConfidence = 0.99; routingEvidence = 'test' }
+                    classification = @{ reversibility = 'code'; crossRoot = $false; productionTouch = $false; externalSideEffect = $false; manualTestClass = 'none' }
+                    scores = [PSCustomObject]@{ impact = 4; confidence = 5; userTestBurden = 1; autoVerifiable = 5; dependencyValue = 2; total = 20; rubricVersion = 'triage-v1' }
+                    contract = [PSCustomObject]@{
+                        objective = 'review pack unavailable'; allowedPaths = @('tests'); forbiddenPaths = @()
+                        doneWhen = @('pass')
+                        verifyCommands = @(@{ executable = 'pwsh'; arguments = @('-NoProfile', '-Command', 'exit 0'); workingDirectory = '.'; timeoutSeconds = 30 })
+                    }
+                    eligible = $true; ineligibleReasons = @()
+                }
+                $item = New-MetraLoomQueueItemFromCandidate -Root $root -Candidate $cand
+                $branch = [string]$item.execution.branch
+                git -C $proj checkout -b $branch 2>$null | Out-Null
+                if ((Get-LoomGitCurrentBranch -ProjectRoot $proj) -ne $branch) {
+                    git -C $proj checkout -B $branch 2>$null | Out-Null
+                }
+                Set-Content -Path (Join-Path $proj 'tests\change.txt') -Value 'x'
+                git -C $proj add tests/change.txt 2>$null | Out-Null
+                $runDir = Join-Path $root "runs\$($item.id)\run-001"
+                New-Item -ItemType Directory -Path $runDir -Force | Out-Null
+                Invoke-MetraLoomStateChange -Root $root -ItemId $item.id -From 'queued' -To 'claimed' -Reason 'test' | Out-Null
+                Invoke-MetraLoomStateChange -Root $root -ItemId $item.id -From 'claimed' -To 'implementing' -Reason 'test' | Out-Null
+                Invoke-MetraLoomStateChange -Root $root -ItemId $item.id -From 'implementing' -To 'reviewing' -Reason 'test' -Mutator {
+                    param($i)
+                    if (-not $i.execution) { $i | Add-Member -NotePropertyName execution -NotePropertyValue ([PSCustomObject]@{}) -Force }
+                    $i.execution | Add-Member -NotePropertyName runDir -NotePropertyValue $runDir -Force
+                    $i.execution | Add-Member -NotePropertyName runNumber -NotePropertyValue 1 -Force
+                    $i.execution | Add-Member -NotePropertyName baselineSha -NotePropertyValue (Get-LoomGitHeadCommit -ProjectRoot $proj) -Force
+                    return $i
+                } | Out-Null
+                New-LoomRunRequestPackage -Item (Get-MetraLoomQueueItem -Root $root -Id $item.id) -RunDir $runDir | Out-Null
+
+                $inspect = { param($Request, $ProjectRoot, $RunDir)
+                    [PSCustomObject]@{ schemaVersion = 1; outcome = 'passed'; goalMet = $true; message = 'mock pass' }
+                }
+                $verify = { param($Request, $ProjectRoot, $RunDir)
+                    [PSCustomObject]@{ schemaVersion = 1; outcome = 'passed'; passed = $true; message = 'mock pass' }
+                }
+                $packMiss = { param($Name, $Base, $ProjectRoot)
+                    [PSCustomObject]@{ outcome = 'adapter-unavailable'; packPath = ''; message = 'mock missing' }
+                }
+                $rMiss = Invoke-MetraLoomReview -Root $root -ItemId $item.id -Confirm `
+                    -InspectScript $inspect -VerifyScript $verify -PackScript $packMiss
+                $rMiss.outcome | Should -Be 'completed'
+                $rMiss.packOutcome | Should -Be 'adapter-unavailable'
+                (Get-MetraLoomQueueItem -Root $root -Id $item.id).status | Should -Be 'completed'
             }
             finally {
                 if ($branch -and (Test-Path $proj)) {

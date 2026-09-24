@@ -12,6 +12,95 @@ function Get-MetraOpsDistPath {
     return Join-Path $MetraRoot 'ops\dist'
 }
 
+function Sync-MetraOpsAskSidecarHealthPoll {
+    <#
+    .SYNOPSIS
+        Periodic Cursor Ask /health probe + Ensure (Ops owns Ask; measured from prior poll completion).
+    #>
+    [CmdletBinding()]
+    param(
+        [string]$MetraRoot = (Get-MetraRoot),
+        [int]$IntervalSec = 45
+    )
+
+    if (-not $script:MetraOpsAskHealthNextUtc) {
+        $script:MetraOpsAskHealthNextUtc = [datetime]::UtcNow
+    }
+    if ([datetime]::UtcNow -lt $script:MetraOpsAskHealthNextUtc) {
+        return
+    }
+
+    try {
+        if (-not (Get-Command Get-MetraAskSettings -ErrorAction SilentlyContinue)) {
+            return
+        }
+        $settings = Get-MetraAskSettings -MetraRoot $MetraRoot
+        if ([string]$settings.engine -ne 'cursor') {
+            return
+        }
+        $port = [int]$settings.cursorPort
+        if ($port -lt 1) { return }
+
+        $healthy = $false
+        try {
+            $healthy = [bool](Test-MetraAskCursorPortHealth -Port $port -TimeoutSec 1)
+        }
+        catch {
+            $healthy = $false
+        }
+        if (-not $healthy) {
+            try {
+                $null = Invoke-MetraAskCursorSidecarEnsure -MetraRoot $MetraRoot -CursorPort $port
+            }
+            catch {
+                Write-Warning ("Ask sidecar health poll Ensure failed: {0}" -f $_.Exception.Message)
+            }
+        }
+    }
+    finally {
+        # Interval from completion of this attempt (including Ensure), not wall-clock schedule.
+        $script:MetraOpsAskHealthNextUtc = [datetime]::UtcNow.AddSeconds([Math]::Max(5, $IntervalSec))
+    }
+}
+
+function Get-MetraOpsAskMetaSummary {
+    <#
+    .SYNOPSIS
+        Ask-class summary for GET /api/meta (additive; no secrets).
+    #>
+    [CmdletBinding()]
+    param([string]$MetraRoot = (Get-MetraRoot))
+
+    $selected = $false
+    $healthy = $false
+    $degradedCode = $null
+    $engine = $null
+    try {
+        $settings = Get-MetraAskSettings -MetraRoot $MetraRoot
+        $engine = [string]$settings.engine
+        $selected = ($engine -ne 'none' -and [bool]$settings.enabled)
+        if ($engine -eq 'cursor') {
+            $payload = Get-MetraAskCursorPortHealthPayload -Port ([int]$settings.cursorPort) -TimeoutSec 1
+            if ($null -ne $payload) {
+                $healthy = [bool](Test-MetraAskCursorHealthResponseOk -Response $payload)
+                $degradedCode = Get-MetraProp -Object $payload -Name 'degradedCode' -Default $null
+                if ([string]::IsNullOrWhiteSpace([string]$degradedCode)) { $degradedCode = $null }
+            }
+        }
+        elseif ($selected -and (Get-Command Test-MetraAskEngineHealth -ErrorAction SilentlyContinue)) {
+            $healthy = [bool](Test-MetraAskEngineHealth -MetraRoot $MetraRoot -TimeoutSec 2)
+        }
+    }
+    catch { }
+
+    return [PSCustomObject]@{
+        selected     = [bool]$selected
+        healthy      = [bool]$healthy
+        degradedCode = $degradedCode
+        engine       = $engine
+    }
+}
+
 function Get-MetraOpsContentType {
     param([Parameter(Mandatory)][string]$Path)
 
@@ -519,10 +608,36 @@ function Invoke-MetraOpsApi {
                     if ($match.Success) { $manifestVersion = $match.Groups[1].Value }
                 }
             }
+
+            # Additive fields only - existing clients ignore unknown properties.
+            $shareUrl = $null
+            $serveOk = $false
+            $serveError = $null
+            $bindTailscale = $false
+            try {
+                $binding = Get-MetraOpsDeskBindingForPort -Port ([int]$Request.LocalEndPoint.Port) -MetraRoot $MetraRoot
+                $shareUrl = [string](Get-MetraProp -Object $binding -Name 'ShareUrl' -Default $null)
+                if ([string]::IsNullOrWhiteSpace($shareUrl)) {
+                    $shareUrl = [string](Get-MetraProp -Object $binding -Name 'BrowserUrl' -Default $null)
+                }
+                $serveOk = [bool](Get-MetraProp -Object $binding -Name 'Serve' -Default $false)
+                $serveError = Get-MetraProp -Object $binding -Name 'ServeError' -Default $null
+                if ([string]::IsNullOrWhiteSpace([string]$serveError)) { $serveError = $null }
+                $bindTailscale = [bool](Get-MetraProp -Object $binding -Name 'Tailscale' -Default $false)
+            }
+            catch { }
+
+            $askEngine = Get-MetraOpsAskMetaSummary -MetraRoot $MetraRoot
+
             Write-MetraOpsJsonResponse -Response $Response -Object ([PSCustomObject]@{
-                    version   = $manifestVersion
-                    metraRoot = $MetraRoot
-                    homeLabel = $MetraRoot
+                    version       = $manifestVersion
+                    metraRoot     = $MetraRoot
+                    homeLabel     = $MetraRoot
+                    shareUrl      = $shareUrl
+                    serveOk       = $serveOk
+                    serveError    = $serveError
+                    bindTailscale = $bindTailscale
+                    askEngine     = $askEngine
                 })
             return
         }
@@ -1318,7 +1433,9 @@ function Invoke-MetraOpsApi {
                 return
             }
             $visionReq = ConvertTo-MetraVisionAskRequest -Body $visionParsed
-            $visionResult = Invoke-MetraVisionAskHandler -Request $visionReq -MetraRoot $MetraRoot
+            $deviceId = ''
+            try { $deviceId = [string]$Request.Headers['X-Metra-Device'] } catch { }
+            $visionResult = Invoke-MetraVisionAskHandler -Request $visionReq -MetraRoot $MetraRoot -DeviceId $deviceId
             $visionStatus = Get-MetraVisionAskHttpStatusCode -Envelope $visionResult
             Write-MetraOpsJsonResponse -Response $Response -StatusCode $visionStatus -Object $visionResult -Depth 12
             return
@@ -1361,7 +1478,9 @@ function Invoke-MetraOpsApi {
                     return
                 }
                 if ($dispatch.path -eq 'vision') {
-                    $visionResult = Invoke-MetraVisionAskHandler -Request $dispatch.request -MetraRoot $MetraRoot
+                    $deviceId = ''
+                    try { $deviceId = [string]$Request.Headers['X-Metra-Device'] } catch { }
+                    $visionResult = Invoke-MetraVisionAskHandler -Request $dispatch.request -MetraRoot $MetraRoot -DeviceId $deviceId
                     Write-MetraOpsJsonResponse -Response $Response -StatusCode (Get-MetraVisionAskHttpStatusCode -Envelope $visionResult) -Object $visionResult -Depth 12
                     return
                 }
@@ -2128,6 +2247,12 @@ function Start-MetraOpsServer {
         $binding = Get-MetraOpsDeskBindingForPort -Port $Port -MetraRoot $MetraRoot
         if (-not $serve.Ok) {
             Write-Warning ("Tailscale Serve HTTPS unavailable: {0}. Desk stays on loopback; do not treat plain http MagicDNS as the primary phone URL." -f $serve.Reason)
+            if (Get-Command Set-MetraOpsHostPendingBalloon -ErrorAction SilentlyContinue) {
+                Set-MetraOpsHostPendingBalloon `
+                    -Title 'Metra Ops' `
+                    -Text 'Tailscale Serve HTTPS failed - phone Ask needs HTTPS. Fix Serve or campus hosts, then restart Ops.' `
+                    -Icon Warning
+            }
         }
     }
 
@@ -2245,7 +2370,13 @@ function Start-MetraOpsServer {
     # runspace is busy in the accept loop - the resulting exception is unhandled on a native
     # callback thread and takes the whole console host down instead of stopping the server.
     try {
+        $script:MetraOpsAskHealthNextUtc = [datetime]::UtcNow.AddSeconds(45)
         while ($listener.IsListening) {
+            try {
+                Sync-MetraOpsAskSidecarHealthPoll -MetraRoot $MetraRoot -IntervalSec 45
+            }
+            catch { }
+
             $async = $null
             try {
                 $async = $listener.BeginGetContext($null, $null)
@@ -2259,6 +2390,10 @@ function Start-MetraOpsServer {
                     if (-not $listener.IsListening) { break }
                     # Timed wait lets Ctrl+C / pipeline stop run between polls.
                     if ($async.AsyncWaitHandle.WaitOne(250)) { break }
+                    try {
+                        Sync-MetraOpsAskSidecarHealthPoll -MetraRoot $MetraRoot -IntervalSec 45
+                    }
+                    catch { }
                 }
 
                 if (-not $listener.IsListening) { break }

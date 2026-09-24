@@ -104,7 +104,7 @@ function Measure-YarnRank {
     }
 }
 
-function Sort-YarnBacklogItems {
+function Get-YarnBacklogItemsSorted {
     param([object[]]$Items)
     return @(
         $Items |

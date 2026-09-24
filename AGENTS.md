@@ -57,6 +57,8 @@ Triggers: Metra home, routing, ctx, registry, inspect, profile, decisions, works
 | audit, selfdoc, verify, registry maintenance | [docs/playbooks/maintenance-audit.md](docs/playbooks/maintenance-audit.md) |
 | Tailscale, DNSFilter, campus hosts, Serve enable | [docs/playbooks/tailscale-campus.md](docs/playbooks/tailscale-campus.md) |
 | satellite connect, Mac onboarding, profile sync merge | [docs/playbooks/satellite-remote-install.md](docs/playbooks/satellite-remote-install.md) |
+| Ops Ask offline, sidecar poll, MetraOpsDesk, Serve HTTPS phone | [docs/playbooks/ops-ask-reach.md](docs/playbooks/ops-ask-reach.md) |
+| MetraHost.exe tray, Build-MetraHost, PowerShell Host fallback | [host/MetraHost/README.md](host/MetraHost/README.md) |
 | yarn intake, backlog, synthesize, pack freshness | [docs/playbooks/yarn.md](docs/playbooks/yarn.md) |
 | loom queue, triage, run, review, daily, loop | [docs/playbooks/loom.md](docs/playbooks/loom.md) |
 | narrative engine, scenario packs, lessons/sims | [docs/playbooks/narrative.md](docs/playbooks/narrative.md) |

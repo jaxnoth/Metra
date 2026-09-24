@@ -85,7 +85,7 @@ Describe 'Yarn A1 rank and scan' {
                 [PSCustomObject]@{ id = 'YARN-A'; total = 0.5; effectiveImpact = 0.4; firstSeenAt = '2026-01-01' }
                 [PSCustomObject]@{ id = 'YARN-C'; total = 0.9; effectiveImpact = 0.2; firstSeenAt = '2026-01-03' }
             )
-            $sorted = Sort-YarnBacklogItems -Items $items
+            $sorted = Get-YarnBacklogItemsSorted -Items $items
             $sorted[0].id | Should -Be 'YARN-C'
             $sorted[1].id | Should -Be 'YARN-A'
         }
@@ -1597,3 +1597,4 @@ Describe 'Yarn Plan Board projection' {
         }
     }
 }
+

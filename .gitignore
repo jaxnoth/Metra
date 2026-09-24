@@ -95,3 +95,15 @@ packaging/stage/
 # Ink compiler (large self-contained Windows build; fetch on narrative compile)
 narrative/vendor/ink/inklecate.exe
 
+
+# MetraHost build outputs
+host/MetraHost/bin/
+host/MetraHost/obj/
+host/MetraHost/publish/
+
+# Porter pack (generated plan snapshots + freshness)
+porter/manifest.json
+porter/OPEN-PLANS.md
+porter/plans/**
+!porter/plans/README.md
+

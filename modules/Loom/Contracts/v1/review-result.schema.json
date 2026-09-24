@@ -11,6 +11,11 @@
     "reviewRunId": { "type": "string" },
     "completedCommit": { "type": ["string", "null"] },
     "inspectOutcome": { "type": "string" },
-    "verifyOutcome": { "type": "string" }
+    "verifyOutcome": { "type": "string" },
+    "status": { "type": "string" },
+    "packOutcome": { "type": "string" },
+    "packPath": { "type": "string" },
+    "packBase": { "type": "string" },
+    "packMessage": { "type": "string" }
   }
 }

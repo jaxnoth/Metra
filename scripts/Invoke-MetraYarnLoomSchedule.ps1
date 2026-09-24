@@ -1,8 +1,8 @@
 # Scheduled entrypoint for MetraYarnLoomDaily / MetraYarnLoomPulse.
 # Modes:
 #   Daily (default): yarn scan -> yarn daily -Reconcile -> loom loop -UntilDailyGate -Confirm
-#   Pulse: yarn scan -> loom loop -UntilDailyGate -Confirm (skips reconcile)
-# Exit codes match Invoke-MetraYarnLoomSchedule (0-4).
+#   Pulse: yarn scan -> loom loop -UntilDailyGate -ScoutOnly -Confirm -> Porter (Metra-product pack)
+# Exit codes match Invoke-MetraYarnLoomSchedule (0-4). Porter soft-fails on Pulse.
 
 [CmdletBinding()]
 param(

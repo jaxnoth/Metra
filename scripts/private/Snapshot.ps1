@@ -61,7 +61,7 @@ function Get-MetraProjectGitCounts {
         Returns dirty/ahead/behind counts for a project folder (best-effort, no network).
     .DESCRIPTION
         Some projects keep the git remote in a subfolder rather than the project root
-        (for example Jitterbit tracks OrgBrand.Jitterbit/). When the root is not a repo,
+        (for example Jitterbit tracks Jitterbit/module/). When the root is not a repo,
         counts come from registry-declared gitPaths, or a shallow probe of immediate
         child folders. Counts across multiple nested repos are summed.
     .PARAMETER SubPath

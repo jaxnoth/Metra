@@ -326,5 +326,6 @@ function Get-MetraYarnPending {
             formalPlanPath  = $planPath
         }
     }
-    return Sort-YarnBacklogItems -Items $rows
+    return Get-YarnBacklogItemsSorted -Items $rows
 }
+

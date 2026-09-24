@@ -270,8 +270,14 @@ function Export-MetraContextPack {
             if ($atlasRoot -and -not [string]::IsNullOrWhiteSpace($Query)) {
                 $atlasCli = Join-Path $atlasRoot 'Atlas.ps1'
                 $healthOut = & $atlasCli health 2>$null
-                # Prefer module import for structured hits
-                Import-Module (Join-Path $atlasRoot 'module\OrgBrand.Atlas.psd1') -Force -ErrorAction Stop
+                # Prefer module import for structured hits (any *.psd1 under module/)
+                $atlasModuleDir = Join-Path $atlasRoot 'module'
+                $atlasManifest = Get-ChildItem -LiteralPath $atlasModuleDir -Filter '*.psd1' -ErrorAction Stop |
+                    Select-Object -First 1
+                if (-not $atlasManifest) {
+                    throw "No Atlas module manifest under $atlasModuleDir"
+                }
+                Import-Module $atlasManifest.FullName -Force -ErrorAction Stop
                 $health = Test-AtlasHealth
                 if ($health -and $health.Reachable) {
                     $hits = @(Find-AtlasPage -Query $Query -Top 3)

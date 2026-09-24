@@ -63,7 +63,7 @@ Describe 'Ask evidence - live system intent' {
     It 'matches expanded operator phrasings' {
         InModuleScope Metra {
             Test-MetraAskLiveSystemIntent -Prompt 'status of the gateway right now' | Should -BeTrue
-            Test-MetraAskLiveSystemIntent -Prompt 'check health on prd-example' | Should -BeTrue
+            Test-MetraAskLiveSystemIntent -Prompt 'check health on app-host01' | Should -BeTrue
             Test-MetraAskLiveSystemIntent -Prompt 'are we seeing failures on int?' | Should -BeTrue
             Test-MetraAskLiveSystemIntent -Prompt 'is sam alerting?' | Should -BeTrue
             Test-MetraAskLiveSystemIntent -Prompt 'are services healthy' | Should -BeTrue

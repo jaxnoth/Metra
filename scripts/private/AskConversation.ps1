@@ -1,7 +1,7 @@
 # Ask Conversation Execution - Batch 1: secrets preflight + voice envelope.
 # Intent/policy/engine rewiring lands in later bites. Do not retain raw prompts.
 
-function Normalize-MetraAskInput {
+function ConvertTo-MetraAskInput {
     <#
     .SYNOPSIS
         Trim and normalize Ask prompt text before secrets preflight.
@@ -47,6 +47,30 @@ function Test-MetraAskConversationExecutionEnabled {
     return $false
 }
 
+function Test-MetraAskVisionPhoneClient {
+    <#
+    .SYNOPSIS
+        True when the Ask client is the phone Vision companion (ops-ios), not Ops desk HTML.
+    .NOTES
+        Client identity only - not utterance classification. Vision talks through the engine
+        with portfolio context available; it does not use desk greeting stub replies.
+    #>
+    [CmdletBinding()]
+    param(
+        [string]$HeaderClient = '',
+        [string]$BodyClient = '',
+        [string]$ClientHint = ''
+    )
+
+    foreach ($raw in @($HeaderClient, $BodyClient, $ClientHint)) {
+        if ([string]::IsNullOrWhiteSpace($raw)) { continue }
+        $n = $raw.Trim().ToLowerInvariant()
+        if ($n -in @('ops-ios', 'ios', 'phone', 'vision')) { return $true }
+        if ($n -match '(^|[_\-\s])(ops-ios|ios|phone|vision)($|[_\-\s])') { return $true }
+    }
+    return $false
+}
+
 function Invoke-MetraAskConversationSecretsPreflight {
     <#
     .SYNOPSIS
@@ -61,7 +85,7 @@ function Invoke-MetraAskConversationSecretsPreflight {
         [string]$Prompt
     )
 
-    $normalized = Normalize-MetraAskInput -Prompt $Prompt
+    $normalized = ConvertTo-MetraAskInput -Prompt $Prompt
     $scrub = Invoke-MetraAskSecretsScrubText -Text $normalized
 
     $disposition = 'unchanged'

@@ -97,7 +97,6 @@ $export = @(
     'Get-MetraLoomQueueItemProjectKey'
     'Get-MetraLoomBusyProjectKeys'
     'Test-MetraLoomProjectLaneBusy'
-    'Sort-MetraLoomEligibleQueuedItems'
     'Get-MetraLoomEligibleQueuedForClaim'
     'Invoke-MetraLoomClaimNextEligible'
     'Invoke-MetraLoomClaimItem'

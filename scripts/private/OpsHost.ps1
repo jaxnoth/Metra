@@ -28,6 +28,55 @@ function Get-MetraOpsHostLogPath {
     return Join-Path (Get-MetraOpsHostDataDir) 'ops-host.log'
 }
 
+function Get-MetraOpsHostPendingBalloonPath {
+    return Join-Path (Get-MetraOpsHostDataDir) 'ops-host-pending-balloon.json'
+}
+
+function Set-MetraOpsHostPendingBalloon {
+    <#
+    .SYNOPSIS
+        Queue a one-shot tray balloon for the Host (Ops has no NotifyIcon).
+    #>
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory)][string]$Title,
+        [Parameter(Mandatory)][string]$Text,
+        [ValidateSet('Info', 'Warning', 'Error')]
+        [string]$Icon = 'Warning'
+    )
+
+    try {
+        $payload = @{
+            title     = $Title
+            text      = $Text
+            icon      = $Icon
+            createdAt = [datetime]::UtcNow.ToString('o')
+        } | ConvertTo-Json -Compress
+        $path = Get-MetraOpsHostPendingBalloonPath
+        [System.IO.File]::WriteAllText($path, $payload, [System.Text.UTF8Encoding]::new($false))
+    }
+    catch { }
+}
+
+function Clear-MetraOpsHostPendingBalloon {
+    $path = Get-MetraOpsHostPendingBalloonPath
+    if (Test-Path -LiteralPath $path) {
+        Remove-Item -LiteralPath $path -Force -ErrorAction SilentlyContinue
+    }
+}
+
+function Read-MetraOpsHostPendingBalloon {
+    $path = Get-MetraOpsHostPendingBalloonPath
+    if (-not (Test-Path -LiteralPath $path)) { return $null }
+    try {
+        $raw = [System.IO.File]::ReadAllText($path)
+        return ($raw | ConvertFrom-Json)
+    }
+    catch {
+        return $null
+    }
+}
+
 function Write-MetraOpsHostLog {
     <#
     .SYNOPSIS
@@ -79,6 +128,26 @@ function Get-MetraOpsHostIconPath {
     )
     foreach ($path in $candidates) {
         if (Test-Path -LiteralPath $path) { return $path }
+    }
+    return $null
+}
+
+function Get-MetraOpsHostExePath {
+    <#
+    .SYNOPSIS
+        Path to MetraHost.exe when published/built; otherwise $null (PowerShell tray fallback).
+    #>
+    [CmdletBinding()]
+    param([string]$MetraRoot = (Get-MetraRoot))
+
+    foreach ($candidate in @(
+            (Join-Path $MetraRoot 'host\MetraHost\publish\MetraHost.exe')
+            (Join-Path $MetraRoot 'host\MetraHost\bin\Release\net8.0-windows\MetraHost.exe')
+            (Join-Path $MetraRoot 'host\MetraHost\bin\Debug\net8.0-windows\MetraHost.exe')
+        )) {
+        if (Test-Path -LiteralPath $candidate -PathType Leaf) {
+            return $candidate
+        }
     }
     return $null
 }
@@ -842,6 +911,27 @@ function Start-MetraOpsHost {
         throw "Invalid port: $Port"
     }
 
+    # Prefer MetraHost.exe when built - distinct process identity from PowerShell.
+    $hostExe = Get-MetraOpsHostExePath -MetraRoot $MetraRoot
+    if ($hostExe) {
+        $existingHost = Get-MetraOpsHostProcessId
+        if ($existingHost -and $existingHost -ne $PID) {
+            try { Install-MetraOpsStartMenuShortcuts -MetraRoot $MetraRoot | Out-Null } catch { }
+            Write-Host "Metra Ops host already running (process $existingHost)." -ForegroundColor Green
+            if (-not $NoBrowser) {
+                Open-MetraOpsDeskBrowser -Port $Port -MetraRoot $MetraRoot
+            }
+            return
+        }
+
+        $argList = @('--root', $MetraRoot, '--port', "$Port")
+        if ($NoBrowser) { $argList += '--no-browser' }
+        if ($ForceLocal) { $argList += '--force-local' }
+        Start-Process -FilePath $hostExe -ArgumentList $argList -WorkingDirectory $MetraRoot | Out-Null
+        Write-Host "Metra Ops host started (MetraHost.exe)." -ForegroundColor Green
+        return
+    }
+
     # Second click / idempotent: another host already owns the tray.
     $existingHost = Get-MetraOpsHostProcessId
     if ($existingHost -and $existingHost -ne $PID) {
@@ -1062,6 +1152,25 @@ function Start-MetraOpsHost {
     $timer.Add_Tick({
             # Operator chose Stop desk - do not fight that decision.
             if ($script:MetraOpsDeskStopped) { return }
+
+            # One-shot balloons queued by Ops (e.g. Serve HTTPS failed).
+            try {
+                $pendingBalloon = Read-MetraOpsHostPendingBalloon
+                if ($pendingBalloon) {
+                    Clear-MetraOpsHostPendingBalloon
+                    $tipIcon = [System.Windows.Forms.ToolTipIcon]::Warning
+                    $iconName = [string](Get-MetraProp -Object $pendingBalloon -Name 'icon' -Default 'Warning')
+                    if ($iconName -eq 'Info') { $tipIcon = [System.Windows.Forms.ToolTipIcon]::Info }
+                    elseif ($iconName -eq 'Error') { $tipIcon = [System.Windows.Forms.ToolTipIcon]::Error }
+                    $notify.ShowBalloonTip(
+                        6000,
+                        [string](Get-MetraProp -Object $pendingBalloon -Name 'title' -Default 'Metra Ops'),
+                        [string](Get-MetraProp -Object $pendingBalloon -Name 'text' -Default ''),
+                        $tipIcon
+                    )
+                }
+            }
+            catch { }
 
             # Quiet product update check (cached 24h inside Get-MetraProductUpdates). Balloon only when new.
             if ([datetime]::UtcNow -ge $script:MetraOpsNextUpdateCheckUtc) {
