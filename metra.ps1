@@ -36,7 +36,7 @@ param(
     [Parameter(Position = 0)]
     [ValidateSet(
         'list', 'status', 'pull', 'fetch', 'run', 'new', 'apply', 'workspace',
-        'audit', 'snapshot', 'selfdoc', 'ops', 'host', 'chats', 'roots', 'routing',
+        'audit', 'snapshot', 'selfdoc', 'ops', 'host', 'chats', 'roots', 'paths', 'export', 'routing',
         'export-profile', 'import-profile', 'ctx', 'setup', 'verify', 'security-audit', 'unblock', 'tailscale', 'satellite', 'desk', 'profile', 'decisions', 'coverage', 'ask', 'capture', 'narrative', 'watch', 'inspect', 'azdo', 'atlas', 'loom', 'yarn', 'plan-board', 'porter', 'autoprogram', 'help'
     )]
     [string]$Command = 'help',
@@ -72,6 +72,7 @@ param(
     [switch]$IncludeMetra,
     [switch]$Cloud,
     [switch]$SharedOnly,
+    [switch]$Share,
     [switch]$MissingOnly,
     [switch]$Quick,
     [switch]$RefreshSelfDocumentation,
@@ -371,6 +372,106 @@ switch ($Command) {
         $missing = @($roots | Where-Object { -not $_.Exists })
         if ($missing.Count -gt 0) {
             Write-Host ("Not present on this machine: {0}" -f (($missing.Name) -join ', ')) -ForegroundColor Yellow
+        }
+    }
+
+    'paths' {
+        $sub = 'show'
+        if ($Rest -and $Rest.Count -gt 0) { $sub = [string]$Rest[0] }
+        switch ($sub.ToLowerInvariant()) {
+            'show' {
+                $cfg = Get-MetraPathsLocal
+                $resolved = $null
+                $resolveError = $null
+                try { $resolved = Get-MetraShareRoot } catch { $resolveError = $_.Exception.Message }
+                [PSCustomObject]@{
+                    pathsLocalPath    = $cfg.path
+                    pathsLocalExists  = [bool]$cfg.exists
+                    shareRootTemplate = [string]$cfg.shareRootTemplate
+                    shareRootOverride = [string]$cfg.shareRoot
+                    shareRoot         = $resolved
+                    resolveError      = $resolveError
+                    oneDriveEnv       = [Environment]::GetEnvironmentVariable('OneDrive')
+                    userProfileEnv    = [Environment]::GetEnvironmentVariable('USERPROFILE')
+                } | Format-List
+            }
+            'init' {
+                $template = $null
+                $absolute = $null
+                if (-not [string]::IsNullOrWhiteSpace($Path)) {
+                    # -Path as absolute share root override, or keep template via example default
+                    if ($Path -match '%') { $template = $Path }
+                    else { $absolute = $Path }
+                }
+                $initArgs = @{ Force = $Force }
+                if ($template) { $initArgs.ShareRootTemplate = $template }
+                if ($absolute) { $initArgs.ShareRoot = $absolute }
+                $result = Initialize-MetraShareLayout @initArgs
+                if (-not $Quiet) {
+                    $result | Format-List
+                    Write-Host ("Share root: {0}" -f $result.shareRoot) -ForegroundColor Green
+                }
+                else {
+                    Write-Output $result.shareRoot
+                }
+            }
+            'project' {
+                if (-not $Rest -or $Rest.Count -lt 2 -or [string]::IsNullOrWhiteSpace([string]$Rest[1])) {
+                    throw "paths project requires a project name. Example: .\metra.ps1 paths project TicketTracker"
+                }
+                $proj = [string]$Rest[1]
+                $dir = Get-MetraShareProjectPath -Project $proj
+                if ($Quiet) {
+                    Write-Output $dir
+                }
+                else {
+                    Write-Host $dir
+                }
+            }
+            'open' {
+                $root = Get-MetraShareRoot
+                if (-not (Test-Path -LiteralPath $root)) {
+                    throw "Share root missing. Run: .\metra.ps1 paths init"
+                }
+                Start-Process explorer.exe -ArgumentList $root | Out-Null
+                Write-Host $root
+            }
+            default {
+                throw "Unknown paths subcommand '$sub'. Use: show | init | project <Name> | open"
+            }
+        }
+    }
+
+    'export' {
+        $kind = 'docx'
+        if ($Rest -and $Rest.Count -gt 0) { $kind = [string]$Rest[0] }
+        switch ($kind.ToLowerInvariant()) {
+            'docx' {
+                $mdPath = $Path
+                if ([string]::IsNullOrWhiteSpace($mdPath) -and $Rest -and $Rest.Count -gt 1) {
+                    $mdPath = [string]$Rest[1]
+                }
+                if ([string]::IsNullOrWhiteSpace($mdPath)) {
+                    throw "export docx requires a markdown path. Example: .\metra.ps1 export docx ..\TicketTracker\docs\Ticket-Lifecycle-Metra.md -Share -Name TicketTracker"
+                }
+                $tool = Join-Path $PSScriptRoot 'tools\Export-MarkdownDocx.ps1'
+                if (-not (Test-Path -LiteralPath $tool)) {
+                    throw "Export tool missing: $tool"
+                }
+                $exportArgs = @{ Path = $mdPath }
+                if ($Share) { $exportArgs.Share = $true }
+                if (-not [string]::IsNullOrWhiteSpace($Name) -and @($Name).Count -ge 1 -and $Name[0]) {
+                    $exportArgs.Project = [string]$Name[0]
+                }
+                elseif (-not [string]::IsNullOrWhiteSpace($RelativePath)) {
+                    # allow -RelativePath as alternate project label if someone prefers
+                    $exportArgs.Project = $RelativePath
+                }
+                & $tool @exportArgs
+            }
+            default {
+                throw "Unknown export kind '$kind'. Use: export docx <path.md> [-Share] [-Name <Project>]"
+            }
         }
     }
 

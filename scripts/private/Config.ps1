@@ -930,3 +930,275 @@ function Test-ExcludedProjectName {
     return $false
 }
 
+function Get-MetraPathsLocalPath {
+    <#
+    .SYNOPSIS
+        Machine-local paths ledger (%LOCALAPPDATA%\Metra\paths.local.json).
+    #>
+    [CmdletBinding()]
+    param([string]$MetraRoot)
+    return Join-Path (Get-MetraMachineDataRoot -MetraRoot $MetraRoot) 'paths.local.json'
+}
+
+function Expand-MetraEnvPathTemplate {
+    <#
+    .SYNOPSIS
+        Expand %VAR% tokens in a path template (e.g. %OneDrive%\Documents\Metra).
+    .NOTES
+        Unset or blank environment variables leave their %VAR% token intact so callers
+        can fail closed instead of producing drive-relative paths like \Documents\Metra.
+    #>
+    [CmdletBinding()]
+    param([Parameter(Mandatory)][AllowEmptyString()][string]$Template)
+
+    $s = [string]$Template
+    $guard = 0
+    while ($s -match '%([^%]+)%' -and $guard -lt 20) {
+        $guard++
+        $name = $Matches[1]
+        $val = [Environment]::GetEnvironmentVariable($name)
+        if ([string]::IsNullOrWhiteSpace([string]$val)) {
+            # Stop expanding; leave the unresolved token for candidate validation.
+            break
+        }
+        $s = $s.Replace('%' + $name + '%', $val)
+    }
+    return $s.Trim()
+}
+
+function Test-MetraSharePathCandidate {
+    <#
+    .SYNOPSIS
+        True when a share-root candidate is a usable absolute path (not relative / drive-relative / unresolved).
+    #>
+    [CmdletBinding()]
+    param([AllowEmptyString()][string]$Candidate)
+
+    if ([string]::IsNullOrWhiteSpace($Candidate)) { return $false }
+    if ($Candidate -match '%[^%]+%') { return $false }
+    # \Documents\Metra is Path.IsPathRooted on Windows but resolves to <currentDrive>\Documents\Metra.
+    if ($Candidate -match '^[\\/](?![\\/])') { return $false }
+    if (-not [System.IO.Path]::IsPathRooted($Candidate)) { return $false }
+
+    $fullyQualified = [System.IO.Path].GetMethod('IsPathFullyQualified', [type[]]@([string]))
+    if ($null -ne $fullyQualified) {
+        return [bool]$fullyQualified.Invoke($null, @($Candidate))
+    }
+
+    # Windows PowerShell 5.1: require drive letter or UNC.
+    return ($Candidate -match '^[A-Za-z]:[\\/]') -or ($Candidate -match '^\\\\[^\\\/]+[\\/]')
+}
+
+function Get-MetraDefaultShareRootTemplate {
+    <#
+    .SYNOPSIS
+        Preferred OneDrive Documents\Metra template; USERPROFILE fallback when OneDrive unset.
+    #>
+    [CmdletBinding()]
+    param()
+    if (-not [string]::IsNullOrWhiteSpace([Environment]::GetEnvironmentVariable('OneDrive'))) {
+        return '%OneDrive%\Documents\Metra'
+    }
+    return '%USERPROFILE%\Documents\Metra'
+}
+
+function Get-MetraPathsLocal {
+    <#
+    .SYNOPSIS
+        Read paths.local.json (share root template / override). Missing file returns defaults.
+    #>
+    [CmdletBinding()]
+    param([string]$MetraRoot)
+
+    $path = Get-MetraPathsLocalPath -MetraRoot $MetraRoot
+    $defaults = [PSCustomObject]@{
+        shareRootTemplate = Get-MetraDefaultShareRootTemplate
+        shareRoot         = $null
+        updatedAt         = $null
+        path              = $path
+        exists            = (Test-Path -LiteralPath $path)
+    }
+    if (-not $defaults.exists) { return $defaults }
+    try {
+        $raw = Get-Content -LiteralPath $path -Raw -Encoding UTF8 | ConvertFrom-Json
+        $template = [string](Get-MetraProp -Object $raw -Name 'shareRootTemplate' -Default '')
+        if ([string]::IsNullOrWhiteSpace($template)) {
+            $template = Get-MetraDefaultShareRootTemplate
+        }
+        $absolute = Get-MetraProp -Object $raw -Name 'shareRoot' -Default $null
+        if ($null -ne $absolute) {
+            $absolute = [string]$absolute
+            if ([string]::IsNullOrWhiteSpace($absolute)) { $absolute = $null }
+        }
+        return [PSCustomObject]@{
+            shareRootTemplate = $template
+            shareRoot         = $absolute
+            updatedAt         = (Get-MetraProp -Object $raw -Name 'updatedAt' -Default $null)
+            path              = $path
+            exists            = $true
+        }
+    }
+    catch {
+        Write-Warning ("Get-MetraPathsLocal: failed to read '{0}': {1}" -f $path, $_.Exception.Message)
+        return $defaults
+    }
+}
+
+function Get-MetraShareRoot {
+    <#
+    .SYNOPSIS
+        Resolved Metra share root (OneDrive Documents\Metra by default).
+    .NOTES
+        Prefer shareRoot absolute override, else expand shareRootTemplate (%OneDrive% / %USERPROFILE%).
+        Unresolved or drive-relative expansions fall back to Get-MetraDefaultShareRootTemplate.
+    #>
+    [CmdletBinding()]
+    param([string]$MetraRoot)
+
+    $cfg = Get-MetraPathsLocal -MetraRoot $MetraRoot
+    $candidate = $null
+    if (-not [string]::IsNullOrWhiteSpace([string]$cfg.shareRoot)) {
+        $override = [string]$cfg.shareRoot
+        if (Test-MetraSharePathCandidate -Candidate $override) {
+            $candidate = $override
+        }
+    }
+    if (-not (Test-MetraSharePathCandidate -Candidate $candidate)) {
+        $expanded = Expand-MetraEnvPathTemplate -Template ([string]$cfg.shareRootTemplate)
+        if (Test-MetraSharePathCandidate -Candidate $expanded) {
+            $candidate = $expanded
+        }
+    }
+    if (-not (Test-MetraSharePathCandidate -Candidate $candidate)) {
+        $fallback = Expand-MetraEnvPathTemplate -Template (Get-MetraDefaultShareRootTemplate)
+        if (Test-MetraSharePathCandidate -Candidate $fallback) {
+            $candidate = $fallback
+        }
+    }
+    if (-not (Test-MetraSharePathCandidate -Candidate $candidate)) {
+        throw 'Could not resolve Metra share root. Set OneDrive or USERPROFILE, or write shareRoot in paths.local.json.'
+    }
+    return [System.IO.Path]::GetFullPath($candidate)
+}
+
+function Get-MetraShareProjectPath {
+    <#
+    .SYNOPSIS
+        Share\<Project> under the Metra share root (creates the directory).
+    #>
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory)][string]$Project,
+        [string]$MetraRoot,
+        [switch]$NoCreate
+    )
+    $name = $Project.Trim()
+    if ([string]::IsNullOrWhiteSpace($name)) { throw 'Project name is required.' }
+    if ($name -in @('.', '..') -or $name -match '^\.+$') {
+        throw 'Invalid project name.'
+    }
+    if ($name -match '[\\/:*?"<>|]') {
+        throw "Project name has invalid path characters: $name"
+    }
+    $shareRoot = Get-MetraShareRoot -MetraRoot $MetraRoot
+    $shareContainer = [System.IO.Path]::GetFullPath((Join-Path $shareRoot 'Share'))
+    $dir = [System.IO.Path]::GetFullPath((Join-Path $shareContainer $name))
+    if (-not (Test-MetraPathWithinRoot -Path $dir -Root $shareContainer)) {
+        throw 'Project path escaped share root.'
+    }
+    # Project folder must be a direct child of Share (not Share itself).
+    if ([string]::Equals($dir, $shareContainer, [StringComparison]::OrdinalIgnoreCase)) {
+        throw 'Invalid project name.'
+    }
+    if (-not $NoCreate) {
+        [void][System.IO.Directory]::CreateDirectory($dir)
+    }
+    return $dir
+}
+
+function Initialize-MetraShareLayout {
+    <#
+    .SYNOPSIS
+        Create OneDrive (or Documents) Metra share folder + paths.local.json pointer.
+    #>
+    [CmdletBinding()]
+    param(
+        [string]$ShareRootTemplate,
+        [string]$ShareRoot,
+        [string]$MetraRoot,
+        [switch]$Force
+    )
+
+    $ledgerPath = Get-MetraPathsLocalPath -MetraRoot $MetraRoot
+    $existing = Get-MetraPathsLocal -MetraRoot $MetraRoot
+    $template = $ShareRootTemplate
+    if ([string]::IsNullOrWhiteSpace($template)) {
+        if ($existing.exists -and -not [string]::IsNullOrWhiteSpace([string]$existing.shareRootTemplate)) {
+            $template = [string]$existing.shareRootTemplate
+        }
+        else {
+            $template = Get-MetraDefaultShareRootTemplate
+        }
+    }
+
+    $absoluteOverride = $ShareRoot
+    if ([string]::IsNullOrWhiteSpace($absoluteOverride) -and $existing.exists) {
+        $absoluteOverride = [string]$existing.shareRoot
+    }
+    if ([string]::IsNullOrWhiteSpace($absoluteOverride)) { $absoluteOverride = $null }
+
+    if ((Test-Path -LiteralPath $ledgerPath) -and -not $Force -and -not $PSBoundParameters.ContainsKey('ShareRootTemplate') -and -not $PSBoundParameters.ContainsKey('ShareRoot')) {
+        $root = Get-MetraShareRoot -MetraRoot $MetraRoot
+        [void][System.IO.Directory]::CreateDirectory($root)
+        [void][System.IO.Directory]::CreateDirectory((Join-Path $root 'Share'))
+        return [PSCustomObject]@{
+            ok                = $true
+            createdLedger     = $false
+            shareRoot         = $root
+            pathsLocalPath    = $ledgerPath
+            shareRootTemplate = [string]$existing.shareRootTemplate
+        }
+    }
+
+    $payload = [ordered]@{
+        shareRootTemplate = $template
+        updatedAt         = (Get-Date).ToString('o')
+    }
+    if ($absoluteOverride) {
+        $payload['shareRoot'] = [System.IO.Path]::GetFullPath($absoluteOverride)
+    }
+
+    $json = ($payload | ConvertTo-Json -Depth 4)
+    $utf8 = New-Object System.Text.UTF8Encoding $false
+    [System.IO.File]::WriteAllText($ledgerPath, $json, $utf8)
+
+    $root = Get-MetraShareRoot -MetraRoot $MetraRoot
+    [void][System.IO.Directory]::CreateDirectory($root)
+    [void][System.IO.Directory]::CreateDirectory((Join-Path $root 'Share'))
+
+    $readme = Join-Path $root 'README.txt'
+    if (-not (Test-Path -LiteralPath $readme) -or $Force) {
+        $body = @"
+Metra share folder (operator machine)
+
+Owned by Metra for shareable exports (Word docs, handouts) that sync via OneDrive.
+Markdown / code stay in git checkouts. Regenerated binaries and boss-facing copies land under Share\<Project>\.
+
+Pointer file (machine-local, not OneDrive):
+  %LOCALAPPDATA%\Metra\paths.local.json
+
+Default template: %OneDrive%\Documents\Metra
+CLI: .\metra.ps1 paths show | init | project <Name> | open
+"@
+        [System.IO.File]::WriteAllText($readme, $body.TrimStart(), $utf8)
+    }
+
+    return [PSCustomObject]@{
+        ok                = $true
+        createdLedger     = $true
+        shareRoot         = $root
+        pathsLocalPath    = $ledgerPath
+        shareRootTemplate = $template
+    }
+}
+

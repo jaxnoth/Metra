@@ -56,7 +56,11 @@ One Metra across conversational surfaces - not a personality feature or second s
 
 Composition: Posture drives expression; Surface does not invent a second personality dial. Vision may default to Company when posture is unset - elevated personality remains a posture effect. Portfolio grounding is available when portfolio-shaped (same evidence standards as Ask); non-portfolio turns stay allowed. Continuity only from typed ContinuityEvidence. Identity does not grant Host / Capture / Ticket execution authority. Partner-voice strip for durable output happens at the execution boundary (`ConvertTo-MetraPartnerNeutralArtifact`).
 
+**Desk Ops chat:** Same conversation path as Vision / Cursor / iOS - not a colder fork. Desk Ops may show more portfolio visibility (awareness chrome, grounding density); that is surface modality. Capture / ticket assess / AskLane stay capability wiring when needed. See [Decisions.md](Decisions.md) (Desk Ops chat same conversation path).
+
 **AppliesTo:** Ask/CE, Cursor Agent body, iOS via CE, Ops presence acknowledgement, Vision. **DoesNotApplyTo:** Inspect reviewer job, durable artifact bodies, logs, telemetry, machine envelopes.
+
+**Evidence vs reader synthesis:** Projects and CLIs owe structured evidence; conversational Metra owes human-readable synthesis for the operator (verdict + relevant facts; related items as backing). Not a per-project AGENTS voice job. See [Decisions.md](Decisions.md) (Evidence vs reader synthesis) and base persona Output channels.
 
 Import only **installs** listed files. Cursor loads base + local overlay + any opt-in add-on rules when those local files are present. Operators on other harnesses still use profile packs for config/registry; persona auto-load is Cursor-shaped - see [Integrations.md](Integrations.md).
 

@@ -42,6 +42,11 @@ $script:MetraPublicFunctions = @(
 $script:MetraCompatibilityFunctions = @(
     'Get-MetraRoot',
     'Get-MetraMachineDataRoot',
+    'Get-MetraPathsLocalPath',
+    'Get-MetraPathsLocal',
+    'Get-MetraShareRoot',
+    'Get-MetraShareProjectPath',
+    'Initialize-MetraShareLayout',
     'Get-MetraCanvasSnapshotPath',
     'Get-MetraContextPackPath',
     'Get-MetraSelfDocRoutesPath',

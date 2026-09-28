@@ -3445,6 +3445,81 @@ Describe 'Metra routing concept and multi-hop' {
     }
 }
 
+Describe 'Metra share root path safety' {
+    It 'leaves unset env tokens intact instead of producing drive-relative paths' {
+        InModuleScope Metra {
+            $prev = [Environment]::GetEnvironmentVariable('OneDrive')
+            try {
+                [Environment]::SetEnvironmentVariable('OneDrive', $null)
+                $expanded = Expand-MetraEnvPathTemplate -Template '%OneDrive%\Documents\Metra'
+                $expanded | Should -Match '%OneDrive%'
+                Test-MetraSharePathCandidate -Candidate $expanded | Should -BeFalse
+                Test-MetraSharePathCandidate -Candidate '\Documents\Metra' | Should -BeFalse
+                Test-MetraSharePathCandidate -Candidate 'Documents\Metra' | Should -BeFalse
+            }
+            finally {
+                [Environment]::SetEnvironmentVariable('OneDrive', $prev)
+            }
+        }
+    }
+
+    It 'falls back to USERPROFILE template when OneDrive is unset' {
+        InModuleScope Metra {
+            $temp = Join-Path ([IO.Path]::GetTempPath()) ("metra-share-" + [guid]::NewGuid().ToString('n'))
+            $machine = Join-Path $temp '.metra-machine'
+            New-Item -ItemType Directory -Path $machine -Force | Out-Null
+            $prevOd = [Environment]::GetEnvironmentVariable('OneDrive')
+            $prevUp = [Environment]::GetEnvironmentVariable('USERPROFILE')
+            try {
+                [Environment]::SetEnvironmentVariable('OneDrive', $null)
+                if ([string]::IsNullOrWhiteSpace($prevUp)) {
+                    [Environment]::SetEnvironmentVariable('USERPROFILE', $env:USERPROFILE)
+                }
+                $pathsLocal = @{
+                    shareRootTemplate = '%OneDrive%\Documents\Metra'
+                    shareRoot         = $null
+                    updatedAt         = (Get-Date).ToString('o')
+                } | ConvertTo-Json
+                Set-Content -LiteralPath (Join-Path $machine 'paths.local.json') -Value $pathsLocal -Encoding utf8
+                Mock Get-MetraMachineDataRoot { $machine }
+                $root = Get-MetraShareRoot -MetraRoot $temp
+                $root | Should -Match 'Documents[\\/]Metra$'
+                $root.StartsWith('\') | Should -BeFalse
+                ([System.IO.Path]::GetFullPath($root)) | Should -Be $root
+                # Must not land on current-drive \Documents\Metra
+                $root | Should -Not -BeLike '\Documents\Metra'
+                $badFull = [System.IO.Path]::GetFullPath('\Documents\Metra')
+                $root | Should -Not -Be $badFull
+            }
+            finally {
+                [Environment]::SetEnvironmentVariable('OneDrive', $prevOd)
+                [Environment]::SetEnvironmentVariable('USERPROFILE', $prevUp)
+                Remove-Item -LiteralPath $temp -Recurse -Force -ErrorAction SilentlyContinue
+            }
+        }
+    }
+
+    It 'rejects . and .. project names and keeps projects under Share' {
+        InModuleScope Metra {
+            $temp = Join-Path ([IO.Path]::GetTempPath()) ("metra-share-proj-" + [guid]::NewGuid().ToString('n'))
+            $shareRoot = Join-Path $temp 'MetraShare'
+            New-Item -ItemType Directory -Path $shareRoot -Force | Out-Null
+            try {
+                Mock Get-MetraShareRoot { $shareRoot }
+                { Get-MetraShareProjectPath -Project '..' -NoCreate } | Should -Throw
+                { Get-MetraShareProjectPath -Project '.' -NoCreate } | Should -Throw
+                { Get-MetraShareProjectPath -Project '...' -NoCreate } | Should -Throw
+                $ok = Get-MetraShareProjectPath -Project 'TicketTracker' -NoCreate
+                $ok | Should -Be ([System.IO.Path]::GetFullPath((Join-Path (Join-Path $shareRoot 'Share') 'TicketTracker')))
+                Test-MetraPathWithinRoot -Path $ok -Root (Join-Path $shareRoot 'Share') | Should -BeTrue
+            }
+            finally {
+                Remove-Item -LiteralPath $temp -Recurse -Force -ErrorAction SilentlyContinue
+            }
+        }
+    }
+}
+
 Describe 'Attention visible count normalization' {
     It 'normalizes Attention visible count to 1..10' {
         InModuleScope Metra {

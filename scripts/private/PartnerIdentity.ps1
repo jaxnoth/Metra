@@ -43,10 +43,11 @@ function Get-MetraPartnerIdentityContract {
             'continuity_from_attached_evidence_only'
             'vocative_metra_is_check_in_not_route'
             'sink_strip_at_execution_output'
+            'desk_ops_chat_same_conversation_path'
         )
         Composition   = [PSCustomObject]@{
             PostureOwns = @('warmth', 'humor', 'clarifications', 'silence', 'plainEnglish', 'expression_intensity')
-            SurfaceOwns = @('modality', 'default_posture', 'capability_wiring')
+            SurfaceOwns = @('modality', 'default_posture', 'capability_wiring', 'portfolio_visibility')
         }
         SurfaceDefaults = [PSCustomObject]@{
             Ask         = 'Desk'
@@ -205,6 +206,10 @@ function New-MetraPartnerIdentityPreamble {
 
     if ($Surface -in @('Vision', 'iOS')) {
         [void]$lines.Add('Vision / phone companion: normal Metra conversation with optional portfolio access. Same partner identity - not a separate companion character. Use attached portfolio context when relevant; do not force desk routing essays.')
+    }
+
+    if ($Surface -eq 'Ask') {
+        [void]$lines.Add('Desk Ops chat: same Partner Identity and conversation path as Vision and other Metra chat surfaces - not a second self. This surface may show more portfolio visibility (chrome, grounding density). Capture, ticket assess, and AskLane remain capability wiring when the turn needs them - not a forked identity. Synthesize evidence for the operator; do not relay related-item lists as the answer.')
     }
 
     return ($lines -join "`n")

@@ -2251,7 +2251,7 @@ If no issues: {"findings":[]}. No markdown. No prose outside JSON.
             -Context @{ purpose = 'metra-inspect' } -TimeoutSec 600 `
             -Engine $selection.Engine -Model $selection.RequestedModel
         if (-not $engineResult.ok -and $attempt -eq 0 -and (Test-MetraAskSidecarRestartableFailure -EngineResult $engineResult)) {
-            Write-Host 'Inspect: Ask engine failed — restarting sidecar and retrying once...' -ForegroundColor Yellow
+            Write-Host 'Inspect: Ask engine failed - restarting sidecar and retrying once...' -ForegroundColor Yellow
             $null = Restart-MetraAskEngine -MetraRoot $MetraRoot -Confirm:$false
             continue
         }
@@ -3262,6 +3262,7 @@ function Write-MetraInspectPackArtifact {
             Path         = $packPath
             Stale        = $Stale
             Mode         = $Mode
+            SlotKey      = $SlotKey
             Text         = $PackText
             Skipped      = $true
             Clipboard    = $false
@@ -3290,6 +3291,7 @@ function Write-MetraInspectPackArtifact {
         Path      = $packPath
         Stale     = $Stale
         Mode      = $Mode
+        SlotKey   = $SlotKey
         Text      = $PackText
         Skipped   = $false
         Clipboard = $clipped
@@ -3446,15 +3448,35 @@ function Invoke-MetraInspectPack {
     [CmdletBinding(SupportsShouldProcess)]
     param(
         [ValidateSet('diff', 'plan')][string]$Mode = 'diff',
+        [string]$Name,
         [switch]$NoClipboard
     )
 
-    $pointer = Get-MetraInspectLastPointer -Mode $Mode
-    if (-not $pointer -or [string]::IsNullOrWhiteSpace([string]$pointer.latestReportPath)) {
-        throw "No last $Mode inspect report. Run .\metra.ps1 inspect$(if ($Mode -eq 'plan') { ' plan' }) first."
+    $pointerSlot = $null
+    if (-not [string]::IsNullOrWhiteSpace($Name)) {
+        $ctx = Resolve-MetraInspectProjectContext -Name $Name -Mode $Mode
+        if (-not $ctx.Ok) { throw $ctx.Error }
+        $pointerSlot = [string]$ctx.Project
+        if ([string]::IsNullOrWhiteSpace($pointerSlot)) { $pointerSlot = 'default' }
     }
 
-    $slotKey = [string](Get-MetraProp -Object $pointer -Name 'project' -Default '')
+    $pointer = if ($pointerSlot) {
+        Get-MetraInspectLastPointer -Mode $Mode -SlotKey $pointerSlot
+    }
+    else {
+        Get-MetraInspectLastPointer -Mode $Mode
+    }
+    if (-not $pointer -or [string]::IsNullOrWhiteSpace([string]$pointer.latestReportPath)) {
+        $hint = if ($pointerSlot) { " -Name $pointerSlot" } else { '' }
+        throw "No last $Mode inspect report. Run .\metra.ps1 inspect$(if ($Mode -eq 'plan') { ' plan' })$hint first."
+    }
+
+    $slotKey = if ($pointerSlot) {
+        $pointerSlot
+    }
+    else {
+        [string](Get-MetraProp -Object $pointer -Name 'project' -Default '')
+    }
     if ([string]::IsNullOrWhiteSpace($slotKey)) { $slotKey = 'default' }
 
     $stateRoot = Get-MetraInspectStateRoot
@@ -5052,7 +5074,7 @@ function Invoke-MetraInspectReviewLoop {
             Write-Host ("Verify touch-set: {0} path(s) with bodies; remainder names-only." -f @($touchSet).Count) -ForegroundColor DarkGray
         }
         else {
-            Write-Host 'Verify touch-set empty — falling back to full reduced prompt.' -ForegroundColor Yellow
+            Write-Host 'Verify touch-set empty - falling back to full reduced prompt.' -ForegroundColor Yellow
             $inspectParams.VerifyPass = $true
         }
     }
@@ -5634,22 +5656,36 @@ function Show-MetraInspectBingGateStatus {
 function Invoke-MetraInspectAutoPack {
     [CmdletBinding()]
     param(
+        [string]$Name,
         [switch]$NoClipboard
     )
+    $fallbackSlot = if ([string]::IsNullOrWhiteSpace($Name)) { 'default' } else { $Name.Trim() }
     try {
-        $pack = Invoke-MetraInspectPack -Mode diff -NoClipboard:$NoClipboard -Confirm:$false
+        $packParams = @{
+            Mode        = 'diff'
+            NoClipboard = $NoClipboard
+            Confirm     = $false
+        }
+        if (-not [string]::IsNullOrWhiteSpace($Name)) {
+            $packParams.Name = $Name.Trim()
+        }
+        $pack = Invoke-MetraInspectPack @packParams
+        $resolvedSlot = [string](Get-MetraProp -Object $pack -Name 'SlotKey' -Default $fallbackSlot)
+        if ([string]::IsNullOrWhiteSpace($resolvedSlot)) { $resolvedSlot = $fallbackSlot }
         return [PSCustomObject]@{
             ok       = $true
-            packPath = [string](Get-MetraProp -Object $pack -Name 'Path' -Default (Get-MetraInspectPackPath -SlotKey 'default' -Mode 'diff'))
+            packPath = [string](Get-MetraProp -Object $pack -Name 'Path' -Default (Get-MetraInspectPackPath -SlotKey $resolvedSlot -Mode 'diff'))
             skipped  = [bool](Get-MetraProp -Object $pack -Name 'Skipped' -Default $false)
+            slotKey  = $resolvedSlot
         }
     }
     catch {
         Write-Warning ("Auto pack build failed: {0}" -f $_.Exception.Message)
         return [PSCustomObject]@{
             ok       = $false
-            packPath = Get-MetraInspectPackPath -SlotKey 'default' -Mode 'diff'
+            packPath = Get-MetraInspectPackPath -SlotKey $fallbackSlot -Mode 'diff'
             error    = $_.Exception.Message
+            slotKey  = $fallbackSlot
         }
     }
 }
@@ -5678,8 +5714,8 @@ function Invoke-MetraInspectPrepareForBing {
             $live = Get-MetraInspectCurrentDiffInput -ProjectContext $ctx
             $assess = Get-MetraInspectSlotDiffAssess -SlotKey $slotKey
             if ($null -ne $assess -and $live.inputHash -eq $assess.inputHash) {
-                Write-Host 'Prepare-for-Bing: reusing completed loop session — refreshing pack...' -ForegroundColor Cyan
-                $packResult = Invoke-MetraInspectAutoPack -NoClipboard
+                Write-Host 'Prepare-for-Bing: reusing completed loop session - refreshing pack...' -ForegroundColor Cyan
+                $packResult = Invoke-MetraInspectAutoPack -Name $slotKey -NoClipboard
                 return [PSCustomObject]@{
                     readyForBing      = $true
                     project           = $slotKey
@@ -5694,7 +5730,7 @@ function Invoke-MetraInspectPrepareForBing {
                     reusedSession     = $true
                 }
             }
-            Write-Host 'Prepare-for-Bing: working tree changed since completed session — re-assessing...' -ForegroundColor Yellow
+            Write-Host 'Prepare-for-Bing: working tree changed since completed session - re-assessing...' -ForegroundColor Yellow
             $Reset = $true
         }
     }
@@ -5730,7 +5766,7 @@ function Invoke-MetraInspectPrepareForBing {
     $goalMet = ($critical -eq 0 -and $high -eq 0 -and $medium -le 2)
 
     Write-Host 'Prepare-for-Bing: auto-building Bing pack...' -ForegroundColor Cyan
-    $packResult = Invoke-MetraInspectAutoPack -NoClipboard
+    $packResult = Invoke-MetraInspectAutoPack -Name $slotKey -NoClipboard
     $packPath = [string]$packResult.packPath
 
     if ($active -and $phase -eq 'AwaitingFix') {
@@ -5804,7 +5840,7 @@ function Invoke-MetraInspectPreCommitHook {
 
     $live = Get-MetraInspectCurrentDiffInput -ProjectContext $ctx
     if ($live.empty) {
-        Write-Host 'Pre-commit: no inspectable diff — OK.'
+        Write-Host 'Pre-commit: no inspectable diff - OK.'
         return [PSCustomObject]@{ ok = $true; skipped = $true; reason = 'no-diff' }
     }
 
@@ -5814,18 +5850,18 @@ function Invoke-MetraInspectPreCommitHook {
         Write-Host ''
         switch ($triad.reason) {
             'no-assessment' {
-                Write-Host 'COMMIT BLOCKED — no Inspect assessment for this diff.' -ForegroundColor Red
+                Write-Host 'COMMIT BLOCKED - no Inspect assessment for this diff.' -ForegroundColor Red
                 Write-Host ("  Run: .\metra.ps1 inspect prepare-bing -Name {0}" -f $ctx.Project)
             }
             'assess-gate-mismatch' {
-                Write-Host 'COMMIT BLOCKED — assessment changed after Bing affirmation.' -ForegroundColor Red
+                Write-Host 'COMMIT BLOCKED - assessment changed after Bing affirmation.' -ForegroundColor Red
                 Write-Host ("  Assess: {0}" -f $triad.assessInputHash)
                 Write-Host ("  Gate:   {0}" -f $triad.gateInputHash)
                 Write-Host ("  Re-run: .\metra.ps1 inspect prepare-bing -Name {0} -Reset" -f $ctx.Project)
                 Write-Host ("  Then:   .\metra.ps1 inspect gate affirm -Name {0} -Confirm" -f $ctx.Project)
             }
             default {
-                Write-Host 'COMMIT BLOCKED — Bing review required (manual gate).' -ForegroundColor Red
+                Write-Host 'COMMIT BLOCKED - Bing review required (manual gate).' -ForegroundColor Red
                 Write-Host ("  Bing pack (review only): {0}" -f $packPath)
                 Write-Host ("  Agent action queue: {0}" -f (Join-Path (Resolve-MetraInspectReviewSlotRoot -SlotKey $slotKey).SlotRoot 'fix-queue.json'))
                 Write-Host ("  After Bing review: .\metra.ps1 inspect gate affirm -Name {0}" -f $ctx.Project)

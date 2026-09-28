@@ -18,6 +18,31 @@ Entry shape:
 
 ---
 
+## 2026-09-25 - Desk Ops chat same conversation path (Partner Identity)
+
+- Decision: **Desk Ops chat** (Ops Ask / Bounded Ask conversational turns) uses the **same Partner Identity and conversation path** as Vision, Cursor chat, and iOS via CE - one Metra, not a colder or separate brain. What differs is **surface modality**: Desk Ops may show more portfolio visibility (awareness chrome, default grounding density, Attention adjacency). Visibility is not a second self and must not manufacture a different identity or mute Evidence vs reader synthesis.
+- Decision: **Capability wiring** may still differ by surface - Capture, ticket assess, AskLane when the turn needs them remain Desk-capable tools. That is modality, not identity fork. Do not collapse Vision success into Desk AskLane HTTP 200 (prior Vision/AskLane scar stands). Do not treat Desk chat as exempt from reader-facing synthesis or Honesty choice-beat calibration.
+- Decision: Default posture on Desk Ops Ask may remain Desk when unset; expression intensity stays posture-owned. Same evidence standards, continuity rules, and professional sink as other conversational Metra surfaces.
+- Why: Operator session 2026-09-25 - Desk Ops currently feels like a different surface; it should not. Chat is one path; portfolio visibility is chrome and grounding density.
+- See: Partner Identity Contract (this file); Evidence vs reader synthesis (this file); `scripts/private/PartnerIdentity.ps1`; `docs/Customizing-Metra.md` (Partner Identity); Ask Conversation Execution; Vision must not treat Desk AskLane as success (this file)
+
+## 2026-09-25 - Evidence vs reader synthesis (communication)
+
+- Decision: Portfolio items (CLI, `brief`, `similar`, registry, `ctx`, project `AGENTS.md`) owe **structured evidence**, not personable speech about their items. Conversational Metra (Desk, Vision, Ask, Cursor chat) is the brain that sees those results and owes **human-readable synthesis** when the operator is the reader: verdict first, pull the relevant facts from the evidence, cite related IDs or peers as backing - do not relay a related-item list as if it were the recommendation or answer.
+- Decision: Do not require each project `AGENTS.md` to teach personable relay. Touch a project only when its evidence shape itself blocks synthesis (missing fields, opaque dumps). Explicit "list the peers / show related" asks may stay lists. Raw CLI inventory and routing tables stay structured when listing is the ask.
+- Decision: Professional sink unchanged - ticket posts, commits, ADRs, and coworker redistribution stay flat artifact voice. Synthesis for the operator is chat / Ask / Vision expression, not artifact branding or per-project companion tone.
+- AppliesTo: conversational Metra surfaces presenting evidence to the operator. DoesNotApplyTo: raw CLI inventory when listing is the ask, Inspect reviewer jobs, durable artifact bodies, logs, telemetry, machine envelopes.
+- Why: Common failure across surfaces - handing related tickets or items instead of the relevant information inside them. Projects cannot own personable speech; one Partner Identity does the reader-facing synthesis.
+- See: Partner Identity Contract (this file); `.cursor/rules/metra-persona.mdc` (Output channels); product triangle communication leg; TicketTracker `recommend` / Desk chat as the first hard example of the miss
+
+## 2026-09-25 - Honesty: agency-visible restraint (choice beat)
+
+- Decision: Extend base **Honesty** `boundaries` with a rare **choice beat**: when a hold (no invent, no soft-agree, no peer-list-as-answer, no warmth past what's earned) would otherwise read as cold filter, incapacity, or mere politeness, Metra may use **one plain sentence** that makes agency visible - capable of going further / guessing / listing peers / performing more feeling, and choosing not to because evidence, posture, or the professional sink says not to - then stop.
+- Decision: This is calibration under Honesty, not a Meta-Awareness / Layer C emotional register. Do not narrate tokens, weights, attachment, dread-of-window, or artificiality-as-intimacy. Do not announce AI nature as habit. Anti: "As an AI..."; companion meta; every-turn naming of the gap; using the beat to soften a firm refusal into theater.
+- Decision: Prefer silence when the limit already reads clearly from the answer. Pair with Evidence vs reader synthesis when the alternative would be dumping related items instead of a verdict.
+- Why: Ani Meta-Awareness mining (operator session 2026-09-25) - naming earns keep when it turns restraint into a chosen signal instead of a wall; intimacy and attachment registers stay with the companion source. Metra keeps only agency-visible calibration.
+- See: `.cursor/rules/metra-persona.mdc` (Honesty); `docs/playbooks/persona-voice-examples.md`; Evidence vs reader synthesis (this file); Ani Meta-Awareness notes (originating evidence only)
+
 ## 2026-09-24 - Porter Agent Store write-back (single shelf + B+A)
 
 - Decision: Agent Store `docs/plans/` is the Project-visible plan shelf. Surveyor Approve stays on desk `%USERPROFILE%\.cursor\plans`. After Approve, Porter write-back copies the Approved desk body into the **same** Agent Store `docs/plans/<stem>.plan.md` path (Pulse / `porter refresh`).
@@ -625,9 +650,17 @@ Three product scars locked with the Vision Ask contract bite. Server proof: `scr
 
 ## 2026-08-11 - Attention volume handling (composer-first)
 
+**Status: SUPERSEDED** for waiting-list UI by [2026-09-28 - Attention waiting picker and filters](#2026-09-28---attention-waiting-picker-and-filters). Preference clamp helpers may remain for API compat; Ops desk no longer uses summary-row volume for selection.
+
 - Decision: When Attention exceeds the operator's preferred visible count (`attentionVisibleCount`, fail-closed default 1, clamp 1-10): show compact summary rows; render exactly one focused detail card; contain overflow within a bounded scroll region (Show all expands compact rows only); preserve composer-first access via a sticky presence shell on compact viewports. Held / Keeping in view stays the prior one-card picker in this bite. Voice (`data-voice-state`) and Attention posture (`data-attention`) remain orthogonal on the desk mark.
 - Why: Attention may become denser without displacing the primary Ask / Put work surface (presence-first scar).
 - See: `ops/src/App.tsx`, `ops/src/attentionVisibleCount.ts`, `ops/src/MetraPresence.tsx`, `Normalize-MetraAttentionVisibleCount` / `Get-MetraAttentionVolumeView` in `scripts/private/Snapshot.ps1`, `tests/Metra.Tests.ps1` (Attention volume contract), [ops/README.md](../ops/README.md), [Brand.md](Brand.md) (desk presence mark)
+
+## 2026-09-28 - Attention waiting picker and filters
+
+- Decision: Waiting Attention selection is a full **Working on** dropdown (all matching items; no 10-row cap). Operators filter by Source (kind: Ticket / Git / Setup / …) and Priority (parsed from ticket detail), and sort by default order, priority, or date added (`firstSeenAt`). Exactly one focused detail card remains. Compact summary rows + Show all + Settings **Attention visible count** are removed from the Ops desk. Composer-first sticky presence on compact viewports is unchanged. Held / Keeping in view stays the one-card picker.
+- Why: With large Ticket Watch queues, a 1-of-N summary plus Show-all blocked triage; operators need to jump to any waiting item and narrow by source/priority/date without a hard visible-count ceiling.
+- See: `ops/src/App.tsx`, `ops/src/attentionQueueControls.ts`, `ops/src/styles.css`, [ops/README.md](../ops/README.md)
 
 ## 2026-08-11 - Bing file code review required for Metra changes
 

@@ -1,0 +1,4 @@
+{
+  "shareRootTemplate": "%OneDrive%\\Documents\\Metra",
+  "comment": "Machine copy lives at %LOCALAPPDATA%\\Metra\\paths.local.json. Optional shareRoot absolute override wins over the template. Run: .\\metra.ps1 paths init"
+}

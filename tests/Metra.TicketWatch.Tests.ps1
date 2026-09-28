@@ -577,6 +577,28 @@ Describe 'Ticket watch Attention helpers' {
         }
     }
 
+    It 'Update-MetraTicketAttentionFromAssess whyNext never paraphrases mining provenance' {
+        InModuleScope Metra {
+            $q = [pscustomobject]@{
+                id = 'ticket:1038910'
+                detail = 'Open'
+                command = '.\TicketTracker.ps1 brief 1038910'
+            }
+            foreach ($gate in @('INTAKE', 'CLARIFY', 'SOLVE-READY', '')) {
+                $a = [pscustomobject]@{
+                    gate              = $gate
+                    customerAsk       = ''
+                    responseObjective = 'OperatorConfirm'
+                    ticketId          = '1038910'
+                }
+                $u = Update-MetraTicketAttentionFromAssess -QueueItem $q -AssessResult $a
+                $u.whyNext | Should -Not -Match 'SQL similar:'
+                $u.whyNext | Should -Not -Match 'Learned pending:'
+                $u.whyNext | Should -Not -Match 'Pending recognition:'
+            }
+        }
+    }
+
     It 'E1: product cue list normalizes union from solutions, registry, and local' {
         InModuleScope Metra {
             $cues = ConvertTo-MetraTicketWatchNormalizedProductCues `

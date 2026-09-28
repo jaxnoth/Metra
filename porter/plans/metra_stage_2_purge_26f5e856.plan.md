@@ -69,9 +69,9 @@ Use **git filter-repo** on a **fresh mirror**, not the daily checkout.
 
 Path / content classes already denied by tip `security-audit` (InternalTopology + RestrictedDataMap), including historical forms of:
 
-- Org / AD / share / host needles (`ORGNET`, `example-org`, `etl-host`, UNC Scripts, `prd-*` as hostnames, lab MagicDNS, personal machine paths)
-- HR/payroll maps (`VendorX`, `DM-Sample`, census fn patterns)
-- Pre-scrub campus playbook bodies that named org VIP / OrgBrand framing (tip is generic; old blobs are not)
+- Org / AD / share / host needles (`IWUNET`, `indwes`, `datamanager`, UNC Scripts, `prd-*` as hostnames, lab MagicDNS, personal machine paths)
+- HR/payroll maps (`Pentegra`, `DM-Employee`, census fn patterns)
+- Pre-scrub campus playbook bodies that named org VIP / IWU framing (tip is generic; old blobs are not)
 
 Prefer **path-aware + content** passes over deleting whole product features. Keep MIT / public product history where blobs are PublicSafe.
 

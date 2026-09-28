@@ -1039,14 +1039,20 @@ function ConvertFrom-MetraTicketWatchAnalyzeNote {
     if ($NoteText -match '(?s)Similar \(local cache\):\s*(.*?)\s*Solutions index hits:') {
         $similarLines = @($Matches[1] -split "`n" | ForEach-Object { $_.TrimEnd() } | Where-Object { $_ })
     }
-    if ($NoteText -match '(?s)Solutions index hits:\s*(.*)$') {
+    if ($NoteText -match '(?s)Solutions(?: write-up)?(?: index)? hits:\s*(.*?)(?:\r?\n\r?\n|\r?\nSimilar|\z)') {
         $solutionLines = @($Matches[1] -split "`n" | ForEach-Object { $_.TrimEnd() } | Where-Object { $_ })
+    }
+    elseif ($NoteText -match '(?s)Solutions index hits:\s*(.*)$') {
+        $solutionLines = @($Matches[1] -split "`n" | ForEach-Object { $_.TrimEnd() } | Where-Object { $_ })
+    }
+    if ($NoteText -match '(?s)Similar \(cite-acceptable mining\):\s*(.*)$') {
+        $similarLines = @($Matches[1] -split "`n" | ForEach-Object { $_.TrimEnd() } | Where-Object { $_ })
     }
 
     return [PSCustomObject]@{
         SimilarLines   = $similarLines
         SolutionLines  = $solutionLines
-        SimilarCount   = @($similarLines | Where-Object { $_ -match '^\s*-\s+' -and $_ -notmatch '(?i)\(none' }).Count
+        SimilarCount   = @($similarLines | Where-Object { $_ -match '^\s*-\s+' -and $_ -notmatch '(?i)\(none' -and $_ -notmatch '(?i)no cite-acceptable' }).Count
         SolutionsCount = @($solutionLines | Where-Object { $_ -match '^\s*-\s+' -and $_ -notmatch '(?i)\(no solutions' }).Count
     }
 }
@@ -1075,11 +1081,20 @@ function Invoke-MetraTicketWatchEnsureAnalyzeEvidence {
         $analysis = New-TicketDraftAnalysis -Id $TicketId
         if ($analysis) {
             $similarLines = @(foreach ($s in @($analysis.Similar)) {
-                    '- {0}: {1}' -f $s.Id, $s.Subject
+                    $sid = [string](Get-MetraProp -Object $s -Name 'Id' -Default (Get-MetraProp -Object $s -Name 'id' -Default ''))
+                    $ssub = [string](Get-MetraProp -Object $s -Name 'Subject' -Default (Get-MetraProp -Object $s -Name 'subject' -Default ''))
+                    '- {0}: {1}' -f $sid, $ssub
                 })
             $solutionLines = @(foreach ($h in @($analysis.Solutions)) {
                     '- {0} ({1})' -f $h.Title, $h.File
                 })
+            if (@($analysis.PSObject.Properties['Recognition']).Count -gt 0 -and @($analysis.Recognition).Count -gt 0) {
+                $solutionLines = @(
+                    foreach ($h in @($analysis.Recognition)) {
+                        '- Pending recognition: {0} matched: {1}' -f $h.Topic, $h.Matched
+                    }
+                ) + @($solutionLines)
+            }
             $similarN = @($analysis.Similar).Count
             $solutionsN = @($analysis.Solutions).Count
             $fromStructured = $true
@@ -1409,7 +1424,8 @@ function Invoke-MetraTicketWatchStoreRecommend {
         return $result
     }
 
-    $null = Import-MetraTicketTrackerModule -ModulePath $tt.ModulePath
+    # Force reload so Ops Host picks up TicketTracker mining exports without a full desk restart.
+    $null = Import-MetraTicketTrackerModule -ModulePath $tt.ModulePath -Force
     $ticket = @(Get-TrackedTickets -Id $Id | Select-Object -First 1)
     if ($ticket.Count -eq 0) {
         $result.warning = "Ticket '$Id' not found in local cache. Sync or pull first."
@@ -1513,8 +1529,71 @@ function Invoke-MetraTicketWatchStoreRecommend {
         -MailEvidence:($evidenceHint -eq 'm365Mail') `
         -WebSuggested:($evidenceHint -eq 'boundedWeb')
 
-    $useNextEvidenceBody = $Preview -and (-not $isRecommendable) -and (-not $Force)
-    if ($useNextEvidenceBody) {
+    # Mining handoff owns Preview when TT can build a bundle with recognition/peers/SQL provenance.
+    # Thin next-evidence brief is only the fallback when mining is empty or unavailable.
+    $miningBody = ''
+    $miningHasSignal = $false
+    if ((Get-Command -Name 'Format-TicketAssessMiningRecommendBody' -ErrorAction SilentlyContinue) `
+            -and (Get-Command -Name 'Get-TicketAssessMiningBundle' -ErrorAction SilentlyContinue)) {
+        try {
+            $miningBundle = Get-TicketAssessMiningBundle -Id $canonicalId -Top 8
+            $miningHasSignal = (
+                @($miningBundle.MiningSimilar).Count -gt 0 -or
+                @($miningBundle.Recognition).Count -gt 0 -or
+                @($miningBundle.Solutions).Count -gt 0 -or
+                [string]$miningBundle.SqlSimilarStatus -eq 'ok'
+            )
+            if ($miningHasSignal) {
+                $miningBody = Format-TicketAssessMiningRecommendBody -Bundle $miningBundle `
+                    -MailEvidence:($evidenceHint -eq 'm365Mail') `
+                    -WebSuggested:($evidenceHint -eq 'boundedWeb')
+                if ($Preview -and -not $isRecommendable -and -not $Force) {
+                    $miningBody = @(
+                        'Not a durable Affirm A recommendation yet - mining handoff for Metra investigate.'
+                        ''
+                        $miningBody
+                    ) -join "`n"
+                }
+                $simCount = @($miningBundle.MiningSimilar).Count
+                $solCount = @($miningBundle.Solutions).Count
+                $basis = New-MetraTicketWatchRecommendBasis `
+                    -SimilarCount $simCount `
+                    -SolutionsCount $solCount `
+                    -MailEvidence:($evidenceHint -eq 'm365Mail') `
+                    -WebSuggested:($evidenceHint -eq 'boundedWeb')
+            }
+        }
+        catch {
+            $miningBody = ''
+            $miningHasSignal = $false
+            $mineErr = [string]$_.Exception.Message
+            if (-not [string]::IsNullOrWhiteSpace($mineErr)) {
+                $suffix = "Mining handoff failed: $mineErr"
+                if ([string]::IsNullOrWhiteSpace([string]$result.warning)) {
+                    $result.warning = $suffix
+                }
+                else {
+                    $result.warning = "$($result.warning)`n$suffix"
+                }
+            }
+        }
+    }
+    elseif ($Preview) {
+        # TicketTracker loaded but mining exports missing - Host/TT drift; thin next-evidence is a fallback only.
+        $hint = 'Mining handoff unavailable (Get-TicketAssessMiningBundle not exported). Restart Ops desk or update TicketTracker.'
+        if ([string]::IsNullOrWhiteSpace([string]$result.warning)) {
+            $result.warning = $hint
+        }
+        else {
+            $result.warning = "$($result.warning)`n$hint"
+        }
+    }
+
+    $useNextEvidenceBody = $Preview -and (-not $isRecommendable) -and (-not $Force) -and (-not $miningHasSignal)
+    if ($miningBody) {
+        $body = $miningBody
+    }
+    elseif ($useNextEvidenceBody) {
         $body = New-MetraTicketWatchNextEvidenceBody `
             -TicketId $canonicalId `
             -Subject $subject `

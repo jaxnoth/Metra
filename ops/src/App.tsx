@@ -43,9 +43,13 @@ import {
 import { AskMarkdown } from './AskMarkdown'
 import { formatAskTabTitle, getMetraBridge } from './bridge'
 import {
-  DEFAULT_ATTENTION_VISIBLE_COUNT,
-  normalizeAttentionVisibleCount,
-} from './attentionVisibleCount'
+  filterAndSortAttentionItems,
+  uniqueAttentionKinds,
+  uniqueAttentionPriorityLabels,
+  type AttentionPriorityFilter,
+  type AttentionSortMode,
+  type AttentionSourceFilter,
+} from './attentionQueueControls'
 import { MetraPresence } from './MetraPresence'
 import type {
   AttentionItem,
@@ -78,6 +82,33 @@ const SETTINGS_PANEL_TABS: { id: SettingsPanelTab; label: string }[] = [
 ]
 
 const SETTINGS_TAB_STORAGE_KEY = 'metraSettingsTab'
+
+/** Keep recommend-draft whitespace; make markdown and bare http(s) links clickable. */
+function RecommendPreviewText({ text }: { text: string }) {
+  const parts = text.split(/(\[[^\]]+\]\(https?:\/\/[^)\s]+\)|https?:\/\/[^\s)]+)/g)
+  return (
+    <pre className="attention-recommend-preview" style={{ whiteSpace: 'pre-wrap' }}>
+      {parts.map((part, i) => {
+        const md = /^\[([^\]]+)\]\((https?:\/\/[^)\s]+)\)$/.exec(part)
+        if (md) {
+          return (
+            <a key={i} href={md[2]} target="_blank" rel="noopener noreferrer">
+              {md[1]}
+            </a>
+          )
+        }
+        if (/^https?:\/\//.test(part)) {
+          return (
+            <a key={i} href={part} target="_blank" rel="noopener noreferrer">
+              {part}
+            </a>
+          )
+        }
+        return <span key={i}>{part}</span>
+      })}
+    </pre>
+  )
+}
 
 function readStoredSettingsTab(): SettingsPanelTab {
   try {
@@ -509,9 +540,7 @@ function AttentionCard({
                 : ''}
           </p>
           {item.existingRecommendation?.trim() ? (
-            <pre className="attention-recommend-preview" style={{ whiteSpace: 'pre-wrap' }}>
-              {item.existingRecommendation.trim()}
-            </pre>
+            <RecommendPreviewText text={item.existingRecommendation.trim()} />
           ) : (
             <p className="muted">Recommendation text requires local Ops authority.</p>
           )}
@@ -852,9 +881,7 @@ function ResolveActions({
       {recommendPreview && (
         <div style={{ marginBottom: '0.75rem' }}>
           <p className="muted">New recommendation preview (not yet in iSupport)</p>
-          <pre className="attention-recommend-preview" style={{ whiteSpace: 'pre-wrap' }}>
-            {recommendPreview}
-          </pre>
+          <RecommendPreviewText text={recommendPreview} />
         </div>
       )}
       <label className="attention-feedback">
@@ -1318,8 +1345,13 @@ export default function App() {
   const TICKET_SCAN_MAX_FAILS = 3
   const [ticketScanPaused, setTicketScanPaused] = useState(false)
   const [selectedAttentionKey, setSelectedAttentionKey] = useState<string | null>(null)
-  const [attentionShowAll, setAttentionShowAll] = useState(false)
   const [selectedHeldKey, setSelectedHeldKey] = useState<string | null>(null)
+  const [attentionSourceFilter, setAttentionSourceFilter] =
+    useState<AttentionSourceFilter>('all')
+  const [attentionPriorityFilter, setAttentionPriorityFilter] =
+    useState<AttentionPriorityFilter>('all')
+  const [attentionSortMode, setAttentionSortMode] =
+    useState<AttentionSortMode>('default')
   const [compactViewport, setCompactViewport] = useState(() =>
     typeof window === 'undefined' ? false : window.matchMedia('(max-width: 42rem)').matches,
   )
@@ -1569,21 +1601,6 @@ export default function App() {
         setTab('route')
         setSettingsOpen(false)
       }
-    } catch (e) {
-      setError(e instanceof Error ? e.message : String(e))
-    } finally {
-      setBusy(false)
-    }
-  }
-
-  async function onAttentionVisibleCount(next: number) {
-    setBusy(true)
-    setError(null)
-    try {
-      const normalized = normalizeAttentionVisibleCount(next)
-      const prefs = await putPreferences(deskMode, normalized)
-      setDesk((prev) => (prev ? { ...prev, preferences: prefs } : prev))
-      setAttentionShowAll(false)
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e))
     } finally {
@@ -2502,11 +2519,6 @@ export default function App() {
     desk?.attention?.activeCount ??
     (desk?.nextAttention ? 1 : 0)
   const attentionHeld = desk?.attention?.heldCount ?? desk?.attention?.held?.length ?? 0
-  const attentionVisibleCount = normalizeAttentionVisibleCount(
-    desk?.attention?.visibleCount ??
-      desk?.preferences?.attentionVisibleCount ??
-      DEFAULT_ATTENTION_VISIBLE_COUNT,
-  )
 
   return (
     <div className="app">
@@ -2918,14 +2930,20 @@ export default function App() {
               const held = desk?.attention?.held ?? []
               const heldCount = desk?.attention?.heldCount ?? held.length
               const heldKeys = held.map((h) => attentionItemKey(h))
-              const visibleRows = attentionShowAll
-                ? active
-                : active.slice(0, attentionVisibleCount)
+              const sourceOptions = uniqueAttentionKinds(active)
+              const priorityOptions = uniqueAttentionPriorityLabels(active)
+              const filtered = filterAndSortAttentionItems(active, {
+                source: attentionSourceFilter,
+                priority: attentionPriorityFilter,
+                sort: attentionSortMode,
+              })
+              const filteredKeys = filtered.map((a) => attentionItemKey(a))
+              const selectedKey =
+                selectedAttentionKey && filteredKeys.includes(selectedAttentionKey)
+                  ? selectedAttentionKey
+                  : filteredKeys[0] ?? null
               const focused =
-                active.find((a) => attentionItemKey(a) === selectedAttentionKey) ??
-                visibleRows[0] ??
-                active[0] ??
-                null
+                filtered.find((a) => attentionItemKey(a) === selectedKey) ?? filtered[0] ?? null
               const selectedHeldKeyResolved =
                 selectedHeldKey && heldKeys.includes(selectedHeldKey)
                   ? selectedHeldKey
@@ -2934,8 +2952,11 @@ export default function App() {
                 held.find((h) => attentionItemKey(h) === selectedHeldKeyResolved) ??
                 held[0] ??
                 null
-              const overflowCount = Math.max(0, active.length - attentionVisibleCount)
               const notRechecked = desk?.attention?.notRecheckedCount ?? 0
+              const filtersActive =
+                attentionSourceFilter !== 'all' ||
+                attentionPriorityFilter !== 'all' ||
+                attentionSortMode !== 'default'
 
               const heldBlock =
                 heldCount > 0 && selectedHeld ? (
@@ -2974,7 +2995,78 @@ export default function App() {
                   </div>
                 ) : null
 
-              if (!focused) {
+              const filterToolbar =
+                active.length > 0 ? (
+                  <div className="attention-controls" role="group" aria-label="Attention filters">
+                    <label className="attention-control">
+                      <span className="muted">Source</span>
+                      <select
+                        value={attentionSourceFilter}
+                        onChange={(e) => {
+                          setAttentionSourceFilter(e.target.value || 'all')
+                          setSelectedAttentionKey(null)
+                        }}
+                        aria-label="Filter by source"
+                      >
+                        <option value="all">All sources</option>
+                        {sourceOptions.map((k) => (
+                          <option key={k} value={k}>
+                            {kindLabel(k) || k}
+                          </option>
+                        ))}
+                      </select>
+                    </label>
+                    <label className="attention-control">
+                      <span className="muted">Priority</span>
+                      <select
+                        value={attentionPriorityFilter}
+                        onChange={(e) => {
+                          setAttentionPriorityFilter(e.target.value || 'all')
+                          setSelectedAttentionKey(null)
+                        }}
+                        aria-label="Filter by priority"
+                      >
+                        <option value="all">All priorities</option>
+                        {priorityOptions.map((p) => (
+                          <option key={p} value={p}>
+                            {p}
+                          </option>
+                        ))}
+                      </select>
+                    </label>
+                    <label className="attention-control">
+                      <span className="muted">Sort</span>
+                      <select
+                        value={attentionSortMode}
+                        onChange={(e) =>
+                          setAttentionSortMode((e.target.value as AttentionSortMode) || 'default')
+                        }
+                        aria-label="Sort waiting items"
+                      >
+                        <option value="default">Default order</option>
+                        <option value="priority">Priority (high first)</option>
+                        <option value="dateAddedNewest">Date added (newest)</option>
+                        <option value="dateAddedOldest">Date added (oldest)</option>
+                      </select>
+                    </label>
+                    {filtersActive && (
+                      <button
+                        type="button"
+                        className="btn btn-quiet"
+                        onClick={() => {
+                          setAttentionSourceFilter('all')
+                          setAttentionPriorityFilter('all')
+                          setAttentionSortMode('default')
+                          setSelectedAttentionKey(null)
+                        }}
+                      >
+                        Clear filters
+                      </button>
+                    )}
+                  </div>
+                ) : null
+
+              if (active.length === 0) {
                 return (
                   <div className="attention-empty">
                     <p className="attention">No active attention.</p>
@@ -2993,51 +3085,47 @@ export default function App() {
                 <div className="attention-block">
                   <p className="muted attention-count">
                     {desk?.attention?.activeCount ?? active.length} waiting
+                    {filtered.length !== active.length
+                      ? ` · showing ${filtered.length}`
+                      : ''}
                     {notRechecked > 0 ? ` · ${notRechecked} not rechecked yet` : ''}
                   </p>
-                  <div className="attention-list-region" role="list" aria-label="Attention summaries">
-                    {visibleRows.map((item) => {
-                      const key = attentionItemKey(item)
-                      const selected = attentionItemKey(focused) === key
-                      return (
-                        <button
-                          key={key}
-                          type="button"
-                          role="listitem"
-                          className={`attention-summary-row${selected ? ' is-selected' : ''}`}
-                          aria-pressed={selected}
-                          onClick={() => setSelectedAttentionKey(key)}
+                  {filterToolbar}
+                  {filtered.length === 0 ? (
+                    <p className="muted">No items match these filters.</p>
+                  ) : (
+                    <>
+                      <label className="attention-picker">
+                        <span className="muted">Working on</span>
+                        <select
+                          value={selectedKey ?? ''}
+                          onChange={(e) => setSelectedAttentionKey(e.target.value || null)}
+                          aria-label="Select attention item"
                         >
-                          <span className="attention-summary-label">
-                            {attentionPickerLabel(item)}
-                          </span>
-                        </button>
-                      )
-                    })}
-                  </div>
-                  {overflowCount > 0 && (
-                    <div className="actions attention-overflow-actions">
-                      <button
-                        type="button"
-                        className="btn btn-quiet"
-                        onClick={() => setAttentionShowAll((v) => !v)}
-                      >
-                        {attentionShowAll
-                          ? 'Show fewer'
-                          : `Show all (${active.length})`}
-                      </button>
-                    </div>
+                          {filtered.map((item) => {
+                            const key = attentionItemKey(item)
+                            return (
+                              <option key={key} value={key}>
+                                {attentionPickerLabel(item)}
+                              </option>
+                            )
+                          })}
+                        </select>
+                      </label>
+                      {focused && (
+                        <AttentionCard
+                          key={attentionItemKey(focused)}
+                          item={focused}
+                          advanced={advanced}
+                          busy={busy}
+                          onAskSeed={onAskFromAttention}
+                          onStatus={setResolveStatus}
+                          onDeskUpdate={setDesk}
+                          primary
+                        />
+                      )}
+                    </>
                   )}
-                  <AttentionCard
-                    key={attentionItemKey(focused)}
-                    item={focused}
-                    advanced={advanced}
-                    busy={busy}
-                    onAskSeed={onAskFromAttention}
-                    onStatus={setResolveStatus}
-                    onDeskUpdate={setDesk}
-                    primary
-                  />
                   {heldBlock}
                   {resolveStatus && <p className="muted resolve-status">{resolveStatus}</p>}
                 </div>
@@ -3773,28 +3861,6 @@ export default function App() {
                 onChange={(e) => void onToggleTicketWatch(e.target.checked)}
               />
               {ticketWatchEnabled ? 'On' : 'Off'}
-            </label>
-          </div>
-          <div className="settings-row">
-            <div>
-              <strong>Attention visible count</strong>
-              <p className="muted">
-                How many waiting summaries show before Show all. Detail stays one focused card.
-              </p>
-            </div>
-            <label>
-              <select
-                disabled={busy}
-                value={attentionVisibleCount}
-                onChange={(e) => void onAttentionVisibleCount(Number(e.target.value))}
-                aria-label="Attention visible count"
-              >
-                {Array.from({ length: 10 }, (_, i) => i + 1).map((n) => (
-                  <option key={n} value={n}>
-                    {n}
-                  </option>
-                ))}
-              </select>
             </label>
           </div>
           <div className="settings-row">
