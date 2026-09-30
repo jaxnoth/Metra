@@ -38,6 +38,26 @@ Describe 'Yarn A0 storage and hashes' {
             $stale = Test-YarnPackFreshness -PlanText ($plan + "`nedit") -RecordedPlanContentHash $h -RecordedPackInputHash $p -RecordedPackContractVersion (Get-YarnPackContractVersion) -LastPackSucceeded $true
             $stale.fresh | Should -BeFalse
             $stale.reason | Should -Be 'plan-content-changed'
+
+            # Workflow key filter is frontmatter-scoped: body "status:" stays in the hash.
+            $withBodyStatus = "---`nname: x`n---`nExample:`nstatus: pending"
+            $withoutBodyStatus = "---`nname: x`n---`nExample:`nother: pending"
+            (Get-YarnPlanContentHash -PlanText $withBodyStatus) |
+                Should -Not -Be (Get-YarnPlanContentHash -PlanText $withoutBodyStatus)
+            $fmStatusA = "---`nname: x`nstatus: pending`n---`nbody"
+            $fmStatusB = "---`nname: x`n---`nbody"
+            (Get-YarnPlanContentHash -PlanText $fmStatusA) |
+                Should -Be (Get-YarnPlanContentHash -PlanText $fmStatusB)
+
+            # Workflow key filter is frontmatter-scoped: body "status:" stays in the hash.
+            $withBodyStatus = "---`nname: x`n---`nExample:`nstatus: pending"
+            $withoutBodyStatus = "---`nname: x`n---`nExample:`nother: pending"
+            (Get-YarnPlanContentHash -PlanText $withBodyStatus) |
+                Should -Not -Be (Get-YarnPlanContentHash -PlanText $withoutBodyStatus)
+            $fmStatusA = "---`nname: x`nstatus: pending`n---`nbody"
+            $fmStatusB = "---`nname: x`n---`nbody"
+            (Get-YarnPlanContentHash -PlanText $fmStatusA) |
+                Should -Be (Get-YarnPlanContentHash -PlanText $fmStatusB)
         }
     }
 

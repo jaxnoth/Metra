@@ -18,6 +18,19 @@ Entry shape:
 
 ---
 
+## 2026-09-30 - Plan content hash workflow filter is frontmatter-scoped
+
+- Decision: `Get-YarnPlanContentHash` / Surveyor `getPlanContentHash` exclude workflow keys only inside the YAML frontmatter block (opening `---` through closing `---`). Body lines that match workflow-key patterns (e.g. `status: pending` in Markdown) remain in the hashed text.
+- Why: Whole-file filtering stripped legitimate body content and diverged from the Yarn playbook frontmatter rule. Bing Design Graph review flagged this as a reliability issue before Graph ship.
+- See: `modules/Yarn/Private/Hash.ps1`; Surveyor `packages/shared/src/planContentHash.ts`; `docs/playbooks/yarn.md` (Canonical content hash)
+
+## 2026-09-30 - Portfolio documentation Health (not Surveyor Graph)
+
+- Decision: Surveyor **Graph** is Design visualization (mermaid) plus read-only todos and plan navigation. It does not host portfolio Health, citation-drift analytics, or documentation coverage dashboards.
+- Decision: Portfolio documentation Health and related analytics belong to a future **portfolio docs/analytics** surface (Atlas-oriented store; reader TBD), not Surveyor Graph.
+- Why: Graph must stay plan-intent navigation. Folding Health into Surveyor would turn a plan reader into an analytics suite and blur Atlas/Metra boundaries.
+- See: Surveyor `AGENTS.md` (Graph); Surveyor Design Graph plan `surveyor_design_graph_ec796863.plan.md`
+
 ## 2026-09-25 - Desk Ops chat same conversation path (Partner Identity)
 
 - Decision: **Desk Ops chat** (Ops Ask / Bounded Ask conversational turns) uses the **same Partner Identity and conversation path** as Vision, Cursor chat, and iOS via CE - one Metra, not a colder or separate brain. What differs is **surface modality**: Desk Ops may show more portfolio visibility (awareness chrome, default grounding density, Attention adjacency). Visibility is not a second self and must not manufacture a different identity or mute Evidence vs reader synthesis.

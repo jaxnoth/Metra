@@ -64,7 +64,7 @@ Shared helper `Get-YarnPlanContentHash` (Surveyor port: `getPlanContentHash`):
 |------|------|
 | Encoding | UTF-8 |
 | Newlines | Normalize to LF; trimEnd each line |
-| Frontmatter | Exclude workflow keys (`externalReviewed*`, `approveForLoom*`, `status`, `loomHandoffId`, `loomAcceptedAt`, pack/approval bookkeeping, legacy `bingReviewed`) |
+| Frontmatter | Exclude workflow keys **from the YAML frontmatter block only** (opening `---` through closing `---`). Keys: `externalReviewed*`, `approveForLoom*`, `status`, `loomHandoffId`, `loomAcceptedAt`, pack/approval bookkeeping, legacy `bingReviewed`. Body lines that look like `status: pending` remain in the hash. |
 | Digest | SHA256 lowercase hex |
 
 Mark writes must not change the hash. Plan body edits invalidate both gates until Approve (or affirm+Approve) runs again.

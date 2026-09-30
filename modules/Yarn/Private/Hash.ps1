@@ -21,8 +21,9 @@ function Get-YarnSourceHash {
 
 function Get-YarnPlanContentForHash {
     param([Parameter(Mandatory)][AllowEmptyString()][string]$PlanText)
-    # Frozen desk contract: UTF-8 + LF (via Get-YarnCanonicalText) then exclude workflow keys.
-    # Keys must stay aligned with Get-YarnPlanWorkflowFrontmatterKeys when that helper is loaded.
+    # Frozen desk contract: UTF-8 + LF (via Get-YarnCanonicalText) then exclude
+    # workflow keys from YAML frontmatter only (opening --- through closing ---).
+    # Keys must stay aligned with Get-YarnPlanWorkflowFrontmatterKeys / Surveyor planContentHash.
     $exclude = @(
         'externalReviewed', 'externalReviewHash',
         'approveForLoom', 'approveForLoomHash',
@@ -32,9 +33,26 @@ function Get-YarnPlanContentForHash {
     )
     $excludeAlt = ($exclude -join '|')
     $canonical = Get-YarnCanonicalText -Text $PlanText
+    $lines = @($canonical -split "`n")
     $filtered = New-Object System.Collections.Generic.List[string]
-    foreach ($line in ($canonical -split "`n")) {
-        if ($line -match ("^\s*($excludeAlt)\s*:")) { continue }
+    if ($lines.Count -eq 0 -or $lines[0] -ne '---') {
+        return ($lines -join "`n")
+    }
+    $end = -1
+    for ($i = 1; $i -lt $lines.Count; $i++) {
+        if ($lines[$i] -eq '---') {
+            $end = $i
+            break
+        }
+    }
+    if ($end -lt 0) {
+        return ($lines -join "`n")
+    }
+    for ($i = 0; $i -lt $lines.Count; $i++) {
+        $line = $lines[$i]
+        if ($i -gt 0 -and $i -lt $end -and ($line -match ("^\s*($excludeAlt)\s*:"))) {
+            continue
+        }
         [void]$filtered.Add($line)
     }
     return ($filtered -join "`n")
