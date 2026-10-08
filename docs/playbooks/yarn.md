@@ -15,6 +15,8 @@
 
 Helpers: `Resolve-MetraPlanPath` (canonical body by authority), `Resolve-MetraPlanWorkingPath` / `Resolve-YarnFormalPlanReadPath` (Cursor working body only; never returns a repo scar). Surveyor reads indexes; it never rewrites them. Legacy `docs\*.plan.md` remain readable for inventory/allowlists.
 
+**Design graphs:** Every formal plan should include a `## Design` mermaid that Surveyor Graph can click through (headings, todos, or linked file stems). Authoring contract: [Surveyor design-graph playbook](../../../Surveyor/docs/playbooks/design-graph.md) (sibling checkout).
+
 ## Commands
 
 ```powershell
@@ -73,16 +75,38 @@ Legacy `bingReviewed: true` or Bing language in the plan body is not enough alon
 
 ### Schedule
 
-Two tasks share the same runner and a single schedule lock (they never overlap):
+**Preferred owner: MetraHost cadence** (always-on tray). Legacy Interactive Scheduled Tasks remain for migration only.
 
-| Task | Cadence | Stages |
-|------|---------|--------|
-| `MetraYarnLoomDaily` | Once daily (default `02:00`) | scan → daily -Reconcile → loom loop (all eligible) |
-| `MetraYarnLoomPulse` | Every N minutes (default 15; range 5-120) | scan → loom loop **-ScoutOnly** → **Porter** → **Inspect prep** when handoff `awaiting-prepare-bing` (soft-fail; never Bing-affirm; skips reconcile). |
+| Owner | Cadence | How |
+|-------|---------|-----|
+| **MetraHost** (preferred) | Pulse (~15m) + Daily (default `02:00` local) | Host timer → HostBridge `cadence-tick` → `Invoke-MetraYarnLoomSchedule` (CreateNoWindow). State: `%LOCALAPPDATA%\Metra\host-cadence.json` |
+| Legacy `MetraYarnLoomDaily` | Once daily (default `02:00`) | Task → `pwsh -File` runner (focus-steal risk) |
+| Legacy `MetraYarnLoomPulse` | Every N minutes (default 15; range 5-120) | Task → `pwsh -File` runner |
 
-Runner: `scripts/Invoke-MetraYarnLoomSchedule.ps1 -Mode Daily|Pulse`. Exit codes: 0 ok/daily-gate, 1 failure, 2 validation blocked, 3 unexpected loom pause, 4 lock held. Logs: `%LOCALAPPDATA%\Metra\yarn\schedule-logs\`.
+Stages inside the Yarn runner (unchanged by Host ownership):
 
-Install registers `pwsh -WindowStyle Hidden` so Interactive logon does not steal focus (Pulse especially). `yarn schedule status` reports `mismatch` if Hidden is missing - re-run `install` / `pulse install` with `-Confirm` to refresh.
+| Mode | Stages |
+|------|--------|
+| Daily | scan → daily -Reconcile → loom loop (all eligible) |
+| Pulse | scan → loom loop **-ScoutOnly** → **Porter** → **Inspect prep** when handoff `awaiting-prepare-bing` (soft-fail; never Bing-affirm; skips reconcile) |
+
+Exit codes (cadence **health**, not Host process exit): 0 ok/daily-gate, 1 failure, 2 validation blocked, 3 unexpected loom pause, 4 lock held. Logs: `%LOCALAPPDATA%\Metra\yarn\schedule-logs\`.
+
+#### Host cadence CLI
+
+```powershell
+.\metra.ps1 yarn schedule host status
+.\metra.ps1 yarn schedule host enable -Confirm          # optional -EveryMinutes 15 -At 02:00
+.\metra.ps1 yarn schedule host migrate -Confirm         # unregister Pulse then Daily Tasks (Host must be enabled)
+.\metra.ps1 yarn schedule host disable
+.\metra.ps1 yarn schedule status                        # includes hostCadence block
+```
+
+When `enabled=true`, `yarn schedule install` / `pulse install` refuse (Host owns cadence). `MetraOpsDesk` is Ops **reach** only - not Yarn cadence. Host down means no automatic Pulse/Daily.
+
+Failed Daily (exit 1-3) counts as completed for that local date - no same-day automatic retry. Exit 4 (lock held) is not a retry storm.
+
+Legacy Task install still uses `pwsh -WindowStyle Hidden`. Prefer Host enable + `host migrate` over leaving Interactive Pulse installed.
 
 **Approve does not start Yarn/Loom immediately.** Surveyor only writes content-bound marks. The next Pulse (or Daily, or `yarn schedule run` / `pulse run`) enrolls and builds. Prefer Pulse for **Scout** desk-speed after Approve; keep Daily for overnight reconcile + full non-Scout builds.
 

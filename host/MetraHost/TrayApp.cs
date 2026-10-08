@@ -21,6 +21,9 @@ internal sealed class TrayApp : ApplicationContext
     private bool _shortcutsPending = true;
     private DateTime _nextAttemptUtc = DateTime.MinValue;
     private DateTime _nextUpdateCheckUtc = DateTime.UtcNow;
+    private DateTime _nextCadenceEvalUtc = DateTime.MinValue;
+    private int _cadenceBusy;
+    private Task? _cadenceTask;
     private string? _lastError;
     private string? _updateNotifiedKey;
 
@@ -202,6 +205,9 @@ internal sealed class TrayApp : ApplicationContext
                 HostLog.Write($"Start Menu shortcut refresh failed - {ex.Message}", "warn");
             }
         }
+
+        // Yarn cadence is Host-owned; keep evaluating even if desk is stopped.
+        MaybeCadenceTick();
 
         if (_deskStopped)
         {
@@ -479,6 +485,78 @@ internal sealed class TrayApp : ApplicationContext
         }
     }
 
+    /// <summary>
+    /// Host-owned Yarn Pulse/Daily cadence. Runs off the UI thread so long schedule
+    /// runs do not block desk supervision. Bridge uses CreateNoWindow.
+    /// </summary>
+    private void MaybeCadenceTick()
+    {
+        if (DateTime.UtcNow < _nextCadenceEvalUtc)
+        {
+            return;
+        }
+
+        // Evaluate at least every 30s (finer than 60s tolerance floor).
+        _nextCadenceEvalUtc = DateTime.UtcNow.AddSeconds(30);
+        if (Interlocked.CompareExchange(ref _cadenceBusy, 1, 0) != 0)
+        {
+            return;
+        }
+
+        _cadenceTask = Task.Run(() =>
+        {
+            try
+            {
+                // Daily task limit was 2h; allow long Pulse/Daily without killing Host.
+                var r = _bridge.Invoke("cadence-tick", _port, timeoutMs: 7_200_000);
+                if (!r.Ok)
+                {
+                    HostLog.Write($"Cadence tick failed - {r.Error}", "warn");
+                    return;
+                }
+
+                if (r.Executed)
+                {
+                    HostLog.Write(
+                        $"Cadence ran mode={r.CadenceMode} exit={r.ExitCode} reason={r.Reason}");
+                }
+            }
+            catch (Exception ex)
+            {
+                HostLog.Write($"Cadence tick exception - {ex.Message}", "warn");
+            }
+            finally
+            {
+                Interlocked.Exchange(ref _cadenceBusy, 0);
+            }
+        });
+    }
+
+    private void WaitForCadenceShutdown()
+    {
+        var task = _cadenceTask;
+        if (task is null)
+        {
+            return;
+        }
+
+        try
+        {
+            // Bound UI-thread wait so logoff/Exit does not freeze WinForms for hours.
+            // In-flight schedule may continue briefly after Host exit; state lease expires in 2h.
+            if (!task.Wait(TimeSpan.FromSeconds(10)))
+            {
+                HostLog.Write(
+                    "Cadence still running after 10s shutdown wait - Host exiting; lease recovery on next start.",
+                    "warn");
+            }
+        }
+        catch (Exception ex)
+        {
+            HostLog.Write($"Cadence shutdown wait failed - {ex.Message}", "warn");
+        }
+    }
+
     private void Balloon(string text, ToolTipIcon icon) =>
         _notify.ShowBalloonTip(5000, "Metra Ops", text, icon);
 
@@ -508,6 +586,8 @@ internal sealed class TrayApp : ApplicationContext
         {
             // ignore
         }
+
+        WaitForCadenceShutdown();
 
         try
         {

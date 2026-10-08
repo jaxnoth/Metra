@@ -335,9 +335,22 @@ function Get-MetraYarnScheduleStatus {
     $runner = Get-YarnScheduleRunnerPath -MetraRoot $MetraRoot
     $daily = Get-YarnScheduleTaskStatusCore -TaskName (Get-YarnScheduleTaskName) -RunnerPath $runner -MetraRoot $MetraRoot
     $pulse = Get-YarnScheduleTaskStatusCore -TaskName (Get-YarnPulseScheduleTaskName) -RunnerPath $runner -MetraRoot $MetraRoot -ExpectedModeArg '-Mode Pulse'
+    $hostCadence = $null
+    try {
+        $metraManifest = Join-Path $MetraRoot 'scripts\Metra.psd1'
+        if (Test-Path -LiteralPath $metraManifest) {
+            Import-Module $metraManifest -Force -ErrorAction SilentlyContinue
+        }
+        if (Get-Command Get-MetraHostCadenceStatus -ErrorAction SilentlyContinue) {
+            $hostCadence = Get-MetraHostCadenceStatus -MetraRoot $MetraRoot
+        }
+    }
+    catch { }
+
     return [PSCustomObject]@{
-        daily = $daily
-        pulse = $pulse
+        daily       = $daily
+        pulse       = $pulse
+        hostCadence = $hostCadence
     }
 }
 
@@ -351,6 +364,14 @@ function Install-MetraYarnSchedule {
 
     if (-not $Confirm) {
         throw 'yarn schedule install requires -Confirm'
+    }
+
+    $metraManifest = Join-Path $MetraRoot 'scripts\Metra.psd1'
+    if (Test-Path -LiteralPath $metraManifest) {
+        Import-Module $metraManifest -Force -ErrorAction SilentlyContinue
+    }
+    if (Get-Command Assert-MetraHostCadenceAllowsLegacyInstall -ErrorAction SilentlyContinue) {
+        Assert-MetraHostCadenceAllowsLegacyInstall -MetraRoot $MetraRoot
     }
 
     $when = Test-YarnScheduleAtTime -At $At
@@ -429,6 +450,14 @@ function Install-MetraYarnPulseSchedule {
         throw 'yarn schedule pulse install requires -Confirm'
     }
 
+    $metraManifest = Join-Path $MetraRoot 'scripts\Metra.psd1'
+    if (Test-Path -LiteralPath $metraManifest) {
+        Import-Module $metraManifest -Force -ErrorAction SilentlyContinue
+    }
+    if (Get-Command Assert-MetraHostCadenceAllowsLegacyInstall -ErrorAction SilentlyContinue) {
+        Assert-MetraHostCadenceAllowsLegacyInstall -MetraRoot $MetraRoot
+    }
+
     $minutes = Test-YarnPulseEveryMinutes -EveryMinutes $EveryMinutes
     $name = Get-YarnPulseScheduleTaskName
     $runner = Get-YarnScheduleRunnerPath -MetraRoot $MetraRoot
@@ -495,6 +524,72 @@ function Uninstall-MetraYarnPulseSchedule {
     }
 }
 
+function Invoke-YarnScheduleHostCommand {
+    [CmdletBinding()]
+    param(
+        [string[]]$ArgsRest = @(),
+        [string]$MetraRoot = (Get-YarnHostRoot)
+    )
+
+    if (-not $ArgsRest -or $ArgsRest.Count -eq 0) {
+        throw 'yarn schedule host requires enable|disable|status|migrate'
+    }
+    $sub = $ArgsRest[0].ToLowerInvariant()
+    $rest = @()
+    if ($ArgsRest.Count -gt 1) { $rest = @($ArgsRest[1..($ArgsRest.Count - 1)]) }
+
+    # Host cadence helpers live in the Metra module (scripts/private/HostCadence.ps1).
+    $metraManifest = Join-Path $MetraRoot 'scripts\Metra.psd1'
+    if (Test-Path -LiteralPath $metraManifest) {
+        Import-Module $metraManifest -Force -ErrorAction SilentlyContinue
+    }
+
+    switch ($sub) {
+        'status' {
+            return Get-MetraHostCadenceStatus -MetraRoot $MetraRoot
+        }
+        'enable' {
+            $confirm = $rest -contains '-Confirm'
+            $every = 15
+            $at = '02:00'
+            for ($i = 0; $i -lt $rest.Count; $i++) {
+                if ($rest[$i] -eq '-EveryMinutes' -and ($i + 1) -lt $rest.Count) {
+                    $every = [int]$rest[$i + 1]
+                    $i++
+                }
+                elseif ($rest[$i] -eq '-At' -and ($i + 1) -lt $rest.Count) {
+                    $at = [string]$rest[$i + 1]
+                    $i++
+                }
+                elseif ($rest[$i] -eq '-Confirm') { $confirm = $true }
+            }
+            return Enable-MetraHostCadence -Confirm:$confirm -PulseEveryMinutes $every -DailyAtLocal $at -MetraRoot $MetraRoot
+        }
+        'disable' {
+            return Disable-MetraHostCadence -MetraRoot $MetraRoot
+        }
+        'migrate' {
+            if ($rest -notcontains '-Confirm') {
+                throw 'yarn schedule host migrate requires -Confirm (unregisters MetraYarnLoomPulse then MetraYarnLoomDaily)'
+            }
+            if (-not (Test-MetraHostCadenceOwned -MetraRoot $MetraRoot)) {
+                throw 'Host cadence is not enabled. Run yarn schedule host enable -Confirm first.'
+            }
+            $pulse = Uninstall-MetraYarnPulseSchedule -MetraRoot $MetraRoot -Confirm:$true
+            $daily = Uninstall-MetraYarnSchedule -MetraRoot $MetraRoot -Confirm:$true
+            return [pscustomobject]@{
+                outcome     = 'migrated'
+                pulse       = $pulse
+                daily       = $daily
+                hostCadence = Get-MetraHostCadenceStatus -MetraRoot $MetraRoot
+            }
+        }
+        default {
+            throw "yarn schedule host: unknown subcommand '$sub' (use enable|disable|status|migrate)"
+        }
+    }
+}
+
 function Invoke-YarnScheduleCommand {
     [CmdletBinding()]
     param(
@@ -504,13 +599,16 @@ function Invoke-YarnScheduleCommand {
     )
 
     if (-not $ArgsRest -or $ArgsRest.Count -eq 0) {
-        throw 'yarn schedule requires install|uninstall|status|run|pulse'
+        throw 'yarn schedule requires install|uninstall|status|run|pulse|host'
     }
     $sub = $ArgsRest[0].ToLowerInvariant()
     $rest = @()
     if ($ArgsRest.Count -gt 1) { $rest = @($ArgsRest[1..($ArgsRest.Count - 1)]) }
 
     switch ($sub) {
+        'host' {
+            return Invoke-YarnScheduleHostCommand -ArgsRest $rest -MetraRoot $MetraRoot
+        }
         'status' {
             return Get-MetraYarnScheduleStatus -MetraRoot $MetraRoot
         }
@@ -563,7 +661,7 @@ function Invoke-YarnScheduleCommand {
             }
         }
         default {
-            throw "yarn schedule: unknown subcommand '$sub' (use install|uninstall|status|run|pulse)"
+            throw "yarn schedule: unknown subcommand '$sub' (use install|uninstall|status|run|pulse|host)"
         }
     }
 }

@@ -27,8 +27,13 @@ internal sealed class OpsBridge
         _shellExe = ResolveShell();
     }
 
-    public BridgeResult Invoke(string action, int port, IDictionary<string, string>? extra = null)
+    public BridgeResult Invoke(string action, int port, IDictionary<string, string>? extra = null, int timeoutMs = 120_000)
     {
+        if (timeoutMs < 1_000)
+        {
+            timeoutMs = 1_000;
+        }
+
         var psi = new ProcessStartInfo
         {
             FileName = _shellExe,
@@ -77,7 +82,7 @@ internal sealed class OpsBridge
         // unread stream fills its OS pipe buffer before WaitForExit.
         var stdoutTask = proc.StandardOutput.ReadToEndAsync();
         var stderrTask = proc.StandardError.ReadToEndAsync();
-        if (!proc.WaitForExit(120_000))
+        if (!proc.WaitForExit(timeoutMs))
         {
             try
             {
@@ -88,7 +93,7 @@ internal sealed class OpsBridge
                 // ignore
             }
 
-            return BridgeResult.Fail("bridge_timeout", "Ops bridge timed out.");
+            return BridgeResult.Fail("bridge_timeout", $"Ops bridge timed out after {timeoutMs}ms ({action}).");
         }
 
         Task.WaitAll(stdoutTask, stderrTask);
@@ -213,6 +218,10 @@ internal sealed class BridgeResult
     public bool AnyUpdate { get; init; }
     public string? UpdateSummary { get; init; }
     public int AppliedOk { get; init; }
+    public bool Executed { get; init; }
+    public string? CadenceMode { get; init; }
+    public int? ExitCode { get; init; }
+    public string? Reason { get; init; }
 
     public static BridgeResult Fail(string code, string error) => new()
     {
@@ -238,6 +247,10 @@ internal sealed class BridgeResult
             AnyUpdate = root.TryGetProperty("anyUpdate", out var au) && au.ValueKind == JsonValueKind.True,
             UpdateSummary = GetString(root, "updateSummary"),
             AppliedOk = GetInt(root, "appliedOk") ?? 0,
+            Executed = root.TryGetProperty("executed", out var ex) && ex.ValueKind == JsonValueKind.True,
+            CadenceMode = GetString(root, "mode"),
+            ExitCode = GetInt(root, "exitCode"),
+            Reason = GetString(root, "reason"),
         };
     }
 

@@ -20,7 +20,9 @@ param(
         'set-startup',
         'sync-proposals',
         'check-updates',
-        'refresh-shortcuts'
+        'refresh-shortcuts',
+        'cadence-tick',
+        'cadence-status'
     )]
     [string]$Action,
 
@@ -273,6 +275,41 @@ try {
                     ok            = $true
                     anyUpdate     = $any
                     updateSummary = $summary
+                })
+            return
+        }
+        'cadence-status' {
+            $status = Invoke-MetraHostBridgePrivate {
+                param($root)
+                Get-MetraHostCadenceStatus -MetraRoot $root
+            } $MetraRoot
+            Write-MetraHostBridgeJson ([pscustomobject]@{
+                    ok      = $true
+                    enabled = [bool]$status.enabled
+                    message = ("owner={0}; mismatch={1}; active={2}" -f $status.owner, $status.legacyTaskMismatch, $status.activeRunKind)
+                    status  = $status
+                })
+            return
+        }
+        'cadence-tick' {
+            # Execute due Pulse/Daily via Invoke-MetraYarnLoomSchedule (no visible console - bridge CreateNoWindow).
+            $tick = Invoke-MetraHostBridgePrivate {
+                param($root)
+                Invoke-MetraHostCadenceTick -MetraRoot $root -Execute
+            } $MetraRoot
+            $st = Get-MetraProp -Object $tick -Name 'status' -Default $null
+            Write-MetraHostBridgeJson ([pscustomobject]@{
+                    ok        = $true
+                    executed  = [bool](Get-MetraProp -Object $tick -Name 'executed' -Default $false)
+                    enabled   = [bool](Get-MetraProp -Object $st -Name 'enabled' -Default $false)
+                    mode      = [string](Get-MetraProp -Object $tick -Name 'mode' -Default $null)
+                    exitCode  = $(Get-MetraProp -Object $tick -Name 'exitCode' -Default $null)
+                    reason    = [string](Get-MetraProp -Object $tick -Name 'reason' -Default '')
+                    message   = ("cadence {0} mode={1} exit={2}" -f `
+                        [string](Get-MetraProp -Object $tick -Name 'reason' -Default ''), `
+                        [string](Get-MetraProp -Object $tick -Name 'mode' -Default ''), `
+                        [string](Get-MetraProp -Object $tick -Name 'exitCode' -Default ''))
+                    status    = $st
                 })
             return
         }

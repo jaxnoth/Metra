@@ -61,6 +61,7 @@
         'Install-MetraYarnPulseSchedule'
         'Uninstall-MetraYarnPulseSchedule'
         'Invoke-YarnScheduleCommand'
+        'Invoke-YarnScheduleHostCommand'
         'Test-YarnLoomQueueWriteForbidden'
         'Read-YarnFutureDevIdeas'
         'Resolve-YarnPlanBoardProjection'

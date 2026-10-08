@@ -71,11 +71,19 @@ Entry shape:
 - Why: Close Project Loom-lane gap plan without treating Future-Dev as continuity backlog.
 - See: `tests/Invoke-PorterContinuitySmoke.ps1`; `docs/playbooks/project-lane.md`
 
+## 2026-10-08 - MetraHost owns Yarn/Loom Pulse and Daily cadence
+
+- Decision: **MetraHost** owns Yarn/Loom **Pulse** and **Daily** timing, lease coalescing, and persisted due-state (`%LOCALAPPDATA%\Metra\host-cadence.json`, `enabled` default false). Host invokes existing `Invoke-MetraYarnLoomSchedule` only via HostBridge (`cadence-tick`, CreateNoWindow). Yarn keeps stage semantics and exit codes 0-4 as **cadence health** (never Host process exit).
+- Decision: Legacy Interactive Tasks `MetraYarnLoomPulse` / `MetraYarnLoomDaily` are migration-only. When Host cadence is enabled, Task install refuses; `yarn schedule host migrate -Confirm` unregisters Pulse then Daily. Optional Host-ensure watchdog must not invoke the schedule runner. `MetraOpsDesk` remains Ops reach only - not Yarn cadence.
+- Decision: No Pulse auto-commit; no automatic Bing affirm; Inspect prep stays soft-fail inside the Yarn Pulse path. Cadence does not run when Host is down.
+- Why: Interactive `pwsh -File` Pulse stole focus every ~15 minutes despite `-WindowStyle Hidden`. Host is already always-on on HQ; one owner avoids a second scheduler in Ops.
+- See: `scripts/private/HostCadence.ps1`; `scripts/bootstrap/Invoke-MetraOpsHostBridge.ps1`; `host/MetraHost/TrayApp.cs`; `docs/playbooks/yarn.md`; desk plan `host_ops_yarn_cadence_*`
+
 ## 2026-09-24 - Porter transport vs Handoff state vs Inspect prep
 
 - Decision: **Porter remains a transport product.** It copies Approved Metra-product Cursor plan leaves into `porter/plans/` (byte-identical mirrors), writes `OPEN-PLANS.md`, and may **store** DESK-HANDOFF workflow state files in the pack. Porter is **not** the authority for implementation lifecycle, ship status, or Bing decisions. Never hand-edit `porter/plans/*`.
 - Decision: **Handoff** (concept) owns states `awaiting-prepare-bing` | `ready-for-bing` | `cleared` | `stale`. Files may live under `porter/`. On `handoff set`, Project coding for that stem is frozen until cleared or stale.
-- Decision: **`MetraYarnLoomPulse`** after Porter **observes** `awaiting-prepare-bing` and **invokes** `inspect prepare-bing -Name Metra` (soft-fail). On success, handoff advances to `ready-for-bing`. Porter scripts do **not** call Inspect engines. Automation may advance work through evidence generation; human authority is required only for judgment, risk acceptance, or durable shipment (`inspect gate affirm` / commit).
+- Decision: **Pulse** (Host cadence or legacy `MetraYarnLoomPulse`) after Porter **observes** `awaiting-prepare-bing` and **invokes** `inspect prepare-bing -Name Metra` (soft-fail). On success, handoff advances to `ready-for-bing`. Porter scripts do **not** call Inspect engines. Automation may advance work through evidence generation; human authority is required only for judgment, risk acceptance, or durable shipment (`inspect gate affirm` / commit).
 - Decision: Track `porter/OPEN-PLANS.md` and `porter/plans/*.plan.md` in git so cloud clones see mirrors; keep `manifest.json` and handoff machine state gitignored. Still **no** Pulse auto-commit - operator (or `porter publish`) stages/commits the pack when Project should see updates.
 - Why: Cursor Project continuity needed transport without making Porter a quiet workflow engine, and without making the operator the prepare-bing button-pusher.
 - See: `porter/README.md`; `docs/playbooks/project-lane.md`; `docs/Cursor-Project-Metra-Charter.md`; `modules/Yarn/Private/Schedule.ps1`

@@ -78,6 +78,7 @@ $export = @(
     'Install-MetraYarnPulseSchedule'
     'Uninstall-MetraYarnPulseSchedule'
     'Invoke-YarnScheduleCommand'
+    'Invoke-YarnScheduleHostCommand'
     'Test-YarnLoomQueueWriteForbidden'
     'Read-YarnFutureDevIdeas'
     'Test-YarnAtlasAdapterAvailable'
