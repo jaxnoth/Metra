@@ -164,6 +164,23 @@ function Add-MetraYarnConfirmForward {
             $forward += '-Confirm'
         }
     }
+    elseif ($subLower -eq 'schedule') {
+        # Top-level -Confirm is stripped from RemainingArguments; re-inject for gated schedule ops.
+        $needsConfirm = $false
+        if ($forward.Count -gt 0) {
+            $a0 = $forward[0].ToLowerInvariant()
+            if ($a0 -in @('install', 'uninstall')) { $needsConfirm = $true }
+            elseif ($a0 -eq 'pulse' -and $forward.Count -gt 1 -and $forward[1].ToLowerInvariant() -in @('install', 'uninstall')) {
+                $needsConfirm = $true
+            }
+            elseif ($a0 -eq 'host' -and $forward.Count -gt 1 -and $forward[1].ToLowerInvariant() -in @('enable', 'migrate')) {
+                $needsConfirm = $true
+            }
+        }
+        if ($needsConfirm -and $forward -notcontains '-Confirm') {
+            $forward += '-Confirm'
+        }
+    }
     return $forward
 }
 
