@@ -331,6 +331,29 @@ export async function putSettings(body: {
   ).then((r) => parseJson(r))
 }
 
+export function fetchHostCadence(): Promise<import('./types').HostCadenceStatus> {
+  return fetch('/api/host/cadence').then((r) => parseJson(r))
+}
+
+export async function putHostCadence(body: {
+  enabled?: boolean
+  pulseEveryMinutes?: number
+  dailyAtLocal?: string
+}): Promise<import('./types').HostCadenceSaveResult> {
+  const token = await ensureLocalSessionToken()
+  return fetch(
+    '/api/host/cadence',
+    withSessionHeaders(
+      {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(body),
+      },
+      token,
+    ),
+  ).then((r) => parseJson(r))
+}
+
 export function fetchUpdates(force = false): Promise<import('./types').ProductUpdates> {
   const q = force ? '?force=1' : ''
   return fetch(`/api/updates${q}`).then((r) => parseJson(r))

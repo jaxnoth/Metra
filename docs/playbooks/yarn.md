@@ -92,7 +92,27 @@ Stages inside the Yarn runner (unchanged by Host ownership):
 
 Exit codes (cadence **health**, not Host process exit): 0 ok/daily-gate, 1 failure, 2 validation blocked, 3 unexpected loom pause, 4 lock held. Logs: `%LOCALAPPDATA%\Metra\yarn\schedule-logs\`.
 
-#### Host cadence CLI
+#### Host cadence control
+
+**Ops Settings → Desk → Yarn cadence** is the operator control surface (enable toggle, Pulse minutes, Daily local time). Changes write `%LOCALAPPDATA%\Metra\host-cadence.json` and take effect on the next Host tick (~30s) without redeploying MetraHost. APIs: `GET`/`PUT` `/api/host/cadence`.
+
+Control-surface authority (Ops Settings / `PUT /api/host/cadence` vs Host execution):
+
+| Action | Ops Settings / API | Host / CLI |
+|--------|--------------------|------------|
+| Enable / disable cadence | Yes | Yes (`host enable` / `disable`) |
+| Change Pulse interval | Yes | Yes (`-EveryMinutes`) |
+| Change Daily local time | Yes | Yes (`-At`) |
+| View status / mismatch | Yes | Yes (`host status`) |
+| Force Pulse run now | No | CLI `yarn schedule pulse run` (or wait for Host tick) |
+| Force Daily run now | No | CLI `yarn schedule run` (or wait for Host tick) |
+| Clear active lease | No | Host lease repair / tick only |
+| Complete interrupted run | No | Host / schedule runner only |
+| Unregister legacy Tasks | No | CLI `host migrate -Confirm` |
+
+Ops Settings is configuration and status only - not a second scheduler and not an execution console.
+
+CLI twin (same state file):
 
 ```powershell
 .\metra.ps1 yarn schedule host status
@@ -102,7 +122,7 @@ Exit codes (cadence **health**, not Host process exit): 0 ok/daily-gate, 1 failu
 .\metra.ps1 yarn schedule status                        # includes hostCadence block
 ```
 
-When `enabled=true`, `yarn schedule install` / `pulse install` refuse (Host owns cadence). `MetraOpsDesk` is Ops **reach** only - not Yarn cadence. Host down means no automatic Pulse/Daily.
+When `enabled=true`, `yarn schedule install` / `pulse install` refuse (Host owns cadence). Host down means no automatic Pulse/Daily.
 
 Failed Daily (exit 1-3) counts as completed for that local date - no same-day automatic retry. Exit 4 (lock held) is not a retry storm.
 

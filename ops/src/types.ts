@@ -353,6 +353,39 @@ export type ProductUpdates = {
   applyJob?: ProductUpdateApplyJob | null
 }
 
+/** GET /api/host/cadence - MetraHost Yarn Pulse/Daily ownership. */
+export type HostCadenceStatus = {
+  schemaVersion?: number
+  enabled: boolean
+  owner: string
+  armedIdle?: boolean
+  pulseEveryMinutes: number
+  dailyAtLocal: string
+  nextPulseDueUtc?: string | null
+  nextDailyDueLocal?: string | null
+  lastPulseStartedUtc?: string | null
+  lastPulseCompletedUtc?: string | null
+  lastPulseOutcome?: number | string | null
+  lastDailyLocalDate?: string | null
+  lastDailyStartedUtc?: string | null
+  lastDailyCompletedUtc?: string | null
+  lastDailyOutcome?: number | string | null
+  pendingPulse?: boolean
+  pendingDaily?: boolean
+  activeRunKind?: string | null
+  legacyTaskMismatch?: boolean
+  legacyPulsePresent?: boolean
+  legacyDailyPresent?: boolean
+  legacyDetails?: string[]
+  statePath?: string
+}
+
+export type HostCadenceSaveResult = {
+  ok: boolean
+  status: HostCadenceStatus
+  error?: string
+}
+
 /** Legacy sync CLI shape (still used by Invoke-MetraProductUpdate WhatIf). */
 export type ProductUpdateResult = {
   ok: boolean

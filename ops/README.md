@@ -79,6 +79,8 @@ HTML Ops is the first client. Future native iOS (and phone browser over Tailscal
 | POST | `/api/profile/pair/approve` | Settings | Body `{ requestId }`. Adds allowlist + mints device token (local authority). |
 | GET | `/api/profile/export` | Settings | Profile zip via `Export-MetraProfile` (optional cache by hash). Same auth as status. |
 | POST | `/api/profile/issue-sync-token` | Settings | Break-glass bearer (plaintext once). Body optional `{ rotate: true }`. Local authority only. Prefer Tailscale pair. |
+| GET | `/api/host/cadence` | Settings | Host Yarn Pulse/Daily cadence status (`host-cadence.json`). |
+| PUT | `/api/host/cadence` | Settings | Body: `{ enabled?, pulseEveryMinutes?, dailyAtLocal? }`. Operator machine only. Takes effect on next Host tick (~30s); no Host redeploy. |
 | GET | `/api/updates` | Settings | Metra + Ollama update status (`?force=1` bypasses 24h cache). |
 | POST | `/api/updates` | Settings | Body: `{ target: "metra" \| "ollama" }`. Operator-confirm apply only - never auto. Operator machine only. |
 | POST | `/api/ask` | Ask | Body: `prompt`, optional `sessionId`, `recallSessionId`, `client`, `clientHint`. Header `X-Metra-Client`: `ops-web` \| `ops-ios` \| `cli`. When `client-auth.local.json` allowlist is configured, remote (non-local-authority) callers need allowlisted WhoIs. |

@@ -115,6 +115,7 @@ $script:MetraCompatibilityFunctions = @(
     'Get-MetraHostCadenceStatus',
     'Enable-MetraHostCadence',
     'Disable-MetraHostCadence',
+    'Set-MetraHostCadenceSettings',
     'Test-MetraHostCadenceOwned',
     'Assert-MetraHostCadenceAllowsLegacyInstall',
     'Invoke-MetraHostCadenceTick',

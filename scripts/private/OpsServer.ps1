@@ -1139,6 +1139,74 @@ function Invoke-MetraOpsApi {
             return
         }
 
+        if ($method -eq 'GET' -and $path -eq '/api/host/cadence') {
+            try {
+                if (-not (Get-Command Get-MetraHostCadenceStatus -ErrorAction SilentlyContinue)) {
+                    Write-MetraOpsJsonResponse -Response $Response -StatusCode 503 -Object ([PSCustomObject]@{
+                            error      = 'Host cadence helpers unavailable.'
+                            reasonCode = 'hostCadenceUnavailable'
+                        })
+                    return
+                }
+                Write-MetraOpsJsonResponse -Response $Response -Object (Get-MetraHostCadenceStatus -MetraRoot $MetraRoot) -Depth 6
+            }
+            catch {
+                Write-MetraOpsJsonResponse -Response $Response -StatusCode 500 -Object ([PSCustomObject]@{
+                        error = $_.Exception.Message
+                    })
+            }
+            return
+        }
+
+        if ($method -eq 'PUT' -and $path -eq '/api/host/cadence') {
+            if (-not (Assert-MetraOpsLocalAuthority -Request $Request -Response $Response `
+                    -ErrorMessage 'Yarn cadence settings run on the operator machine only.' `
+                    -ReasonCode 'hostCadenceLocalOnly')) { return }
+            $body = Read-MetraOpsRequestBody -Request $Request
+            try {
+                if (-not (Get-Command Set-MetraHostCadenceSettings -ErrorAction SilentlyContinue)) {
+                    Write-MetraOpsJsonResponse -Response $Response -StatusCode 503 -Object ([PSCustomObject]@{
+                            error      = 'Host cadence helpers unavailable.'
+                            reasonCode = 'hostCadenceUnavailable'
+                        })
+                    return
+                }
+                $parsed = ConvertFrom-MetraOpsJsonBody -Body $body -AllowEmpty
+                $setArgs = @{ MetraRoot = $MetraRoot }
+                $enabledRaw = Get-MetraProp -Object $parsed -Name 'enabled' -Default $null
+                if ($null -ne $enabledRaw) {
+                    $setArgs['Enabled'] = [bool]$enabledRaw
+                }
+                $everyRaw = Get-MetraProp -Object $parsed -Name 'pulseEveryMinutes' -Default $null
+                if ($null -ne $everyRaw -and -not [string]::IsNullOrWhiteSpace([string]$everyRaw)) {
+                    $setArgs['PulseEveryMinutes'] = [int]$everyRaw
+                }
+                $atRaw = Get-MetraProp -Object $parsed -Name 'dailyAtLocal' -Default $null
+                if ($null -ne $atRaw -and -not [string]::IsNullOrWhiteSpace([string]$atRaw)) {
+                    $setArgs['DailyAtLocal'] = [string]$atRaw
+                }
+                if (-not $setArgs.ContainsKey('Enabled') -and
+                    -not $setArgs.ContainsKey('PulseEveryMinutes') -and
+                    -not $setArgs.ContainsKey('DailyAtLocal')) {
+                    Write-MetraOpsJsonResponse -Response $Response -StatusCode 400 -Object ([PSCustomObject]@{
+                            error = 'Provide enabled, pulseEveryMinutes, and/or dailyAtLocal.'
+                        })
+                    return
+                }
+                $status = Set-MetraHostCadenceSettings @setArgs
+                Write-MetraOpsJsonResponse -Response $Response -Object ([PSCustomObject]@{
+                        ok     = $true
+                        status = $status
+                    }) -Depth 6
+            }
+            catch {
+                Write-MetraOpsJsonResponse -Response $Response -StatusCode 400 -Object ([PSCustomObject]@{
+                        error = $_.Exception.Message
+                    })
+            }
+            return
+        }
+
         if ($method -eq 'GET' -and $path -eq '/api/updates') {
             $forceRaw = Get-MetraOpsQueryValue -Request $Request -Name 'force'
             $force = $forceRaw -match '^(?i)(1|true|yes)$'

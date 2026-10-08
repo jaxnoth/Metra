@@ -434,6 +434,48 @@ function Disable-MetraHostCadence {
     return Get-MetraHostCadenceStatus -Path $Path -MetraRoot $MetraRoot
 }
 
+function Set-MetraHostCadenceSettings {
+    <#
+    .SYNOPSIS
+        Patch host-cadence.json (enable, pulse interval, daily local time). Ops Settings / API use this;
+        Host picks up changes on the next cadence-tick (~30s) without redeploy.
+    #>
+    [CmdletBinding()]
+    param(
+        [string]$Path,
+        [string]$MetraRoot,
+        [bool]$Enabled,
+        [int]$PulseEveryMinutes,
+        [string]$DailyAtLocal
+    )
+    $Path = Resolve-MetraHostCadenceStatePath -Path $Path -MetraRoot $MetraRoot
+    $state = Initialize-MetraHostCadenceState -Path $Path -MetraRoot $MetraRoot
+
+    if ($PSBoundParameters.ContainsKey('PulseEveryMinutes')) {
+        $every = [int]$PulseEveryMinutes
+        if ($every -lt 5 -or $every -gt 120) {
+            throw "Invalid pulseEveryMinutes '$every' (allowed 5-120)."
+        }
+        $state.pulseEveryMinutes = $every
+    }
+    if ($PSBoundParameters.ContainsKey('DailyAtLocal')) {
+        $at = ([string]$DailyAtLocal).Trim()
+        if ($at -notmatch '^(?<h>[01]?\d|2[0-3]):(?<m>[0-5]\d)$') {
+            throw "Invalid dailyAtLocal '$at' (expected HH:mm, 00:00-23:59)."
+        }
+        $state.dailyAtLocal = ('{0:D2}:{1:D2}' -f [int]$Matches.h, [int]$Matches.m)
+    }
+    if ($PSBoundParameters.ContainsKey('Enabled')) {
+        $state.enabled = [bool]$Enabled
+        if ($state.enabled -and [string]::IsNullOrWhiteSpace([string]$state.nextPulseDueUtc)) {
+            $state.nextPulseDueUtc = ([datetime]::UtcNow.ToString('o'))
+        }
+    }
+
+    Save-MetraHostCadenceState -State $state -Path $Path -MetraRoot $MetraRoot
+    return Get-MetraHostCadenceStatus -Path $Path -MetraRoot $MetraRoot
+}
+
 function Test-MetraHostCadenceOwned {
     [CmdletBinding()]
     param(

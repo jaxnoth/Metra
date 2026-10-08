@@ -31,6 +31,8 @@ import {
   postAskEngineSet,
   fetchSettings,
   putSettings,
+  fetchHostCadence,
+  putHostCadence,
   fetchUpdates,
   fetchProfileStatus,
   downloadProfileExport,
@@ -56,6 +58,7 @@ import type {
   AskSessionSummary,
   AskEnginePanel,
   SettingsPortfolio,
+  HostCadenceStatus,
   ProductUpdates,
   ProfileSyncStatus,
   CaptureItem,
@@ -1338,6 +1341,10 @@ export default function App() {
   const [machineRoleDraft, setMachineRoleDraft] = useState<'Hq' | 'Satellite' | 'Standalone'>('Standalone')
   const [opsBaseUrlDraft, setOpsBaseUrlDraft] = useState('')
   const [settingsStatus, setSettingsStatus] = useState<string | null>(null)
+  const [hostCadence, setHostCadence] = useState<HostCadenceStatus | null>(null)
+  const [cadenceEveryDraft, setCadenceEveryDraft] = useState('15')
+  const [cadenceAtDraft, setCadenceAtDraft] = useState('02:00')
+  const [cadenceStatusMsg, setCadenceStatusMsg] = useState<string | null>(null)
   const [resolveStatus, setResolveStatus] = useState<string | null>(null)
   const [ticketWatchStatus, setTicketWatchStatus] = useState<string | null>(null)
   const ticketScanInFlight = useRef(false)
@@ -1690,12 +1697,73 @@ export default function App() {
     }
   }
 
+  async function loadHostCadence() {
+    try {
+      const status = await fetchHostCadence()
+      setHostCadence(status)
+      setCadenceEveryDraft(String(status.pulseEveryMinutes ?? 15))
+      setCadenceAtDraft(status.dailyAtLocal || '02:00')
+    } catch {
+      setHostCadence(null)
+    }
+  }
+
+  async function onToggleHostCadence(next: boolean) {
+    setBusy(true)
+    setError(null)
+    setCadenceStatusMsg(null)
+    try {
+      const result = await putHostCadence({ enabled: next })
+      setHostCadence(result.status)
+      setCadenceStatusMsg(
+        next
+          ? 'Yarn cadence on - Host will evaluate within ~30s (no redeploy).'
+          : 'Yarn cadence off - Host ticks stay idle until you enable again.',
+      )
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e))
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  async function onSaveHostCadenceSchedule() {
+    setBusy(true)
+    setError(null)
+    setCadenceStatusMsg(null)
+    try {
+      const every = Number.parseInt(cadenceEveryDraft, 10)
+      if (!Number.isFinite(every) || every < 5 || every > 120) {
+        throw new Error('Pulse interval must be between 5 and 120 minutes.')
+      }
+      const at = cadenceAtDraft.trim()
+      if (!/^([01]?\d|2[0-3]):[0-5]\d$/.test(at)) {
+        throw new Error('Daily time must look like HH:mm (local, 00:00-23:59).')
+      }
+      const result = await putHostCadence({
+        pulseEveryMinutes: every,
+        dailyAtLocal: at,
+      })
+      setHostCadence(result.status)
+      setCadenceEveryDraft(String(result.status.pulseEveryMinutes ?? every))
+      setCadenceAtDraft(result.status.dailyAtLocal || at)
+      setCadenceStatusMsg(
+        `Saved Pulse every ${result.status.pulseEveryMinutes}m; Daily at ${result.status.dailyAtLocal} local.`,
+      )
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e))
+    } finally {
+      setBusy(false)
+    }
+  }
+
   useEffect(() => {
     if (!hasLocalSession) return
     if (!settingsOpen && tab !== 'settings') return
     void loadSettingsPortfolio()
     void loadProductUpdates(false)
     void loadProfileSyncStatus()
+    void loadHostCadence()
     // eslint-disable-next-line react-hooks/exhaustive-deps -- load when Settings opens after verified authority
   }, [settingsOpen, tab, hasLocalSession])
 
@@ -3861,6 +3929,101 @@ export default function App() {
                 onChange={(e) => void onToggleTicketWatch(e.target.checked)}
               />
               {ticketWatchEnabled ? 'On' : 'Off'}
+            </label>
+          </div>
+          <div className="settings-row">
+            <div>
+              <strong>Yarn cadence</strong>
+              <p className="muted">
+                MetraHost owns Yarn/Loom Pulse and Daily timing. Toggle and schedule write
+                host-cadence.json; Host applies on the next tick (~30s) without redeploy.
+              </p>
+              {hostCadence ? (
+                <ul className="muted" style={{ marginTop: '0.5rem' }}>
+                  <li style={{ marginBottom: '0.35rem' }}>
+                    Owner: {hostCadence.owner}
+                    {hostCadence.activeRunKind
+                      ? ` · running ${hostCadence.activeRunKind}`
+                      : ''}
+                  </li>
+                  <li style={{ marginBottom: '0.35rem' }}>
+                    Next Pulse (UTC): {hostCadence.nextPulseDueUtc || '-'}
+                    {hostCadence.lastPulseOutcome != null && hostCadence.lastPulseOutcome !== ''
+                      ? ` · last exit ${hostCadence.lastPulseOutcome}`
+                      : ''}
+                  </li>
+                  <li style={{ marginBottom: '0.35rem' }}>
+                    Daily at {hostCadence.dailyAtLocal} local
+                    {hostCadence.lastDailyLocalDate
+                      ? ` · last completed ${hostCadence.lastDailyLocalDate}`
+                      : ''}
+                    {hostCadence.lastDailyOutcome != null && hostCadence.lastDailyOutcome !== ''
+                      ? ` · exit ${hostCadence.lastDailyOutcome}`
+                      : ''}
+                  </li>
+                  {hostCadence.legacyTaskMismatch ? (
+                    <li style={{ marginBottom: '0.35rem' }}>
+                      Legacy Task mismatch - run{' '}
+                      <code>yarn schedule host migrate -Confirm</code> from the Metra checkout.
+                    </li>
+                  ) : null}
+                </ul>
+              ) : (
+                <p className="muted">Cadence status unavailable.</p>
+              )}
+              <div
+                style={{
+                  display: 'flex',
+                  flexWrap: 'wrap',
+                  gap: '0.75rem',
+                  alignItems: 'flex-end',
+                  marginTop: '0.5rem',
+                }}
+              >
+                <label className="settings-field">
+                  <span className="muted">Pulse minutes (5-120)</span>
+                  <input
+                    type="number"
+                    min={5}
+                    max={120}
+                    disabled={busy || !hasLocalSession}
+                    value={cadenceEveryDraft}
+                    onChange={(e) => setCadenceEveryDraft(e.target.value)}
+                  />
+                </label>
+                <label className="settings-field">
+                  <span className="muted">Daily at (local HH:mm)</span>
+                  <input
+                    type="text"
+                    disabled={busy || !hasLocalSession}
+                    value={cadenceAtDraft}
+                    onChange={(e) => setCadenceAtDraft(e.target.value)}
+                    placeholder="02:00"
+                    spellCheck={false}
+                  />
+                </label>
+                <button
+                  type="button"
+                  disabled={busy || !hasLocalSession}
+                  onClick={() => void onSaveHostCadenceSchedule()}
+                >
+                  Save schedule
+                </button>
+              </div>
+              {cadenceStatusMsg ? (
+                <p className="muted" role="status" style={{ marginTop: '0.5rem' }}>
+                  {cadenceStatusMsg}
+                </p>
+              ) : null}
+            </div>
+            <label className="switch">
+              <input
+                type="checkbox"
+                checked={Boolean(hostCadence?.enabled)}
+                disabled={busy || !hasLocalSession || !hostCadence}
+                onChange={(e) => void onToggleHostCadence(e.target.checked)}
+              />
+              {hostCadence?.enabled ? 'On' : 'Off'}
             </label>
           </div>
           <div className="settings-row">

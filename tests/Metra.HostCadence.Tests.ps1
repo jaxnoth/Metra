@@ -86,6 +86,18 @@ Describe 'Metra Host Cadence' {
         }
     }
 
+    It 'patches enable and schedule via Set-MetraHostCadenceSettings without Confirm' {
+        $st = Set-MetraHostCadenceSettings -Path $script:CadencePath -Enabled $true `
+            -PulseEveryMinutes 20 -DailyAtLocal '03:30'
+        $st.enabled | Should -BeTrue
+        $st.pulseEveryMinutes | Should -Be 20
+        $st.dailyAtLocal | Should -Be '03:30'
+        $off = Set-MetraHostCadenceSettings -Path $script:CadencePath -Enabled $false
+        $off.enabled | Should -BeFalse
+        $off.pulseEveryMinutes | Should -Be 20
+        { Set-MetraHostCadenceSettings -Path $script:CadencePath -DailyAtLocal '25:00' } | Should -Throw
+    }
+
     It 'keeps in-flight activeRunKind within lease; clears only when expired' {
         $state = Initialize-MetraHostCadenceState -Path $script:CadencePath
         $state.activeRunKind = 'Pulse'

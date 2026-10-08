@@ -74,10 +74,11 @@ Entry shape:
 ## 2026-10-08 - MetraHost owns Yarn/Loom Pulse and Daily cadence
 
 - Decision: **MetraHost** owns Yarn/Loom **Pulse** and **Daily** timing, lease coalescing, and persisted due-state (`%LOCALAPPDATA%\Metra\host-cadence.json`, `enabled` default false). Host invokes existing `Invoke-MetraYarnLoomSchedule` only via HostBridge (`cadence-tick`, CreateNoWindow). Yarn keeps stage semantics and exit codes 0-4 as **cadence health** (never Host process exit).
-- Decision: Legacy Interactive Tasks `MetraYarnLoomPulse` / `MetraYarnLoomDaily` are migration-only. When Host cadence is enabled, Task install refuses; `yarn schedule host migrate -Confirm` unregisters Pulse then Daily. Optional Host-ensure watchdog must not invoke the schedule runner. `MetraOpsDesk` remains Ops reach only - not Yarn cadence.
+- Decision: Legacy Interactive Tasks `MetraYarnLoomPulse` / `MetraYarnLoomDaily` are migration-only. When Host cadence is enabled, Task install refuses; `yarn schedule host migrate -Confirm` unregisters Pulse then Daily. Optional Host-ensure watchdog must not invoke the schedule runner.
+- Decision: **Ops Settings → Desk → Yarn cadence** is the operator control surface for enable, Pulse interval, and Daily local time (`GET`/`PUT` `/api/host/cadence` → `Set-MetraHostCadenceSettings` → same `host-cadence.json`). Ops is configuration and status only - not a second scheduler. Force Pulse/Daily run, lease clear, and interrupted-run completion stay Host/CLI execution paths (see authority table in `docs/playbooks/yarn.md`).
 - Decision: No Pulse auto-commit; no automatic Bing affirm; Inspect prep stays soft-fail inside the Yarn Pulse path. Cadence does not run when Host is down.
-- Why: Interactive `pwsh -File` Pulse stole focus every ~15 minutes despite `-WindowStyle Hidden`. Host is already always-on on HQ; one owner avoids a second scheduler in Ops.
-- See: `scripts/private/HostCadence.ps1`; `scripts/bootstrap/Invoke-MetraOpsHostBridge.ps1`; `host/MetraHost/TrayApp.cs`; `docs/playbooks/yarn.md`; desk plan `host_ops_yarn_cadence_*`
+- Why: Interactive `pwsh -File` Pulse stole focus every ~15 minutes despite `-WindowStyle Hidden`. Host is already always-on on HQ; one owner avoids a second scheduler in Ops; Ops Settings is the Host control surface for config, not execution.
+- See: `scripts/private/HostCadence.ps1`; `scripts/bootstrap/Invoke-MetraOpsHostBridge.ps1`; `host/MetraHost/TrayApp.cs`; `ops/src/App.tsx`; `docs/playbooks/yarn.md`; desk plan `host_ops_yarn_cadence_*`
 
 ## 2026-09-24 - Porter transport vs Handoff state vs Inspect prep
 
