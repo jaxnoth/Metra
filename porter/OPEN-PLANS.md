@@ -1,6 +1,6 @@
 # Metra-product plans (porter scope)
 
-Generated: 2026-09-28T21:12:07.3777073Z
+Generated: 2026-10-09T09:14:35.6343473Z
 Scope: porter/scope.json (Metra product only; 6 index entries skipped)
 Sources: plans/index.yaml + Approved Cursor leaves under %USERPROFILE%\.cursor\plans (in-scope, not already indexed)
 
@@ -14,8 +14,8 @@ Sources: plans/index.yaml + Approved Cursor leaves under %USERPROFILE%\.cursor\p
 | ios-presence-face-transitions | repo | - | plans/ios-presence-face-transitions.plan.md | - |
 | ios-voice-identity | repo | - | plans/ios-voice-identity.plan.md | - |
 | loom-product-boundary | repo | - | plans/loom-product-boundary.plan.md | - |
-| metra-stage-2-purge | cursor | metra_stage_2_purge_26f5e856.plan.md | - | plans/metra_stage_2_purge_26f5e856.plan.md |
 | new-use-case-for-metra-sort-of-dedicated-server | repo | - | plans/new-use-case-for-metra-sort-of-dedicated-server.plan.md | - |
+| ops-ask-conflict-parent | cursor | ops_ask_conflict_parent_6578644c.plan.md | - | plans/ops_ask_conflict_parent_6578644c.plan.md |
 | ops-ask-sidecar-stability | cursor | ops_ask_sidecar_stability_79118c68.plan.md | - | plans/ops_ask_sidecar_stability_79118c68.plan.md |
 | ops-desk-ask-sequencing | cursor | ops_ask_conflict_parent_6578644c.plan.md | - | plans/ops_ask_conflict_parent_6578644c.plan.md |
 | routing-graph-evolution | repo | - | plans/routing-graph-evolution.plan.md | - |

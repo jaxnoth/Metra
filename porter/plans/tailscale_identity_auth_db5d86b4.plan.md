@@ -1,5 +1,6 @@
 ---
 name: Tailscale identity auth
+status: completed
 overview: "Replace paste-first Profile Sync with Tailscale WhoIs + host allowlist, then host-minted per-device capability tokens. Keep legacy sync token as break-glass only; tighten remote Ask behind the same allowlist without touching loopback local authority or Host apply. Bing 2026-08-29: Approved with minor recommendations (WhoIs cache, device metadata, explicit replay docs)."
 todos:
   - id: bite1-whois-allowlist

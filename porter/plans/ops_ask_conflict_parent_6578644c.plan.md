@@ -1,10 +1,10 @@
 ---
 name: Ops Ask Conflict Parent
-overview: Parent umbrella for active unbuilt Ops/Ask/desk plans - inventory conflict surfaces, lock build sequence (stability before fix_batch offload), and keep sibling lanes from colliding on OpsServer/Ask without merging plans. Bing approve-with-minor-amendments 2026-09-21 folded below.
+overview: Parent umbrella for Ops/Ask/desk sequencing - lock Track A build order (stability before fix_batch offload), keep sibling lanes from colliding on OpsServer/Ask, and retire when the conflict lane is clear. Bing approve-with-minor-amendments 2026-09-21 folded below.
 todos:
   - id: affirm-parent
     content: Surveyor Pack/Approve this parent; index stem ops-desk-ask-sequencing authority cursor (Bing Conditional Affirm folded 2026-09-21)
-    status: pending
+    status: completed
   - id: link-children
     content: Add relatedPlans cite on ops_ask_sidecar_stability + ops_ask_fix_batch pointing at this parent + locked sequence
     status: completed
@@ -15,139 +15,184 @@ todos:
     content: "After both Track A ships: iOS askBusy mapping + poll Ensure via named mutex (or cancel if folded into a child)"
     status: pending
   - id: retire-parent
-    content: "When Track A + integration done and no active child modifies Ops Ask concurrency / askBusy /api/meta / Ensure - mark parent Parked/Complete and archive"
+    content: When Track A + integration done and no active child modifies Ops Ask concurrency / askBusy /api/meta / Ensure - mark parent Parked/Complete and archive
     status: pending
 isProject: false
-relatedPlans:
-  - ops_ask_sidecar_stability_79118c68.plan.md
-  - ops_ask_fix_batch_a72e390d.plan.md
-  - attention_2.0_forward_cb1ee20e.plan.md
+externalReviewHash: 224a09ceef27e4443f0017a8d9fbca1c360323c3ac3fc6e31d795639cbd231e4
+approveForLoom: true
+approveForLoomHash: 224a09ceef27e4443f0017a8d9fbca1c360323c3ac3fc6e31d795639cbd231e4
+externalReviewed: true
+loomAcceptedAt: "2026-10-08T20:52:57.8964670Z"
+loomHandoffId: yh-61ec5675fbbe4ea467e208ce9db2bf41
+status: Approved
 ---
 
 # Ops Desk / Ask sequencing (parent)
 
 **Stem:** `ops-desk-ask-sequencing`
 **Role:** Parent umbrella (same pattern as [`attention_2.0_forward_cb1ee20e.plan.md`](attention_2.0_forward_cb1ee20e.plan.md)) - organize and sequence children; do **not** merge child bodies.
-**Home:** Metra (Yarn / Plan Board Subproject **OpsDesk** + **Ask**). **Not** a TicketTracker iSupport ticket - portfolio plan conflict is Yarn/Plan Board territory.
-**Status:** Approved with minor amendments (Bing 2026-09-21) - amendments A/B/C folded below. Surveyor Approve / Yarn index still pending operator.
+**Home:** Metra (Yarn / Plan Board Subproject **OpsDesk** + **Ask**). Not a TicketTracker ticket.
+**Status:** Bing Approve with minor amendments (2026-09-21). Surveyor Approve recorded (content-bound marks). Index stem `ops-desk-ask-sequencing` already `authority: cursor`.
 
-## Bing review (2026-09-21)
+## Goal
 
-**Verdict:** Approve with minor amendments. Parent stays portfolio coordination; children keep implementation authority. Amendments A (override authority), B (retirement), C (future-child relatedPlans) folded into this document.
+One place to see **what ships next** on Ops/Ask without hunting ~30 Cursor leaves. Two children both rewrite [`OpsServer.ps1`](scripts/private/OpsServer.ps1) Ask behavior - without this parent, Loom/Surveyor can Approve them in either order and collide.
 
-Boundaries checked and kept: parent owns sequencing; children own implementation; Attention parent stays separate; TicketTracker not absorbed; OpsDesk/Ask remain portfolio categories.
+| Child leaf | Job |
+|------------|-----|
+| [`ops_ask_sidecar_stability_79118c68.plan.md`](ops_ask_sidecar_stability_79118c68.plan.md) | Remote reach / false offline |
+| [`ops_ask_fix_batch_a72e390d.plan.md`](ops_ask_fix_batch_a72e390d.plan.md) | DEV-JMP01 CPU; Ask off accept-loop |
+
+## Design
+
+```mermaid
+flowchart TB
+  parent[Ops Desk / Ask sequencing parent]
+  parent --> order[Order of execution]
+  order --> step1[1 Sidecar stability]
+  order --> step2[2 fix_batch]
+  order --> step3[3 Integration follow-through]
+  step1 --> stability[ops_ask_sidecar_stability]
+  step2 --> fixbatch[ops_ask_fix_batch]
+  step3 --> integrate[integration-followthrough]
+  parent --> parallel[Parallel tracks B and C]
+  parallel --> trackB[Track B Vision / iOS]
+  parallel --> trackC[Track C Attention UI]
+```
+
+## Order of execution
+
+Serialize Track A. Do **not** merge the two Ask children. Do **not** put async Ask worker work inside stability.
+
+| Step | Plan / bite | Status | Pending | What it owns | Conflict surface |
+|------|-------------|--------|---------|--------------|------------------|
+| 0 | Foundation: `sidecar_complete_fix`, `metra_ops_host` / `ops_desk_coherence` | Shipped | 0 | Lease, health gate, Ensure recycle; tray Host→Ops→Ask | Cite only |
+| **1** | [`ops_ask_sidecar_stability`](ops_ask_sidecar_stability_79118c68.plan.md) | **Todos complete** - affirm/index if still needed | 0 | Phone timeout, Ask `/health` poll, Serve+meta, error taxonomy, Ops Scheduled Task | Accept-loop Ensure; `/api/meta` shape; iOS errors |
+| **2a** | [`ops_ask_fix_batch`](ops_ask_fix_batch_a72e390d.plan.md) **P0a** | **Next implement** | 6 total | Attention Project vs Reconcile; migrate `Get-MetraDeskPayload` callers | Desk payload / reconcile boundary |
+| **2b** | same leaf **P0b** | Blocked until 2a (and step 1) | (same) | SemaphoreSlim `askBusy` 409; Ask worker off accept-loop | Accept-loop rewrite; named mutex Ensure |
+| **2c** | same leaf **P1 → P2 → verify** | After 2b | (same) | Cost caps, caches, inspect | Telemetry must not share Ask gate |
+| **3** | Parent todo `integration-followthrough` | After step 2 ships | 1 | iOS map `askBusy`; route poll Ensure through fix_batch named mutex | May cancel if folded into open child |
+| 4 | Parent todo `retire-parent` | After 1–3 clear | 1 | Park/Complete this parent | See Retire parent when |
+
+**Current next bite:** step **2a** (fix_batch P0a).
+
+### Hard gates
+
+| Gate | Rule |
+|------|------|
+| Default order | Step 1 → 2a → 2b → 2c → 3 → 4 |
+| Override | Only via [Override authority](#override-authority-amendment-a) note on **this** parent (date, what, why, operator). Chat / Loom receipt / child footnote do not count. |
+| Future children | Any new plan that touches Ask lifecycle, concurrency, `askBusy`/409, `/api/meta`, or Ensure must `relatedPlans` cite this parent **before** Approve (Amendment C). |
+| Merge ban | Do not merge stability + fix_batch into one plan. |
 
 ---
 
-## Why this parent exists
+## Track A - Ops/Ask conflict lane (serialize)
 
-~30 Cursor leaves still have `pending` todos. Two unbuilt plans both rewrite [`OpsServer.ps1`](scripts/private/OpsServer.ps1) Ask behavior:
+Same children as the execution table; ownership detail for desk scan.
 
-- [`ops_ask_sidecar_stability_79118c68.plan.md`](ops_ask_sidecar_stability_79118c68.plan.md) - remote reach / false offline
-- [`ops_ask_fix_batch_a72e390d.plan.md`](ops_ask_fix_batch_a72e390d.plan.md) - DEV-JMP01 CPU; Ask off accept-loop
+| Child | Status | Pending | Owns | Conflict |
+|-------|--------|---------|------|----------|
+| **ops_ask_sidecar_stability** | Todos complete | 0 | Phone timeout, Ask `/health` poll, Serve+meta, error taxonomy, Ops Scheduled Task | Accept-loop Ensure; `/api/meta` shape; iOS errors |
+| **ops_ask_fix_batch** | Unbuilt | 6 | Attention Project/Reconcile; SemaphoreSlim + Ask worker offload; cost caps | Accept-loop rewrite; 409 `askBusy`; named mutex Ensure |
+| sidecar_complete_fix | Shipped | 0 | Lease, health gate, Ensure recycle | Foundation only - cite; live SDK pin **1.0.26** (ignore obsolete 1.0.30 todo) |
+| metra_ops_host / ops_desk_coherence | Shipped | 0 | Tray Host→Ops→Ask; desk UX | Cite ownership chain |
 
-Without a parent, Loom/Surveyor can Approve either in either order and collide. Yarn `clusterHint` alone does **not** create parent epics (inventory metadata only).
+## Track B - Vision / iOS (parallel OK)
 
----
+May ship beside Track A **unless** they change Ops accept-loop concurrency, Ask single-flight, or `/api/meta` without citing this parent. Prefer consuming stability meta/error contracts.
 
-## Snapshot - active unbuilt (pending todos > 0)
+| Child | Pending | Note | Wait on Track A? |
+|-------|---------|------|------------------|
+| vision_cursor_identity_stack | 6 | Vision identity loader - VisionAsk, not accept-loop offload | No |
+| ios_conversation_policy_wire | 1 | Residual policy wire | No |
+| ios_phase_1_spike | 5 | Spike leftovers; HTTPS/Tailscale client | Prefer stable Serve (step 1) |
+| metra_ios_no-mac | 9 | Work Mac / reach program | Depends on step 1 Serve visibility |
 
-Broad portfolio (~30 leaves). **Conflict-relevant cluster only** below. Other pending work (Jitterbit, TT mining, Orion, installer, routing soak, Atlas, Scout parked, etc.) stays outside this parent unless it edits `OpsServer` Ask paths.
+## Track C - Ops desk Attention UI
 
-### Track A - Ops/Ask conflict lane (serialize)
+| Child | Pending | Note | Wait on Track A? |
+|-------|---------|------|------------------|
+| ops_itsm_ui_mining | 7 | Attention card UX / desk payload | Yes for Project vs Reconcile - after **2a** |
+| attention_2.0_forward | 4 | Separate **Attention** parent - cross-link only | No (different umbrella) |
+| ticket_watch_* (affirm/bus; desk shipped) | 3+ | Sensors; Host poll later | Do not steal Ops Ask lifecycle |
 
-| Child | Pending | Owns | Conflict |
-|-------|---------|------|----------|
-| **ops_ask_sidecar_stability** | 7 | Phone timeout, Ask `/health` poll, Serve+meta, error taxonomy, Ops Scheduled Task | Accept-loop Ensure; `/api/meta` shape; iOS errors |
-| **ops_ask_fix_batch** | 6 | Attention Project/Reconcile; SemaphoreSlim + Ask worker offload; cost caps | Accept-loop rewrite; 409 `askBusy`; named mutex Ensure |
-| sidecar_complete_fix | 0 (shipped) | Lease, health gate, Ensure recycle | Foundation only - cite; ignore obsolete SDK 1.0.30 todo (live pin **1.0.26**) |
-| metra_ops_host / ops_desk_coherence | 0 (shipped) | Tray Host→Ops→Ask; desk UX | Cite ownership chain |
+## Outside this parent
 
-**Locked sequence**
-
-1. Ship **sidecar stability** under current sync Ask (poll + iOS timeout + Serve meta + Task).
-2. Ship **fix_batch** P0a → P0b → P1… (offload + gate).
-3. Tiny integration follow-through: iOS map `askBusy`; route poll Ensure through fix_batch named mutex.
-
-Do **not** merge these two plans. Do **not** implement async Ask worker inside stability.
-
-### Track B - Vision / iOS (parallel OK if they avoid OpsServer accept-loop)
-
-| Child | Pending | Note |
-|-------|---------|------|
-| vision_cursor_identity_stack | 6 | Vision identity loader - touch VisionAsk, not accept-loop offload |
-| ios_conversation_policy_wire | 1 | Residual policy wire |
-| ios_phase_1_spike | 5 | Spike leftovers; HTTPS/Tailscale client |
-| metra_ios_no-mac | 9 | Work Mac / reach program - may assume stable Serve; **depends on** stability Serve visibility |
-
-**Rule:** iOS/Vision children may ship in parallel with Track A **except** they must not change Ops accept-loop concurrency, Ask single-flight, or `/api/meta` schema without citing this parent. Prefer consuming stability's meta/error contracts once shipped.
-
-### Track C - Ops desk Attention UI (aware of fix_batch P0a)
-
-| Child | Pending | Note |
-|-------|---------|------|
-| ops_itsm_ui_mining | 7 | Attention card UX - may call desk payload; must use Project vs Reconcile once fix_batch P0a lands |
-| attention_2.0_forward | 4 | Separate **Attention** parent - TicketWatch/Scout; cross-link only |
-| ticket_watch_* (affirm/bus; desk shipped) | 3+ | Sensors; Host poll later - do not steal Ops Ask lifecycle |
-
-**Rule:** Attention UI work can proceed, but any `Get-MetraDeskPayload` / reconcile change waits for or follows fix_batch **P0a** boundary.
-
-### Outside this parent (no Ops Ask conflict)
-
-Examples with pending todos that do **not** need this sequence gate: `tt_itsm_pattern_mining`, `orion_alert_desk`, `jitterbit_upgrade_policy`, `plan_index_per_project`, `github_public_audience_revision`, `inspect_runtime_verification` (parked stub), `Scout` (parked), routing graph soak, Atlas commit sessions, capability routing inertia (routing product - cite if it changes Ask engine bind).
+No sequence gate unless the work edits `OpsServer` Ask paths: e.g. `tt_itsm_pattern_mining`, `orion_alert_desk`, `jitterbit_upgrade_policy`, `plan_index_per_project`, `github_public_audience_revision`, `inspect_runtime_verification` (parked), Scout (parked), routing soak, Atlas commit sessions. Capability routing - cite here only if it changes Ask engine bind.
 
 ---
 
 ## Parent duties
 
-1. Keep Track A sequence visible on Plan Board (Subproject OpsDesk/Ask).
-2. **Future-child gate (Amendment C):** Any **new** plan that modifies OpsServer Ask lifecycle, Ask concurrency, Ask Busy semantics (`askBusy` / 409), `/api/meta` schema, or Ask Ensure behavior must list `relatedPlans` citing this parent (stem `ops-desk-ask-sequencing` or leaf `ops_ask_conflict_parent_6578644c.plan.md`) **before** Surveyor/Yarn Approve. Existing Track A children must cite this parent the same way.
-3. After either Track A child ships, mark the integration follow-through todo here (or cancel if folded into the open child).
-4. Do not invent a second Metra project or TicketTracker ticket for this.
+| # | Duty |
+|---|------|
+| 1 | Keep Track A order visible on Plan Board (OpsDesk / Ask). |
+| 2 | Enforce future-child `relatedPlans` cite (Amendment C) before Approve. |
+| 3 | After Track A children ship, complete or cancel `integration-followthrough`. |
+| 4 | Do not invent a second Metra project or TicketTracker ticket for this. |
 
----
+### Parent todos (this leaf)
+
+| Todo | Status | When |
+|------|--------|------|
+| `affirm-parent` | completed | Surveyor Pack/Approve + index stem `ops-desk-ask-sequencing` |
+| `link-children` | completed | Both Track A children cite this parent |
+| `yarn-idea` | pending | Optional Capture / Plan Board idea |
+| `integration-followthrough` | pending | Execution step 3 |
+| `retire-parent` | pending | Execution step 4 |
 
 ## Override authority (Amendment A)
 
-Track A sequence is the default gate for Loom / Surveyor / Yarn Approve of downstream Ask work.
+Track A order is the default gate for Loom / Surveyor / Yarn Approve of downstream Ask work.
 
-**Any override of the Track A sequence must be recorded in this parent plan by the operator before approval of downstream work.**
+**Any override must be recorded in this parent before approving out-of-order work.**
 
-Required override record (edit this parent body):
+| Field | Required |
+|-------|----------|
+| Date (UTC) | yes |
+| What is approved out of order | yes (e.g. fix_batch P0b before stability) |
+| Why | one short paragraph |
+| Operator | Stephen / display name |
 
-- Date (UTC)
-- What is being approved out of order (e.g. fix_batch P0b before stability reach bites)
-- Why (one short paragraph)
-- Operator identity (Stephen / display name)
+### Override log
 
-Until that note exists here, tools must treat out-of-order Approve of fix_batch P0b (or any third plan that changes Ask concurrency / Ensure / `/api/meta` ahead of stability) as **blocked**. Do not invent a second override channel (chat-only, Loom receipt alone, or child-plan footnote).
+| Date (UTC) | What | Why | Operator |
+|------------|------|-----|----------|
+| *(none)* | | | |
 
----
+Until a row exists here, out-of-order Approve of fix_batch P0b (or any third plan that changes Ask concurrency / Ensure / `/api/meta` ahead of stability) is **blocked**.
+
+## Bing review (2026-09-21)
+
+**Verdict:** Approve with minor amendments. Parent = portfolio coordination; children = implementation. Amendments A (override), B (retirement), C (future-child relatedPlans) folded above. Boundaries kept: Attention parent separate; TicketTracker not absorbed; OpsDesk/Ask stay portfolio categories.
 
 ## Yarn / Surveyor gate (after affirm)
 
-- Cursor leaf under `%USERPROFILE%\.cursor\plans\` (`authority: cursor`).
-- Upsert index stem `ops-desk-ask-sequencing`.
-- Optionally Capture → Yarn idea titled "Ops Desk / Ask sequencing parent" linking both children.
-- Point [`ops_ask_sidecar_stability`](ops_ask_sidecar_stability_79118c68.plan.md) and [`ops_ask_fix_batch`](ops_ask_fix_batch_a72e390d.plan.md) at this parent in their Related sections.
+| Action | Detail |
+|--------|--------|
+| Authority | Cursor leaf under `%USERPROFILE%\.cursor\plans\` |
+| Index | Upsert stem `ops-desk-ask-sequencing` |
+| Optional | Yarn idea "Ops Desk / Ask sequencing parent" linking both children |
+| Children | Already point here in Related sections |
 
----
+## Done when (coordination)
 
-## Done when (coordination success)
-
-- Both Track A children cite this parent and the locked sequence.
-- Operator can open one plan and see what else is live on Ops/Ask without hunting 30 leaves.
-- Override authority (Amendment A) is the only path around Track A order.
-
----
+| Check | State |
+|-------|-------|
+| Both Track A children cite this parent + locked sequence | Done (`link-children`) |
+| One plan shows what else is live on Ops/Ask | This leaf |
+| Only Amendment A overrides Track A order | Active |
 
 ## Retire parent when (Amendment B)
 
-Park / Complete this parent (Surveyor archive / Yarn park) when **all** of the following are true:
+Park / Complete (Surveyor archive / Yarn park) when **all** are true:
 
-1. `ops_ask_sidecar_stability` shipped (or cancelled with operator note here)
-2. `ops_ask_fix_batch` shipped (or cancelled with operator note here)
-3. Integration follow-through completed **or** explicitly cancelled on this parent
-4. No **active** child (pending todos) modifies Ops Ask concurrency, Ask Busy semantics, `/api/meta` schema, or Ask Ensure behavior
+| # | Condition |
+|---|-----------|
+| 1 | `ops_ask_sidecar_stability` shipped (or cancelled with note here) |
+| 2 | `ops_ask_fix_batch` shipped (or cancelled with note here) |
+| 3 | Integration follow-through completed **or** cancelled on this parent |
+| 4 | No active child (pending todos) modifies Ask concurrency, `askBusy`, `/api/meta`, or Ensure |
 
-Retirement is the archival trigger for Surveyor/Yarn - not an automatic Loom action. After retire, a future plan that reopens those surfaces must either revive this parent or create a new sequencing parent and re-lock order.
+Retirement is archival - not an automatic Loom action. A later plan that reopens those surfaces must revive this parent or create a new sequencing parent and re-lock order.
