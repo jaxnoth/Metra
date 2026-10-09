@@ -50,6 +50,7 @@ function Sync-MetraOpsAskSidecarHealthPoll {
         }
         if (-not $healthy) {
             try {
+                # Ensure serializes via named mutex ask-sidecar-ensure (shared with opaque Restart).
                 $null = Invoke-MetraAskCursorSidecarEnsure -MetraRoot $MetraRoot -CursorPort $port
             }
             catch {

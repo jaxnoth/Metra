@@ -42,8 +42,9 @@ Serve / campus hosts: [tailscale-campus.md](tailscale-campus.md).
 | Layer | Budget / rule |
 |-------|----------------|
 | Engine `Invoke-MetraAskEngine` | 180s |
-| iOS `OpsAskClient` | 195s; `timedOut` ≠ offline; one early-reachability retry only |
+| iOS `OpsAskClient` | 195s; `timedOut` ≠ offline; one early-reachability retry only; **409 `askBusy` → `AskClientError.askBusy`** (not offline) |
 | Ops accept-loop Ask poll | 45s from prior poll **completion** + Ensure |
+| Ensure / opaque Restart | Named mutex `ask-sidecar-ensure` (cross-runspace; poll + worker Restart share it) |
 | `/health` `degradedCode` | Set on auth/usage/model; **clears after one successful finish** (asymmetric vs 2-strike `ok` gate) |
 | Task password | Task Scheduler / LSA only |
 

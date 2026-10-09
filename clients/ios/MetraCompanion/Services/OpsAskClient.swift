@@ -55,6 +55,10 @@ struct OpsAskClient: AskClient {
             }
 
             if !(200..<300).contains(http.statusCode) {
+                // Stable 409 askBusy - busy/contention, never offline / timeout / contract catch-all.
+                if Self.isAskBusyResponse(statusCode: http.statusCode, json: json) {
+                    throw AskClientError.askBusy
+                }
                 let status = (json["status"] as? String)?
                     .trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
                 let reason = (json["reason"] as? String)?
@@ -209,6 +213,15 @@ struct OpsAskClient: AskClient {
         return Message(sessionId: sessionId, role: .assistant, text: messageText)
     }
 
+    /// HTTP 409 + `error: askBusy` (Ops SemaphoreSlim single-flight). Not offline or retryable reachability.
+    private static func isAskBusyResponse(statusCode: Int, json: [String: Any]) -> Bool {
+        guard statusCode == 409 else { return false }
+        let error = (json["error"] as? String)?
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+            .lowercased() ?? ""
+        return error == "askbusy"
+    }
+
     private static func mapContractFailure(reason: String, json: [String: Any]) -> AskClientError {
         let detail = (json["detail"] as? String)?
             .trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
@@ -225,6 +238,8 @@ struct OpsAskClient: AskClient {
             return .cursorUsageLimit(detail.isEmpty ? nil : detail)
         case "cursor_model_unavailable":
             return .cursorModelUnavailable(detail.isEmpty ? nil : detail)
+        case "askBusy", "ask_busy":
+            return .askBusy
         case "invalid_contract", "unsupported_contract_version",
              "engine_failure", "desk_requires_connectivity":
             return .contractError(reason, detail.isEmpty ? nil : detail)

@@ -9,14 +9,14 @@ todos:
     content: Add relatedPlans cite on ops_ask_sidecar_stability + ops_ask_fix_batch pointing at this parent + locked sequence
     status: completed
   - id: yarn-idea
-    content: "Optional: Yarn Capture/idea for Ops Desk Ask sequencing parent (Plan Board Subproject OpsDesk)"
-    status: pending
+    content: "Optional: Yarn Capture/idea for Ops Desk Ask sequencing parent (Plan Board Subproject OpsDesk) - skipped at retire (not a gate)"
+    status: cancelled
   - id: integration-followthrough
-    content: "After both Track A ships: iOS askBusy mapping + poll Ensure via named mutex (or cancel if folded into a child)"
-    status: pending
+    content: "Step 3: iOS AskClientError.askBusy for 409 + poll/opaque Ensure via named mutex ask-sidecar-ensure (shipped 2026-10-09)"
+    status: completed
   - id: retire-parent
-    content: When Track A + integration done and no active child modifies Ops Ask concurrency / askBusy /api/meta / Ensure - mark parent Parked/Complete and archive
-    status: pending
+    content: "Parked 2026-10-09 after Bing Approve of integration (askBusy + ask-sidecar-ensure); Track A clear; no active Ask-concurrency child"
+    status: completed
 isProject: false
 externalReviewHash: 224a09ceef27e4443f0017a8d9fbca1c360323c3ac3fc6e31d795639cbd231e4
 approveForLoom: true
@@ -24,7 +24,7 @@ approveForLoomHash: 224a09ceef27e4443f0017a8d9fbca1c360323c3ac3fc6e31d795639cbd2
 externalReviewed: true
 loomAcceptedAt: "2026-10-08T20:52:57.8964670Z"
 loomHandoffId: yh-61ec5675fbbe4ea467e208ce9db2bf41
-status: Approved
+status: Parked
 ---
 
 # Ops Desk / Ask sequencing (parent)
@@ -32,7 +32,7 @@ status: Approved
 **Stem:** `ops-desk-ask-sequencing`
 **Role:** Parent umbrella (same pattern as [`attention_2.0_forward_cb1ee20e.plan.md`](attention_2.0_forward_cb1ee20e.plan.md)) - organize and sequence children; do **not** merge child bodies.
 **Home:** Metra (Yarn / Plan Board Subproject **OpsDesk** + **Ask**). Not a TicketTracker ticket.
-**Status:** Bing Approve with minor amendments (2026-09-21). Surveyor Approve recorded (content-bound marks). Index stem `ops-desk-ask-sequencing` already `authority: cursor`.
+**Status:** **Parked / Complete** (2026-10-09). Bing Approve of integration + operator retire. Amendment C still applies if a future child reopens Ask concurrency / `askBusy` / `/api/meta` / Ensure - revive this parent or create a new sequencing parent.
 
 ## Goal
 
@@ -67,14 +67,21 @@ Serialize Track A. Do **not** merge the two Ask children. Do **not** put async A
 | Step | Plan / bite | Status | Pending | What it owns | Conflict surface |
 |------|-------------|--------|---------|--------------|------------------|
 | 0 | Foundation: `sidecar_complete_fix`, `metra_ops_host` / `ops_desk_coherence` | Shipped | 0 | Lease, health gate, Ensure recycle; tray Host→Ops→Ask | Cite only |
-| **1** | [`ops_ask_sidecar_stability`](ops_ask_sidecar_stability_79118c68.plan.md) | **Todos complete** - affirm/index if still needed | 0 | Phone timeout, Ask `/health` poll, Serve+meta, error taxonomy, Ops Scheduled Task | Accept-loop Ensure; `/api/meta` shape; iOS errors |
-| **2a** | [`ops_ask_fix_batch`](ops_ask_fix_batch_a72e390d.plan.md) **P0a** | **Next implement** | 6 total | Attention Project vs Reconcile; migrate `Get-MetraDeskPayload` callers | Desk payload / reconcile boundary |
-| **2b** | same leaf **P0b** | Blocked until 2a (and step 1) | (same) | SemaphoreSlim `askBusy` 409; Ask worker off accept-loop | Accept-loop rewrite; named mutex Ensure |
-| **2c** | same leaf **P1 → P2 → verify** | After 2b | (same) | Cost caps, caches, inspect | Telemetry must not share Ask gate |
-| **3** | Parent todo `integration-followthrough` | After step 2 ships | 1 | iOS map `askBusy`; route poll Ensure through fix_batch named mutex | May cancel if folded into open child |
-| 4 | Parent todo `retire-parent` | After 1–3 clear | 1 | Park/Complete this parent | See Retire parent when |
+| **1** | [`ops_ask_sidecar_stability`](ops_ask_sidecar_stability_79118c68.plan.md) | **Shipped** (todos complete) | 0 | Phone timeout, Ask `/health` poll, Serve+meta, error taxonomy, Ops Scheduled Task | Accept-loop Ensure; `/api/meta` shape; iOS errors |
+| **2a** | [`ops_ask_fix_batch`](ops_ask_fix_batch_a72e390d.plan.md) **P0a** | **Shipped** | 0 | Attention Project vs Reconcile; migrate `Get-MetraDeskPayload` callers | Desk payload / reconcile boundary |
+| **2b** | same leaf **P0b** | **Shipped** (gate + worker) | 0 | SemaphoreSlim `askBusy` 409; Ask worker off accept-loop | Accept-loop rewrite; 409 contract |
+| **2c** | same leaf **P1 → P2 → verify** | **Shipped** | 0 | Cost caps, caches, inspect | Telemetry must not share Ask gate |
+| **3** | Parent todo `integration-followthrough` | **Shipped** (2026-10-09) | 0 | iOS `askBusy`; named mutex `ask-sidecar-ensure` on Ensure + Restart | Closed |
+| 4 | Parent todo `retire-parent` | **Parked** (2026-10-09) | 0 | Park/Complete this parent | Closed |
 
-**Current next bite:** step **2a** (fix_batch P0a).
+**Current next bite:** none - parent parked. Future Ask-concurrency work must cite/revive sequencing (Amendment C).
+
+### Integration ship notes (2026-10-09)
+
+| Bite | Landed |
+|------|--------|
+| iOS `askBusy` | `AskClientError.askBusy`; `OpsAskClient` maps HTTP 409 + `error=askBusy` (never offline) |
+| Named mutex Ensure | `Invoke-MetraWithNamedMutex -Name 'ask-sidecar-ensure'` on Ensure; Restart stop→start under same mutex + per-runspace depth for nested Start→Ensure |
 
 ### Hard gates
 
@@ -93,8 +100,8 @@ Same children as the execution table; ownership detail for desk scan.
 
 | Child | Status | Pending | Owns | Conflict |
 |-------|--------|---------|------|----------|
-| **ops_ask_sidecar_stability** | Todos complete | 0 | Phone timeout, Ask `/health` poll, Serve+meta, error taxonomy, Ops Scheduled Task | Accept-loop Ensure; `/api/meta` shape; iOS errors |
-| **ops_ask_fix_batch** | Unbuilt | 6 | Attention Project/Reconcile; SemaphoreSlim + Ask worker offload; cost caps | Accept-loop rewrite; 409 `askBusy`; named mutex Ensure |
+| **ops_ask_sidecar_stability** | Shipped | 0 | Phone timeout, Ask `/health` poll, Serve+meta, error taxonomy, Ops Scheduled Task | Accept-loop Ensure; `/api/meta` shape; iOS errors |
+| **ops_ask_fix_batch** | Shipped (all 6 todos complete) | 0 | Attention Project/Reconcile; SemaphoreSlim + Ask worker offload; cost caps | 409 `askBusy` + named mutex Ensure (parent step 3) shipped |
 | sidecar_complete_fix | Shipped | 0 | Lease, health gate, Ensure recycle | Foundation only - cite; live SDK pin **1.0.26** (ignore obsolete 1.0.30 todo) |
 | metra_ops_host / ops_desk_coherence | Shipped | 0 | Tray Host→Ops→Ask; desk UX | Cite ownership chain |
 
@@ -113,7 +120,7 @@ May ship beside Track A **unless** they change Ops accept-loop concurrency, Ask 
 
 | Child | Pending | Note | Wait on Track A? |
 |-------|---------|------|------------------|
-| ops_itsm_ui_mining | 7 | Attention card UX / desk payload | Yes for Project vs Reconcile - after **2a** |
+| ops_itsm_ui_mining | 7 | Attention card UX / desk payload | Unblocked for Project vs Reconcile (**2a shipped**) |
 | attention_2.0_forward | 4 | Separate **Attention** parent - cross-link only | No (different umbrella) |
 | ticket_watch_* (affirm/bus; desk shipped) | 3+ | Sensors; Host poll later | Do not steal Ops Ask lifecycle |
 
@@ -138,9 +145,9 @@ No sequence gate unless the work edits `OpsServer` Ask paths: e.g. `tt_itsm_patt
 |------|--------|------|
 | `affirm-parent` | completed | Surveyor Pack/Approve + index stem `ops-desk-ask-sequencing` |
 | `link-children` | completed | Both Track A children cite this parent |
-| `yarn-idea` | pending | Optional Capture / Plan Board idea |
-| `integration-followthrough` | pending | Execution step 3 |
-| `retire-parent` | pending | Execution step 4 |
+| `yarn-idea` | cancelled | Optional Capture skipped at retire |
+| `integration-followthrough` | completed | Execution step 3 - shipped 2026-10-09 |
+| `retire-parent` | completed | Execution step 4 - parked 2026-10-09 (Bing Approve + operator) |
 
 ## Override authority (Amendment A)
 
@@ -188,11 +195,13 @@ Until a row exists here, out-of-order Approve of fix_batch P0b (or any third pla
 
 Park / Complete (Surveyor archive / Yarn park) when **all** are true:
 
-| # | Condition |
-|---|-----------|
-| 1 | `ops_ask_sidecar_stability` shipped (or cancelled with note here) |
-| 2 | `ops_ask_fix_batch` shipped (or cancelled with note here) |
-| 3 | Integration follow-through completed **or** cancelled on this parent |
-| 4 | No active child (pending todos) modifies Ask concurrency, `askBusy`, `/api/meta`, or Ensure |
+| # | Condition | 2026-10-09 |
+|---|-----------|------------|
+| 1 | `ops_ask_sidecar_stability` shipped (or cancelled with note here) | Met |
+| 2 | `ops_ask_fix_batch` shipped (or cancelled with note here) | Met |
+| 3 | Integration follow-through completed **or** cancelled on this parent | Met |
+| 4 | No active child (pending todos) modifies Ask concurrency, `askBusy`, `/api/meta`, or Ensure | Met (Track A children shipped; Track B/C do not own those surfaces) |
 
-Retirement is archival - not an automatic Loom action. A later plan that reopens those surfaces must revive this parent or create a new sequencing parent and re-lock order.
+**Retired 2026-10-09** after Bing Approve of integration (shared `ask-sidecar-ensure` mutex + iOS `askBusy`) and operator retire. Archival only - not an automatic Loom action. A later plan that reopens those surfaces must revive this parent or create a new sequencing parent and re-lock order.
+
+**Ops note (Bing):** watch mutex timeout / restart delay / Ensure delay telemetry after rollout (`TimeoutMs 90000` on the shared lifecycle gate).

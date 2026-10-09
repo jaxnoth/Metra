@@ -5853,11 +5853,24 @@ Describe 'Ops Ask sidecar stability (reach)' {
         $ask | Should -Match 'cursorAuthError'
         $ask | Should -Match 'cursorUsageLimit'
         $ask | Should -Match 'cursorModelUnavailable'
+        $ask | Should -Match 'case askBusy'
         $ops | Should -Match 'askTimeoutInterval: TimeInterval = 195'
         $ops | Should -Match 'urlError\.code == \.timedOut'
         $ops | Should -Match 'AskClientError\.requestTimedOut'
+        $ops | Should -Match 'AskClientError\.askBusy'
+        $ops | Should -Match 'isAskBusyResponse'
         $ops | Should -Match 'isEarlyReachabilityFailure'
         $ops | Should -Match 'probeMeta'
         $ops | Should -Match '/api/meta'
+    }
+
+    It 'Ask Ensure and opaque Restart share named mutex ask-sidecar-ensure' {
+        $ask = Get-Content -LiteralPath (Join-Path (Get-MetraRoot) 'scripts\private\AskEngine.ps1') -Raw
+        $ops = Get-Content -LiteralPath (Join-Path (Get-MetraRoot) 'scripts\private\OpsServer.ps1') -Raw
+        $ask | Should -Match "Invoke-MetraWithNamedMutex -Name 'ask-sidecar-ensure'"
+        # Ensure + Restart both take the mutex (opaque recovery -> Restart -> Start -> Ensure).
+        ([regex]::Matches($ask, "Invoke-MetraWithNamedMutex -Name 'ask-sidecar-ensure'")).Count | Should -BeGreaterOrEqual 2
+        $ops | Should -Match 'ask-sidecar-ensure'
+        $ops | Should -Match 'Invoke-MetraAskCursorSidecarEnsure'
     }
 }

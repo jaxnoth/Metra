@@ -1017,6 +1017,10 @@ function Get-MetraAskCursorForeignListenerProcessIds {
     return @($foreign)
 }
 
+if (-not (Get-Variable -Name MetraAskSidecarEnsureMutexDepth -Scope Script -ErrorAction SilentlyContinue)) {
+    $script:MetraAskSidecarEnsureMutexDepth = 0
+}
+
 function Invoke-MetraAskCursorSidecarEnsure {
     <#
     .SYNOPSIS
@@ -1024,6 +1028,9 @@ function Invoke-MetraAskCursorSidecarEnsure {
     .NOTES
         Writes the PID file only after /health succeeds (or after adopting a live Metra listener).
         Failed second starts no longer overwrite a good PID with a dead process id.
+        Cross-runspace single-flight: named mutex ask-sidecar-ensure (poll Ensure + opaque
+        Restart share one primitive). Per-runspace depth skips a second WaitOne when Restart
+        already holds the mutex and calls Start->Ensure.
     #>
     [CmdletBinding()]
     param(
@@ -1033,125 +1040,142 @@ function Invoke-MetraAskCursorSidecarEnsure {
         [string]$CursorOptimizeFor = 'cost'
     )
 
-    if (Test-MetraAskCursorPortHealth -Port $CursorPort -TimeoutSec 1) {
-        $null = Sync-MetraAskEnginePidFile -Port $CursorPort
-        return $true
-    }
-
-    $existing = @(Get-MetraAskCursorSidecarListenerProcessIds -Port $CursorPort)
-    if ($existing.Count -gt 0) {
-        if (Wait-MetraAskCursorPortHealth -Port $CursorPort -TimeoutSec 2) {
+    $runCore = {
+        if (Test-MetraAskCursorPortHealth -Port $CursorPort -TimeoutSec 1) {
             $null = Sync-MetraAskEnginePidFile -Port $CursorPort
             return $true
         }
-        # Owned Metra listener present but health not ok - recycle (do not adopt wedged process).
-        Write-Warning ("Ask Cursor sidecar listener(s) on port {0} unhealthy; recycling owned process. See {1}" -f `
-            $CursorPort, (Get-MetraAskEngineLogPath -Port $CursorPort -Stream stderr))
+
+        $existing = @(Get-MetraAskCursorSidecarListenerProcessIds -Port $CursorPort)
+        if ($existing.Count -gt 0) {
+            if (Wait-MetraAskCursorPortHealth -Port $CursorPort -TimeoutSec 2) {
+                $null = Sync-MetraAskEnginePidFile -Port $CursorPort
+                return $true
+            }
+            # Owned Metra listener present but health not ok - recycle (do not adopt wedged process).
+            Write-Warning ("Ask Cursor sidecar listener(s) on port {0} unhealthy; recycling owned process. See {1}" -f `
+                $CursorPort, (Get-MetraAskEngineLogPath -Port $CursorPort -Stream stderr))
+            try {
+                $null = Stop-MetraAskEngine -MetraRoot $MetraRoot -Port $CursorPort -IncludePortListeners -Confirm:$false
+            }
+            catch {
+                Write-Warning "Ask Cursor sidecar stop failed before recycle spawn: $($_.Exception.Message)"
+                return $false
+            }
+            $stillOwned = @(Get-MetraAskCursorSidecarListenerProcessIds -Port $CursorPort)
+            if ($stillOwned.Count -gt 0) {
+                Write-Warning ("Ask Cursor sidecar still listening after stop on port {0}; not spawning. See {1}" -f `
+                    $CursorPort, (Get-MetraAskEngineLogPath -Port $CursorPort -Stream stderr))
+                return $false
+            }
+            # Fall through to cold spawn below (foreign check is shared with no-owned path).
+        }
+
+        # Before any cold spawn (including after owned recycle): fail closed on non-Metra occupants.
+        $foreign = @(Get-MetraAskCursorForeignListenerProcessIds -Port $CursorPort)
+        if ($foreign.Count -gt 0) {
+            Write-Warning ("Port {0} is in use by non-Metra process(es) ({1}); not starting Ask sidecar." -f `
+                $CursorPort, ($foreign -join ','))
+            return $false
+        }
+
+        $nodePath = Get-MetraAskNodePath -MetraRoot $MetraRoot
+        $sidecar = Get-MetraAskCursorSidecarPath -MetraRoot $MetraRoot
+        $key = Get-MetraCursorApiKey -PreferUser
+        if (-not $nodePath -or -not $sidecar -or [string]::IsNullOrWhiteSpace($key) -or -not (Test-MetraAskCursorSidecarDeps -MetraRoot $MetraRoot)) {
+            return $false
+        }
+
+        Clear-MetraAskEngineStalePidFile -Port $CursorPort
+        Initialize-MetraAskEngineSpawnLogs -Port $CursorPort
+
+        $logOut = Get-MetraAskEngineLogPath -Port $CursorPort -Stream stdout
+        $logErr = Get-MetraAskEngineLogPath -Port $CursorPort -Stream stderr
+        $logDir = Split-Path -Parent $logOut
+        $proc = $null
+        $prevPort = $env:METRA_ASK_PORT
+        $prevModel = $env:METRA_ASK_MODEL
+        $prevOpt = $env:METRA_ASK_OPTIMIZE_FOR
+        $prevEng = $env:METRA_ASK_ENGINE
+        $prevLogDir = $env:METRA_ASK_LOG_DIR
         try {
-            $null = Stop-MetraAskEngine -MetraRoot $MetraRoot -Port $CursorPort -IncludePortListeners -Confirm:$false
+            $previous = $env:CURSOR_API_KEY
+            $env:CURSOR_API_KEY = $key
+            $env:METRA_ASK_PORT = "$CursorPort"
+            $env:METRA_ASK_MODEL = $CursorModel
+            $env:METRA_ASK_OPTIMIZE_FOR = $CursorOptimizeFor
+            $env:METRA_ASK_ENGINE = 'cursor'
+            $env:METRA_ASK_LOG_DIR = $logDir
+            try {
+                # Temporary process environment: Windows PowerShell Start-Process lacks per-child -Environment.
+                $proc = Start-Process -FilePath $nodePath -ArgumentList @($sidecar) `
+                    -WorkingDirectory (Split-Path -Parent $sidecar) `
+                    -PassThru -WindowStyle Hidden `
+                    -RedirectStandardOutput $logOut `
+                    -RedirectStandardError $logErr
+            }
+            finally {
+                if ($null -eq $previous) { Remove-Item Env:CURSOR_API_KEY -ErrorAction SilentlyContinue }
+                else { $env:CURSOR_API_KEY = $previous }
+                if ($null -eq $prevPort) { Remove-Item Env:METRA_ASK_PORT -ErrorAction SilentlyContinue } else { $env:METRA_ASK_PORT = $prevPort }
+                if ($null -eq $prevModel) { Remove-Item Env:METRA_ASK_MODEL -ErrorAction SilentlyContinue } else { $env:METRA_ASK_MODEL = $prevModel }
+                if ($null -eq $prevOpt) { Remove-Item Env:METRA_ASK_OPTIMIZE_FOR -ErrorAction SilentlyContinue } else { $env:METRA_ASK_OPTIMIZE_FOR = $prevOpt }
+                if ($null -eq $prevEng) { Remove-Item Env:METRA_ASK_ENGINE -ErrorAction SilentlyContinue } else { $env:METRA_ASK_ENGINE = $prevEng }
+                if ($null -eq $prevLogDir) { Remove-Item Env:METRA_ASK_LOG_DIR -ErrorAction SilentlyContinue } else { $env:METRA_ASK_LOG_DIR = $prevLogDir }
+            }
         }
         catch {
-            Write-Warning "Ask Cursor sidecar stop failed before recycle spawn: $($_.Exception.Message)"
+            Write-Warning "Ask Cursor sidecar start failed: $($_.Exception.Message)"
             return $false
         }
-        $stillOwned = @(Get-MetraAskCursorSidecarListenerProcessIds -Port $CursorPort)
-        if ($stillOwned.Count -gt 0) {
-            Write-Warning ("Ask Cursor sidecar still listening after stop on port {0}; not spawning. See {1}" -f `
-                $CursorPort, (Get-MetraAskEngineLogPath -Port $CursorPort -Stream stderr))
-            return $false
-        }
-        # Fall through to cold spawn below (foreign check is shared with no-owned path).
-    }
 
-    # Before any cold spawn (including after owned recycle): fail closed on non-Metra occupants.
-    $foreign = @(Get-MetraAskCursorForeignListenerProcessIds -Port $CursorPort)
-    if ($foreign.Count -gt 0) {
-        Write-Warning ("Port {0} is in use by non-Metra process(es) ({1}); not starting Ask sidecar." -f `
-            $CursorPort, ($foreign -join ','))
+        if (-not $proc) {
+            Write-Warning 'Ask Cursor sidecar Start-Process returned no process handle.'
+            return $false
+        }
+
+        # Do not write the PID file until /health succeeds - a failed bind (EADDRINUSE) must not replace a good PID.
+        if (Wait-MetraAskCursorPortHealth -Port $CursorPort -TimeoutSec 20) {
+            $synced = Sync-MetraAskEnginePidFile -Port $CursorPort
+            if ($null -eq $synced -and -not $proc.HasExited -and (Test-MetraAskCursorSidecarProcessId -ProcessId $proc.Id)) {
+                Write-MetraAskEnginePidFile -Port $CursorPort -ProcessId $proc.Id
+            }
+            return $true
+        }
+
+        $listenersNow = @(Get-MetraAskCursorSidecarListenerProcessIds -Port $CursorPort)
+        if ($listenersNow.Count -gt 0 -and (Wait-MetraAskCursorPortHealth -Port $CursorPort -TimeoutSec 5)) {
+            $null = Sync-MetraAskEnginePidFile -Port $CursorPort
+            if (-not $proc.HasExited -and -not ($listenersNow -contains $proc.Id) -and (Test-MetraAskCursorSidecarProcessId -ProcessId $proc.Id)) {
+                try { Stop-Process -Id $proc.Id -Force -ErrorAction Stop } catch { }
+            }
+            return $true
+        }
+
+        if ($proc -and -not $proc.HasExited) {
+            Write-Warning ("Ask Cursor sidecar started (PID {0}) but health is still false on port {1}. Port may be held by another process - not killing automatically. See {2} (and {2}.1 if rotated)." -f `
+                $proc.Id, $CursorPort, $logErr)
+        }
+        else {
+            Write-Warning ("Ask Cursor sidecar exited before health on port {0}. See {1} (and {1}.1 if rotated)." -f $CursorPort, $logErr)
+        }
         return $false
     }
 
-    $nodePath = Get-MetraAskNodePath -MetraRoot $MetraRoot
-    $sidecar = Get-MetraAskCursorSidecarPath -MetraRoot $MetraRoot
-    $key = Get-MetraCursorApiKey -PreferUser
-    if (-not $nodePath -or -not $sidecar -or [string]::IsNullOrWhiteSpace($key) -or -not (Test-MetraAskCursorSidecarDeps -MetraRoot $MetraRoot)) {
-        return $false
+    if ($script:MetraAskSidecarEnsureMutexDepth -gt 0) {
+        return (& $runCore)
     }
 
-    Clear-MetraAskEngineStalePidFile -Port $CursorPort
-    Initialize-MetraAskEngineSpawnLogs -Port $CursorPort
-
-    $logOut = Get-MetraAskEngineLogPath -Port $CursorPort -Stream stdout
-    $logErr = Get-MetraAskEngineLogPath -Port $CursorPort -Stream stderr
-    $logDir = Split-Path -Parent $logOut
-    $proc = $null
-    $prevPort = $env:METRA_ASK_PORT
-    $prevModel = $env:METRA_ASK_MODEL
-    $prevOpt = $env:METRA_ASK_OPTIMIZE_FOR
-    $prevEng = $env:METRA_ASK_ENGINE
-    $prevLogDir = $env:METRA_ASK_LOG_DIR
-    try {
-        $previous = $env:CURSOR_API_KEY
-        $env:CURSOR_API_KEY = $key
-        $env:METRA_ASK_PORT = "$CursorPort"
-        $env:METRA_ASK_MODEL = $CursorModel
-        $env:METRA_ASK_OPTIMIZE_FOR = $CursorOptimizeFor
-        $env:METRA_ASK_ENGINE = 'cursor'
-        $env:METRA_ASK_LOG_DIR = $logDir
+    # 90s: spawn + Wait-MetraAskCursorPortHealth (20s) + recycle paths; poll waits rather than racing.
+    return Invoke-MetraWithNamedMutex -Name 'ask-sidecar-ensure' -TimeoutMs 90000 -Script {
+        $script:MetraAskSidecarEnsureMutexDepth++
         try {
-            # Temporary process environment: Windows PowerShell Start-Process lacks per-child -Environment.
-            $proc = Start-Process -FilePath $nodePath -ArgumentList @($sidecar) `
-                -WorkingDirectory (Split-Path -Parent $sidecar) `
-                -PassThru -WindowStyle Hidden `
-                -RedirectStandardOutput $logOut `
-                -RedirectStandardError $logErr
+            return (& $runCore)
         }
         finally {
-            if ($null -eq $previous) { Remove-Item Env:CURSOR_API_KEY -ErrorAction SilentlyContinue }
-            else { $env:CURSOR_API_KEY = $previous }
-            if ($null -eq $prevPort) { Remove-Item Env:METRA_ASK_PORT -ErrorAction SilentlyContinue } else { $env:METRA_ASK_PORT = $prevPort }
-            if ($null -eq $prevModel) { Remove-Item Env:METRA_ASK_MODEL -ErrorAction SilentlyContinue } else { $env:METRA_ASK_MODEL = $prevModel }
-            if ($null -eq $prevOpt) { Remove-Item Env:METRA_ASK_OPTIMIZE_FOR -ErrorAction SilentlyContinue } else { $env:METRA_ASK_OPTIMIZE_FOR = $prevOpt }
-            if ($null -eq $prevEng) { Remove-Item Env:METRA_ASK_ENGINE -ErrorAction SilentlyContinue } else { $env:METRA_ASK_ENGINE = $prevEng }
-            if ($null -eq $prevLogDir) { Remove-Item Env:METRA_ASK_LOG_DIR -ErrorAction SilentlyContinue } else { $env:METRA_ASK_LOG_DIR = $prevLogDir }
+            $script:MetraAskSidecarEnsureMutexDepth--
         }
     }
-    catch {
-        Write-Warning "Ask Cursor sidecar start failed: $($_.Exception.Message)"
-        return $false
-    }
-
-    if (-not $proc) {
-        Write-Warning 'Ask Cursor sidecar Start-Process returned no process handle.'
-        return $false
-    }
-
-    # Do not write the PID file until /health succeeds - a failed bind (EADDRINUSE) must not replace a good PID.
-    if (Wait-MetraAskCursorPortHealth -Port $CursorPort -TimeoutSec 20) {
-        $synced = Sync-MetraAskEnginePidFile -Port $CursorPort
-        if ($null -eq $synced -and -not $proc.HasExited -and (Test-MetraAskCursorSidecarProcessId -ProcessId $proc.Id)) {
-            Write-MetraAskEnginePidFile -Port $CursorPort -ProcessId $proc.Id
-        }
-        return $true
-    }
-
-    $listenersNow = @(Get-MetraAskCursorSidecarListenerProcessIds -Port $CursorPort)
-    if ($listenersNow.Count -gt 0 -and (Wait-MetraAskCursorPortHealth -Port $CursorPort -TimeoutSec 5)) {
-        $null = Sync-MetraAskEnginePidFile -Port $CursorPort
-        if (-not $proc.HasExited -and -not ($listenersNow -contains $proc.Id) -and (Test-MetraAskCursorSidecarProcessId -ProcessId $proc.Id)) {
-            try { Stop-Process -Id $proc.Id -Force -ErrorAction Stop } catch { }
-        }
-        return $true
-    }
-
-    if ($proc -and -not $proc.HasExited) {
-        Write-Warning ("Ask Cursor sidecar started (PID {0}) but health is still false on port {1}. Port may be held by another process - not killing automatically. See {2} (and {2}.1 if rotated)." -f `
-            $proc.Id, $CursorPort, $logErr)
-    }
-    else {
-        Write-Warning ("Ask Cursor sidecar exited before health on port {0}. See {1} (and {1}.1 if rotated)." -f $CursorPort, $logErr)
-    }
-    return $false
 }
 
 function Start-MetraAskCursorSidecar {
@@ -1921,41 +1945,51 @@ function Restart-MetraAskEngine {
         return Get-MetraAskCapability -MetraRoot $MetraRoot
     }
 
-    $pidBefore = Get-MetraAskEngineRecordedProcessId -MetraRoot $MetraRoot
+    # Same ask-sidecar-ensure mutex as poll Ensure: no interleave of Stop between another Ensure spawn.
+    # Depth lets nested Start->Ensure skip a second WaitOne while this thread holds the mutex.
+    return Invoke-MetraWithNamedMutex -Name 'ask-sidecar-ensure' -TimeoutMs 90000 -Script {
+        $script:MetraAskSidecarEnsureMutexDepth++
+        try {
+            $pidBefore = Get-MetraAskEngineRecordedProcessId -MetraRoot $MetraRoot
 
-    $null = Stop-MetraAskEngine -MetraRoot $MetraRoot -IncludePortListeners -Confirm:$false
+            $null = Stop-MetraAskEngine -MetraRoot $MetraRoot -IncludePortListeners -Confirm:$false
 
-    $deadline = [datetime]::UtcNow.AddSeconds(10)
-    while ([datetime]::UtcNow -lt $deadline) {
-        if (-not (Test-MetraAskEngineHealth -MetraRoot $MetraRoot -TimeoutSec 1)) { break }
-        Start-Sleep -Milliseconds 250
-    }
-    if (Test-MetraAskEngineHealth -MetraRoot $MetraRoot -TimeoutSec 1) {
-        Write-Warning 'Ask sidecar still healthy after stop; forcing port listener recycle.'
-        $null = Stop-MetraAskEngine -MetraRoot $MetraRoot -IncludePortListeners -Confirm:$false
-        $deadline = [datetime]::UtcNow.AddSeconds(10)
-        while ([datetime]::UtcNow -lt $deadline) {
-            if (-not (Test-MetraAskEngineHealth -MetraRoot $MetraRoot -TimeoutSec 1)) { break }
-            Start-Sleep -Milliseconds 250
+            $deadline = [datetime]::UtcNow.AddSeconds(10)
+            while ([datetime]::UtcNow -lt $deadline) {
+                if (-not (Test-MetraAskEngineHealth -MetraRoot $MetraRoot -TimeoutSec 1)) { break }
+                Start-Sleep -Milliseconds 250
+            }
+            if (Test-MetraAskEngineHealth -MetraRoot $MetraRoot -TimeoutSec 1) {
+                Write-Warning 'Ask sidecar still healthy after stop; forcing port listener recycle.'
+                $null = Stop-MetraAskEngine -MetraRoot $MetraRoot -IncludePortListeners -Confirm:$false
+                $deadline = [datetime]::UtcNow.AddSeconds(10)
+                while ([datetime]::UtcNow -lt $deadline) {
+                    if (-not (Test-MetraAskEngineHealth -MetraRoot $MetraRoot -TimeoutSec 1)) { break }
+                    Start-Sleep -Milliseconds 250
+                }
+            }
+            if (Test-MetraAskEngineHealth -MetraRoot $MetraRoot -TimeoutSec 1) {
+                $logErr = Get-MetraAskEngineLogPath -Port $settings.cursorPort -Stream stderr
+                Write-Warning "Ask sidecar still healthy after forced stop; restart did not recycle the process. See $logErr (and matching .out.log)"
+                $stale = Get-MetraAskCapability -MetraRoot $MetraRoot
+                $stale | Add-Member -NotePropertyName reason -NotePropertyValue 'restart_stale_process' -Force
+                $stale | Add-Member -NotePropertyName available -NotePropertyValue $false -Force
+                return $stale
+            }
+
+            $cap = Start-MetraAskEngine -MetraRoot $MetraRoot
+            $pidAfter = Get-MetraAskEngineRecordedProcessId -MetraRoot $MetraRoot
+            if ($cap.available -and $null -ne $pidBefore -and $null -ne $pidAfter -and $pidBefore -eq $pidAfter) {
+                Write-Warning "Ask sidecar restart completed but PID unchanged ($pidAfter)."
+                $cap | Add-Member -NotePropertyName reason -NotePropertyValue 'restart_same_pid' -Force
+                $cap | Add-Member -NotePropertyName available -NotePropertyValue $false -Force
+            }
+            return $cap
+        }
+        finally {
+            $script:MetraAskSidecarEnsureMutexDepth--
         }
     }
-    if (Test-MetraAskEngineHealth -MetraRoot $MetraRoot -TimeoutSec 1) {
-        $logErr = Get-MetraAskEngineLogPath -Port $settings.cursorPort -Stream stderr
-        Write-Warning "Ask sidecar still healthy after forced stop; restart did not recycle the process. See $logErr (and matching .out.log)"
-        $stale = Get-MetraAskCapability -MetraRoot $MetraRoot
-        $stale | Add-Member -NotePropertyName reason -NotePropertyValue 'restart_stale_process' -Force
-        $stale | Add-Member -NotePropertyName available -NotePropertyValue $false -Force
-        return $stale
-    }
-
-    $cap = Start-MetraAskEngine -MetraRoot $MetraRoot
-    $pidAfter = Get-MetraAskEngineRecordedProcessId -MetraRoot $MetraRoot
-    if ($cap.available -and $null -ne $pidBefore -and $null -ne $pidAfter -and $pidBefore -eq $pidAfter) {
-        Write-Warning "Ask sidecar restart completed but PID unchanged ($pidAfter)."
-        $cap | Add-Member -NotePropertyName reason -NotePropertyValue 'restart_same_pid' -Force
-        $cap | Add-Member -NotePropertyName available -NotePropertyValue $false -Force
-    }
-    return $cap
 }
 
 function Get-MetraAskEngineRecordedProcessId {

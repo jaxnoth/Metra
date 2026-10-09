@@ -15,6 +15,7 @@ enum AskClientError: LocalizedError, Sendable {
     case cursorUsageLimit(String?)
     case cursorModelUnavailable(String?)
     case serveHttpsDown(String?)
+    case askBusy
     case contractError(String, String?)
 
     var errorDescription: String? {
@@ -53,6 +54,8 @@ enum AskClientError: LocalizedError, Sendable {
         case .serveHttpsDown(let detail):
             let suffix = detail.map { ": \($0)" } ?? ""
             return "Tailscale Serve HTTPS is down on the Ops host\(suffix). Phone Ask needs HTTPS."
+        case .askBusy:
+            return "Ops Ask is busy with another request. Try again in a moment."
         case .contractError(let reason, let detail):
             let suffix = detail.map { ": \($0)" } ?? ""
             return "Ops Ask contract error (\(reason))\(suffix)"
