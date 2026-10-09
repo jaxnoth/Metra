@@ -51,6 +51,11 @@ plans:
     authority: repo
     repoPath: new-use-case-for-metra-sort-of-dedicated-server.plan.md
     updatedAt: '2026-09-10T14:49:05.2327366Z'
+  - stem: ops-ask-conflict-parent
+    cursorLeaf: ops_ask_conflict_parent_6578644c.plan.md
+    authority: cursor
+    repoPath: null
+    updatedAt: '2026-10-08T20:52:56.1652589Z'
   - stem: ops-ask-sidecar-stability
     cursorLeaf: ops_ask_sidecar_stability_79118c68.plan.md
     authority: cursor
@@ -60,7 +65,7 @@ plans:
     cursorLeaf: ops_ask_conflict_parent_6578644c.plan.md
     authority: cursor
     repoPath: null
-    updatedAt: '2026-09-21T20:45:00.0000000Z'
+    updatedAt: '2026-10-08T20:46:00.0000000Z'
   - stem: ops-itsm-ui-mining
     cursorLeaf: ops_itsm_ui_mining_4b04b1ae.plan.md
     authority: cursor

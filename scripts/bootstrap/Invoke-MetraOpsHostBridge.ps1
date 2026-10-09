@@ -292,13 +292,13 @@ try {
             return
         }
         'cadence-tick' {
-            # Execute due Pulse/Daily via Invoke-MetraYarnLoomSchedule (no visible console - bridge CreateNoWindow).
-            $tick = Invoke-MetraHostBridgePrivate {
+            # Execute due Pulse/Daily via Invoke-MetraYarnLoomSchedule (Host CreateNoWindow + -WindowStyle Hidden).
+            # Build the JSON payload inside the Metra module - Get-MetraProp is private and not exported.
+            $payload = Invoke-MetraHostBridgePrivate {
                 param($root)
-                Invoke-MetraHostCadenceTick -MetraRoot $root -Execute
-            } $MetraRoot
-            $st = Get-MetraProp -Object $tick -Name 'status' -Default $null
-            Write-MetraHostBridgeJson ([pscustomobject]@{
+                $tick = Invoke-MetraHostCadenceTick -MetraRoot $root -Execute
+                $st = Get-MetraProp -Object $tick -Name 'status' -Default $null
+                return [pscustomobject]@{
                     ok        = $true
                     executed  = [bool](Get-MetraProp -Object $tick -Name 'executed' -Default $false)
                     enabled   = [bool](Get-MetraProp -Object $st -Name 'enabled' -Default $false)
@@ -310,7 +310,9 @@ try {
                         [string](Get-MetraProp -Object $tick -Name 'mode' -Default ''), `
                         [string](Get-MetraProp -Object $tick -Name 'exitCode' -Default ''))
                     status    = $st
-                })
+                }
+            } $MetraRoot
+            Write-MetraHostBridgeJson $payload
             return
         }
         default {

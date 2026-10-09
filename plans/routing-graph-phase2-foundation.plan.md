@@ -1,7 +1,7 @@
 ---
 name: Routing graph Phase 2 - Foundation
 overview: "Shipped contract - in-memory Ops|Sql family graph + compound cue boost (+4) so product+ops intent prefers Automation without replacing haystack keywords."
-status: Shipped
+status: completed
 shippedAt: 2026-08-29
 bingReviewed: true
 phase: routing-graph-2

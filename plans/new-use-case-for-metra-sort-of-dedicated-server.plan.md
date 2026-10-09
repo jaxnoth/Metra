@@ -1,7 +1,7 @@
 ---
 name: New use case for Metra. Sort of. Dedicated server that eventually analyzes all i
 overview: "CANCELLED / done. Empty Yarn stub (2026-09-04) from Capture 89b2cfec. Concept pursued elsewhere as jumpbox HQ + TicketWatch (mine-first Attention) - not this draft. Do not Bing-finalize this stub."
-status: done
+status: completed
 bingReviewed: false
 captureId: 89b2cfecff644dd9b1c48e34c370de27
 synthesizedAt: "2026-09-04T01:42:46.5926811Z"

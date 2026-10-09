@@ -1,3 +1,8 @@
+---
+name: Scout (parked)
+status: stub
+---
+
 # Plan: Scout (parked)
 
 **Status:** Parked (2026-09-03)

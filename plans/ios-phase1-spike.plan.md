@@ -1,3 +1,8 @@
+---
+name: Metra iOS Phase 1 spike (official)
+status: approved
+---
+
 # Metra iOS Phase 1 spike (official)
 
 **Status:** Phase 1 spike **smoke-passed** (2026-08-29); next = Phase 1.5 trial week  

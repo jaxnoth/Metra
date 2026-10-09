@@ -1,3 +1,8 @@
+---
+name: Moved
+status: completed
+---
+
 # Moved
 
 This plan was renamed and restructured after Bing’s 2026-08-29 behavioral-contract review.

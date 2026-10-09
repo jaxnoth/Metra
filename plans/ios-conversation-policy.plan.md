@@ -1,3 +1,8 @@
+---
+name: iOS conversation policy (Desk / Company / Deliver)
+status: approved
+---
+
 # Plan: iOS conversation policy (Desk / Company / Deliver)
 
 **Status:** Approved (Bing second review 2026-08-29; Warmth / spark-or-quiet amend 2026-09-04 Bing R1/R2 folded)  

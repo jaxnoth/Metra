@@ -1,3 +1,8 @@
+---
+name: iOS voice identity (provisional)
+status: draft
+---
+
 # Plan: iOS voice identity (provisional)
 
 **Status:** Provisional lock (operator 2026-08-29) - no app wiring yet  

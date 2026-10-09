@@ -488,6 +488,7 @@ internal sealed class TrayApp : ApplicationContext
     /// <summary>
     /// Host-owned Yarn Pulse/Daily cadence. Runs off the UI thread so long schedule
     /// runs do not block desk supervision. Bridge uses CreateNoWindow.
+    /// In-process gate skips pwsh spawn when nothing can be due (avoids console flash).
     /// </summary>
     private void MaybeCadenceTick()
     {
@@ -498,6 +499,13 @@ internal sealed class TrayApp : ApplicationContext
 
         // Evaluate at least every 30s (finer than 60s tolerance floor).
         _nextCadenceEvalUtc = DateTime.UtcNow.AddSeconds(30);
+
+        // Cheap JSON gate - do not start a console-subsystem pwsh when idle.
+        if (!HostCadenceGate.ShouldInvokeBridgeTick())
+        {
+            return;
+        }
+
         if (Interlocked.CompareExchange(ref _cadenceBusy, 1, 0) != 0)
         {
             return;

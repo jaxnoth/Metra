@@ -47,6 +47,7 @@ internal sealed class OpsBridge
         };
 
         // ArgumentList avoids manual quoting bugs for spaces and trailing backslashes.
+        // CreateNoWindow + redirected IO only - do not pass -WindowStyle Hidden (that can flash a console).
         psi.ArgumentList.Add("-NoProfile");
         psi.ArgumentList.Add("-ExecutionPolicy");
         psi.ArgumentList.Add("Bypass");

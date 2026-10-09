@@ -1,7 +1,7 @@
 ---
 name: Routing graph Phase 5 - Review
 overview: "Shipped contract - propose pending edges from ambiguous+compound misroutes into proposals.json; operator affirm→graph via Add-MetraRoutingAcceptedEdge or reject without graph write."
-status: Shipped
+status: completed
 shippedAt: 2026-08-31
 bingReviewed: true
 phase: routing-graph-5

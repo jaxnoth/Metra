@@ -1,3 +1,8 @@
+---
+name: Tailscale identity auth (Ask + Profile Sync)
+status: completed
+---
+
 # Plan: Tailscale identity auth (Ask + Profile Sync)
 
 **Status:** Shipped (CLI + Ops host; Bing minors folded 2026-08-29)  

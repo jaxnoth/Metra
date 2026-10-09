@@ -1,7 +1,7 @@
 ---
 name: Loom product boundary
-overview: "Product-boundary correction: Loom as a first-class governed-execution domain, Metra-hosted with extractable module boundary. Pause feature work until M0ΓÇôM2 complete. Do not move into Forge."
-status: Approved with amendments (Bing 2026-08-31)
+overview: "Product-boundary correction: Loom as a first-class governed-execution domain, Metra-hosted with extractable module boundary. Pause feature work until M0ΓÇôM2 complete. Do not move into Forge. Bing approved with amendments 2026-08-31."
+status: completed
 phase: boundary-correction
 bingReviewed: true
 m0Completed: 2026-08-31
@@ -38,15 +38,15 @@ todos:
 atlasStableId: null
 synthesizedAt: null
 relatedPlans:
-  - path: %USERPROFILE%\.cursor\plans\metra_auto-programming_loop_0e30e91c.plan.md
+  - path: "%USERPROFILE%\\.cursor\\plans\\metra_auto-programming_loop_0e30e91c.plan.md"
     role: execution-roadmap
-  - path: C:\Projects\_meta\plans\routing-graph-phase5-review.plan.md
+  - path: "C:\\Projects\\_meta\\plans\\routing-graph-phase5-review.plan.md"
     role: separate-track
 ---
 
 # Loom product boundary correction
 
-**Status:** Approved with amendments (Bing 2026-08-31)  
+**Status:** Completed (Bing approved with amendments 2026-08-31)  
 **Date:** 2026-08-31  
 **Type:** Product / architecture (not a file cleanup)  
 **Gate:** No Loom **feature** work (Slice 3+) until **M0, M0.5, M1, and M2 partial** (module shell + adapter boundary + isolation tests) are complete. Full M2 before unattended or Slice 4+.
@@ -528,7 +528,7 @@ M2 partial acceptance requires this gate **green** for: contract validation, sta
 - [x] **Isolation gate:** `Import-Module Loom.psd1` + `tests/Loom/` pass **without** Metra.psm1 ΓÇö **11/11**
 - [x] Extraction-readiness tests pass (Section 10.5)
 - [x] `scripts/private/Loom.ps1` is shim only (Γëñ30 lines) or deleted with deprecation note
-- [ ] Focused Bing pack of module + tests clean ΓÇö after inspect/pack
+- [x] Focused Bing pack of module + tests clean ΓÇö after inspect/pack
 - [x] **M2 partial** checked before Slice 3; **M2 complete** (full Private/ split) deferred
 - [x] **Naming review** scheduled (Section 17) ΓÇö Loom chosen; rename track separate
 

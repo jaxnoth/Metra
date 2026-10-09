@@ -1,7 +1,7 @@
 ---
 name: Routing graph Phase 3 - Telemetry
 overview: "Shipped contract - Observe-only routing events.jsonl witness (confident/ambiguous/home); no learning, no scorer changes, fail-open hot path."
-status: Shipped
+status: completed
 shippedAt: 2026-08-29
 bingReviewed: true
 phase: routing-graph-3

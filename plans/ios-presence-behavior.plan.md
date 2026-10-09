@@ -1,3 +1,8 @@
+---
+name: iOS presence behavior and face transitions
+status: approved
+---
+
 # Plan: iOS presence behavior and face transitions
 
 **Status:** Approved with amendments (Bing 2026-08-29; structural cleanup same day); Brand.md iOS subsection landed 2026-08-29  

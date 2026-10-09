@@ -1,3 +1,8 @@
+---
+name: "Sprint: Coworker developer + ticket analysis ready (2026-09-10)"
+status: pending
+---
+
 # Sprint: Coworker developer + ticket analysis ready (2026-09-10)
 
 **North star:** By 2026-09-10, coworker can install Metra, route tickets, preview grounded asks, use portfolio companions when analysis requires them, and fail closed when companions or evidence are missing. Complete after five tickets (>=1 investigate hop) and two dry-runs.

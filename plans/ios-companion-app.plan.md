@@ -1,3 +1,8 @@
+---
+name: Metra iOS companion app (umbrella)
+status: approved
+---
+
 # Plan: Metra iOS companion app (umbrella)
 
 **Status:** Approved with minor amendments (Bing 2026-08-29)  

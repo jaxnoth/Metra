@@ -1,7 +1,7 @@
 ---
 name: Routing graph Phase 6 - Concept / multi-hop
-overview: "Bing-affirmed contract for concept→product and bounded cross-stem. Operator promoted Gate B build 2026-09-07 - implement in parent session after P5 soak. No embedding map; no silent Apply."
-status: BingAffirmedBuildPromoted
+overview: "Bing-affirmed contract for concept→product and bounded cross-stem. Operator promoted Gate B build 2026-09-07 - implement in parent session after P5 soak. No embedding map; no silent Apply. Bing affirmed; build promoted."
+status: approved
 phase: routing-graph-6
 wakeWhen: "Operator promote-for-build (2026-09-07) authorizes Gate B implement; P5 soak still runs first for evidence."
 doNotStartUntil: "Parent Gate B execute; bingReviewed true; build promoted."

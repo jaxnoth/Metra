@@ -1,7 +1,7 @@
 ---
 name: Ask routing graph evolution (master roadmap)
 overview: "P2-P5 program complete (contracts + seeded IWUDATA ops edge). Architecture index only - not a Loom bite. Future work: Backlog wake stub routing-graph-phase6-concept.plan.md."
-status: Shipped
+status: completed
 shippedAt: 2026-09-06
 bingReviewed: true
 phase: routing-graph-program
