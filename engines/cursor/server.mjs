@@ -524,7 +524,9 @@ function mimeFromFileName(fileName) {
 }
 
 /**
- * Resolve Host quarantine image refs (id + path) into SDK images.
+ * Resolve Host image refs (id + path) into SDK images.
+ * Normalization (max edge / JPEG) is owned by Metra PowerShell AskImage intake.
+ * This loader only base64-encodes the path Host already prepared - do not resize here.
  * Never accept journal-style payloads with base64 from callers as the primary path.
  */
 function loadImagesFromRefs(rawImages) {
@@ -542,9 +544,10 @@ function loadImagesFromRefs(rawImages) {
     }
     const buf = fs.readFileSync(filePath)
     if (!buf || buf.length === 0) continue
+    const mime = String(raw.mimeType || '').trim() || mimeFromFileName(fileName)
     out.push({
       data: buf.toString('base64'),
-      mimeType: mimeFromFileName(fileName),
+      mimeType: mime,
     })
   }
   return out

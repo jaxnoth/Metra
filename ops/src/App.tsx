@@ -1368,6 +1368,8 @@ export default function App() {
   const [placeText, setPlaceText] = useState('')
   const [placeFiles, setPlaceFiles] = useState<PlaceUploadMeta[]>([])
   const [placePreviews, setPlacePreviews] = useState<Record<string, string>>({})
+  const placePreviewsRef = useRef<Record<string, string>>({})
+  placePreviewsRef.current = placePreviews
   const [placeResult, setPlaceResult] = useState<PlaceRecommendation | null>(null)
   const [placeStatus, setPlaceStatus] = useState<string | null>(null)
   const [placePending, setPlacePending] = useState(false)
@@ -1405,6 +1407,19 @@ export default function App() {
     })
     return () => {
       cancelled = true
+    }
+  }, [])
+
+  // Revoke staged image blob URLs on unmount (abandon without send/remove).
+  useEffect(() => {
+    return () => {
+      for (const url of Object.values(placePreviewsRef.current)) {
+        try {
+          URL.revokeObjectURL(url)
+        } catch {
+          /* ignore */
+        }
+      }
     }
   }, [])
 
@@ -2530,7 +2545,16 @@ export default function App() {
       }
       setPlaceFiles((prev) => [...prev, ...uploaded])
       if (Object.keys(previewAdds).length > 0) {
-        setPlacePreviews((prev) => ({ ...prev, ...previewAdds }))
+        setPlacePreviews((prev) => {
+          const next = { ...prev }
+          for (const [id, url] of Object.entries(previewAdds)) {
+            if (next[id] && next[id] !== url) {
+              URL.revokeObjectURL(next[id])
+            }
+            next[id] = url
+          }
+          return next
+        })
       }
       const imageCount = uploaded.filter(isAskImageFile).length
       const otherCount = uploaded.length - imageCount

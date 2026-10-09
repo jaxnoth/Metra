@@ -1,7 +1,9 @@
 # OpenAI-compatible Ask complete/health for ollama, enterprise, and llamacpp (PowerShell-native).
-# Context JSON ceiling: evidence maxTotalChars (2400) * 5 for route/continuity/capability headroom.
+# Context JSON ceiling: evidence maxTotalChars (2400) * 2 for route/continuity/capability headroom.
 
-$script:MetraAskOpenAICompatContextJsonMultiplier = 5
+$script:MetraAskOpenAICompatContextJsonMultiplier = 2
+$script:MetraAskOpenAICompatMaxTokensDesk = 1024
+$script:MetraAskOpenAICompatMaxTokensInspect = 4096
 
 function Get-MetraAskOpenAICompatContextJsonMaxChars {
     $limits = Get-MetraAskEvidenceLimits
@@ -359,7 +361,7 @@ function Invoke-MetraAskOpenAICompatComplete {
         if (-not $isInspect) {
             try {
                 $ctxJson = ($Context | ConvertTo-Json -Depth 6 -Compress)
-                # Ceiling = evidence maxTotalChars * 5 (route/continuity/capability headroom).
+                # Ceiling = evidence maxTotalChars * multiplier (route/continuity/capability headroom).
                 $ceiling = Get-MetraAskOpenAICompatContextJsonMaxChars
                 if ($ctxJson -and $ctxJson.Length -lt $ceiling) {
                     $systemParts += "Context JSON: $ctxJson"
@@ -369,13 +371,21 @@ function Invoke-MetraAskOpenAICompatComplete {
         }
     }
 
+    $systemText = ($systemParts -join "`n")
+    $maxTokens = if ($isInspect) {
+        [int]$script:MetraAskOpenAICompatMaxTokensInspect
+    }
+    else {
+        [int]$script:MetraAskOpenAICompatMaxTokensDesk
+    }
     $body = @{
         model       = $model
         messages    = @(
-            @{ role = 'system'; content = ($systemParts -join "`n") }
+            @{ role = 'system'; content = $systemText }
             @{ role = 'user'; content = $Prompt }
         )
         temperature = if ($isInspect) { 0.1 } else { 0.2 }
+        max_tokens  = $maxTokens
     }
     if ($isInspect) {
         $body['response_format'] = @{ type = 'json_object' }
@@ -447,6 +457,29 @@ function Invoke-MetraAskOpenAICompatComplete {
             $(if ($msgScrub.Matched) { $msgScrub.Notice })
         )
         $usedModel = [string](Get-MetraProp -Object $response -Name 'model' -Default $model)
+        $usageObj = Get-MetraProp -Object $response -Name 'usage' -Default $null
+        $usageOut = $null
+        if ($null -ne $usageObj) {
+            $usageOut = [PSCustomObject]@{
+                prompt_tokens     = Get-MetraProp -Object $usageObj -Name 'prompt_tokens' -Default $null
+                completion_tokens = Get-MetraProp -Object $usageObj -Name 'completion_tokens' -Default $null
+                total_tokens      = Get-MetraProp -Object $usageObj -Name 'total_tokens' -Default $null
+            }
+            # Retain provider-specific fields without inventing totals.
+            $cached = Get-MetraProp -Object $usageObj -Name 'prompt_tokens_details' -Default $null
+            if ($null -ne $cached) {
+                $usageOut | Add-Member -NotePropertyName provider -NotePropertyValue ([PSCustomObject]@{
+                        prompt_tokens_details = $cached
+                    }) -Force
+            }
+        }
+        $ctxChars = 0
+        try {
+            if ($null -ne $Context) {
+                $ctxChars = [int](($Context | ConvertTo-Json -Depth 6 -Compress).Length)
+            }
+        }
+        catch { $ctxChars = 0 }
         return [PSCustomObject]@{
             ok              = $true
             message         = [string]$msgScrub.Text
@@ -461,6 +494,10 @@ function Invoke-MetraAskOpenAICompatComplete {
             secretsScrubbed = [bool]($PromptScrub.Matched -or $CtxScrub.Matched -or $msgScrub.Matched)
             secretsKinds    = @($PromptScrub.Kinds) + @($CtxScrub.Kinds) + @($msgScrub.Kinds)
             scrubbedPrompt  = [string]$PromptScrub.Text
+            usage           = $usageOut
+            promptChars     = [int]$Prompt.Length
+            contextChars    = $ctxChars
+            maxTokens       = $maxTokens
         }
     }
     catch {

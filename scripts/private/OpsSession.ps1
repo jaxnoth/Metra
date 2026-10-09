@@ -7,17 +7,52 @@ function Get-MetraOpsLocalSessionTokenPath {
     return Join-Path $env:LOCALAPPDATA 'Metra\ops-local-session.token'
 }
 
+if ($null -eq (Get-Variable -Name MetraOpsSessionTokenCache -Scope Script -ErrorAction SilentlyContinue)) {
+    $script:MetraOpsSessionTokenCache = @{
+        Token     = $null
+        Path      = $null
+        Lwt       = [datetime]::MinValue
+        CachedUtc = [datetime]::MinValue
+        TtlSec    = 30
+    }
+}
+
+function Clear-MetraOpsLocalSessionTokenCache {
+    [CmdletBinding()]
+    param()
+    $script:MetraOpsSessionTokenCache.Token = $null
+    $script:MetraOpsSessionTokenCache.Path = $null
+    $script:MetraOpsSessionTokenCache.Lwt = [datetime]::MinValue
+    $script:MetraOpsSessionTokenCache.CachedUtc = [datetime]::MinValue
+}
+
 function Get-MetraOpsProposalLocalSessionToken {
     param([switch]$AllowMissing)
 
     $path = Get-MetraOpsLocalSessionTokenPath
-    if (Test-Path -LiteralPath $path) {
-        return (Get-Content -LiteralPath $path -Raw -Encoding UTF8).Trim()
-    }
-    if ($AllowMissing) {
+    if (-not (Test-Path -LiteralPath $path)) {
+        Clear-MetraOpsLocalSessionTokenCache
+        if ($AllowMissing) { return '' }
         return ''
     }
-    return ''
+
+    $lwt = [datetime]::MinValue
+    try { $lwt = (Get-Item -LiteralPath $path).LastWriteTimeUtc } catch { }
+
+    $cache = $script:MetraOpsSessionTokenCache
+    $ageOk = $cache.CachedUtc -ne [datetime]::MinValue -and `
+        (([datetime]::UtcNow - $cache.CachedUtc).TotalSeconds -lt [double]$cache.TtlSec)
+    if ($ageOk -and $cache.Path -eq $path -and $cache.Lwt -eq $lwt -and
+        -not [string]::IsNullOrWhiteSpace([string]$cache.Token)) {
+        return [string]$cache.Token
+    }
+
+    $token = (Get-Content -LiteralPath $path -Raw -Encoding UTF8).Trim()
+    $script:MetraOpsSessionTokenCache.Token = $token
+    $script:MetraOpsSessionTokenCache.Path = $path
+    $script:MetraOpsSessionTokenCache.Lwt = $lwt
+    $script:MetraOpsSessionTokenCache.CachedUtc = [datetime]::UtcNow
+    return $token
 }
 
 function Test-MetraOpsLocalSessionTokenFormat {
@@ -61,6 +96,10 @@ function Initialize-MetraOpsLocalSessionToken {
         $existing = (Get-Content -LiteralPath $path -Raw -Encoding UTF8).Trim()
         # Reuse only a well-formed 64-hex token; missing/malformed fall through to mint/replace.
         if (Test-MetraOpsLocalSessionTokenFormat -Value $existing) {
+            $script:MetraOpsSessionTokenCache.Token = $existing
+            $script:MetraOpsSessionTokenCache.Path = $path
+            try { $script:MetraOpsSessionTokenCache.Lwt = (Get-Item -LiteralPath $path).LastWriteTimeUtc } catch { }
+            $script:MetraOpsSessionTokenCache.CachedUtc = [datetime]::UtcNow
             return [PSCustomObject]@{
                 Token   = $existing
                 Path    = $path
@@ -79,6 +118,11 @@ function Initialize-MetraOpsLocalSessionToken {
     }
     $token = -join ($bytes | ForEach-Object { $_.ToString('x2') })
     [System.IO.File]::WriteAllText($path, $token + "`n")
+    Clear-MetraOpsLocalSessionTokenCache
+    $script:MetraOpsSessionTokenCache.Token = $token
+    $script:MetraOpsSessionTokenCache.Path = $path
+    try { $script:MetraOpsSessionTokenCache.Lwt = (Get-Item -LiteralPath $path).LastWriteTimeUtc } catch { }
+    $script:MetraOpsSessionTokenCache.CachedUtc = [datetime]::UtcNow
 
     return [PSCustomObject]@{
         Token   = $token
@@ -118,9 +162,11 @@ function Test-MetraOpsLocalSessionToken {
     $expected = if ($null -eq $expected) { '' } else { $expected.Trim() }
 
     if ([string]::IsNullOrWhiteSpace($expected)) {
+        Clear-MetraOpsLocalSessionTokenCache
         return $false
     }
     if (-not (Test-MetraOpsLocalSessionTokenFormat -Value $expected)) {
+        Clear-MetraOpsLocalSessionTokenCache
         return $false
     }
 
@@ -129,14 +175,19 @@ function Test-MetraOpsLocalSessionToken {
     if ($a.Length -ne $b.Length) {
         return $false
     }
+    $ok = $false
     try {
-        return [System.Security.Cryptography.CryptographicOperations]::FixedTimeEquals($a, $b)
+        $ok = [System.Security.Cryptography.CryptographicOperations]::FixedTimeEquals($a, $b)
     }
     catch {
         $diff = 0
         for ($i = 0; $i -lt $a.Length; $i++) {
             $diff = $diff -bor ($a[$i] -bxor $b[$i])
         }
-        return ($diff -eq 0)
+        $ok = ($diff -eq 0)
     }
+    if (-not $ok) {
+        Clear-MetraOpsLocalSessionTokenCache
+    }
+    return $ok
 }

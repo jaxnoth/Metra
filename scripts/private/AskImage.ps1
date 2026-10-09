@@ -6,9 +6,119 @@ $script:MetraAskImageMaxCount = 3
 # Match Place upload ceiling (scripts/private/Place.ps1 MetraPlaceMaxUploadBytes).
 $script:MetraAskImageMaxBytes = 8MB
 $script:MetraAskImageDefaultPrompt = 'Describe what matters in this screenshot for the next check.'
+$script:MetraAskImageNormMaxEdge = 1280
+$script:MetraAskImageNormJpegQuality = 85
 
 function Get-MetraAskImageDefaultPrompt {
     return [string]$script:MetraAskImageDefaultPrompt
+}
+
+function Get-MetraAskImageNormalizeRoot {
+    $root = Join-Path $env:LOCALAPPDATA 'Metra\ask\normalized'
+    if (-not (Test-Path -LiteralPath $root)) {
+        $null = New-Item -ItemType Directory -Path $root -Force
+    }
+    return $root
+}
+
+function ConvertTo-MetraAskNormalizedImage {
+    <#
+    .SYNOPSIS
+        Authoritative Ask image normalize: max edge 1280, JPEG ~85, no upscale.
+        Returns path/mime/byte sizes. On failure, returns the original path (fail-open).
+    #>
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory)][string]$Path,
+        [Parameter(Mandatory)][string]$Id,
+        [string]$FileName = ''
+    )
+
+    $preBytes = 0
+    try { $preBytes = [long](Get-Item -LiteralPath $Path).Length } catch { }
+
+    $result = [PSCustomObject]@{
+        path         = $Path
+        mimeType     = Get-MetraAskImageMimeType -FileName $(if ($FileName) { $FileName } else { $Path })
+        preBytes     = $preBytes
+        postBytes    = $preBytes
+        normalized   = $false
+        maxEdge      = [int]$script:MetraAskImageNormMaxEdge
+    }
+
+    try {
+        Add-Type -AssemblyName System.Drawing -ErrorAction Stop
+    }
+    catch {
+        return $result
+    }
+
+    $img = $null
+    $bmp = $null
+    try {
+        $img = [System.Drawing.Image]::FromFile($Path)
+        # Apply simple EXIF orientation when present (tag 0x0112).
+        try {
+            if (@($img.PropertyIdList) -contains 0x0112) {
+                $orient = $img.GetPropertyItem(0x0112).Value[0]
+                switch ($orient) {
+                    3 { $img.RotateFlip([System.Drawing.RotateFlipType]::Rotate180FlipNone) }
+                    6 { $img.RotateFlip([System.Drawing.RotateFlipType]::Rotate90FlipNone) }
+                    8 { $img.RotateFlip([System.Drawing.RotateFlipType]::Rotate270FlipNone) }
+                }
+            }
+        }
+        catch { }
+
+        $w = [int]$img.Width
+        $h = [int]$img.Height
+        $maxEdge = [int]$script:MetraAskImageNormMaxEdge
+        $scale = 1.0
+        $longest = [Math]::Max($w, $h)
+        if ($longest -gt $maxEdge -and $longest -gt 0) {
+            $scale = $maxEdge / [double]$longest
+        }
+        $nw = [Math]::Max(1, [int][Math]::Round($w * $scale))
+        $nh = [Math]::Max(1, [int][Math]::Round($h * $scale))
+
+        $bmp = New-Object System.Drawing.Bitmap $nw, $nh
+        $g = [System.Drawing.Graphics]::FromImage($bmp)
+        try {
+            $g.InterpolationMode = [System.Drawing.Drawing2D.InterpolationMode]::HighQualityBicubic
+            $g.DrawImage($img, 0, 0, $nw, $nh)
+        }
+        finally { $g.Dispose() }
+
+        $outDir = Get-MetraAskImageNormalizeRoot
+        $safeId = ($Id -replace '[^\w\-]', '_')
+        $outPath = Join-Path $outDir ($safeId + '.jpg')
+        $codec = [System.Drawing.Imaging.ImageCodecInfo]::GetImageEncoders() |
+            Where-Object { $_.MimeType -eq 'image/jpeg' } |
+            Select-Object -First 1
+        if (-not $codec) {
+            $bmp.Save($outPath, [System.Drawing.Imaging.ImageFormat]::Jpeg)
+        }
+        else {
+            $encoder = [System.Drawing.Imaging.Encoder]::Quality
+            $eps = New-Object System.Drawing.Imaging.EncoderParameters 1
+            $eps.Param[0] = New-Object System.Drawing.Imaging.EncoderParameter $encoder, ([long]$script:MetraAskImageNormJpegQuality)
+            $bmp.Save($outPath, $codec, $eps)
+            $eps.Dispose()
+        }
+        $post = [long](Get-Item -LiteralPath $outPath).Length
+        $result.path = $outPath
+        $result.mimeType = 'image/jpeg'
+        $result.postBytes = $post
+        $result.normalized = $true
+        return $result
+    }
+    catch {
+        return $result
+    }
+    finally {
+        if ($bmp) { try { $bmp.Dispose() } catch { } }
+        if ($img) { try { $img.Dispose() } catch { } }
+    }
 }
 
 function Test-MetraAskImageFileName {
@@ -138,11 +248,16 @@ function Resolve-MetraAskImages {
             }
         }
         $safeId = [string](Get-MetraProp -Object $meta -Name 'id' -Default $id)
+        # Authoritative normalize once here; Cursor sidecar must not resize again.
+        $norm = ConvertTo-MetraAskNormalizedImage -Path $path -Id $safeId -FileName $fileName
         $resolved.Add([PSCustomObject]@{
-                id       = $safeId
-                fileName = $fileName
-                path     = $path
-                mimeType = Get-MetraAskImageMimeType -FileName $fileName
+                id        = $safeId
+                fileName  = $fileName
+                path      = [string]$norm.path
+                mimeType  = [string]$norm.mimeType
+                preBytes  = [long]$norm.preBytes
+                postBytes = [long]$norm.postBytes
+                normalized = [bool]$norm.normalized
             })
         $journal.Add([PSCustomObject]@{
                 id       = $safeId

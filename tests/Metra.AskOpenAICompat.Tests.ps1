@@ -173,9 +173,16 @@ Describe 'OpenAI-compat enterprise capability' {
 }
 
 Describe 'OpenAI-compat completion helpers' {
-    It 'context ceiling derives from evidence maxTotalChars * 5' {
+    It 'context ceiling derives from evidence maxTotalChars * 2' {
         InModuleScope Metra {
-            Get-MetraAskOpenAICompatContextJsonMaxChars | Should -Be 12000
+            Get-MetraAskOpenAICompatContextJsonMaxChars | Should -Be 4800
+        }
+    }
+
+    It 'desk max_tokens default is 1024 and inspect is 4096' {
+        InModuleScope Metra {
+            $script:MetraAskOpenAICompatMaxTokensDesk | Should -Be 1024
+            $script:MetraAskOpenAICompatMaxTokensInspect | Should -Be 4096
         }
     }
 

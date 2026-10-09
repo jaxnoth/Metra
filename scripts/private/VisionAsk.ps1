@@ -62,12 +62,7 @@ function Get-MetraVisionAskSystemPrompt {
     $path = Join-Path $MetraRoot 'engines\vision-ask\system.md'
     $body = ''
     if (Test-Path -LiteralPath $path) {
-        try {
-            $body = [System.IO.File]::ReadAllText($path).Trim()
-        }
-        catch {
-            $body = ''
-        }
+        $body = Get-MetraCachedFileText -Path $path -CacheKey "vision-ask:$path"
     }
     if ([string]::IsNullOrWhiteSpace($body)) {
         $body = 'Vision surface: same Metra partner. Portfolio grounding when portfolio-shaped. Confirm before durable writes.'
@@ -544,10 +539,38 @@ function New-MetraVisionAskLocalAssistProvenance {
         -Correlation $Correlation
 }
 
+function Sync-MetraAskRoutedTelemetryRotation {
+    <#
+    .SYNOPSIS
+        Rotate events.jsonl at 5 MB under the telemetry mutex (never the Ask gate).
+        Keeps one .1 backup. Failures are non-fatal.
+    #>
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory)][string]$Path,
+        [long]$MaxBytes = 5MB
+    )
+
+    try {
+        if (-not (Test-Path -LiteralPath $Path)) { return }
+        $len = [long](Get-Item -LiteralPath $Path).Length
+        if ($len -lt $MaxBytes) { return }
+        $bak = "$Path.1"
+        if (Test-Path -LiteralPath $bak) {
+            Remove-Item -LiteralPath $bak -Force -ErrorAction Stop
+        }
+        Move-Item -LiteralPath $Path -Destination $bak -Force -ErrorAction Stop
+    }
+    catch {
+        Write-Warning ("Ask routed telemetry rotation failed: {0}" -f $_.Exception.Message)
+    }
+}
+
 function Add-MetraAskRoutedTelemetryEvent {
     <#
     .SYNOPSIS
         Append metra.ask.routed observe-only JSONL under %LOCALAPPDATA%\Metra\ask.
+        Rotation + append share a telemetry named mutex (never the Ask execution gate).
     #>
     [CmdletBinding()]
     param(
@@ -593,6 +616,12 @@ function Add-MetraAskRoutedTelemetryEvent {
             $packsIncluded = @(Get-MetraProp -Object $diagnostics -Name 'packsIncluded' -Default @())
         }
 
+        $usage = Get-MetraProp -Object $Envelope -Name 'usage' -Default $null
+        $promptChars = Get-MetraProp -Object $Envelope -Name 'promptChars' -Default $null
+        $contextChars = Get-MetraProp -Object $Envelope -Name 'contextChars' -Default $null
+        $imageBytes = Get-MetraProp -Object $Envelope -Name 'imageBytes' -Default $null
+        $imageCount = Get-MetraProp -Object $Envelope -Name 'imageCount' -Default $null
+
         $event = [ordered]@{
             event                 = 'metra.ask.routed'
             ts                    = (Get-Date).ToUniversalTime().ToString('o')
@@ -615,11 +644,18 @@ function Add-MetraAskRoutedTelemetryEvent {
             identityTruncated     = $identityTruncated
             packsIncluded         = $packsIncluded
             packsOmitted          = $packsOmitted
+            usage                 = $usage
+            promptChars           = $promptChars
+            contextChars          = $contextChars
+            imageBytes            = $imageBytes
+            imageCount            = $imageCount
         }
         $line = ($event | ConvertTo-Json -Compress -Depth 6)
-        # Best-effort append; concurrent writers may interleave lines - readers
-        # must tolerate malformed JSONL. Telemetry must never fail the ask path.
-        Add-Content -LiteralPath $path -Value $line -Encoding utf8
+        # Telemetry mutex only - never nest under Ask SemaphoreSlim.
+        $null = Invoke-MetraWithNamedMutex -Name 'ask-routed-telemetry' -Script {
+            Sync-MetraAskRoutedTelemetryRotation -Path $path -MaxBytes 5MB
+            Add-Content -LiteralPath $path -Value $line -Encoding utf8
+        }
     }
     catch {
         # Observe-only: directory create / append / serialize failures are swallowed.

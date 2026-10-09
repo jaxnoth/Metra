@@ -1189,7 +1189,10 @@ function Invoke-MetraAskEngine {
         [string]$MetraRoot = (Get-MetraRoot),
         [int]$TimeoutSec = 180,
         [string]$Engine,
-        [string]$Model
+        [string]$Model,
+        # When callers already scrubbed the exact Prompt / Context, pass results to skip a second walk.
+        $PromptScrub = $null,
+        $ContextScrub = $null
     )
 
     $baseSettings = Get-MetraAskSettings -MetraRoot $MetraRoot
@@ -1202,11 +1205,22 @@ function Invoke-MetraAskEngine {
         $baseSettings
     }
 
-    $promptScrub = Invoke-MetraAskSecretsScrubText -Text $Prompt
+    # Short-circuit only when the immutable scrubbed text still matches Prompt.
+    if ($null -ne $PromptScrub -and [string](Get-MetraProp -Object $PromptScrub -Name 'Text' -Default '') -eq $Prompt) {
+        $promptScrub = $PromptScrub
+    }
+    else {
+        $promptScrub = Invoke-MetraAskSecretsScrubText -Text $Prompt
+    }
     if ($promptScrub.Refuse) {
         return New-MetraAskEngineRefuseResult -Settings $settings -SessionId $SessionId -Scrub $promptScrub -Source prompt
     }
-    $ctxScrub = Invoke-MetraAskSecretsScrubObject -InputObject $Context
+    if ($null -ne $ContextScrub -and $null -ne (Get-MetraProp -Object $ContextScrub -Name 'Value' -Default $null)) {
+        $ctxScrub = $ContextScrub
+    }
+    else {
+        $ctxScrub = Invoke-MetraAskSecretsScrubObject -InputObject $Context
+    }
     if ($ctxScrub.Refuse) {
         return New-MetraAskEngineRefuseResult -Settings $settings -SessionId $SessionId -Scrub $ctxScrub -Source context
     }

@@ -186,10 +186,53 @@ function Get-MetraAttentionMemory {
     }
 }
 
+function Get-MetraAttentionFpPart {
+    param($Value)
+    if ($null -eq $Value) { return '' }
+    $s = "$Value".Trim()
+    if ($s -eq '') { return '' }
+    return $s
+}
+
+function Get-MetraAttentionItemsWriteFingerprint {
+    <#
+    .SYNOPSIS
+        Deterministic fingerprint of attention items for skip-unchanged writes.
+    #>
+    [CmdletBinding()]
+    param(
+        [AllowEmptyCollection()]
+        [object[]]$Items = @()
+    )
+
+    $parts = @(
+        foreach ($i in @($Items | Sort-Object { Get-MetraAttentionFpPart (Get-MetraProp -Object $_ -Name 'key' -Default '') })) {
+            if (-not $i) { continue }
+            @(
+                (Get-MetraAttentionFpPart (Get-MetraProp -Object $i -Name 'key' -Default ''))
+                (Get-MetraAttentionFpPart (Get-MetraProp -Object $i -Name 'state' -Default ''))
+                (Get-MetraAttentionFpPart (Get-MetraProp -Object $i -Name 'evidenceSignature' -Default ''))
+                (Get-MetraAttentionFpPart (Get-MetraProp -Object $i -Name 'confidence' -Default ''))
+                (Get-MetraAttentionFpPart (Get-MetraProp -Object $i -Name 'content' -Default ''))
+                (Get-MetraAttentionFpPart (Get-MetraProp -Object $i -Name 'detail' -Default ''))
+                (Get-MetraAttentionFpPart (Get-MetraProp -Object $i -Name 'lastSeenAt' -Default ''))
+                (Get-MetraAttentionFpPart (Get-MetraProp -Object $i -Name 'notRecheckedSince' -Default ''))
+                (Get-MetraAttentionFpPart (Get-MetraProp -Object $i -Name 'snoozedUntil' -Default ''))
+                (Get-MetraAttentionFpPart (Get-MetraProp -Object $i -Name 'closedAt' -Default ''))
+                (Get-MetraAttentionFpPart (Get-MetraProp -Object $i -Name 'closedBy' -Default ''))
+                (Get-MetraAttentionFpPart (Get-MetraProp -Object $i -Name 'ticketStatus' -Default ''))
+                (Get-MetraAttentionFpPart (Get-MetraProp -Object $i -Name 'note' -Default ''))
+            ) -join '|'
+        }
+    )
+    return ($parts -join "`n")
+}
+
 function Set-MetraAttentionMemory {
     <#
     .SYNOPSIS
         Writes local attention memory after prune/cap.
+        Skips disk write when pruned items are unchanged (no mtime bump).
     #>
     [CmdletBinding()]
     param(
@@ -229,12 +272,28 @@ function Set-MetraAttentionMemory {
     }
 
     $Memory.items = $items
-    $Memory.updatedAt = (Get-Date).ToString('o')
     $path = Get-MetraAttentionMemoryPath -MetraRoot $MetraRoot
     $dir = Split-Path -Parent $path
     if ($dir -and -not (Test-Path $dir)) {
         New-Item -ItemType Directory -Path $dir -Force | Out-Null
     }
+
+    # Skip disk write when item fingerprint matches persisted memory (no mtime bump).
+    $newFp = Get-MetraAttentionItemsWriteFingerprint -Items $items
+    if (Test-Path -LiteralPath $path) {
+        try {
+            $existing = Get-MetraAttentionMemory -MetraRoot $MetraRoot
+            $oldFp = Get-MetraAttentionItemsWriteFingerprint -Items @($existing.items)
+            if ($oldFp -eq $newFp) {
+                $Memory.updatedAt = $existing.updatedAt
+                $Memory.version = [int](Get-MetraProp -Object $existing -Name 'version' -Default 1)
+                return $Memory
+            }
+        }
+        catch { }
+    }
+
+    $Memory.updatedAt = (Get-Date).ToString('o')
     $json = ($Memory | ConvertTo-Json -Depth 8)
     [System.IO.File]::WriteAllText($path, $json + "`r`n")
     return $Memory

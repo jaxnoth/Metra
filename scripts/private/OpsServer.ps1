@@ -1500,12 +1500,25 @@ function Invoke-MetraOpsApi {
                 Write-MetraOpsBadRequest -Response $Response -Message 'JSON body required'
                 return
             }
-            $visionReq = ConvertTo-MetraVisionAskRequest -Body $visionParsed
             $deviceId = ''
             try { $deviceId = [string]$Request.Headers['X-Metra-Device'] } catch { }
-            $visionResult = Invoke-MetraVisionAskHandler -Request $visionReq -MetraRoot $MetraRoot -DeviceId $deviceId
-            $visionStatus = Get-MetraVisionAskHttpStatusCode -Envelope $visionResult
-            Write-MetraOpsJsonResponse -Response $Response -StatusCode $visionStatus -Object $visionResult -Depth 12
+            $visionWork = [PSCustomObject]@{
+                kind     = 'vision'
+                body     = $visionParsed
+                deviceId = $deviceId
+            }
+            $started = Start-MetraOpsAskHttpWorker -Work $visionWork -Response $Response -MetraRoot $MetraRoot
+            if ($started.Busy) {
+                Write-MetraOpsAskBusyResponse -Response $Response
+                return
+            }
+            if (-not $started.Started) {
+                Write-MetraOpsJsonResponse -Response $Response -StatusCode 500 -Object ([PSCustomObject]@{
+                        error = $(if ($started.Error) { [string]$started.Error } else { 'Ask worker failed to start.' })
+                    })
+                return
+            }
+            # Worker owns Response through completion.
             return
         }
 
@@ -1548,8 +1561,22 @@ function Invoke-MetraOpsApi {
                 if ($dispatch.path -eq 'vision') {
                     $deviceId = ''
                     try { $deviceId = [string]$Request.Headers['X-Metra-Device'] } catch { }
-                    $visionResult = Invoke-MetraVisionAskHandler -Request $dispatch.request -MetraRoot $MetraRoot -DeviceId $deviceId
-                    Write-MetraOpsJsonResponse -Response $Response -StatusCode (Get-MetraVisionAskHttpStatusCode -Envelope $visionResult) -Object $visionResult -Depth 12
+                    $visionWork = [PSCustomObject]@{
+                        kind     = 'vision'
+                        body     = $parsed
+                        deviceId = $deviceId
+                    }
+                    $started = Start-MetraOpsAskHttpWorker -Work $visionWork -Response $Response -MetraRoot $MetraRoot
+                    if ($started.Busy) {
+                        Write-MetraOpsAskBusyResponse -Response $Response
+                        return
+                    }
+                    if (-not $started.Started) {
+                        Write-MetraOpsJsonResponse -Response $Response -StatusCode 500 -Object ([PSCustomObject]@{
+                                error = $(if ($started.Error) { [string]$started.Error } else { 'Ask worker failed to start.' })
+                            })
+                        return
+                    }
                     return
                 }
                 if ($dispatch.path -eq 'capture') {
@@ -1598,20 +1625,6 @@ function Invoke-MetraOpsApi {
                     })
                 return
             }
-            $resolvedImages = @()
-            $journalImages = @()
-            if ($imageIds.Count -gt 0) {
-                $resolved = Resolve-MetraAskImages -ImageIds $imageIds
-                if (-not $resolved.ok) {
-                    Write-MetraOpsJsonResponse -Response $Response -StatusCode 400 -Object ([PSCustomObject]@{ error = [string]$resolved.error })
-                    return
-                }
-                $resolvedImages = @($resolved.images)
-                $journalImages = @($resolved.journal)
-            }
-            if ([string]::IsNullOrWhiteSpace($prompt) -and $resolvedImages.Count -gt 0) {
-                $prompt = Get-MetraAskImageDefaultPrompt
-            }
             $headerClient = ''
             try { $headerClient = [string]$Request.Headers['X-Metra-Client'] } catch { }
             $bodyClient = [string](Get-MetraProp -Object $parsed -Name 'client' -Default '')
@@ -1632,82 +1645,33 @@ function Invoke-MetraOpsApi {
             }
             $trustedClient = $isLoopback -or $hasLocalSession
 
-            try {
-                $ask = Get-MetraDeskAskResult -Prompt $prompt -SessionId $sessionId -RecallSessionId $recallSessionId `
-                    -Images $resolvedImages -MetraRoot $MetraRoot `
-                    -HeaderClient $headerClient -BodyClient $bodyClient -ClientHint $clientHint `
-                    -RequestedPolicy $requestedPolicy `
-                    -TrustedClientContext:$trustedClient -IsLoopback:$isLoopback
+            $deskWork = [PSCustomObject]@{
+                kind             = 'desk'
+                prompt           = $prompt
+                sessionId        = $sessionId
+                recallSessionId  = $recallSessionId
+                imageIds         = @($imageIds)
+                headerClient     = $headerClient
+                bodyClient       = $bodyClient
+                clientHint       = $clientHint
+                client           = $client
+                origin           = $origin
+                requestedPolicy  = $requestedPolicy
+                trustedClient    = [bool]$trustedClient
+                isLoopback       = [bool]$isLoopback
             }
-            catch {
-                Write-MetraOpsJsonResponse -Response $Response -StatusCode 400 -Object ([PSCustomObject]@{ error = $_.Exception.Message })
+            $started = Start-MetraOpsAskHttpWorker -Work $deskWork -Response $Response -MetraRoot $MetraRoot
+            if ($started.Busy) {
+                Write-MetraOpsAskBusyResponse -Response $Response
                 return
             }
-            $journalSession = [string]$ask.sessionId
-            if ([string]::IsNullOrWhiteSpace($journalSession)) { $journalSession = $sessionId }
-            $journalPrompt = [string](Get-MetraProp -Object $ask -Name 'scrubbedPrompt' -Default '')
-            if ([string]::IsNullOrWhiteSpace($journalPrompt)) {
-                $secretsGate = [bool](Get-MetraProp -Object $ask -Name 'secretsRefuse' -Default $false) -or `
-                    [bool](Get-MetraProp -Object $ask -Name 'secretsScrubbed' -Default $false)
-                if ($secretsGate) {
-                    $journalPrompt = ''
-                }
-                else {
-                    $journalPrompt = $prompt
-                }
+            if (-not $started.Started) {
+                Write-MetraOpsJsonResponse -Response $Response -StatusCode 500 -Object ([PSCustomObject]@{
+                        error = $(if ($started.Error) { [string]$started.Error } else { 'Ask worker failed to start.' })
+                    })
+                return
             }
-            $askJournalImages = @(Get-MetraProp -Object $ask -Name 'images' -Default $journalImages)
-            $entry = Add-MetraDeskAskEntry `
-                -Prompt $journalPrompt `
-                -Handoff $ask.handoff `
-                -Message ([string]$ask.message) `
-                -SessionId $journalSession `
-                -Origin $origin `
-                -Client $client `
-                -ClientHint $clientHint `
-                -Engine ([string]$ask.engine) `
-                -Model ([string]$ask.model) `
-                -Answered ([bool]$ask.answered) `
-                -Capability $ask.capability `
-                -Images $askJournalImages `
-                -MetraRoot $MetraRoot
-            $askLane = [string](Get-MetraProp -Object $ask -Name 'lane' -Default '')
-            $askLaneReason = [string](Get-MetraProp -Object $ask -Name 'reason' -Default '')
-            $showWhere = Test-MetraAskShowWhere -Handoff $ask.handoff -Lane $askLane -LaneReason $askLaneReason
-            Write-MetraOpsJsonResponse -Response $Response -Object ([PSCustomObject]@{
-                    entry             = $entry
-                    handoff           = $ask.handoff
-                    message           = [string]$ask.message
-                    sessionId         = [string]$entry.sessionId
-                    capability        = $ask.capability
-                    engine            = $ask.engine
-                    model             = $ask.model
-                    answered          = [bool]$ask.answered
-                    answerType        = [string](Get-MetraProp -Object $ask -Name 'answerType' -Default '')
-                    evidenceQuality   = [string](Get-MetraProp -Object $ask -Name 'evidenceQuality' -Default '')
-                    nextStep          = [string](Get-MetraProp -Object $ask -Name 'nextStep' -Default '')
-                    showWhere         = [bool]$showWhere
-                    suggestCapture    = [bool](Get-MetraProp -Object $ask -Name 'suggestCapture' -Default $false)
-                    lane              = $askLane
-                    reason            = $askLaneReason
-                    responseObjective = [string](Get-MetraProp -Object $ask -Name 'responseObjective' -Default '')
-                    intentConfidence  = [double](Get-MetraProp -Object $ask -Name 'intentConfidence' -Default 0)
-                    routeScore        = [int](Get-MetraProp -Object $ask -Name 'routeScore' -Default 0)
-                    turnMode          = [string](Get-MetraProp -Object $ask -Name 'turnMode' -Default '')
-                    voice             = $(Get-MetraProp -Object $ask -Name 'voice' -Default $null)
-                    continuity        = $ask.continuity
-                    intentClass       = $(Get-MetraProp -Object $ask -Name 'intentClass' -Default $null)
-                    policy            = $(Get-MetraProp -Object $ask -Name 'policy' -Default $null)
-                    policySource      = $(Get-MetraProp -Object $ask -Name 'policySource' -Default $null)
-                    reasonCode        = $(Get-MetraProp -Object $ask -Name 'reasonCode' -Default $null)
-                    evidenceDepth     = $(Get-MetraProp -Object $ask -Name 'evidenceDepth' -Default $null)
-                    conversationExecutionEnabled = [bool](Get-MetraProp -Object $ask -Name 'conversationExecutionEnabled' -Default $false)
-                    secretsScrubbed   = [bool](Get-MetraProp -Object $ask -Name 'secretsScrubbed' -Default $false)
-                    secretsNotice     = $(Get-MetraProp -Object $ask -Name 'secretsNotice' -Default $null)
-                    secretsKinds      = @(Get-MetraProp -Object $ask -Name 'secretsKinds' -Default @())
-                    secretsReason     = $(Get-MetraProp -Object $ask -Name 'secretsReason' -Default $null)
-                    images            = @(Get-MetraProp -Object $entry -Name 'images' -Default @())
-                }) -Depth 12
+            # Worker owns Response through completion.
             return
         }
 
@@ -2468,28 +2432,48 @@ function Start-MetraOpsServer {
                 if (-not $async.IsCompleted) { continue }
 
                 try {
+                    Sync-MetraOpsAskWorkerHandles
                     $context = $listener.EndGetContext($async)
                 }
                 catch {
-                    break
+                    # Recoverable accept/context failures must not tear down the listener.
+                    Write-Warning ("Ops accept EndGetContext failed: {0}" -f $_.Exception.Message)
+                    continue
                 }
 
                 $req = $context.Request
                 $res = $context.Response
 
-                if ($req.HttpMethod -eq 'OPTIONS') {
-                    # No CORS grant - just avoid treating preflight as a missing app route.
-                    $res.StatusCode = 204
-                    $res.Headers['Cache-Control'] = 'no-store'
-                    $res.Close()
-                    continue
-                }
+                try {
+                    if ($req.HttpMethod -eq 'OPTIONS') {
+                        # No CORS grant - just avoid treating preflight as a missing app route.
+                        $res.StatusCode = 204
+                        $res.Headers['Cache-Control'] = 'no-store'
+                        $res.Close()
+                        continue
+                    }
 
-                if ($req.Url.AbsolutePath.StartsWith('/api/', [StringComparison]::OrdinalIgnoreCase)) {
-                    Invoke-MetraOpsApi -Request $req -Response $res -MetraRoot $MetraRoot
+                    if ($req.Url.AbsolutePath.StartsWith('/api/', [StringComparison]::OrdinalIgnoreCase)) {
+                        Invoke-MetraOpsApi -Request $req -Response $res -MetraRoot $MetraRoot
+                    }
+                    else {
+                        Invoke-MetraOpsStatic -Request $req -Response $res -DistPath $dist
+                    }
                 }
-                else {
-                    Invoke-MetraOpsStatic -Request $req -Response $res -DistPath $dist
+                catch {
+                    Write-Warning ("Ops request handler failed: {0}" -f $_.Exception.Message)
+                    try {
+                        if ($res -and -not $res.OutputStream.CanWrite) { }
+                        elseif ($res) {
+                            Write-MetraOpsJsonResponse -Response $res -StatusCode 500 -Object ([PSCustomObject]@{
+                                    error = 'request handler failed'
+                                })
+                        }
+                    }
+                    catch {
+                        try { $res.Close() } catch { }
+                    }
+                    continue
                 }
             }
             finally {
@@ -2500,6 +2484,7 @@ function Start-MetraOpsServer {
         }
     }
     finally {
+        try { Clear-MetraOpsAskWorkerHandles -WaitMs 5000 } catch { }
         try { Stop-MetraAskEngine -MetraRoot $MetraRoot -IncludePortListeners -Confirm:$false } catch { }
         try {
             if ($listener.IsListening) { $listener.Stop() }

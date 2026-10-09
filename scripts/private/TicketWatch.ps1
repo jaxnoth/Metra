@@ -2776,7 +2776,7 @@ function Invoke-MetraTicketWatchScan {
         }
     }
 
-    # Rebuild queue array from stamped map (assess fields) then reconcile Attention.
+    # Rebuild queue array from stamped map (assess fields) then reconcile Attention when material.
     $queue = @(
         foreach ($q in $queue) {
             $key = [string]$q.id
@@ -2787,11 +2787,33 @@ function Invoke-MetraTicketWatchScan {
         }
     )
     $result.queue = $queue
-    $memory = Update-MetraAttentionMemory `
-        -Queue $queue `
-        -CoveredKinds $coveredKinds `
-        -ScanMode 'full' `
-        -MetraRoot $MetraRoot
+
+    # Material = added/refreshed observations, or full coverage that would auto-close missing tickets.
+    $material = ($result.added -gt 0) -or ($result.refreshed -gt 0)
+    if (-not $material -and $result.coveredTicket) {
+        $queueKeys = @{}
+        foreach ($q in $queue) {
+            $k = [string](Get-MetraProp -Object $q -Name 'id' -Default '')
+            if ($k) { $queueKeys[$k] = $true }
+        }
+        foreach ($prev in @($before.items)) {
+            if (-not $prev) { continue }
+            if ([string]$prev.kind -ne 'ticket') { continue }
+            if ([string]$prev.state -notin @('active', 'snoozed', 'held')) { continue }
+            $pk = [string]$prev.key
+            if ($pk -and -not $queueKeys.ContainsKey($pk)) {
+                $material = $true
+                break
+            }
+        }
+    }
+    if ($material) {
+        $null = Update-MetraAttentionMemory `
+            -Queue $queue `
+            -CoveredKinds $coveredKinds `
+            -ScanMode 'full' `
+            -MetraRoot $MetraRoot
+    }
     $result.ok = $true
     $result.nextEvidenceAvailable = ($result.evidenceSuggestions -gt 0)
     $result.readyForRecommendation = ($result.evidenceRecommendable -gt 0)

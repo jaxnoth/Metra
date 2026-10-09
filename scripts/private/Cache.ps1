@@ -45,3 +45,52 @@ function Test-MetraCacheEntryFresh {
 function Get-MetraCacheTtlSeconds {
     return [int]$script:MetraCacheTtlSeconds
 }
+
+if ($null -eq (Get-Variable -Name MetraFileTextCache -Scope Script -ErrorAction SilentlyContinue)) {
+    $script:MetraFileTextCache = @{}
+}
+
+function Get-MetraCachedFileText {
+    <#
+    .SYNOPSIS
+        Read a UTF-8 text file with in-process cache keyed by path + LastWriteTimeUtc.
+        On mtime read failure, returns an uncached read (never stale forever).
+    #>
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory)][string]$Path,
+        [string]$CacheKey = ''
+    )
+
+    if ([string]::IsNullOrWhiteSpace($Path) -or -not (Test-Path -LiteralPath $Path)) {
+        return ''
+    }
+
+    $key = if ($CacheKey) { $CacheKey } else { $Path }
+    $lwt = $null
+    try {
+        $lwt = (Get-Item -LiteralPath $Path).LastWriteTimeUtc
+    }
+    catch {
+        try {
+            return [System.IO.File]::ReadAllText($Path).Trim()
+        }
+        catch {
+            return ''
+        }
+    }
+
+    $hit = $script:MetraFileTextCache[$key]
+    if ($hit -and $hit.Lwt -eq $lwt -and $null -ne $hit.Text) {
+        return [string]$hit.Text
+    }
+
+    try {
+        $text = [System.IO.File]::ReadAllText($Path).Trim()
+    }
+    catch {
+        return ''
+    }
+    $script:MetraFileTextCache[$key] = @{ Lwt = $lwt; Text = $text }
+    return $text
+}

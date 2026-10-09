@@ -4,7 +4,7 @@
 #   Desk preferences  Get/Set-MetraDeskPreferences
 #   Ask journal       Get/Add-MetraDeskAskEntry, Search-MetraDeskAskJournal, continuity
 #   Ask orchestration Get-MetraDeskAskResult, honesty short-circuits
-#   Desk payload      ConvertTo-MetraDeskPayload, Get-MetraDeskPayload
+#   Desk payload      ConvertTo-MetraDeskPayload (Project vs Reconcile), Get-MetraDeskPayload
 
 $script:MetraGitProbeSkip = @(
     'node_modules', 'bin', 'obj', '.vs', '.vscode', '.idea',
@@ -2486,7 +2486,8 @@ function Invoke-MetraAskDeskResultLegacy {
     $engineResult = $null
     try {
         $engineResult = Invoke-MetraAskEngine -Prompt $enginePrompt -Cwd $cwd -Context $safeContext `
-            -SessionId $SessionId -Images $resolvedImages -MetraRoot $MetraRoot
+            -SessionId $SessionId -Images $resolvedImages -MetraRoot $MetraRoot `
+            -PromptScrub $promptScrub -ContextScrub $ctxScrub
     }
     catch {
         $failMsg = [string]$_.Exception.Message
@@ -2737,12 +2738,16 @@ function ConvertTo-MetraDeskPayload {
     <#
     .SYNOPSIS
         Shapes canvas-snapshot.json into the HTML Ops desk payload (one brain, many faces).
+    .PARAMETER Reconcile
+        When set, reconcile snapshot-derived observations into attention memory (aging/auto-close/write).
+        When omitted, Project only: read persisted attention memory and rank for presentation (no write).
     .PARAMETER Request
         Optional Ops HTTP request. When present without local authority, meta.metraRoot is omitted.
     #>
     [CmdletBinding()]
     param(
         [Parameter(Mandatory)]$Snapshot,
+        [switch]$Reconcile,
         [string]$MetraRoot = (Get-MetraRoot),
         $Request = $null
     )
@@ -2833,11 +2838,17 @@ function ConvertTo-MetraDeskPayload {
     if ($gitChecked) { $coveredKinds += 'git' }
     if ($verifyChecked) { $coveredKinds += 'verify' }
 
-    $memory = Update-MetraAttentionMemory `
-        -Queue $attentionQueue `
-        -CoveredKinds $coveredKinds `
-        -ScanMode $scanMode `
-        -MetraRoot $MetraRoot
+    # Project = observational read/rank. Reconcile = mutate attention memory.
+    if ($Reconcile) {
+        $memory = Update-MetraAttentionMemory `
+            -Queue $attentionQueue `
+            -CoveredKinds $coveredKinds `
+            -ScanMode $scanMode `
+            -MetraRoot $MetraRoot
+    }
+    else {
+        $memory = Get-MetraAttentionMemory -MetraRoot $MetraRoot
+    }
 
     $prefs = Get-MetraDeskPreferences -MetraRoot $MetraRoot
     $ticketWatchAutoScanMinutes = 5
@@ -3046,9 +3057,12 @@ function Get-MetraDeskPayload {
     .SYNOPSIS
         Returns the HTML Ops desk payload from the shared canvas snapshot brain.
     .PARAMETER Refresh
-        Rebuild snapshot first (Quick by default unless -Full).
+        Rebuild snapshot first (Quick by default unless -Full) and Reconcile attention.
     .PARAMETER Full
         With -Refresh, run a full snapshot (git + verify).
+    .PARAMETER Reconcile
+        Reconcile attention from the current snapshot without rebuilding it.
+        Implied by -Refresh. Plain calls Project only (no attention write).
     .PARAMETER Request
         Optional Ops HTTP request for public meta shaping (masks metraRoot without local authority).
     #>
@@ -3056,6 +3070,7 @@ function Get-MetraDeskPayload {
     param(
         [switch]$Refresh,
         [switch]$Full,
+        [switch]$Reconcile,
         [int]$ScanDepth = 2,
         [string]$MetraRoot = (Get-MetraRoot),
         $Request = $null
@@ -3070,7 +3085,8 @@ function Get-MetraDeskPayload {
         throw "Desk snapshot missing at $snapPath"
     }
 
+    $doReconcile = $Refresh -or $Reconcile
     $snapshot = Get-Content -LiteralPath $snapPath -Raw | ConvertFrom-Json
-    return ConvertTo-MetraDeskPayload -Snapshot $snapshot -MetraRoot $MetraRoot -Request $Request
+    return ConvertTo-MetraDeskPayload -Snapshot $snapshot -Reconcile:$doReconcile -MetraRoot $MetraRoot -Request $Request
 }
 

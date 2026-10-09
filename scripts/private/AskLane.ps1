@@ -41,11 +41,9 @@ function Get-MetraChatLaneSystemPrompt {
     $path = Join-Path $MetraRoot 'engines\chat-lane\system.md'
     $lane = 'Chat lane: brief, human, no ticket ids or invented system state.'
     if (Test-Path -LiteralPath $path) {
-        try {
-            $lane = [System.IO.File]::ReadAllText($path).Trim()
-        }
-        catch {
-            $lane = 'Chat lane: brief, human, no ticket ids or invented system state.'
+        $cached = Get-MetraCachedFileText -Path $path -CacheKey "chat-lane:$path"
+        if (-not [string]::IsNullOrWhiteSpace($cached)) {
+            $lane = $cached
         }
     }
     return "$partner`n`n$lane"

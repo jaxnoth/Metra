@@ -51,7 +51,13 @@ Describe 'Ask image resolve' {
             $ok.ok | Should -BeTrue
             @($ok.images).Count | Should -Be 1
             $ok.images[0].path | Should -Not -BeNullOrEmpty
-            $ok.images[0].mimeType | Should -Be 'image/png'
+            # Intake normalizes to JPEG (max-edge) when System.Drawing is available.
+            if ([bool]$ok.images[0].normalized) {
+                $ok.images[0].mimeType | Should -Be 'image/jpeg'
+            }
+            else {
+                $ok.images[0].mimeType | Should -Be 'image/png'
+            }
             @($ok.journal).Count | Should -Be 1
             ($ok.journal[0].PSObject.Properties.Name) | Should -Not -Contain 'path'
             ($ok.journal[0].PSObject.Properties.Name) | Should -Not -Contain 'mimeType'
