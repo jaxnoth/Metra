@@ -222,6 +222,52 @@
         "Jitterbit",
         "pki"
       ]
+    },
+    {
+      "name": "Firewall",
+      "purpose": "Read-only multi-vendor firewall investigation (NSX-T first) and Change draft text. Network owns production publishes.",
+      "share": true,
+      "featured": false,
+      "optional": true,
+      "triggers": [
+        "firewall",
+        "nsx",
+        "nsx-t",
+        "dfw",
+        "prd-nsxt",
+        "distributed firewall",
+        "smtp boxes",
+        "security policy"
+      ],
+      "entry": "AGENTS.md",
+      "capabilities": [
+        "firewall-read",
+        "nsx-t-policy",
+        "change-draft"
+      ],
+      "serves": [
+        "Network Services",
+        "Data Ops",
+        "SDT"
+      ],
+      "whenPresent": "Use .\\Firewall.ps1 health / policy / group / rule search for read-only investigation. Draft Change text with draft change; Bill Emmett publishes via iSupport Change. Never write NSX from this CLI.",
+      "whenMissing": "No Firewall checkout. Ask for NSX UI access or paste policy/rule evidence; do not invent firewall rules.",
+      "preferredPaths": [
+        "README.md",
+        "AGENTS.md",
+        "Firewall.ps1",
+        "docs/playbooks",
+        "module"
+      ],
+      "excludePaths": [
+        "config/settings.json",
+        "bin",
+        "obj"
+      ],
+      "related": [
+        "TicketTracker",
+        "CredentialHelper"
+      ]
     }
   ]
 }
