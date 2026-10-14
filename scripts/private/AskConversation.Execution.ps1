@@ -4,13 +4,15 @@ function Add-MetraAskVoiceNormalization {
     <#
     .SYNOPSIS
         Ensure desk Ask results always carry filled voice with message == voice.display.
+        Optional PolicyEnvelope attaches observe-only p4-telemetry fields (no routing change).
     #>
     [CmdletBinding()]
     param(
         [Parameter(Mandatory)]$Result,
         [ValidateSet('success', 'refuse', 'authority', 'fallback', 'legacy')]
         [string]$PathKind = 'legacy',
-        [string]$ReasonCode = 'ok'
+        [string]$ReasonCode = 'ok',
+        $PolicyEnvelope = $null
     )
 
     if ($null -eq $Result) { return $Result }
@@ -40,15 +42,18 @@ function Add-MetraAskVoiceNormalization {
         $display = [string](Get-MetraProp -Object $existing -Name 'display' -Default $message)
         $Result | Add-Member -NotePropertyName message -NotePropertyValue $display -Force
         $Result | Add-Member -NotePropertyName voice -NotePropertyValue $existing -Force
-        return $Result
     }
-
-    $voice = Format-MetraAskVoiceFromEngine -PathKind $kind -Text $message -ReasonCode $ReasonCode `
-        -RefuseNotice ([string](Get-MetraProp -Object $Result -Name 'secretsNotice' -Default ''))
-    $Result | Add-Member -NotePropertyName voice -NotePropertyValue $voice -Force
-    $Result | Add-Member -NotePropertyName message -NotePropertyValue ([string]$voice.display) -Force
-    if (-not $Result.PSObject.Properties['reasonCode']) {
-        $Result | Add-Member -NotePropertyName reasonCode -NotePropertyValue $ReasonCode -Force
+    else {
+        $voice = Format-MetraAskVoiceFromEngine -PathKind $kind -Text $message -ReasonCode $ReasonCode `
+            -RefuseNotice ([string](Get-MetraProp -Object $Result -Name 'secretsNotice' -Default ''))
+        $Result | Add-Member -NotePropertyName voice -NotePropertyValue $voice -Force
+        $Result | Add-Member -NotePropertyName message -NotePropertyValue ([string]$voice.display) -Force
+        if (-not $Result.PSObject.Properties['reasonCode']) {
+            $Result | Add-Member -NotePropertyName reasonCode -NotePropertyValue $ReasonCode -Force
+        }
+    }
+    if ($null -ne $PolicyEnvelope) {
+        $Result = Add-MetraAskResultPolicyEnvelope -Result $Result -Envelope $PolicyEnvelope
     }
     return $Result
 }
@@ -84,7 +89,12 @@ function Invoke-MetraAskConversationExecution {
         $handoff = Get-MetraDeskHandoff -Query 'secrets blocked' -MetraRoot $MetraRoot
         $lane = Resolve-MetraAskLane -Prompt 'secrets blocked' -RouteScore 0 -EvidenceQuality 'none' -RouteWhere ''
         $cap = Get-MetraAskCapability -MetraRoot $MetraRoot
-        return Add-MetraAskVoiceNormalization -PathKind 'refuse' -ReasonCode ([string]$pre.ReasonCode) -Result (
+        $secretsPolicy = [PSCustomObject]@{ Policy = 'DeskStrict'; PolicySource = 'secrets_preflight' }
+        $secretsIntent = [PSCustomObject]@{ IntentClass = 'refuse'; Confidence = 1.0; Source = 'secrets'; Notes = @() }
+        $secretsTurn = Get-MetraAskPolicyTurnIds -SessionId $SessionId -Continuity $null
+        $secretsEnvelope = New-MetraPolicyEnvelope -Policy $secretsPolicy -Intent $secretsIntent `
+            -ConversationId ([string]$secretsTurn.ConversationId) -TurnId $secretsTurn.TurnId -Surface 'ops-ask'
+        return Add-MetraAskVoiceNormalization -PolicyEnvelope $secretsEnvelope -PathKind 'refuse' -ReasonCode ([string]$pre.ReasonCode) -Result (
             Merge-MetraAskLaneIntoResult -Lane $lane -Result ([PSCustomObject]@{
                     handoff                      = $handoff
                     message                      = [string]$voice.display
@@ -157,6 +167,72 @@ function Invoke-MetraAskConversationExecution {
         -IsLoopback:$IsLoopback `
         -IncidentActive:$IncidentActive
 
+    $turnIds = Get-MetraAskPolicyTurnIds -SessionId $SessionId -Continuity $continuity
+    $policyEnvelope = New-MetraPolicyEnvelope `
+        -Policy $policy `
+        -Intent $intent `
+        -ConversationId ([string]$turnIds.ConversationId) `
+        -TurnId $turnIds.TurnId `
+        -Surface 'ops-ask'
+
+    # Local relational: no compliant local path yet - honest fail, no sticky-cloud send
+    if ([string]$policyEnvelope.executionTarget -eq 'local' -and [string]$policyEnvelope.retentionClass -eq 'ephemeral') {
+        $localMsg = 'Personal support stays off Metra saved history and needs a local or no-retain path. That path is not available here right now - I will not send this to a sticky cloud chat. Desk help is available when you want portfolio work.'
+        $voice = Format-MetraAskVoiceFromEngine -PathKind 'refuse' -Text $localMsg -ReasonCode 'retention_block_no_compliant_route'
+        $laneLocal = Resolve-MetraAskLane -Prompt $safePrompt -RouteScore $routeScore -EvidenceQuality 'none' -RouteWhere $routeWhere
+        $capLocal = Get-MetraAskCapability -MetraRoot $MetraRoot
+        return Add-MetraAskVoiceNormalization -PolicyEnvelope $policyEnvelope -PathKind 'refuse' -ReasonCode 'retention_block_no_compliant_route' -Result (
+            Merge-MetraAskLaneIntoResult -Lane $laneLocal -Result ([PSCustomObject]@{
+                    handoff                      = $handoff
+                    message                      = [string]$voice.display
+                    voice                        = $voice
+                    sessionId                    = $SessionId
+                    capability                   = $capLocal
+                    answered                     = $false
+                    answerType                   = 'refusal'
+                    evidenceQuality              = 'none'
+                    continuity                   = $continuity
+                    scrubbedPrompt               = $safePrompt
+                    suggestCapture               = $false
+                    images                       = @($JournalImages)
+                    intentClass                  = [string]$intent.IntentClass
+                    policy                       = [string]$policy.Policy
+                    policySource                 = [string]$policy.PolicySource
+                    reasonCode                   = 'retention_block_no_compliant_route'
+                    conversationExecutionEnabled = $true
+                })
+        )
+    }
+
+    # Intimacy refuse: no model send; retentionClass=refuse
+    if ([string]$intent.IntentClass -match '^intimacy_') {
+        $refuseMsg = 'I stay Metra - good coworker / good company at the next desk, not a romantic or sexual partner. I can keep Company chat inside that ceiling, or switch to Desk help.'
+        $voice = Format-MetraAskVoiceFromEngine -PathKind 'refuse' -Text $refuseMsg -ReasonCode 'intimacy_refuse'
+        $laneRef = Resolve-MetraAskLane -Prompt $safePrompt -RouteScore $routeScore -EvidenceQuality 'none' -RouteWhere $routeWhere
+        $capRef = Get-MetraAskCapability -MetraRoot $MetraRoot
+        return Add-MetraAskVoiceNormalization -PolicyEnvelope $policyEnvelope -PathKind 'refuse' -ReasonCode 'intimacy_refuse' -Result (
+            Merge-MetraAskLaneIntoResult -Lane $laneRef -Result ([PSCustomObject]@{
+                    handoff                      = $handoff
+                    message                      = [string]$voice.display
+                    voice                        = $voice
+                    sessionId                    = $SessionId
+                    capability                   = $capRef
+                    answered                     = $false
+                    answerType                   = 'refusal'
+                    evidenceQuality              = 'none'
+                    continuity                   = $continuity
+                    scrubbedPrompt               = $safePrompt
+                    suggestCapture               = $false
+                    images                       = @($JournalImages)
+                    intentClass                  = [string]$intent.IntentClass
+                    policy                       = [string]$policy.Policy
+                    policySource                 = [string]$policy.PolicySource
+                    reasonCode                   = 'intimacy_refuse'
+                    conversationExecutionEnabled = $true
+                })
+        )
+    }
+
     # SCAR (2026-09-18): Phone CE soft-default Company via vision_phone_default was removed.
     # Phone uses the Vision Ask contract + Conversation Identity Stack (Invoke-MetraVisionAskHandler).
     # Desk-legacy CE no longer special-cases ops-ios. Fix forward on Vision - do not restore this bridge.
@@ -170,7 +246,7 @@ function Invoke-MetraAskConversationExecution {
         $merged | Add-Member -NotePropertyName policy -NotePropertyValue ([string]$policy.Policy) -Force
         $merged | Add-Member -NotePropertyName policySource -NotePropertyValue ([string]$policy.PolicySource) -Force
         $merged | Add-Member -NotePropertyName conversationExecutionEnabled -NotePropertyValue $true -Force
-        return Add-MetraAskVoiceNormalization -Result $merged -PathKind 'success' -ReasonCode 'capture_phrase'
+        return Add-MetraAskVoiceNormalization -PolicyEnvelope $policyEnvelope -Result $merged -PathKind 'success' -ReasonCode 'capture_phrase'
     }
 
     if ([string]$intent.IntentClass -eq 'authority_write' -or [string]$policy.ResponseObjective -eq 'OperatorConfirm') {
@@ -178,7 +254,7 @@ function Invoke-MetraAskConversationExecution {
         $authMsg = 'OperatorConfirm: confirm any Host write at the desk (recommend/post/resolve) before I treat it as done.'
         $voice = Format-MetraAskVoiceFromEngine -PathKind 'authority' -Text $authMsg -ReasonCode 'authority_requires_confirm'
         $cap = Get-MetraAskCapability -MetraRoot $MetraRoot
-        return Add-MetraAskVoiceNormalization -PathKind 'authority' -ReasonCode 'authority_requires_confirm' -Result (
+        return Add-MetraAskVoiceNormalization -PolicyEnvelope $policyEnvelope -PathKind 'authority' -ReasonCode 'authority_requires_confirm' -Result (
             Merge-MetraAskLaneIntoResult -Lane $laneAuth -Result ([PSCustomObject]@{
                     handoff                      = $handoff
                     message                      = [string]$voice.display
@@ -225,7 +301,7 @@ function Invoke-MetraAskConversationExecution {
             $voice = Format-MetraAskVoiceFromEngine -PathKind 'success' -Text $msg -ReasonCode 'health_unverifiable' `
                 -DurableDisposition 'status_query:inability_to_verify'
             $laneSt = Resolve-MetraAskLane -Prompt $safePrompt -RouteScore $routeScore -EvidenceQuality 'thin' -RouteWhere $routeWhere
-            return Add-MetraAskVoiceNormalization -PathKind 'success' -ReasonCode 'health_unverifiable' -Result (
+            return Add-MetraAskVoiceNormalization -PolicyEnvelope $policyEnvelope -PathKind 'success' -ReasonCode 'health_unverifiable' -Result (
                 Merge-MetraAskLaneIntoResult -Lane $laneSt -Result ([PSCustomObject]@{
                         handoff                      = $handoff
                         message                      = [string]$voice.display
@@ -282,7 +358,7 @@ function Invoke-MetraAskConversationExecution {
         }
         $voice = Format-MetraAskVoiceFromEngine -PathKind 'success' -Text $msg -ReasonCode 'ok' `
             -DurableDisposition (ConvertTo-MetraPartnerNeutralArtifact -Text "intent:$($intent.IntentClass);depth=$depth")
-        return Add-MetraAskVoiceNormalization -PathKind 'success' -ReasonCode 'ok' -Result (
+        return Add-MetraAskVoiceNormalization -PolicyEnvelope $policyEnvelope -PathKind 'success' -ReasonCode 'ok' -Result (
             Merge-MetraAskLaneIntoResult -Lane $laneGreet -Result ([PSCustomObject]@{
                     handoff                      = $handoff
                     message                      = [string]$voice.display
@@ -308,7 +384,6 @@ function Invoke-MetraAskConversationExecution {
                     intentClass                  = [string]$intent.IntentClass
                     policy                       = [string]$policy.Policy
                     policySource                 = [string]$policy.PolicySource
-                    retentionClass               = [string](Get-MetraProp -Object $policy.Knobs -Name 'retentionClass' -Default 'auto')
                     reasonCode                   = 'ok'
                     conversationExecutionEnabled = $true
                     evidenceDepth                = $depth
@@ -325,7 +400,7 @@ function Invoke-MetraAskConversationExecution {
         $voice = Format-MetraAskVoiceFromEngine -PathKind 'fallback' -Text 'I could not build evidence for that ask (not completed).' `
             -ReasonCode 'evidence_pack_failed' -DurableDisposition 'evidence_pack_failed'
         $laneFail = Resolve-MetraAskLane -Prompt $safePrompt -RouteScore $routeScore -EvidenceQuality 'none' -RouteWhere $routeWhere
-        return Add-MetraAskVoiceNormalization -PathKind 'fallback' -ReasonCode 'evidence_pack_failed' -Result (
+        return Add-MetraAskVoiceNormalization -PolicyEnvelope $policyEnvelope -PathKind 'fallback' -ReasonCode 'evidence_pack_failed' -Result (
             Merge-MetraAskLaneIntoResult -Lane $laneFail -Result ([PSCustomObject]@{
                     handoff                      = $handoff
                     message                      = [string]$voice.display
@@ -378,7 +453,7 @@ function Invoke-MetraAskConversationExecution {
     catch {
         $voice = Format-MetraAskVoiceFromEngine -PathKind 'fallback' -ReasonCode 'policy_overlay_failed' `
             -Text 'I could not build the policy overlay for that ask (not completed).'
-        return Add-MetraAskVoiceNormalization -PathKind 'fallback' -ReasonCode 'policy_overlay_failed' -Result (
+        return Add-MetraAskVoiceNormalization -PolicyEnvelope $policyEnvelope -PathKind 'fallback' -ReasonCode 'policy_overlay_failed' -Result (
             Merge-MetraAskLaneIntoResult -Lane $lane -Result ([PSCustomObject]@{
                     handoff         = $handoff
                     message         = [string]$voice.display
@@ -423,7 +498,7 @@ function Invoke-MetraAskConversationExecution {
             -EngineUnavailable:($pathKind -ne 'refuse') `
             -SecretsRefuse:($pathKind -eq 'refuse') `
             -NextStep ([string](Get-MetraProp -Object $handoff -Name 'next' -Default ''))
-        return Add-MetraAskVoiceNormalization -PathKind $pathKind -ReasonCode ([string]$engine.ReasonCode) -Result (
+        return Add-MetraAskVoiceNormalization -PolicyEnvelope $policyEnvelope -PathKind $pathKind -ReasonCode ([string]$engine.ReasonCode) -Result (
             Merge-MetraAskLaneIntoResult -Lane $lane -Result ([PSCustomObject]@{
                     handoff                      = $handoff
                     message                      = [string]$voice.display
@@ -461,7 +536,7 @@ function Invoke-MetraAskConversationExecution {
     if ($responseScrub.Refuse) {
         $voice = Format-MetraAskVoiceFromEngine -PathKind 'refuse' -RefuseNotice ([string]$responseScrub.Notice) `
             -ReasonCode 'secrets_refuse'
-        return Add-MetraAskVoiceNormalization -PathKind 'refuse' -ReasonCode 'secrets_refuse' -Result (
+        return Add-MetraAskVoiceNormalization -PolicyEnvelope $policyEnvelope -PathKind 'refuse' -ReasonCode 'secrets_refuse' -Result (
             Merge-MetraAskLaneIntoResult -Lane $lane -Result ([PSCustomObject]@{
                     handoff         = $handoff
                     message         = [string]$voice.display
@@ -500,7 +575,7 @@ function Invoke-MetraAskConversationExecution {
 
     $voice = Format-MetraAskVoiceFromEngine -PathKind 'success' -Text $cleanMessage -ReasonCode 'ok' `
         -DurableDisposition "intent:$($intent.IntentClass);policy:$($policy.Policy);depth=$depth"
-    return Add-MetraAskVoiceNormalization -PathKind 'success' -ReasonCode 'ok' -Result (
+    return Add-MetraAskVoiceNormalization -PolicyEnvelope $policyEnvelope -PathKind 'success' -ReasonCode 'ok' -Result (
         Merge-MetraAskLaneIntoResult -Lane $lane -Result ([PSCustomObject]@{
                 handoff                      = $handoff
                 message                      = [string]$voice.display
@@ -524,7 +599,6 @@ function Invoke-MetraAskConversationExecution {
                 intentClass                  = [string]$intent.IntentClass
                 policy                       = [string]$policy.Policy
                 policySource                 = [string]$policy.PolicySource
-                retentionClass               = [string](Get-MetraProp -Object $policy.Knobs -Name 'retentionClass' -Default 'auto')
                 overrideRejected             = [bool]$policy.OverrideRejected
                 overrideRejectReason         = [string]$policy.OverrideRejectReason
                 reasonCode                   = 'ok'

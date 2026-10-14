@@ -249,6 +249,12 @@ Entry shape:
 
 ---
 
+## 2026-10-14 - Normative retentionClass vs CE retentionLane
+
+- Decision: Normative conversation telemetry uses `retentionClass` (`normal` / `light` / `ephemeral` / `refuse`) and `executionTarget` (`ops` / `local`) on the policy envelope. CE posture knobs keep a separate `retentionLane` (`desk` / `company` / `deliver` / `auto`). Never copy CE posture aliases into normative `retentionClass`. Companionship / `support_*` prefer `executionTarget=local` + `retentionClass=ephemeral`; when LocalAssist is unavailable, fail honestly (no silent sticky-cloud send). Intimacy refuse uses `retentionClass=refuse` with no model send.
+- Why: An earlier CE scar reused the name `retentionClass` for posture aliases and would poison Phase 4 telemetry and stale-route guards.
+- See: `plans/ios-conversation-policy.plan.md`; `scripts/private/AskConversation.PolicyEnvelope.ps1`; `scripts/private/AskConversation.Policy.ps1` (`retentionLane`); `clients/ios/MetraCompanion/Models/ConversationPolicyState.swift`
+
 ## 2026-09-04 - Warmth attention levers (seam / spark / resume)
 
 - Decision: **Warmth** is quality of attention (Timing / Specificity / Restraint), not affection or generic friendliness. **Familiarity** (Cold / Warming / Familiar) is an independent intensity dial. Hierarchy: Policy allows interpersonal behavior → Familiarity sets intensity → Warmth levers set quality → Surface capability decides if silence exists → Restraint wins under uncertainty.

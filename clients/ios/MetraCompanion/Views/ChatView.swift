@@ -10,18 +10,27 @@ final class ChatViewModel: ObservableObject {
     @Published private(set) var presenceMood: PresenceMood = .attend
 
     @Published private(set) var session: Session
+    /// Last presence cue from policy events (consume-only; no uncued Playful walks).
+    @Published private(set) var lastPresenceCue: PresenceCue?
 
     private let opsURL: () -> String
     private var sendTask: Task<Void, Never>?
     private var speakSettleTask: Task<Void, Never>?
     /// Bumps on each send/cancel so a finishing Task cannot clear a newer send.
     private var sendGeneration: Int = 0
+    /// Company spark-or-quiet state (caps restrict; default deny; no auto-emit in text chat yet).
+    private var sparkQuiet = SparkQuietRuntime()
 
     init(opsURL: @escaping () -> String = {
         UserDefaults.standard.string(forKey: "opsBaseURL") ?? ""
     }) {
         self.opsURL = opsURL
         self.session = Session.fresh()
+    }
+
+    /// Presence consumes policy events only.
+    func consumePresenceEvent(_ event: PresencePolicyEvent) {
+        lastPresenceCue = PresenceCueMap.consume(event)
     }
 
     func send() {
@@ -33,11 +42,15 @@ final class ChatViewModel: ObservableObject {
         draft = ""
         isSending = true
         setPresence(.listening)
+        consumePresenceEvent(.listening)
 
         sendTask?.cancel()
         sendGeneration += 1
         let generation = sendGeneration
         let sessionIdAtSend = session.sessionId
+        let turnIdAtSend = session.beginTurn()
+        // User turn closes quiet episode for spark-or-quiet (new silence window may open later).
+        sparkQuiet.endQuietEpisode()
         sendTask = Task { @MainActor [weak self] in
             guard let self else { return }
             defer {
@@ -55,14 +68,72 @@ final class ChatViewModel: ObservableObject {
 
             do {
                 try Task.checkCancellation()
-                let reply = try await client.ask(session: self.session, text: text)
+                let reply = try await client.ask(
+                    session: self.session,
+                    text: text,
+                    turnId: turnIdAtSend
+                )
                 try Task.checkCancellation()
                 guard self.session.sessionId == sessionIdAtSend else { return }
-                if reply.sessionId != self.session.sessionId {
-                    self.session = Session(sessionId: reply.sessionId)
+
+                // Live activeTurn only - send-time snapshots would ignore background invalidation.
+                let episodeActive = self.session.ephemeralEpisode?.active
+                let decision = ConversationPolicyGate.staleRoute(
+                    responseConversationId: reply.conversationId,
+                    responseTurnId: reply.turnId,
+                    responseRetention: reply.retentionClass,
+                    responseExecution: reply.executionTarget,
+                    active: self.session.activeTurn,
+                    ephemeralEpisodeActive: episodeActive
+                )
+                guard decision.isAccept else {
+                    self.banner = AskClientError.staleRouteDropped.errorDescription
+                    self.consumePresenceEvent(.ephemeralEnded)
+                    self.setPresence(.attend)
+                    return
                 }
-                self.messages.append(reply)
+
+                if reply.message.sessionId != self.session.sessionId {
+                    // Server rotated conversation id - start a fresh Session.
+                    self.session = Session.fresh()
+                }
+                if var turn = self.session.activeTurn {
+                    if let ret = reply.retentionClass { turn.retentionClass = ret }
+                    if let exec = reply.executionTarget { turn.executionTarget = exec }
+                    self.session.activeTurn = turn
+                }
+                if let ret = reply.retentionClass {
+                    if ret == .ephemeral {
+                        if self.session.ephemeralEpisode?.active == true {
+                            var ep = self.session.ephemeralEpisode!
+                            ep.touch()
+                            self.session.ephemeralEpisode = ep
+                        } else {
+                            self.session.ephemeralEpisode = EphemeralEpisode.start(
+                                conversationId: self.session.sessionId
+                            )
+                        }
+                    } else if var ep = self.session.ephemeralEpisode {
+                        ep.applyBoundary(
+                            intentLeavesRelational: true,
+                            policyLeavesCompany: ret == .normal || ret == .refuse,
+                            appBackgrounded: false,
+                            explicitClear: false
+                        )
+                        self.session.ephemeralEpisode = ep.active ? ep : nil
+                    }
+                }
+                self.messages.append(reply.message)
+                if reply.retentionClass == .ephemeral {
+                    self.consumePresenceEvent(.ephemeralActive)
+                    self.sparkQuiet.companySilenceAllowed = true
+                    self.sparkQuiet.beginQuietEpisodeIfNeeded()
+                } else {
+                    self.sparkQuiet.companySilenceAllowed = false
+                    self.sparkQuiet.endQuietEpisode()
+                }
                 // Brief speaking beat, then attend - text mode is not ongoing speech.
+                self.consumePresenceEvent(.speaking)
                 self.setPresence(.speaking, settleToAttendAfter: 1.6)
             } catch is CancellationError {
                 guard self.session.sessionId == sessionIdAtSend else { return }
@@ -111,10 +182,13 @@ final class ChatViewModel: ObservableObject {
 
     func newSession() {
         cancelSend()
+        session.clearEphemeral(reason: "explicit_clear")
         session = Session.fresh()
+        sparkQuiet = SparkQuietRuntime()
         messages.removeAll()
         banner = nil
         draft = ""
+        consumePresenceEvent(.deskAttend)
         setPresence(.attend)
     }
 
@@ -124,6 +198,15 @@ final class ChatViewModel: ObservableObject {
             isSending = false
             setPresence(.attend)
         }
+    }
+
+    /// Ephemeral episode ends on background; activeTurn cleared so in-flight HTTP
+    /// completions cannot display (request may still finish - display is impossible).
+    func handleSceneBackground() {
+        session.invalidateOnBackground()
+        sparkQuiet.companySilenceAllowed = false
+        sparkQuiet.endQuietEpisode()
+        consumePresenceEvent(.ephemeralEnded)
     }
 
     private func setPresence(_ mood: PresenceMood, settleToAttendAfter: TimeInterval? = nil) {

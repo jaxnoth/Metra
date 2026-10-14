@@ -70,6 +70,8 @@ struct RootTabView: View {
                 } else if phase == .background {
                     // Do not cancel Ask on background - brief Tailscale/Settings hops must not abort.
                     // Explicit Cancel / New session still cancel. URLSession timeout remains the bound.
+                    // Ephemeral support episode ends on background (stale-episode boundary).
+                    model.handleSceneBackground()
                     composerFocused = false
                 }
             }

@@ -11,6 +11,9 @@
 		A1000000000000000000000D /* MetraBrand.swift in Sources */ = {isa = PBXBuildFile; fileRef = A2000000000000000000000D /* MetraBrand.swift */; };
 		A10000000000000000000002 /* RootTabView.swift in Sources */ = {isa = PBXBuildFile; fileRef = A20000000000000000000002 /* RootTabView.swift */; };
 		A10000000000000000000003 /* SessionModels.swift in Sources */ = {isa = PBXBuildFile; fileRef = A20000000000000000000003 /* SessionModels.swift */; };
+		A1000000000000000000000E /* ConversationPolicyState.swift in Sources */ = {isa = PBXBuildFile; fileRef = A2000000000000000000000E /* ConversationPolicyState.swift */; };
+		A1000000000000000000000F /* SparkQuietRuntime.swift in Sources */ = {isa = PBXBuildFile; fileRef = A2000000000000000000000F /* SparkQuietRuntime.swift */; };
+		A10000000000000000000010 /* PresenceCueMap.swift in Sources */ = {isa = PBXBuildFile; fileRef = A20000000000000000000010 /* PresenceCueMap.swift */; };
 		A10000000000000000000004 /* AskClient.swift in Sources */ = {isa = PBXBuildFile; fileRef = A20000000000000000000004 /* AskClient.swift */; };
 		A10000000000000000000005 /* OpsAskClient.swift in Sources */ = {isa = PBXBuildFile; fileRef = A20000000000000000000005 /* OpsAskClient.swift */; };
 		A10000000000000000000006 /* DeviceTokenStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = A20000000000000000000006 /* DeviceTokenStore.swift */; };
@@ -26,6 +29,9 @@
 		A2000000000000000000000D /* MetraBrand.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MetraBrand.swift; sourceTree = "<group>"; };
 		A20000000000000000000002 /* RootTabView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RootTabView.swift; sourceTree = "<group>"; };
 		A20000000000000000000003 /* SessionModels.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SessionModels.swift; sourceTree = "<group>"; };
+		A2000000000000000000000E /* ConversationPolicyState.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ConversationPolicyState.swift; sourceTree = "<group>"; };
+		A2000000000000000000000F /* SparkQuietRuntime.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SparkQuietRuntime.swift; sourceTree = "<group>"; };
+		A20000000000000000000010 /* PresenceCueMap.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PresenceCueMap.swift; sourceTree = "<group>"; };
 		A20000000000000000000004 /* AskClient.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AskClient.swift; sourceTree = "<group>"; };
 		A20000000000000000000005 /* OpsAskClient.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = OpsAskClient.swift; sourceTree = "<group>"; };
 		A20000000000000000000006 /* DeviceTokenStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DeviceTokenStore.swift; sourceTree = "<group>"; };
@@ -84,6 +90,9 @@
 			isa = PBXGroup;
 			children = (
 				A20000000000000000000003 /* SessionModels.swift */,
+				A2000000000000000000000E /* ConversationPolicyState.swift */,
+				A2000000000000000000000F /* SparkQuietRuntime.swift */,
+				A20000000000000000000010 /* PresenceCueMap.swift */,
 			);
 			path = Models;
 			sourceTree = "<group>";
@@ -182,6 +191,9 @@
 				A1000000000000000000000D /* MetraBrand.swift in Sources */,
 				A10000000000000000000002 /* RootTabView.swift in Sources */,
 				A10000000000000000000003 /* SessionModels.swift in Sources */,
+				A1000000000000000000000E /* ConversationPolicyState.swift in Sources */,
+				A1000000000000000000000F /* SparkQuietRuntime.swift in Sources */,
+				A10000000000000000000010 /* PresenceCueMap.swift in Sources */,
 				A10000000000000000000004 /* AskClient.swift in Sources */,
 				A10000000000000000000005 /* OpsAskClient.swift in Sources */,
 				A10000000000000000000006 /* DeviceTokenStore.swift in Sources */,

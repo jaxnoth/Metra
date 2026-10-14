@@ -240,24 +240,35 @@ function Format-MetraAskVoiceFromEngine {
 
     switch ($PathKind) {
         'refuse' {
+            # Prefer explicit RefuseNotice (secrets), then Text (policy/intimacy/local), then secrets default.
             $notice = if (-not [string]::IsNullOrWhiteSpace($RefuseNotice)) {
                 $RefuseNotice.Trim()
+            }
+            elseif (-not [string]::IsNullOrWhiteSpace($raw)) {
+                $raw.Trim()
             }
             else {
                 'Private-key material was blocked and not sent to the Ask engine. Rephrase without the key block.'
             }
             $spoken = $notice
             $display = $notice
+            $isSecretsRefuse = $ReasonCode -match '^secrets' -or (
+                [string]::IsNullOrWhiteSpace($RefuseNotice) -eq $false -and
+                $notice -match 'Private-key material was blocked'
+            )
             $durable = if (-not [string]::IsNullOrWhiteSpace($DurableDisposition)) {
                 $DurableDisposition.Trim()
             }
-            else {
+            elseif ($isSecretsRefuse) {
                 "secrets_boundary:refuse:$ReasonCode"
+            }
+            else {
+                "policy_refuse:$ReasonCode"
             }
             # Durable must never carry secret material - scrub already applied in New-MetraAskVoiceObject.
             $fbSp = $notice
             $fbDp = $notice
-            $fbDu = 'secrets_boundary:refuse'
+            $fbDu = if ($isSecretsRefuse) { 'secrets_boundary:refuse' } else { "policy_refuse:$ReasonCode" }
         }
         'authority' {
             [void]$markers.Add('OperatorConfirm')

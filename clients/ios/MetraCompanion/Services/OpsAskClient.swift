@@ -15,7 +15,7 @@ struct OpsAskClient: AskClient {
         self.deviceToken = deviceToken
     }
 
-    func ask(session: Session, text: String) async throws -> Message {
+    func ask(session: Session, text: String, turnId: String) async throws -> AskReply {
         let url = try Self.askURL(from: baseURLString)
 
         var request = URLRequest(url: url)
@@ -32,7 +32,7 @@ struct OpsAskClient: AskClient {
             "intent": "relational",
             "message": text,
             "conversationId": session.sessionId,
-            "turnId": UUID().uuidString,
+            "turnId": turnId,
             "capabilities": [
                 "localAssistAvailable": false,
                 "durableWritesAllowed": false,
@@ -70,7 +70,7 @@ struct OpsAskClient: AskClient {
                 throw AskClientError.httpStatus(http.statusCode, String(raw.prefix(400)))
             }
 
-            return try Self.parseVisionEnvelope(json: json, session: session)
+            return try Self.parseVisionEnvelope(json: json, session: session, requestTurnId: turnId)
         } catch let error as AskClientError {
             throw error
         } catch let urlError as URLError where urlError.code == .timedOut {
@@ -164,7 +164,11 @@ struct OpsAskClient: AskClient {
         return url
     }
 
-    private static func parseVisionEnvelope(json: [String: Any], session: Session) throws -> Message {
+    private static func parseVisionEnvelope(
+        json: [String: Any],
+        session: Session,
+        requestTurnId: String
+    ) throws -> AskReply {
         let status = (json["status"] as? String)?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
         let reason = (json["reason"] as? String)?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
 
@@ -207,10 +211,31 @@ struct OpsAskClient: AskClient {
         _ = (json["presentation"] as? [String: Any])?["mood"] as? String
 
         let corr = json["correlation"] as? [String: Any]
-        let returned = (corr?["conversationId"] as? String)?
+        let returnedCid = (corr?["conversationId"] as? String)?
             .trimmingCharacters(in: .whitespacesAndNewlines)
-        let sessionId = (returned?.isEmpty == false) ? returned! : session.sessionId
-        return Message(sessionId: sessionId, role: .assistant, text: messageText)
+        let returnedTid = (corr?["turnId"] as? String)?
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        let sessionId = (returnedCid?.isEmpty == false) ? returnedCid! : session.sessionId
+        let turnId = (returnedTid?.isEmpty == false) ? returnedTid! : requestTurnId
+
+        let envelope = json["policyEnvelope"] as? [String: Any]
+        let retRaw = (envelope?["retentionClass"] as? String)?
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+            .lowercased()
+        let execRaw = (envelope?["executionTarget"] as? String)?
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+            .lowercased()
+        let retention = retRaw.flatMap { RetentionClass(rawValue: $0) }
+        let execution = execRaw.flatMap { ExecutionTarget(rawValue: $0) }
+
+        let message = Message(sessionId: sessionId, role: .assistant, text: messageText)
+        return AskReply(
+            message: message,
+            conversationId: sessionId,
+            turnId: turnId,
+            retentionClass: retention,
+            executionTarget: execution
+        )
     }
 
     /// HTTP 409 + `error: askBusy` (Ops SemaphoreSlim single-flight). Not offline or retryable reachability.

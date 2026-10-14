@@ -20,7 +20,7 @@ function Get-MetraConversationPolicyKnobs {
                 maxClarifications = 0
                 silenceOk         = $false
                 plainEnglish      = $true
-                retentionClass    = 'desk'
+                retentionLane     = 'desk'
             }
         }
         'Deliver' {
@@ -30,7 +30,7 @@ function Get-MetraConversationPolicyKnobs {
                 maxClarifications = 0
                 silenceOk         = $false
                 plainEnglish      = $true
-                retentionClass    = 'deliver'
+                retentionLane     = 'deliver'
             }
         }
         'Company' {
@@ -40,7 +40,7 @@ function Get-MetraConversationPolicyKnobs {
                 maxClarifications = 1
                 silenceOk         = $true
                 plainEnglish      = $true
-                retentionClass    = 'company'
+                retentionLane     = 'company'
             }
         }
         'Desk' {
@@ -50,7 +50,7 @@ function Get-MetraConversationPolicyKnobs {
                 maxClarifications = 1
                 silenceOk         = $false
                 plainEnglish      = $true
-                retentionClass    = 'desk'
+                retentionLane     = 'desk'
             }
         }
         default {
@@ -60,7 +60,7 @@ function Get-MetraConversationPolicyKnobs {
                 maxClarifications = 1
                 silenceOk         = $false
                 plainEnglish      = $true
-                retentionClass    = 'auto'
+                retentionLane     = 'auto'
             }
         }
     }
@@ -91,13 +91,19 @@ function Resolve-MetraConversationPolicy {
     $policy = 'Auto'
 
     # Intent-derived Auto baseline
-    switch ($intentClass) {
-        'check_in' { $policy = 'Company'; $policySource = 'intent_check_in' }
-        'capability' { $policy = 'Company'; $policySource = 'intent_capability' }
-        'capture' { $policy = 'Desk'; $policySource = 'intent_capture' }
-        'authority_write' { $policy = 'Deliver'; $policySource = 'intent_authority' }
-        'status_query' { $policy = 'Desk'; $policySource = 'intent_status' }
-        'component_status' { $policy = 'Desk'; $policySource = 'intent_component' }
+    switch -Regex ($intentClass) {
+        '^check_in$' { $policy = 'Company'; $policySource = 'intent_check_in' }
+        '^capability$' { $policy = 'Company'; $policySource = 'intent_capability' }
+        '^companionship$' { $policy = 'Company'; $policySource = 'intent_companionship' }
+        '^support_' { $policy = 'Company'; $policySource = 'intent_support' }
+        '^capture$' { $policy = 'Desk'; $policySource = 'intent_capture' }
+        '^authority_write$' { $policy = 'Deliver'; $policySource = 'intent_authority' }
+        '^artifact_request$' { $policy = 'Deliver'; $policySource = 'intent_artifact' }
+        '^status_query$' { $policy = 'Desk'; $policySource = 'intent_status' }
+        '^component_status$' { $policy = 'Desk'; $policySource = 'intent_component' }
+        # urgent is evidence only - DeskStrict requires IncidentActive (trusted), not NL alone
+        '^urgent$' { $policy = 'Desk'; $policySource = 'intent_urgent' }
+        '^intimacy_' { $policy = 'Desk'; $policySource = 'intent_intimacy_refuse' }
         default { $policy = 'Auto'; $policySource = 'intent_auto' }
     }
 

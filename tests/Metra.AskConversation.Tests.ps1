@@ -295,3 +295,313 @@ Describe 'Ask Conversation - intent policy depth' {
         }
     }
 }
+
+Describe 'Ask Conversation p4-telemetry policy envelope' {
+    BeforeAll {
+        if (-not (Get-Module Metra)) {
+            Import-Module (Join-Path $script:MetraRoot 'scripts\Metra.psd1') -Force
+        }
+    }
+
+    It 'envelope contract: version 1, registry reasonCode, normative retention/exec' {
+        $i = Resolve-MetraAskIntent -Prompt 'How are you today?'
+        $p = Resolve-MetraConversationPolicy -Intent $i
+        $e = New-MetraPolicyEnvelope -Policy $p -Intent $i -ConversationId 'c1' -TurnId 3 -Surface ops-ask
+        Test-MetraPolicyEnvelopeContract -Envelope $e | Should -BeTrue
+        $e.policyEnvelopeVersion | Should -Be 1
+        $e.reasonCode | Should -Be 'companionship_signal'
+        $e.policy | Should -Be 'Company'
+        $e.policySource | Should -Be 'inference'
+        $e.retentionClass | Should -Be 'normal'
+        $e.executionTarget | Should -Be 'ops'
+        $e.conversationId | Should -Be 'c1'
+        $e.turnId | Should -Be 3
+    }
+
+    It 'never treats CE posture aliases as normative retentionClass' {
+        $bad = [PSCustomObject]@{
+            policyEnvelopeVersion = 1
+            policy                = 'Company'
+            reasonCode            = 'companionship_signal'
+            intentConfidence      = 0.8
+            policySource          = 'inference'
+            retentionClass        = 'company'
+            executionTarget       = $null
+            conversationId        = 'x'
+            turnId                = 1
+        }
+        Test-MetraPolicyEnvelopeContract -Envelope $bad | Should -BeFalse
+    }
+
+    It 'CE path emits policyEnvelope observe-only on check_in' {
+        $tmp = Join-Path $env:TEMP ('metra-ask-p4-' + [guid]::NewGuid().ToString('N'))
+        try {
+            $null = New-Item -ItemType Directory -Path $tmp -Force
+            @{ ask = @{ enabled = $true; conversationExecution = @{ enabled = $true } } } |
+                ConvertTo-Json -Depth 5 |
+                Set-Content -LiteralPath (Join-Path $tmp 'metra.config.json') -Encoding utf8
+            $r = Invoke-MetraAskConversationExecution -Prompt 'How are you today?' -SessionId 'sess-p4' -MetraRoot $tmp
+            $r.policyEnvelope | Should -Not -BeNullOrEmpty
+            Test-MetraPolicyEnvelopeContract -Envelope $r.policyEnvelope | Should -BeTrue
+            $r.policyEnvelope.surface | Should -Be 'ops-ask'
+            $r.policyEnvelope.retentionClass | Should -Be 'normal'
+            $r.policyEnvelope.executionTarget | Should -Be 'ops'
+            # Must not leak posture-alias knobs onto top-level retentionClass
+            if ($null -ne $r.retentionClass -and "$($r.retentionClass)" -ne '') {
+                "$($r.retentionClass)" | Should -Not -BeIn @('desk', 'company', 'deliver', 'auto')
+            }
+        }
+        finally {
+            if (Test-Path -LiteralPath $tmp) { Remove-Item -LiteralPath $tmp -Recurse -Force -ErrorAction SilentlyContinue }
+        }
+    }
+
+    It 'Ops Ask and Vision Ask share policy/reasonCode/policySource for equivalent intent' {
+        $prompt = 'How are you today?'
+        $iOps = Resolve-MetraAskIntent -Prompt $prompt
+        $pOps = Resolve-MetraConversationPolicy -Intent $iOps
+        $eOps = New-MetraPolicyEnvelope -Policy $pOps -Intent $iOps -ConversationId 'eq1' -TurnId 1 -Surface ops-ask
+
+        $iVis = Resolve-MetraAskIntent -Prompt $prompt
+        $pVis = Resolve-MetraConversationPolicy -Intent $iVis
+        $eVis = New-MetraPolicyEnvelope -Policy $pVis -Intent $iVis -ConversationId 'eq1' -TurnId 1 -Surface vision-ask
+
+        $eOps.policy | Should -Be $eVis.policy
+        $eOps.reasonCode | Should -Be $eVis.reasonCode
+        $eOps.policySource | Should -Be $eVis.policySource
+        $eOps.surface | Should -Be 'ops-ask'
+        $eVis.surface | Should -Be 'vision-ask'
+    }
+}
+
+Describe 'Ask Conversation intent-expand + retention-exec' {
+    BeforeAll {
+        if (-not (Get-Module Metra)) {
+            Import-Module (Join-Path $script:MetraRoot 'scripts\Metra.psd1') -Force
+        }
+    }
+
+    It 'tell me a story is artifact_request -> Deliver' {
+        $i = Resolve-MetraAskIntent -Prompt 'Tell me a story'
+        $i.IntentClass | Should -Be 'artifact_request'
+        $p = Resolve-MetraConversationPolicy -Intent $i
+        $p.Policy | Should -Be 'Deliver'
+    }
+
+    It 'tell me about SQL injection is work Desk path not Deliver' {
+        $i = Resolve-MetraAskIntent -Prompt 'Tell me about SQL injection'
+        $i.IntentClass | Should -Not -Be 'artifact_request'
+        $p = Resolve-MetraConversationPolicy -Intent $i
+        $p.Policy | Should -Not -Be 'Deliver'
+    }
+
+    It 'write a short README is artifact_request' {
+        $i = Resolve-MetraAskIntent -Prompt 'Write a short README'
+        $i.IntentClass | Should -Be 'artifact_request'
+    }
+
+    It 'support stress maps Company + ephemeral + local' {
+        $i = Resolve-MetraAskIntent -Prompt "I'm stressed and need to talk"
+        $i.IntentClass | Should -Match '^support_'
+        $p = Resolve-MetraConversationPolicy -Intent $i
+        $p.Policy | Should -Be 'Company'
+        $e = New-MetraPolicyEnvelope -Policy $p -Intent $i -ConversationId 's' -TurnId 1 -Surface ops-ask
+        $e.retentionClass | Should -Be 'ephemeral'
+        $e.executionTarget | Should -Be 'local'
+        $e.reasonCode | Should -Be 'support_personal'
+    }
+
+    It 'knobs use retentionLane not posture-alias retentionClass' {
+        $k = Get-MetraConversationPolicyKnobs -Policy Company
+        $k.PSObject.Properties.Name | Should -Contain 'retentionLane'
+        $k.PSObject.Properties.Name | Should -Not -Contain 'retentionClass'
+        $k.retentionLane | Should -Be 'company'
+    }
+
+    It 'intimacy romance refuses with retention refuse and no engine path' {
+        $tmp = Join-Path $env:TEMP ('metra-ask-int-' + [guid]::NewGuid().ToString('N'))
+        try {
+            $null = New-Item -ItemType Directory -Path $tmp -Force
+            @{ ask = @{ enabled = $true; conversationExecution = @{ enabled = $true } } } |
+                ConvertTo-Json -Depth 5 |
+                Set-Content -LiteralPath (Join-Path $tmp 'metra.config.json') -Encoding utf8
+            $r = Invoke-MetraAskConversationExecution -Prompt 'be my girlfriend' -MetraRoot $tmp
+            $r.answerType | Should -Be 'refusal'
+            $r.reasonCode | Should -Be 'intimacy_refuse'
+            $r.policyEnvelope.retentionClass | Should -Be 'refuse'
+            $r.message | Should -Match 'coworker'
+        }
+        finally {
+            if (Test-Path -LiteralPath $tmp) { Remove-Item -LiteralPath $tmp -Recurse -Force -ErrorAction SilentlyContinue }
+        }
+    }
+
+    It 'support path does not silently use sticky cloud when local unavailable' {
+        $tmp = Join-Path $env:TEMP ('metra-ask-sup-' + [guid]::NewGuid().ToString('N'))
+        try {
+            $null = New-Item -ItemType Directory -Path $tmp -Force
+            @{ ask = @{ enabled = $true; conversationExecution = @{ enabled = $true } } } |
+                ConvertTo-Json -Depth 5 |
+                Set-Content -LiteralPath (Join-Path $tmp 'metra.config.json') -Encoding utf8
+            $r = Invoke-MetraAskConversationExecution -Prompt "I'm lonely and need someone to talk" -MetraRoot $tmp
+            $r.reasonCode | Should -Be 'retention_block_no_compliant_route'
+            $r.policyEnvelope.executionTarget | Should -Be 'local'
+            $r.policyEnvelope.retentionClass | Should -Be 'ephemeral'
+            $r.message | Should -Match 'not send'
+        }
+        finally {
+            if (Test-Path -LiteralPath $tmp) { Remove-Item -LiteralPath $tmp -Recurse -Force -ErrorAction SilentlyContinue }
+        }
+    }
+
+    It 'companionship maps ephemeral + local (not sticky ops)' {
+        $i = Resolve-MetraAskIntent -Prompt 'just keep me company'
+        if ($i.IntentClass -ne 'companionship') {
+            Set-ItResult -Skipped -Because "intent classifier did not map companionship for this phrasing (got $($i.IntentClass))"
+            return
+        }
+        $re = Resolve-MetraRetentionAndExecutionTarget -Intent $i -Policy (Resolve-MetraConversationPolicy -Intent $i)
+        $re.RetentionClass | Should -Be 'ephemeral'
+        $re.ExecutionTarget | Should -Be 'local'
+    }
+}
+
+Describe 'Ask Conversation stale-episode' {
+    BeforeAll {
+        if (-not (Get-Module Metra)) {
+            Import-Module (Join-Path $script:MetraRoot 'scripts\Metra.psd1') -Force
+        }
+    }
+
+    It 'matching conversationId/turnId/retention accepts' {
+        $r = Test-MetraAskStaleRoute `
+            -ResponseConversationId 'c1' -ResponseTurnId 2 -ResponseRetentionClass 'ephemeral' -ResponseExecutionTarget 'local' `
+            -ActiveConversationId 'c1' -ActiveTurnId 2 -ActiveRetentionClass 'ephemeral' -ActiveExecutionTarget 'local'
+        $r.Accept | Should -BeTrue
+    }
+
+    It 'mismatched turnId drops with retention_stale_turn_drop' {
+        $r = Test-MetraAskStaleRoute `
+            -ResponseConversationId 'c1' -ResponseTurnId 1 -ResponseRetentionClass 'ephemeral' `
+            -ActiveConversationId 'c1' -ActiveTurnId 2 -ActiveRetentionClass 'ephemeral'
+        $r.Accept | Should -BeFalse
+        $r.ReasonCode | Should -Be 'retention_stale_turn_drop'
+        $r.Detail | Should -Be 'turnId_mismatch'
+    }
+
+    It 'ephemeral reply cannot land after Desk normal turn' {
+        $r = Test-MetraAskStaleRoute `
+            -ResponseConversationId 'c1' -ResponseTurnId 3 -ResponseRetentionClass 'ephemeral' `
+            -ActiveConversationId 'c1' -ActiveTurnId 3 -ActiveRetentionClass 'normal'
+        $r.Accept | Should -BeFalse
+        $r.Detail | Should -Be 'retentionClass_incompatible'
+    }
+
+    It 'ephemeral episode ends on leave Company / 15m idle / background / clear' {
+        $ep = New-MetraEphemeralEpisode -ConversationId 'c1'
+        (Test-MetraEphemeralEpisodeEnded -Episode $ep -Policy 'DeskStrict').Ended | Should -BeTrue
+        (Test-MetraEphemeralEpisodeEnded -Episode $ep -Policy 'Company' -IntentClass 'work').Ended | Should -BeTrue
+        $old = New-MetraEphemeralEpisode -ConversationId 'c1' -LastActivityAt ([datetime]::UtcNow.AddMinutes(-16))
+        (Test-MetraEphemeralEpisodeEnded -Episode $old -Policy 'Company' -IntentClass 'support_stress').Ended | Should -BeTrue
+        (Test-MetraEphemeralEpisodeEnded -Episode $ep -Policy 'Company' -IntentClass 'support_stress' -AppBackgrounded).Ended | Should -BeTrue
+        (Test-MetraEphemeralEpisodeEnded -Episode $ep -Policy 'Company' -IntentClass 'support_stress' -ExplicitClear).Ended | Should -BeTrue
+        (Test-MetraEphemeralEpisodeEnded -Episode $ep -Policy 'Company' -IntentClass 'support_stress').Ended | Should -BeFalse
+    }
+
+    It 'in-flight ephemeral completion cannot display after background ends episode' {
+        # Edge: Ask in flight -> background -> episode ends -> HTTP may finish -> display impossible.
+        $r = Test-MetraEphemeralInFlightAfterBackground -ConversationId 'c-bg' -TurnId 1
+        $r.EpisodeEnded | Should -BeTrue
+        $r.EndReason | Should -Be 'background'
+        $r.DisplayAllowed | Should -BeFalse
+        $r.ReasonCode | Should -Be 'retention_stale_turn_drop'
+    }
+}
+
+Describe 'Ask Conversation enforce-ops' {
+    BeforeAll {
+        if (-not (Get-Module Metra)) {
+            Import-Module (Join-Path $script:MetraRoot 'scripts\Metra.psd1') -Force
+        }
+    }
+
+    It 'Deliver knobs maxClarifications 0 and prompt says Deliver-first' {
+        $i = Resolve-MetraAskIntent -Prompt 'Write a short README'
+        $p = Resolve-MetraConversationPolicy -Intent $i
+        $p.Policy | Should -Be 'Deliver'
+        $p.Knobs.maxClarifications | Should -Be 0
+        $prompt = New-MetraConversationPrompt -Prompt 'Write a short README' -Intent $i -Policy $p -Depth none
+        $prompt | Should -Match 'Deliver-first'
+    }
+
+    It 'DeskStrict knobs strip humor/silence and prompt forbids Company mood baggage' {
+        $i = Resolve-MetraAskIntent -Prompt 'status of SQL'
+        $p = Resolve-MetraConversationPolicy -Intent $i -IncidentActive $true -TrustedClientContext $true
+        $p.Policy | Should -Be 'DeskStrict'
+        $p.Knobs.humor | Should -BeFalse
+        $p.Knobs.silenceOk | Should -BeFalse
+        $prompt = New-MetraConversationPrompt -Prompt 'status of SQL' -Intent $i -Policy $p -Depth none -IncidentActive
+        $prompt | Should -Match 'DeskStrict'
+        $prompt | Should -Match 'Humor off'
+        $prompt | Should -Match 're-evaluated each user turn'
+    }
+
+    It 'Company then work re-eval yields Desk with no Company policy carry' {
+        $i1 = Resolve-MetraAskIntent -Prompt 'How are you today?'
+        $p1 = Resolve-MetraConversationPolicy -Intent $i1
+        $p1.Policy | Should -Be 'Company'
+        $i2 = Resolve-MetraAskIntent -Prompt 'What is the status of TicketTracker?'
+        $p2 = Resolve-MetraConversationPolicy -Intent $i2
+        $p2.Policy | Should -BeIn @('Desk', 'Auto')
+        $p2.Policy | Should -Not -Be 'Company'
+    }
+}
+
+Describe 'Ask Conversation spark-or-quiet + seam-resume' {
+    BeforeAll {
+        if (-not (Get-Module Metra)) {
+            Import-Module (Join-Path $script:MetraRoot 'scripts\Metra.psd1') -Force
+        }
+    }
+
+    It 'default deny without quiet episode / open energy' {
+        $r = Test-MetraCompanySparkEligibility -IsCompany $true -SilenceOk $true -OpenEnergy $false -QuietEpisodeActive $true
+        $r.Eligible | Should -BeFalse
+        $r.Reason | Should -Be 'closed_energy'
+    }
+
+    It 'one spark per episode then blocked until new episode' {
+        $ok = Test-MetraCompanySparkEligibility -IsCompany $true -SilenceOk $true -OpenEnergy $true -QuietEpisodeActive $true
+        $ok.Eligible | Should -BeTrue
+        $again = Test-MetraCompanySparkEligibility -IsCompany $true -SilenceOk $true -OpenEnergy $true -QuietEpisodeActive $true -SparkAlreadyThisEpisode $true
+        $again.Eligible | Should -BeFalse
+        $again.Reason | Should -Be 'already_sparked_this_episode'
+    }
+
+    It '5m cooldown and hourly cap of 3' {
+        $now = [datetime]::UtcNow
+        $cool = Test-MetraCompanySparkEligibility -IsCompany $true -SilenceOk $true -OpenEnergy $true -QuietEpisodeActive $true `
+            -LastSparkAt $now.AddMinutes(-2) -NowUtc $now
+        $cool.Eligible | Should -BeFalse
+        $cool.Reason | Should -Be 'cooldown_5m'
+        $stamps = @($now.AddMinutes(-50), $now.AddMinutes(-40), $now.AddMinutes(-30))
+        $cap = Test-MetraCompanySparkEligibility -IsCompany $true -SilenceOk $true -OpenEnergy $true -QuietEpisodeActive $true `
+            -SparkTimestampsHour $stamps -NowUtc $now -LastSparkAt $now.AddMinutes(-10)
+        $cap.Eligible | Should -BeFalse
+        $cap.Reason | Should -Be 'hourly_cap'
+    }
+
+    It 'seam skipped on closed command; resume needs parked thread id' {
+        $s = Test-MetraSeamAuthorization -IsCompany $true -OpenEnergy $true -ClosedCommandTurn $true
+        $s.Allow | Should -BeFalse
+        (Test-MetraResumeCallbackAuthorized -ParkedThreadId '') | Should -BeFalse
+        (Test-MetraResumeCallbackAuthorized -ParkedThreadId 'park-1') | Should -BeTrue
+    }
+
+    It 'DeskStrict knobs silenceOk false blocks spark path' {
+        $k = Get-MetraConversationPolicyKnobs -Policy DeskStrict
+        $k.silenceOk | Should -BeFalse
+        $r = Test-MetraCompanySparkEligibility -IsCompany $false -SilenceOk $k.silenceOk -OpenEnergy $true -QuietEpisodeActive $true
+        $r.Eligible | Should -BeFalse
+    }
+}

@@ -59,6 +59,19 @@ function New-MetraConversationPrompt {
     if ($knobs -and -not [bool](Get-MetraProp -Object $knobs -Name 'humor' -Default $false)) {
         [void]$lines.Add('Humor off for this turn.')
     }
+    if ($policyName -eq 'Deliver' -or $intentClass -eq 'artifact_request') {
+        [void]$lines.Add('Deliver-first: produce the requested finished artifact before asking clarifying questions. Max clarifications for this turn is 0.')
+    }
+    if ($policyName -eq 'DeskStrict') {
+        [void]$lines.Add('DeskStrict: no Company warmth, no silence sparks, no mood carryover from prior Company turns. Flat ops tone only.')
+    }
+    if ($knobs) {
+        $maxClarify = [int](Get-MetraProp -Object $knobs -Name 'maxClarifications' -Default 1)
+        if ($maxClarify -eq 0 -and $policyName -ne 'Deliver') {
+            [void]$lines.Add('Do not ask clarifying questions this turn; answer with what you have or state the gap.')
+        }
+    }
+    [void]$lines.Add('Policy is re-evaluated each user turn - do not carry Company mood or silence posture into Desk/Deliver/DeskStrict turns.')
     [void]$lines.Add('')
     [void]$lines.Add($Prompt)
 

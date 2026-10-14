@@ -46,8 +46,17 @@ Error codes from Vision (`write_not_allowed`, `route_boundary_violation`, …) s
 ## Trial reliability (Phase 1.5)
 
 - Reachability: no `NWPathMonitor` preflight - `URLSession` is the authority; map connectivity `URLError`s to the offline result.
-- Background: entering `.background` does **not** cancel an in-flight Ask (Cancel / New still do).
+- Background: entering `.background` does **not** cancel an in-flight Ask (Cancel / New still do). Ephemeral episodes end and `activeTurn` is cleared so a late HTTP completion cannot display (stale-route drop).
 - Presence SVG under `docs/assets/` is reference only; the app ships the native SwiftUI face, not a bundled SVG.
+
+## Conversation policy (Desk / Company / Deliver)
+
+Normative plan: [plans/ios-conversation-policy.plan.md](../../plans/ios-conversation-policy.plan.md).
+
+- Monotonic `turnId` + stale-route drop when a late reply no longer matches the active turn.
+- `retentionClass` / `executionTarget` on the policy envelope are normative (not CE `retentionLane` posture aliases).
+- Spark-or-quiet + seam/resume gates live under `Models/`; presence consumes policy events only (`PresenceCueMap`).
+- LocalAssist relational path is not answering yet - Ops remains the online lane; honest offline / no-compliant-route messages come from the host.
 
 ## Preconditions
 

@@ -17,6 +17,7 @@ enum AskClientError: LocalizedError, Sendable {
     case serveHttpsDown(String?)
     case askBusy
     case contractError(String, String?)
+    case staleRouteDropped
 
     var errorDescription: String? {
         switch self {
@@ -59,10 +60,21 @@ enum AskClientError: LocalizedError, Sendable {
         case .contractError(let reason, let detail):
             let suffix = detail.map { ": \($0)" } ?? ""
             return "Ops Ask contract error (\(reason))\(suffix)"
+        case .staleRouteDropped:
+            return "That reply arrived after you moved on - it was dropped."
         }
     }
 }
 
+/// Ask reply plus correlation for stale-route checks.
+struct AskReply: Sendable {
+    let message: Message
+    let conversationId: String?
+    let turnId: String?
+    let retentionClass: RetentionClass?
+    let executionTarget: ExecutionTarget?
+}
+
 protocol AskClient: Sendable {
-    func ask(session: Session, text: String) async throws -> Message
+    func ask(session: Session, text: String, turnId: String) async throws -> AskReply
 }

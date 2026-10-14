@@ -421,7 +421,8 @@ function New-MetraVisionAskAnsweredResponse {
         [switch]$PartnerIdentityShortCircuit,
         $Correlation = @{},
         $Diagnostics = $null,
-        [AllowNull()][string]$PresentationMood = $null
+        [AllowNull()][string]$PresentationMood = $null,
+        $PolicyEnvelope = $null
     )
 
     if ($Source -eq 'ops-vision' -and $AskLaneUsed) {
@@ -487,6 +488,7 @@ function New-MetraVisionAskAnsweredResponse {
             mood = $PresentationMood
         }
         correlation     = $corr
+        policyEnvelope  = $PolicyEnvelope
     }
 }
 
@@ -536,7 +538,8 @@ function New-MetraVisionAskLocalAssistProvenance {
         -OpsReached:$false `
         -PortfolioGrounded:$false `
         -EngineInvoked:$false `
-        -Correlation $Correlation
+        -Correlation $Correlation `
+        -PolicyEnvelope $null
 }
 
 function Sync-MetraAskRoutedTelemetryRotation {
@@ -774,6 +777,23 @@ function Invoke-MetraVisionAskHandler {
     else {
         [PSCustomObject]@{ IntentClass = 'work'; Confidence = 0.5; Source = 'vision'; Notes = @() }
     }
+    # Observe-only policy envelope (p4-telemetry). Presentation posture stays PartnerPosture;
+    # envelope uses Resolve-MetraConversationPolicy for Ops/Vision semantic equivalence.
+    $visionPolicy = if (Get-Command Resolve-MetraConversationPolicy -ErrorAction SilentlyContinue) {
+        Resolve-MetraConversationPolicy -Intent $intent
+    }
+    else {
+        [PSCustomObject]@{ Policy = 'Company'; PolicySource = 'intent_auto' }
+    }
+    $visionPolicyEnvelope = if (Get-Command New-MetraPolicyEnvelope -ErrorAction SilentlyContinue) {
+        New-MetraPolicyEnvelope `
+            -Policy $visionPolicy `
+            -Intent $intent `
+            -ConversationId ([string](Get-MetraProp -Object $corr -Name 'conversationId' -Default '')) `
+            -TurnId (Get-MetraProp -Object $corr -Name 'turnId' -Default $null) `
+            -Surface 'vision-ask'
+    }
+    else { $null }
     $continuityEvidence = if (Get-Command New-MetraContinuityEvidence -ErrorAction SilentlyContinue) {
         New-MetraContinuityEvidence -Continuity $null -Handoff $handoff
     }
@@ -801,7 +821,7 @@ function Invoke-MetraVisionAskHandler {
 
     if ($who -or $vocativeOnly) {
         $checkIn = New-MetraPartnerCheckInResponse -Surface Vision -Posture $resolvedPosture -ContinuityEvidence $continuityEvidence -WhoAreYou:$who
-        $answered = New-MetraVisionAskAnsweredResponse `
+        $answered = New-MetraVisionAskAnsweredResponse -PolicyEnvelope $visionPolicyEnvelope `
             -Text ([string]$checkIn.Display) `
             -Source 'ops-vision' `
             -Mode 'vision' `
@@ -829,7 +849,7 @@ function Invoke-MetraVisionAskHandler {
         [PSCustomObject]@{ RequiresConfirm = $false; Message = ''; ReasonCode = '' }
     }
     if ([bool]$authGate.RequiresConfirm) {
-        $answered = New-MetraVisionAskAnsweredResponse `
+        $answered = New-MetraVisionAskAnsweredResponse -PolicyEnvelope $visionPolicyEnvelope `
             -Text ([string]$authGate.Message) `
             -Source 'ops-vision' `
             -Mode 'vision' `
@@ -994,7 +1014,7 @@ $userMessage
         return $err
     }
 
-    $answered = New-MetraVisionAskAnsweredResponse `
+    $answered = New-MetraVisionAskAnsweredResponse -PolicyEnvelope $visionPolicyEnvelope `
         -Text $text `
         -Source 'ops-vision' `
         -Mode 'vision' `

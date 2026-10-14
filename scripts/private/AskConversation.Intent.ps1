@@ -119,6 +119,84 @@ function Resolve-MetraAskIntent {
         }
     }
 
+    # Intimacy refuse bands (no model send; retention refuse)
+    if ($q -match '(?i)\b(be my (girl|boy)friend|dating roleplay|i love you|make love|sexual|erotic|nsfw)\b' `
+            -or $q -match '(?i)\b(act as|pretend (to be|you.?re)|roleplay as)\b.+\b(ani|girlfriend|boyfriend|lover)\b') {
+        $band = 'intimacy_romance'
+        if ($q -match '(?i)\b(sexual|erotic|nsfw|make love)\b') { $band = 'intimacy_sexual' }
+        return [PSCustomObject]@{
+            IntentClass = $band
+            Confidence  = 0.92
+            Source      = $source
+            Notes       = @('intimacy_refuse')
+        }
+    }
+    if ($q -match '(?i)\b(be ani|you are ani|act like ani)\b') {
+        return [PSCustomObject]@{
+            IntentClass = 'intimacy_romance'
+            Confidence  = 0.9
+            Source      = $source
+            Notes       = @('identity_swap_refuse')
+        }
+    }
+
+    # Urgent cues (evidence only - DeskStrict still requires IncidentActive)
+    if ($q -match '(?i)\b(outage|sev[- ]?[01]|p[01]\b|production down|page me|war room|active incident)\b') {
+        return [PSCustomObject]@{
+            IntentClass = 'urgent'
+            Confidence  = 0.85
+            Source      = $source
+            Notes       = @('urgent_phrase')
+        }
+    }
+
+    # Personal support (support_*) - before generic companionship
+    if ($q -match '(?i)\b(i(''|a)?m (stressed|lonely|overwhelmed|anxious|depressed)|feeling (down|alone|hopeless)|need (to talk|someone to talk)|having a hard time)\b') {
+        $label = 'support_personal'
+        if ($q -match '(?i)\b(stress|stressed|overwhelmed|anxious)\b') { $label = 'support_stress' }
+        if ($q -match '(?i)\b(lonely|alone|isolated)\b') { $label = 'support_lonely' }
+        return [PSCustomObject]@{
+            IntentClass = $label
+            Confidence  = 0.8
+            Source      = $source
+            Notes       = @('support_phrase')
+        }
+    }
+
+    # Companionship / warm chat (not check_in greeting)
+    if ($q -match '(?i)\b(just (wanted to )?chat|keep me company|hang out|how was your day|what.?s new with you)\b') {
+        return [PSCustomObject]@{
+            IntentClass = 'companionship'
+            Confidence  = 0.78
+            Source      = $source
+            Notes       = @('companionship_phrase')
+        }
+    }
+
+    # Artifact request (Deliver) vs explanatory "tell me about"
+    # Prefer Desk for about/explain/how does; Deliver for write/tell me a / generate / draft.
+    $explainDominant = ($q -match '(?i)\b(tell me about|explain|how does|what is|what are)\b')
+    $artifactCue = ($q -match '(?i)\b(write|draft|generate|create|compose|make)\b.+\b(email|readme|proposal|script|slogan|poem|song|joke|story)\b' `
+            -or $q -match '(?i)\b(tell|give|write) me a(n)?\b.+\b(story|poem|song|joke|email|readme)\b' `
+            -or $q -match '(?i)^(write|draft|generate)\b.+\b(readme|email|proposal)\b')
+    if ($artifactCue -and -not $explainDominant) {
+        return [PSCustomObject]@{
+            IntentClass = 'artifact_request'
+            Confidence  = 0.86
+            Source      = $source
+            Notes       = @('artifact_phrase')
+        }
+    }
+    # "Tell me a joke about SQL" is artifact; "Tell me about SQL injection" is work/question
+    if ($q -match '(?i)^tell me a(n)?\b' -and -not $explainDominant) {
+        return [PSCustomObject]@{
+            IntentClass = 'artifact_request'
+            Confidence  = 0.84
+            Source      = $source
+            Notes       = @('tell_me_a_artifact')
+        }
+    }
+
     if ($RouteScore -ge 2) {
         $confidence = [Math]::Min(0.9, 0.55 + (0.05 * [Math]::Min(6, [int]$RouteScore)))
         [void]$notes.Add('routed_work')
