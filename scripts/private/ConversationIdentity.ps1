@@ -204,7 +204,7 @@ function Get-MetraConversationIdentityPrompt {
         [ValidateSet('Ask', 'Vision', 'Cursor', 'iOS', 'OpsPresence')]
         [string]$Surface = 'Vision',
         [ValidateSet('Desk', 'Company', 'Deliver', 'DeskStrict', '')]
-        [string]$Posture = 'Company',
+        [string]$Posture = '',
         [switch]$PortfolioShaped,
         [switch]$IncidentActive,
         [switch]$TeachingWanted,
@@ -217,7 +217,15 @@ function Get-MetraConversationIdentityPrompt {
     }
 
     $resolvedSurface = if ([string]::IsNullOrWhiteSpace($Surface)) { 'Vision' } else { $Surface }
-    $resolvedPosture = if ([string]::IsNullOrWhiteSpace($Posture)) { 'Company' } else { $Posture }
+    # Surface modality owns portfolio visibility; posture still owns expression intensity.
+    # Ask defaults Desk when unset - do not auto-raise Company/Warmth solely because Surface=Ask.
+    # Vision/Cursor/iOS keep Company when posture is unset (prior companion default).
+    $resolvedPosture = if ([string]::IsNullOrWhiteSpace($Posture)) {
+        if ($resolvedSurface -eq 'Ask') { 'Desk' } else { 'Company' }
+    }
+    else {
+        $Posture
+    }
     if ($IncidentActive) { $resolvedPosture = 'DeskStrict' }
 
     $gates = Resolve-MetraConversationIdentityPackGates `

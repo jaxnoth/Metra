@@ -62,6 +62,12 @@ The primary surface stays presence-first even on loud days. Composer copy stays 
 
 Shared portfolio brain: `%LOCALAPPDATA%\Metra\desk\canvas-snapshot.json` via `Get-MetraDeskPayload` (same snapshot as the Cursor canvas).
 
+## Identity vs capability (Desk Ops chat)
+
+Desk Ops Ask chat uses the **same Conversation Identity path** as Vision (shared loader, Surface=Ask) - one Metra, not a colder fork. What differs is **capability wiring** and **portfolio visibility** as Surface modality (awareness chrome, Attention adjacency, denser grounding when portfolio-shaped) - not a second personality dial, and not an automatic Company/Warmth bump for Ask. Capture, ticket assess, and AskLane remain Desk tools when the turn needs them; they are not a second self. Vision never treats Desk AskLane / Capture / TT assess as success. See `docs/Decisions.md` (Desk Ops chat same conversation path) and `docs/Customizing-Metra.md` (Partner Identity).
+
+**Accept-loop offload:** Desk and Vision `POST /api/ask` hand engine work to `Start-MetraOpsAskHttpWorker` (shared single-flight gate). Overlap returns HTTP 409 `askBusy` - contention, not offline. Meta/health stay on the accept path. True desk-down / Tailscale unreachable is ops-reach, not askBusy.
+
 ## Ask + Capture HTTP contract (client-agnostic)
 
 HTML Ops is the first client. Future native iOS (and phone browser over Tailscale) should use the same JSON APIs - no HTML-in-API, no browser-only protocol deps. Same-origin only - no wildcard CORS. **Local authority** (operator machine or `X-Metra-Local-Session`) gates mutations listed in [SECURITY.md](../SECURITY.md); **Ask-class** endpoints stay reachable over Tailscale for view/ask/capture intake.

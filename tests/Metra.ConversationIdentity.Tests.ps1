@@ -169,6 +169,29 @@ humor pack MARKER
         }
     }
 
+    It 'Ask Surface alone does not force Company when posture unset (visibility modality)' {
+        InModuleScope Metra {
+            $root = Join-Path $TestDrive 'metra-ask-posture-default'
+            $rules = Join-Path $root '.cursor\rules'
+            New-Item -ItemType Directory -Path $rules -Force | Out-Null
+            New-Item -ItemType Directory -Path (Join-Path $root 'engines\vision-ask') -Force | Out-Null
+            # Teaching activates on Company/Deliver by default; Desk needs -TeachingWanted.
+            Set-Content -LiteralPath (Join-Path $rules 'metra-teaching-gentle.local.mdc') -Value 'teaching MARKER' -Encoding utf8
+            Set-Content -LiteralPath (Join-Path $root 'engines\vision-ask\system.md') -Value 'vision' -Encoding utf8
+
+            $ask = Get-MetraConversationIdentityPrompt -MetraRoot $root -Surface Ask
+            $ask.Text | Should -Match 'Desk Ops chat: same Partner Identity'
+            $ask.TeachingActive | Should -BeFalse
+            $ask.PacksIncluded | Should -Not -Contain 'teaching'
+            ($ask.PacksOmitted | Where-Object { $_.Id -eq 'vision' }).Reason | Should -Be 'surface_gate'
+
+            $vis = Get-MetraConversationIdentityPrompt -MetraRoot $root -Surface Vision
+            $vis.TeachingActive | Should -BeTrue
+            $vis.PacksIncluded | Should -Contain 'teaching'
+            $vis.Text | Should -Not -Match 'Desk Ops chat: same Partner Identity'
+        }
+    }
+
     It 'Vision answered envelope includes diagnostics and posture-derived mood' {
         InModuleScope Metra {
             $out = New-MetraVisionAskAnsweredResponse `

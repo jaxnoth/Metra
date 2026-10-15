@@ -42,6 +42,40 @@ Describe 'Ops Ask worker gate' {
         }
     }
 
+    It 'askBusy copy is contention not offline / unreachable' {
+        InModuleScope Metra {
+            $ms = [System.IO.MemoryStream]::new()
+            $headers = [System.Collections.Specialized.NameValueCollection]::new()
+            $fake = [PSCustomObject]@{
+                StatusCode      = 200
+                ContentType     = ''
+                Headers         = $headers
+                ContentLength64 = 0
+                OutputStream    = $ms
+            }
+            Write-MetraOpsAskBusyResponse -Response $fake
+            $fake.StatusCode | Should -Be 409
+            $text = [System.Text.Encoding]::UTF8.GetString($ms.ToArray())
+            $text | Should -Match '"error"\s*:\s*"askBusy"'
+            $text | Should -Match 'already running'
+            $text | Should -Not -Match '(?i)offline|unreachable|connection refused|timed?\s*out|unavailable'
+            try { $ms.Dispose() } catch { }
+        }
+    }
+
+    It 'gate held still leaves meta path free (accept vs worker separation)' {
+        InModuleScope Metra {
+            # Prove: busy gate does not require stopping the listener; Wait(0) fails without blocking.
+            $null = $script:MetraOpsAskGate.Wait(0)
+            Test-MetraOpsAskGateAvailable | Should -BeFalse
+            ($script:MetraOpsAskGate.Wait(0)) | Should -BeFalse
+            # Accept-loop peers (meta/health) are not gated by this semaphore - only Ask/Vision start is.
+            (Get-Command Write-MetraOpsAskBusyResponse -ErrorAction Stop).Name | Should -Be 'Write-MetraOpsAskBusyResponse'
+            $null = $script:MetraOpsAskGate.Release()
+            Test-MetraOpsAskGateAvailable | Should -BeTrue
+        }
+    }
+
     It 'SemaphoreSlim gate is exclusive' {
         InModuleScope Metra {
             $script:MetraOpsAskGate.CurrentCount | Should -Be 1

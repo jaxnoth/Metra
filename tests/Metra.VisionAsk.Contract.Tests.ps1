@@ -291,6 +291,19 @@ Describe 'Vision Ask handler seam' {
 }
 
 Describe 'Vision Ask boundary isolation' {
+    # Fixture id: vision-isolation (desk_ops_chat_same_path Bite D)
+    It 'vision-isolation: static boundary + Desk caps remain callable' {
+        InModuleScope Metra {
+            $b = Test-MetraVisionAskSourceFileBoundary
+            $b.ok | Should -BeTrue -Because ($b.violations -join ', ')
+            # Desk capabilities stay reachable outside Vision - not removed by same-path work.
+            (Get-Command Resolve-MetraAskLane -ErrorAction Stop).Name | Should -Be 'Resolve-MetraAskLane'
+            (Get-Command Get-MetraDeskAskResult -ErrorAction Stop).Name | Should -Be 'Get-MetraDeskAskResult'
+            $lane = Resolve-MetraAskLane -Prompt 'How does TicketTracker brief work?' -RouteScore 2 -EvidenceQuality 'adequate'
+            $lane | Should -Not -BeNullOrEmpty
+        }
+    }
+
     It 'VisionAsk.ps1 source does not call Desk AskLane / DeskAsk / TT assess' {
         InModuleScope Metra {
             $b = Test-MetraVisionAskSourceFileBoundary
