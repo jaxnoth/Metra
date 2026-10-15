@@ -3517,9 +3517,9 @@ function Invoke-MetraInspectPack {
                 if ($appendix.PackBodyTruncated) {
                     Write-Host 'WARNING: Diff appendix truncated at Bing pack body cap; see Test catalog section for full Describe/It names.' -ForegroundColor Yellow
                 }
-                $hash = Get-MetraInspectInputHash -Parts @(
-                    $appendix.ScrubbedFiles | ForEach-Object { [PSCustomObject]@{ path = $_.path; content = $_.content } }
-                )
+                # Same hash path as assess (Reduce without Bing IncludeDocs). Do not hash the
+                # Bing appendix - that set can include expanded docs while assess collapses them.
+                $hash = Get-MetraInspectReviewWorkingTreeInputHash -Root ([string]$report.provenance.root) -Base ([string](Get-MetraProp -Object $report.provenance -Name 'base' -Default ''))
                 if ($hash -ne [string]$pointer.inputHash) {
                     $stale = $true
                     $staleDetail = 'Current working tree inputHash differs from the assessed report.'

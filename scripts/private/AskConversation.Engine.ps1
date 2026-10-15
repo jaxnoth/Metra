@@ -3,7 +3,10 @@
 function New-MetraConversationPrompt {
     <#
     .SYNOPSIS
-        Partner Identity preamble + policy overlay + objective text for the engine (sanitized prompt only).
+        Conversation Identity Stack (Ask/Vision Surface) + CE policy overlay + sanitized user prompt.
+    .OUTPUTS
+        PSCustomObject with Text (engine prompt) and identity metadata (IdentityHash, PacksIncluded, ...).
+        Callers that need only the string use .Text.
     #>
     [CmdletBinding()]
     param(
@@ -17,7 +20,8 @@ function New-MetraConversationPrompt {
         [string]$Posture = '',
         [switch]$PortfolioShaped,
         $ContinuityEvidence,
-        [switch]$IncidentActive
+        [switch]$IncidentActive,
+        [string]$MetraRoot = (Get-MetraRoot)
     )
 
     $intentClass = [string](Get-MetraProp -Object $Intent -Name 'IntentClass' -Default 'work')
@@ -30,8 +34,22 @@ function New-MetraConversationPrompt {
         $resolvedPosture = $policyName
     }
 
+    $identity = $null
     $lines = [System.Collections.Generic.List[string]]::new()
-    if (Get-Command New-MetraPartnerIdentityPreamble -ErrorAction SilentlyContinue) {
+    # Desk CE / Ask: shared Conversation Identity loader (Surface=Ask omits vision system.md).
+    # CE policy overlay stays after identity text - same path, not same words as Vision.
+    if (Get-Command Get-MetraConversationIdentityPrompt -ErrorAction SilentlyContinue) {
+        $identitySurface = if ($Surface -in @('Ask', 'Vision', 'Cursor', 'iOS', 'OpsPresence')) { $Surface } else { 'Ask' }
+        $identity = Get-MetraConversationIdentityPrompt `
+            -MetraRoot $MetraRoot `
+            -Surface $identitySurface `
+            -Posture $resolvedPosture `
+            -PortfolioShaped:$PortfolioShaped `
+            -IncidentActive:$IncidentActive `
+            -ContinuityEvidence $ContinuityEvidence
+        [void]$lines.Add([string]$identity.Text)
+    }
+    elseif (Get-Command New-MetraPartnerIdentityPreamble -ErrorAction SilentlyContinue) {
         $preamble = New-MetraPartnerIdentityPreamble `
             -Surface $Surface `
             -Posture $resolvedPosture `
@@ -75,7 +93,14 @@ function New-MetraConversationPrompt {
     [void]$lines.Add('')
     [void]$lines.Add($Prompt)
 
-    return ($lines -join "`n")
+    return [PSCustomObject]@{
+        Text            = ($lines -join "`n")
+        IdentityHash   = $(if ($identity) { [string](Get-MetraProp -Object $identity -Name 'IdentityHash' -Default '') } else { $null })
+        PacksIncluded  = $(if ($identity) { @(Get-MetraProp -Object $identity -Name 'PacksIncluded' -Default @()) } else { @() })
+        PacksOmitted   = $(if ($identity) { @(Get-MetraProp -Object $identity -Name 'PacksOmitted' -Default @()) } else { @() })
+        TeachingActive = $(if ($identity) { [bool](Get-MetraProp -Object $identity -Name 'TeachingActive' -Default $false) } else { $false })
+        HumorActive    = $(if ($identity) { [bool](Get-MetraProp -Object $identity -Name 'HumorActive' -Default $false) } else { $false })
+    }
 }
 
 function Invoke-MetraAskConversationEngine {

@@ -56,7 +56,7 @@ One Metra across conversational surfaces - not a personality feature or second s
 
 Composition: Posture drives expression; Surface does not invent a second personality dial. Vision may default to Company when posture is unset - elevated personality remains a posture effect. Portfolio grounding is available when portfolio-shaped (same evidence standards as Ask); non-portfolio turns stay allowed. Continuity only from typed ContinuityEvidence. Identity does not grant Host / Capture / Ticket execution authority. Partner-voice strip for durable output happens at the execution boundary (`ConvertTo-MetraPartnerNeutralArtifact`).
 
-**Desk Ops chat:** Same conversation path as Vision / Cursor / iOS - not a colder fork. Desk Ops may show more portfolio visibility (awareness chrome, grounding density); that is surface modality. Capture / ticket assess / AskLane stay capability wiring when needed. See [Decisions.md](Decisions.md) (Desk Ops chat same conversation path).
+**Desk Ops chat:** Same conversation path as Vision / Cursor / iOS - not a colder fork. Desk CE conversational turns load the shared Conversation Identity Stack (`Get-MetraConversationIdentityPrompt -Surface Ask`) then keep CE policy overlay lines - same loader family as Vision, not byte-identical prompts (Ask omits `engines/vision-ask/system.md` via `surface_gate`). `identityHash` is over the effective composed identity artifact; Ask and Vision hashes may differ when the pack set differs. Desk Ops may show more portfolio visibility (awareness chrome, grounding density); that is surface modality. Capture / ticket assess / AskLane stay capability wiring when needed. See [Decisions.md](Decisions.md) (Desk Ops chat same conversation path); implement leaf `desk_ops_chat_same_path`.
 
 **AppliesTo:** Ask/CE, Cursor Agent body, iOS via CE, Ops presence acknowledgement, Vision. **DoesNotApplyTo:** Inspect reviewer job, durable artifact bodies, logs, telemetry, machine envelopes.
 
@@ -178,8 +178,9 @@ partner → persona → overlay → OCC → humor → teaching → vision brief 
 
 - **Allowlist only:** unknown `metra-*.local.mdc` files are never loaded. New add-ons require a manifest edit.
 - **Loader sole authority** for `TeachingActive` / `HumorActive`. VisionAsk does not re-decide packs.
+- **Surface:** `-Surface Vision` includes the vision brief; `-Surface Ask` (Desk CE via `New-MetraConversationPrompt`) omits it (`surface_gate`) then appends CE policy overlay - same loader, not same words.
 - **Teaching:** Vision Company includes teaching-gentle when installed; Desk only when `context.teachingWanted=true`; DeskStrict never.
-- **Telemetry / diagnostics:** `identityHash` (after frontmatter strip + budget), pack ids - not prompt bodies.
+- **Telemetry / diagnostics:** `identityHash` (after frontmatter strip + budget; effective composed text, not the Surface label), pack ids - not prompt bodies. Ask vs Vision hashes may differ when the pack set differs.
 - iOS always sends `contractVersion=1` with mode=vision. Phone CE `vision_phone_default` was removed - fix forward on Vision.
 
 HQ must have add-on `.local.mdc` files present for packs to activate (export-profile already copies humor/teaching when present).

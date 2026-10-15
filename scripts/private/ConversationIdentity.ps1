@@ -195,10 +195,14 @@ function Get-MetraConversationIdentityPrompt {
         Assemble Conversation Identity Stack text + loader metadata (sole teaching/humor authority).
     .NOTES
         identityHash is computed after frontmatter strip and after budget truncation.
+        Hash is over the effective composed identity artifact - Surface is not hashed as a label;
+        Surface affects the hash only when it changes composition (e.g. Ask omits the vision pack).
     #>
     [CmdletBinding()]
     param(
         [string]$MetraRoot = (Get-MetraRoot),
+        [ValidateSet('Ask', 'Vision', 'Cursor', 'iOS', 'OpsPresence')]
+        [string]$Surface = 'Vision',
         [ValidateSet('Desk', 'Company', 'Deliver', 'DeskStrict', '')]
         [string]$Posture = 'Company',
         [switch]$PortfolioShaped,
@@ -212,6 +216,7 @@ function Get-MetraConversationIdentityPrompt {
         $BudgetBytes = [int]$script:MetraConversationIdentityDefaultBudgetBytes
     }
 
+    $resolvedSurface = if ([string]::IsNullOrWhiteSpace($Surface)) { 'Vision' } else { $Surface }
     $resolvedPosture = if ([string]::IsNullOrWhiteSpace($Posture)) { 'Company' } else { $Posture }
     if ($IncidentActive) { $resolvedPosture = 'DeskStrict' }
 
@@ -227,13 +232,13 @@ function Get-MetraConversationIdentityPrompt {
 
     $partnerText = if (Get-Command New-MetraPartnerIdentityPreamble -ErrorAction SilentlyContinue) {
         New-MetraPartnerIdentityPreamble `
-            -Surface Vision `
+            -Surface $resolvedSurface `
             -Posture $resolvedPosture `
             -PortfolioShaped:$PortfolioShaped `
             -ContinuityEvidence $ContinuityEvidence
     }
     else {
-        "I'm Metra, the portfolio operations partner. Surface=Vision."
+        "I'm Metra, the portfolio operations partner. Surface=$resolvedSurface."
     }
 
     foreach ($src in @(Get-MetraConversationIdentitySources -MetraRoot $MetraRoot)) {
@@ -241,6 +246,12 @@ function Get-MetraConversationIdentityPrompt {
         $tier = [int]$src.BudgetTier
         $body = $null
         $omitReason = $null
+
+        # Ask surface: omit Vision system.md (surface_gate). Identity stays shared; pack set differs.
+        if ($id -eq 'vision' -and $resolvedSurface -eq 'Ask') {
+            $packsOmitted.Add([pscustomobject]@{ Id = $id; Reason = 'surface_gate' }) | Out-Null
+            continue
+        }
 
         switch ($id) {
             'partner' {
@@ -302,10 +313,8 @@ function Get-MetraConversationIdentityPrompt {
                 BudgetTier = $tier
                 Text       = $body.Trim()
             }) | Out-Null
-        if ($id -in @('humor', 'teaching', 'persona', 'overlay', 'occ', 'vision', 'partner', 'narrative')) {
-            if ($id -in @('humor', 'teaching')) {
-                $packsIncluded.Add($id) | Out-Null
-            }
+        if ($id -in @('humor', 'teaching', 'vision')) {
+            $packsIncluded.Add($id) | Out-Null
         }
     }
 
@@ -328,7 +337,7 @@ function Get-MetraConversationIdentityPrompt {
             foreach ($sec in $sections) {
                 if ([int]$sec.BudgetTier -eq $tierDrop) {
                     $packsOmitted.Add([pscustomobject]@{ Id = [string]$sec.Id; Reason = 'budget' }) | Out-Null
-                    if ([string]$sec.Id -in @('humor', 'teaching')) {
+                    if ([string]$sec.Id -in @('humor', 'teaching', 'vision')) {
                         $null = $packsIncluded.Remove([string]$sec.Id)
                     }
                     continue
@@ -363,6 +372,9 @@ function Get-MetraConversationIdentityPrompt {
                 $alt = ($sections | Where-Object { $_.Id -ne 'vision' } | Select-Object -Last 1)
                 if ($null -ne $alt) {
                     $packsOmitted.Add([pscustomobject]@{ Id = [string]$alt.Id; Reason = 'budget' }) | Out-Null
+                    if ([string]$alt.Id -in @('humor', 'teaching', 'vision')) {
+                        $null = $packsIncluded.Remove([string]$alt.Id)
+                    }
                     $sections = [System.Collections.Generic.List[object]]::new(
                         [object[]]@($sections | Where-Object { $_.Id -ne $alt.Id })
                     )
@@ -372,7 +384,7 @@ function Get-MetraConversationIdentityPrompt {
                 }
             }
             $packsOmitted.Add([pscustomobject]@{ Id = [string]$sec.Id; Reason = 'budget' }) | Out-Null
-            if ([string]$sec.Id -in @('humor', 'teaching')) {
+            if ([string]$sec.Id -in @('humor', 'teaching', 'vision')) {
                 $null = $packsIncluded.Remove([string]$sec.Id)
             }
             $sections.RemoveAt($shrinkIdx)

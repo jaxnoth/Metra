@@ -41,6 +41,7 @@ function Get-MetraVisionAskSystemPrompt {
     if (Get-Command Get-MetraConversationIdentityPrompt -ErrorAction SilentlyContinue) {
         return Get-MetraConversationIdentityPrompt `
             -MetraRoot $MetraRoot `
+            -Surface Vision `
             -Posture $Posture `
             -PortfolioShaped:$PortfolioShaped `
             -IncidentActive:$IncidentActive `

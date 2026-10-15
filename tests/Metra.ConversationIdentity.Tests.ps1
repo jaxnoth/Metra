@@ -132,6 +132,40 @@ humor pack MARKER
             $sys.TeachingActive | Should -BeFalse
             $sys.HumorActive | Should -BeFalse
             $sys.Text | Should -Match 'vision only'
+            $sys.PacksIncluded | Should -Contain 'vision'
+        }
+    }
+
+    It 'Ask Surface omits vision pack via surface_gate; Ask hash differs from Vision when vision file present' {
+        InModuleScope Metra {
+            $root = Join-Path $TestDrive 'metra-surface-ask'
+            $rules = Join-Path $root '.cursor\rules'
+            New-Item -ItemType Directory -Path $rules -Force | Out-Null
+            New-Item -ItemType Directory -Path (Join-Path $root 'engines\vision-ask') -Force | Out-Null
+            Set-Content -LiteralPath (Join-Path $rules 'metra-persona.mdc') -Value 'persona shared' -Encoding utf8
+            Set-Content -LiteralPath (Join-Path $root 'engines\vision-ask\system.md') -Value 'VISION-ONLY-PACK' -Encoding utf8
+
+            $ask = Get-MetraConversationIdentityPrompt -MetraRoot $root -Surface Ask -Posture Desk
+            $vis = Get-MetraConversationIdentityPrompt -MetraRoot $root -Surface Vision -Posture Desk
+            $ask.Text | Should -Not -Match 'VISION-ONLY-PACK'
+            $vis.Text | Should -Match 'VISION-ONLY-PACK'
+            ($ask.PacksOmitted | Where-Object { $_.Id -eq 'vision' }).Reason | Should -Be 'surface_gate'
+            $ask.PacksIncluded | Should -Not -Contain 'vision'
+            $vis.PacksIncluded | Should -Contain 'vision'
+            $ask.IdentityHash | Should -Not -Be $vis.IdentityHash
+            $ask.Text | Should -Match 'Desk Ops chat: same Partner Identity'
+            $vis.Text | Should -Not -Match 'Desk Ops chat: same Partner Identity'
+        }
+    }
+
+    It 'identical effective inputs yield identical hashes (determinism)' {
+        InModuleScope Metra {
+            $root = Join-Path $TestDrive 'metra-hash-det'
+            New-Item -ItemType Directory -Path (Join-Path $root 'engines\vision-ask') -Force | Out-Null
+            Set-Content -LiteralPath (Join-Path $root 'engines\vision-ask\system.md') -Value 'vision' -Encoding utf8
+            $a = Get-MetraConversationIdentityPrompt -MetraRoot $root -Surface Ask -Posture Desk
+            $b = Get-MetraConversationIdentityPrompt -MetraRoot $root -Surface Ask -Posture Desk
+            $a.IdentityHash | Should -Be $b.IdentityHash
         }
     }
 

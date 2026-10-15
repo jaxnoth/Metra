@@ -531,7 +531,7 @@ Describe 'Ask Conversation enforce-ops' {
         $p.Policy | Should -Be 'Deliver'
         $p.Knobs.maxClarifications | Should -Be 0
         $prompt = New-MetraConversationPrompt -Prompt 'Write a short README' -Intent $i -Policy $p -Depth none
-        $prompt | Should -Match 'Deliver-first'
+        $prompt.Text | Should -Match 'Deliver-first'
     }
 
     It 'DeskStrict knobs strip humor/silence and prompt forbids Company mood baggage' {
@@ -541,9 +541,29 @@ Describe 'Ask Conversation enforce-ops' {
         $p.Knobs.humor | Should -BeFalse
         $p.Knobs.silenceOk | Should -BeFalse
         $prompt = New-MetraConversationPrompt -Prompt 'status of SQL' -Intent $i -Policy $p -Depth none -IncidentActive
-        $prompt | Should -Match 'DeskStrict'
-        $prompt | Should -Match 'Humor off'
-        $prompt | Should -Match 're-evaluated each user turn'
+        $prompt.Text | Should -Match 'DeskStrict'
+        $prompt.Text | Should -Match 'Humor off'
+        $prompt.Text | Should -Match 're-evaluated each user turn'
+    }
+
+    It 'Ask Surface loads Conversation Identity without vision system.md and exposes identityHash' {
+        InModuleScope Metra {
+            $root = Join-Path $TestDrive 'metra-ask-id'
+            $rules = Join-Path $root '.cursor\rules'
+            New-Item -ItemType Directory -Path $rules -Force | Out-Null
+            New-Item -ItemType Directory -Path (Join-Path $root 'engines\vision-ask') -Force | Out-Null
+            Set-Content -LiteralPath (Join-Path $rules 'metra-persona.mdc') -Value 'persona ASK' -Encoding utf8
+            Set-Content -LiteralPath (Join-Path $root 'engines\vision-ask\system.md') -Value 'VISION-SYSTEM-SHOULD-NOT-LOAD' -Encoding utf8
+
+            $i = Resolve-MetraAskIntent -Prompt 'check in'
+            $p = Resolve-MetraConversationPolicy -Intent $i
+            $built = New-MetraConversationPrompt -Prompt 'hey' -Intent $i -Policy $p -Depth none -Surface Ask -MetraRoot $root
+            $built.Text | Should -Match 'persona ASK'
+            $built.Text | Should -Match 'Desk Ops chat: same Partner Identity'
+            $built.Text | Should -Not -Match 'VISION-SYSTEM-SHOULD-NOT-LOAD'
+            $built.IdentityHash | Should -Match '^[0-9a-f]{16}$'
+            ($built.PacksOmitted | Where-Object { $_.Id -eq 'vision' }).Reason | Should -Be 'surface_gate'
+        }
     }
 
     It 'Company then work re-eval yields Desk with no Company policy carry' {

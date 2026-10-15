@@ -439,7 +439,7 @@ function Invoke-MetraAskConversationExecution {
             $postureForPrompt = ''
         }
         $promptSurface = 'Ask'
-        $enginePrompt = New-MetraConversationPrompt `
+        $builtPrompt = New-MetraConversationPrompt `
             -Prompt $safePrompt `
             -Intent $intent `
             -Policy $policy `
@@ -448,7 +448,14 @@ function Invoke-MetraAskConversationExecution {
             -Posture $postureForPrompt `
             -PortfolioShaped:$portfolioShaped `
             -ContinuityEvidence $continuityEvidence `
-            -IncidentActive:$IncidentActive
+            -IncidentActive:$IncidentActive `
+            -MetraRoot $MetraRoot
+        $enginePrompt = [string]$builtPrompt.Text
+        $identityHash = [string](Get-MetraProp -Object $builtPrompt -Name 'IdentityHash' -Default '')
+        $packsIncluded = @(Get-MetraProp -Object $builtPrompt -Name 'PacksIncluded' -Default @())
+        $packsOmitted = @(Get-MetraProp -Object $builtPrompt -Name 'PacksOmitted' -Default @())
+        $teachingActive = [bool](Get-MetraProp -Object $builtPrompt -Name 'TeachingActive' -Default $false)
+        $humorActive = [bool](Get-MetraProp -Object $builtPrompt -Name 'HumorActive' -Default $false)
     }
     catch {
         $voice = Format-MetraAskVoiceFromEngine -PathKind 'fallback' -ReasonCode 'policy_overlay_failed' `
@@ -526,6 +533,11 @@ function Invoke-MetraAskConversationExecution {
                     reasonCode                   = [string]$engine.ReasonCode
                     conversationExecutionEnabled = $true
                     evidenceDepth                = $depth
+                    identityHash                 = $identityHash
+                    packsIncluded                = @($packsIncluded)
+                    packsOmitted                 = @($packsOmitted)
+                    teachingActive               = $teachingActive
+                    humorActive                  = $humorActive
                 })
         )
     }
@@ -604,6 +616,11 @@ function Invoke-MetraAskConversationExecution {
                 reasonCode                   = 'ok'
                 conversationExecutionEnabled = $true
                 evidenceDepth                = $depth
+                identityHash                 = $identityHash
+                packsIncluded                = @($packsIncluded)
+                packsOmitted                 = @($packsOmitted)
+                teachingActive               = $teachingActive
+                humorActive                  = $humorActive
             })
     )
 }

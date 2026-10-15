@@ -430,7 +430,9 @@ Describe 'Inspect pack pointer honesty' {
             Mock ConvertTo-MetraInspectScrubbedDiffParts {
                 @([PSCustomObject]@{ path = 'x.ps1'; content = 'new-content'; class = 'code' })
             }
-            Mock Get-MetraInspectInputHash { 'freshhash' }
+            # Pack stale check uses assess-aligned Get-MetraInspectReviewWorkingTreeInputHash
+            # (not Bing-appendix hash). Mock the shared path so pointer vs live diverge.
+            Mock Get-MetraInspectReviewWorkingTreeInputHash { 'freshhash' }
             Mock Set-Clipboard { }
 
             try {
