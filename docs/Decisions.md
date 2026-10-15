@@ -71,6 +71,15 @@ Entry shape:
 - Why: Close Project Loom-lane gap plan without treating Future-Dev as continuity backlog.
 - See: `tests/Invoke-PorterContinuitySmoke.ps1`; `docs/playbooks/project-lane.md`
 
+## 2026-10-15 - MetraHost supervises Cursor My Machines worker
+
+- Decision: **MetraHost** supervises a personal Cursor **My Machines** worker (agent worker) against the Metra checkout so Project/Cloud Agents can run Host/Ops-local tool calls. Ownership stays `Host supervises / Worker executes / Ops reports / Yarn schedules / Project consumes`. The worker is a **sibling** Host-supervised concern - not under OpsBridge desk start, not under Yarn cadence, and **no shared lease** with cadence.
+- Decision: Machine-local config `%LOCALAPPDATA%\Metra\host\cursor-worker.local.json` (example tracked; default `enabled: false`). Bridge `scripts/bootstrap/Invoke-MetraCursorWorkerBridge.ps1` exposes `status` | `ensure` | `stop` | `repair-sqlite` with explicit lifecycle states (`Disabled`, `MissingCli`, `Unauthenticated`, `Starting`, `Running`, `RepairRequired`, `Repairing`, `Error`). `Running` means identity-validated healthy worker (daemon + configured name + expected workspace) - `worker.lock` alone is not healthy.
+- Decision: **v1 fail-closed identity:** missing ours → start; running ours → no-op; dead ours → restart; foreign/ambiguous → `Error` with **no kill and no takeover**. **Exit MetraHost / tray application** stops the owned worker; **Stop desk / Ops runtime** does not.
+- Decision: ABI/`better-sqlite3` mismatch: ensure **detects** → `RepairRequired`; operator runs `repair-sqlite` with persisted attempt ledger; ensure **never** repairs. Failed repair for the same cursor-agent version refuses retry until ledger clear or version change.
+- Why: Project agents need a stable local worker without inventing a second Ops/Yarn supervisor or auto-mutating Cursor native binaries.
+- See: `scripts/private/CursorWorker.ps1`; `scripts/bootstrap/Invoke-MetraCursorWorkerBridge.ps1`; `host/MetraHost/README.md`; desk plan `host_cursor_worker_*`
+
 ## 2026-10-08 - MetraHost owns Yarn/Loom Pulse and Daily cadence
 
 - Decision: **MetraHost** owns Yarn/Loom **Pulse** and **Daily** timing, lease coalescing, and persisted due-state (`%LOCALAPPDATA%\Metra\host-cadence.json`, `enabled` default false). Host invokes existing `Invoke-MetraYarnLoomSchedule` only via HostBridge (`cadence-tick`, CreateNoWindow). Yarn keeps stage semantics and exit codes 0-4 as **cadence health** (never Host process exit).

@@ -8,6 +8,7 @@ internal sealed class TrayApp : ApplicationContext
     private readonly int _port;
     private readonly bool _noBrowser;
     private readonly OpsBridge _bridge;
+    private readonly CursorWorkerBridge _workerBridge;
     private readonly HostStateStore _state;
     private readonly NotifyIcon _notify;
     private readonly System.Windows.Forms.Timer _timer;
@@ -22,10 +23,15 @@ internal sealed class TrayApp : ApplicationContext
     private DateTime _nextAttemptUtc = DateTime.MinValue;
     private DateTime _nextUpdateCheckUtc = DateTime.UtcNow;
     private DateTime _nextCadenceEvalUtc = DateTime.MinValue;
+    private DateTime _nextWorkerEnsureUtc = DateTime.MinValue;
     private int _cadenceBusy;
+    private int _workerBusy;
     private Task? _cadenceTask;
+    private Task? _workerTask;
     private string? _lastError;
     private string? _updateNotifiedKey;
+    private string _workerStateLabel = "Disabled";
+    private const int WorkerEnsureThrottleSeconds = 45;
 
     private TrayApp(string metraRoot, int port, bool noBrowser, Mutex mutex, bool startupEnabled)
     {
@@ -34,7 +40,9 @@ internal sealed class TrayApp : ApplicationContext
         _noBrowser = noBrowser;
         _mutex = mutex;
         _bridge = new OpsBridge(metraRoot);
+        _workerBridge = new CursorWorkerBridge(metraRoot);
         _state = new HostStateStore(port, DateTime.UtcNow.ToString("o"));
+        RefreshTrayTooltip();
 
         var iconPath = HostPaths.ResolveIconPath(metraRoot);
         Icon icon;
@@ -206,8 +214,9 @@ internal sealed class TrayApp : ApplicationContext
             }
         }
 
-        // Yarn cadence is Host-owned; keep evaluating even if desk is stopped.
+        // Yarn cadence and Cursor worker are Host-owned; keep evaluating even if desk is stopped.
         MaybeCadenceTick();
+        MaybeWorkerEnsure();
 
         if (_deskStopped)
         {
@@ -373,6 +382,29 @@ internal sealed class TrayApp : ApplicationContext
 
     private void ExitMetra()
     {
+        _intentionalExit = true;
+        // Prevent a racing ensure from restarting the worker after we stop it.
+        _nextWorkerEnsureUtc = DateTime.MaxValue;
+        WaitForWorkerShutdown();
+
+        // MetraHost/tray exit owns worker shutdown. Stop desk does not.
+        try
+        {
+            var stop = _workerBridge.Invoke("stop", timeoutMs: 60_000, skipDebug: true);
+            if (!stop.Ok)
+            {
+                HostLog.Write($"Cursor worker stop on exit failed - {stop.Error ?? stop.LastError}", "warn");
+            }
+            else if (!string.IsNullOrWhiteSpace(stop.State))
+            {
+                _workerStateLabel = stop.State!;
+            }
+        }
+        catch (Exception ex)
+        {
+            HostLog.Write($"Cursor worker stop on exit exception - {ex.Message}", "warn");
+        }
+
         try
         {
             _bridge.Invoke("stop-desk", _port);
@@ -382,10 +414,141 @@ internal sealed class TrayApp : ApplicationContext
             // ignore
         }
 
-        _intentionalExit = true;
         _state.Write("stopped");
         Cleanup(writeUnsupervised: false);
         ExitThread();
+    }
+
+    /// <summary>
+    /// Host-owned Cursor My Machines worker ensure. Throttled; CreateNoWindow via bridge.
+    /// Stop desk must not call worker stop - only ExitMetra / tray exit.
+    /// </summary>
+    private void MaybeWorkerEnsure()
+    {
+        if (_intentionalExit || _cleanedUp)
+        {
+            return;
+        }
+
+        if (DateTime.UtcNow < _nextWorkerEnsureUtc)
+        {
+            return;
+        }
+
+        _nextWorkerEnsureUtc = DateTime.UtcNow.AddSeconds(WorkerEnsureThrottleSeconds);
+
+        if (!CursorWorkerBridge.IsEnabledInConfig())
+        {
+            if (!string.Equals(_workerStateLabel, "Disabled", StringComparison.Ordinal))
+            {
+                _workerStateLabel = "Disabled";
+                RefreshTrayTooltip();
+            }
+
+            return;
+        }
+
+        if (Interlocked.CompareExchange(ref _workerBusy, 1, 0) != 0)
+        {
+            return;
+        }
+
+        _workerTask = Task.Run(() =>
+        {
+            try
+            {
+                if (_intentionalExit || _cleanedUp)
+                {
+                    return;
+                }
+
+                var r = _workerBridge.Invoke("ensure", timeoutMs: 120_000);
+                var state = string.IsNullOrWhiteSpace(r.State) ? (r.Ok ? "Running" : "Error") : r.State!;
+                _workerStateLabel = state;
+                if (!r.Ok)
+                {
+                    HostLog.Write(
+                        $"Cursor worker ensure failed state={state} - {r.LastError ?? r.Error}",
+                        "warn");
+                }
+                else if (!string.Equals(state, "Running", StringComparison.OrdinalIgnoreCase) &&
+                         !string.Equals(state, "Disabled", StringComparison.OrdinalIgnoreCase))
+                {
+                    HostLog.Write($"Cursor worker ensure state={state} - {r.LastError ?? r.Message}");
+                }
+
+                try
+                {
+                    if (!_cleanedUp)
+                    {
+                        // Tooltip updates must be on UI thread.
+                        if (_notify.ContextMenuStrip?.InvokeRequired == true)
+                        {
+                            _notify.ContextMenuStrip.BeginInvoke(new Action(RefreshTrayTooltip));
+                        }
+                        else
+                        {
+                            RefreshTrayTooltip();
+                        }
+                    }
+                }
+                catch
+                {
+                    // ignore tooltip races during shutdown
+                }
+            }
+            catch (Exception ex)
+            {
+                _workerStateLabel = "Error";
+                HostLog.Write($"Cursor worker ensure exception - {ex.Message}", "warn");
+            }
+            finally
+            {
+                Interlocked.Exchange(ref _workerBusy, 0);
+            }
+        });
+    }
+
+    private void WaitForWorkerShutdown()
+    {
+        var task = _workerTask;
+        if (task is null)
+        {
+            return;
+        }
+
+        try
+        {
+            if (!task.Wait(TimeSpan.FromSeconds(15)))
+            {
+                HostLog.Write(
+                    "Cursor worker ensure still running after 15s shutdown wait - Host exiting.",
+                    "warn");
+            }
+        }
+        catch (Exception ex)
+        {
+            HostLog.Write($"Cursor worker shutdown wait failed - {ex.Message}", "warn");
+        }
+    }
+
+    private void RefreshTrayTooltip()
+    {
+        try
+        {
+            var desk = _deskStopped ? "desk stopped" : "desk";
+            var text = $"Metra Ops ({desk}; worker {_workerStateLabel})";
+            if (text.Length > 63)
+            {
+                text = text[..63];
+            }
+
+            _notify.Text = text;
+        }
+        catch
+        {
+            // ignore tooltip failures
+        }
     }
 
     private void ToggleStartup()
@@ -596,6 +759,7 @@ internal sealed class TrayApp : ApplicationContext
         }
 
         WaitForCadenceShutdown();
+        WaitForWorkerShutdown();
 
         try
         {

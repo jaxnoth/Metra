@@ -1,0 +1,7 @@
+{
+  "schemaVersion": 1,
+  "enabled": false,
+  "name": "metra-host",
+  "workerDirs": [],
+  "idleReleaseTimeoutSeconds": 0
+}
