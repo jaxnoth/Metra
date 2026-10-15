@@ -358,7 +358,8 @@ function Get-MetraCursorWorkerProcessSnapshots {
             CommandLine   = $cl
         }
     }
-    return $rows
+    # Unary comma keeps an empty Object[] from unwrapping to $null for the caller.
+    return ,$rows
 }
 
 function Test-MetraCursorWorkerProcessAlive {
@@ -389,9 +390,11 @@ function Resolve-MetraCursorWorkerIdentity {
     $expectedName = [string]$Config.name
     $expectedWs = Get-MetraCursorWorkerExpectedWorkspace -Config $Config -MetraRoot $MetraRoot
     $runtime = Read-MetraCursorWorkerRuntime -Path $RuntimePath -MetraRoot $MetraRoot
-    $observed = @($Observed)
-    if ($null -eq $Observed) {
-        $observed = @(Get-MetraCursorWorkerProcessSnapshots)
+    if ($PSBoundParameters.ContainsKey('Observed')) {
+        $observed = @($Observed | Where-Object { $null -ne $_ })
+    }
+    else {
+        $observed = @(Get-MetraCursorWorkerProcessSnapshots | Where-Object { $null -ne $_ })
     }
 
     $ours = @()

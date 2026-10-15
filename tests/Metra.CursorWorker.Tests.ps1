@@ -133,6 +133,22 @@ Describe 'Metra Cursor Worker' {
         # Ensure must not call repair - status/ensure stay operator-gated; only assert ledger persistence here.
     }
 
+    It 'treats empty process snapshot as missing ours (not foreign)' {
+        @{
+            schemaVersion = 1
+            enabled       = $true
+            name          = 'metra-host'
+            workerDirs    = @($script:MetraRoot)
+            idleReleaseTimeoutSeconds = 0
+        } | ConvertTo-Json | Set-Content -LiteralPath $script:ConfigPath -Encoding utf8
+        $cfg = Read-MetraCursorWorkerConfig -Path $script:ConfigPath -MetraRoot $script:MetraRoot
+        # Explicit empty observed list must not fail-closed as foreign.
+        $id = Resolve-MetraCursorWorkerIdentity -Config $cfg -MetraRoot $script:MetraRoot `
+            -RuntimePath $script:RuntimePath -Observed @()
+        $id.kind | Should -Be 'missing'
+        $id.identityOk | Should -BeFalse
+    }
+
     It 'bridge status returns JSON (default config is Disabled)' {
         $bridge = Join-Path $script:MetraRoot 'scripts\bootstrap\Invoke-MetraCursorWorkerBridge.ps1'
         # Default / missing machine-local config is enabled=false - do not rewrite operator config here.
