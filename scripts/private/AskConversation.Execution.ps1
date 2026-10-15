@@ -439,6 +439,8 @@ function Invoke-MetraAskConversationExecution {
             $postureForPrompt = ''
         }
         $promptSurface = 'Ask'
+        $synthesisResolved = Resolve-MetraAskSynthesisMode -Prompt $safePrompt -Intent $intent -EvidencePack $pack
+        $synthesisMode = [string](Get-MetraProp -Object $synthesisResolved -Name 'Mode' -Default 'None')
         $builtPrompt = New-MetraConversationPrompt `
             -Prompt $safePrompt `
             -Intent $intent `
@@ -449,7 +451,8 @@ function Invoke-MetraAskConversationExecution {
             -PortfolioShaped:$portfolioShaped `
             -ContinuityEvidence $continuityEvidence `
             -IncidentActive:$IncidentActive `
-            -MetraRoot $MetraRoot
+            -MetraRoot $MetraRoot `
+            -SynthesisMode $synthesisMode
         $enginePrompt = [string]$builtPrompt.Text
         $identityHash = [string](Get-MetraProp -Object $builtPrompt -Name 'IdentityHash' -Default '')
         $packsIncluded = @(Get-MetraProp -Object $builtPrompt -Name 'PacksIncluded' -Default @())
@@ -621,6 +624,7 @@ function Invoke-MetraAskConversationExecution {
                 packsOmitted                 = @($packsOmitted)
                 teachingActive               = $teachingActive
                 humorActive                  = $humorActive
+                synthesisMode                = $synthesisMode
             })
     )
 }

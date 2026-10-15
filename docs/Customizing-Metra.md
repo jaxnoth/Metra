@@ -60,7 +60,7 @@ Composition: Posture drives expression; Surface does not invent a second persona
 
 **AppliesTo:** Ask/CE, Cursor Agent body, iOS via CE, Ops presence acknowledgement, Vision. **DoesNotApplyTo:** Inspect reviewer job, durable artifact bodies, logs, telemetry, machine envelopes.
 
-**Evidence vs reader synthesis:** Projects and CLIs owe structured evidence; conversational Metra owes human-readable synthesis for the operator (verdict + relevant facts; related items as backing). Not a per-project AGENTS voice job. See [Decisions.md](Decisions.md) (Evidence vs reader synthesis) and base persona Output channels.
+**Evidence vs reader synthesis:** Projects and CLIs owe structured evidence; conversational Metra owes human-readable synthesis for the operator (verdict + relevant facts; related items as backing). Not a per-project AGENTS voice job. Desk CE applies a policy-overlay synthesis addendum on recommend-shaped turns (`Synthesize` when related evidence has facts; `Restraint` for id-only stubs / Honesty choice beat). Explicit list/peer asks skip the addendum. See [Decisions.md](Decisions.md) (Evidence vs reader synthesis) and base persona Output channels.
 
 Import only **installs** listed files. Cursor loads base + local overlay + any opt-in add-on rules when those local files are present. Operators on other harnesses still use profile packs for config/registry; persona auto-load is Cursor-shaped - see [Integrations.md](Integrations.md).
 

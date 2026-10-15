@@ -575,6 +575,77 @@ Describe 'Ask Conversation enforce-ops' {
         $p2.Policy | Should -BeIn @('Desk', 'Auto')
         $p2.Policy | Should -Not -Be 'Company'
     }
+
+    It 'synthesis-recommend: recommend-shaped + factual related evidence loads Synthesize addendum' {
+        $prompt = 'What should I do on ticket 123456?'
+        $i = Resolve-MetraAskIntent -Prompt $prompt
+        $pack = [PSCustomObject]@{
+            items = @(
+                [PSCustomObject]@{
+                    kind           = 'ticket'
+                    label          = 'Ticket 123456'
+                    excerpt        = 'Disk full on prd-sql01; last brief says clear temp and expand volume.'
+                    factualSupport = $true
+                }
+                [PSCustomObject]@{
+                    kind           = 'ticket'
+                    label          = 'Similar 111111'
+                    excerpt        = 'Prior disk alert cleared after temp purge.'
+                    factualSupport = $true
+                }
+            )
+        }
+        $mode = Resolve-MetraAskSynthesisMode -Prompt $prompt -Intent $i -EvidencePack $pack
+        $mode.Mode | Should -Be 'Synthesize'
+        $p = Resolve-MetraConversationPolicy -Intent $i
+        $built = New-MetraConversationPrompt -Prompt $prompt -Intent $i -Policy $p -Depth full -SynthesisMode Synthesize
+        $built.SynthesisMode | Should -Be 'Synthesize'
+        $built.Text | Should -Match 'Evidence vs reader synthesis \(required this turn\)'
+        $built.Text | Should -Match 'verdict first'
+        $built.Text | Should -Match 'Do not hand a related-item'
+    }
+
+    It 'list-peers-ok: explicit list ask skips synthesis addendum' {
+        $prompt = 'List related tickets for 123456'
+        $i = Resolve-MetraAskIntent -Prompt $prompt
+        Test-MetraAskExplicitListPeersIntent -Prompt $prompt | Should -BeTrue
+        $pack = [PSCustomObject]@{
+            items = @(
+                [PSCustomObject]@{ kind = 'ticket'; label = '111'; factualSupport = $true; excerpt = 'peer A' }
+            )
+        }
+        $mode = Resolve-MetraAskSynthesisMode -Prompt $prompt -Intent $i -EvidencePack $pack
+        $mode.Mode | Should -Be 'None'
+        $mode.Reason | Should -Be 'explicit_list_peers'
+        $p = Resolve-MetraConversationPolicy -Intent $i
+        $built = New-MetraConversationPrompt -Prompt $prompt -Intent $i -Policy $p -Depth full -SynthesisMode None
+        $built.SynthesisMode | Should -Be 'None'
+        # Identity packs may mention the scar by name; CE turn addendum must stay off for list asks.
+        $built.Text | Should -Not -Match 'Evidence vs reader synthesis \(required this turn\)'
+        $built.Text | Should -Not -Match 'Evidence vs reader synthesis \(restraint this turn\)'
+    }
+
+    It 'recommend-shaped id-only related uses Restraint choice-beat addendum' {
+        $prompt = 'What should I recommend on ticket 123456?'
+        $i = Resolve-MetraAskIntent -Prompt $prompt
+        $pack = [PSCustomObject]@{
+            items = @(
+                [PSCustomObject]@{
+                    kind           = 'ticket'
+                    label          = 'Ticket id 123456'
+                    excerpt        = 'Ticket id 123456 detected'
+                    factualSupport = $false
+                }
+            )
+        }
+        $mode = Resolve-MetraAskSynthesisMode -Prompt $prompt -Intent $i -EvidencePack $pack
+        $mode.Mode | Should -Be 'Restraint'
+        $p = Resolve-MetraConversationPolicy -Intent $i
+        $built = New-MetraConversationPrompt -Prompt $prompt -Intent $i -Policy $p -Depth full -SynthesisMode Restraint
+        $built.Text | Should -Match 'Evidence vs reader synthesis \(restraint this turn\)'
+        $built.Text | Should -Match 'do not invent a recommendation'
+        $built.Text | Should -Match 'agency-visible hold'
+    }
 }
 
 Describe 'Ask Conversation spark-or-quiet + seam-resume' {

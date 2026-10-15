@@ -1,5 +1,135 @@
 # Ask Conversation Engine - policy overlay prompt + typed engine envelope.
 
+function Test-MetraAskExplicitListPeersIntent {
+    <#
+    .SYNOPSIS
+        True when the operator explicitly asked to list related/similar peers (synthesis off).
+    #>
+    [CmdletBinding()]
+    param([AllowEmptyString()][string]$Prompt = '')
+
+    $q = if ($null -eq $Prompt) { '' } else { $Prompt.Trim() }
+    if ([string]::IsNullOrWhiteSpace($q)) { return $false }
+    return [bool](
+        $q -match '(?i)\b(list|show|dump|enumerate)\b.+\b(related|similar|peer|peers)\b' `
+            -or $q -match '(?i)\b(related|similar)\b.+\b(tickets?|items?|peers?)\b.+\b(list|show|what are)\b' `
+            -or $q -match '(?i)\b(list|show)\b.+\b(related|similar)\b.+\b(tickets?|items?)\b' `
+            -or $q -match '(?i)^(list|show)\s+(related|similar|peers?)\b'
+    )
+}
+
+function Test-MetraAskRecommendShapedIntent {
+    <#
+    .SYNOPSIS
+        True when the ask is recommend / situation-read shaped (Evidence vs reader synthesis candidate).
+    #>
+    [CmdletBinding()]
+    param(
+        [AllowEmptyString()][string]$Prompt = '',
+        $Intent
+    )
+
+    if (Test-MetraAskExplicitListPeersIntent -Prompt $Prompt) { return $false }
+
+    $intentClass = [string](Get-MetraProp -Object $Intent -Name 'IntentClass' -Default 'work')
+    if ($intentClass -in @('check_in', 'capability', 'empty', 'capture', 'authority_write', 'artifact_request')) {
+        return $false
+    }
+    if ($intentClass -match '^(intimacy_|support_|companionship)') { return $false }
+
+    $q = if ($null -eq $Prompt) { '' } else { $Prompt.Trim() }
+    if ([string]::IsNullOrWhiteSpace($q)) { return $false }
+
+    return [bool](
+        $q -match '(?i)\b(what should i (do|say|recommend)|how should i (handle|triage|respond|proceed)|recommend(ation)?\b|advice on|next step(s)?\b|triage\b|situation (read|assessment)|what do you (think|recommend))\b' `
+            -or $q -match '(?i)\b(should i|would you recommend)\b' `
+            -or ($intentClass -eq 'work' -and $q -match '(?i)\b(ticket|incident|recommend|similar|brief)\b' -and $q -match '(?i)\b(do|handle|fix|resolve|next|advice|think)\b')
+    )
+}
+
+function Resolve-MetraAskSynthesisMode {
+    <#
+    .SYNOPSIS
+        None | Synthesize | Restraint for Desk CE Evidence vs reader synthesis addendum.
+    .NOTES
+        List-peer asks -> None. Recommend-shaped + factual related evidence -> Synthesize.
+        Recommend-shaped + id-only / thin peer stubs -> Restraint (no invented verdict, no peer-list-as-answer).
+    #>
+    [CmdletBinding()]
+    param(
+        [AllowEmptyString()][string]$Prompt = '',
+        $Intent,
+        $EvidencePack
+    )
+
+    if (Test-MetraAskExplicitListPeersIntent -Prompt $Prompt) {
+        return [PSCustomObject]@{ Mode = 'None'; Reason = 'explicit_list_peers' }
+    }
+    if (-not (Test-MetraAskRecommendShapedIntent -Prompt $Prompt -Intent $Intent)) {
+        return [PSCustomObject]@{ Mode = 'None'; Reason = 'not_recommend_shaped' }
+    }
+
+    $items = @($(Get-MetraProp -Object $EvidencePack -Name 'items' -Default @()) | ForEach-Object { $_ })
+    $relatedKinds = @('ticket', 'brief')
+    $related = @($items | Where-Object {
+            $k = [string](Get-MetraProp -Object $_ -Name 'kind' -Default '')
+            $k -in $relatedKinds
+        })
+    $withFacts = @($related | Where-Object {
+            [bool](Get-MetraProp -Object $_ -Name 'factualSupport' -Default $false)
+        })
+
+    if ($withFacts.Count -gt 0) {
+        return [PSCustomObject]@{
+            Mode              = 'Synthesize'
+            Reason            = 'recommend_with_related_facts'
+            RelatedCount      = $related.Count
+            FactualRelatedCount = $withFacts.Count
+        }
+    }
+    if ($related.Count -gt 0) {
+        return [PSCustomObject]@{
+            Mode         = 'Restraint'
+            Reason       = 'recommend_id_only_related'
+            RelatedCount = $related.Count
+            FactualRelatedCount = 0
+        }
+    }
+
+    # Recommend-shaped but no ticket/brief peers in pack - still restrain peer-list-as-answer if context may grow.
+    return [PSCustomObject]@{
+        Mode         = 'Restraint'
+        Reason       = 'recommend_without_related_facts'
+        RelatedCount = 0
+        FactualRelatedCount = 0
+    }
+}
+
+function Get-MetraAskSynthesisAddendumLines {
+    <#
+    .SYNOPSIS
+        CE policy-overlay lines for Evidence vs reader synthesis (chat voice only).
+    #>
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory)]
+        [ValidateSet('None', 'Synthesize', 'Restraint')]
+        [string]$Mode
+    )
+
+    $lines = [System.Collections.Generic.List[string]]::new()
+    switch ($Mode) {
+        'Synthesize' {
+            [void]$lines.Add('Evidence vs reader synthesis (required this turn): verdict first; pull relevant facts from brief/notes/similar evidence; cite related ticket/item IDs only as backing. Do not hand a related-item or peer list as the recommendation or answer.')
+        }
+        'Restraint' {
+            [void]$lines.Add('Evidence vs reader synthesis (restraint this turn): do not invent a recommendation from id-only stubs or empty peer lists. Do not dump related IDs as the answer. Prefer one plain agency-visible hold when a firm verdict is not supported - capable of listing peers or guessing, choosing not to because evidence is thin - then stop. Prefer silence on the gap when the limit already reads clearly.')
+        }
+        default { }
+    }
+    return @($lines)
+}
+
 function New-MetraConversationPrompt {
     <#
     .SYNOPSIS
@@ -21,7 +151,9 @@ function New-MetraConversationPrompt {
         [switch]$PortfolioShaped,
         $ContinuityEvidence,
         [switch]$IncidentActive,
-        [string]$MetraRoot = (Get-MetraRoot)
+        [string]$MetraRoot = (Get-MetraRoot),
+        [ValidateSet('', 'None', 'Synthesize', 'Restraint')]
+        [string]$SynthesisMode = ''
     )
 
     $intentClass = [string](Get-MetraProp -Object $Intent -Name 'IntentClass' -Default 'work')
@@ -33,6 +165,9 @@ function New-MetraConversationPrompt {
     if ([string]::IsNullOrWhiteSpace($resolvedPosture) -and -not [string]::IsNullOrWhiteSpace($policyName) -and $policyName -ne 'Auto') {
         $resolvedPosture = $policyName
     }
+
+    $resolvedSynthesis = $SynthesisMode
+    if ([string]::IsNullOrWhiteSpace($resolvedSynthesis)) { $resolvedSynthesis = 'None' }
 
     $identity = $null
     $lines = [System.Collections.Generic.List[string]]::new()
@@ -89,6 +224,11 @@ function New-MetraConversationPrompt {
             [void]$lines.Add('Do not ask clarifying questions this turn; answer with what you have or state the gap.')
         }
     }
+    foreach ($synthLine in @(Get-MetraAskSynthesisAddendumLines -Mode $resolvedSynthesis)) {
+        if (-not [string]::IsNullOrWhiteSpace($synthLine)) {
+            [void]$lines.Add($synthLine)
+        }
+    }
     [void]$lines.Add('Policy is re-evaluated each user turn - do not carry Company mood or silence posture into Desk/Deliver/DeskStrict turns.')
     [void]$lines.Add('')
     [void]$lines.Add($Prompt)
@@ -100,6 +240,7 @@ function New-MetraConversationPrompt {
         PacksOmitted   = $(if ($identity) { @(Get-MetraProp -Object $identity -Name 'PacksOmitted' -Default @()) } else { @() })
         TeachingActive = $(if ($identity) { [bool](Get-MetraProp -Object $identity -Name 'TeachingActive' -Default $false) } else { $false })
         HumorActive    = $(if ($identity) { [bool](Get-MetraProp -Object $identity -Name 'HumorActive' -Default $false) } else { $false })
+        SynthesisMode  = $resolvedSynthesis
     }
 }
 
