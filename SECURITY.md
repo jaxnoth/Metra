@@ -48,11 +48,24 @@ Deny patterns are the default (`.\metra.ps1 security-audit`). Any allowlist exce
 
 ```powershell
 .\metra.ps1 security-audit
+.\metra.ps1 security-audit -Force   # exit 1 when FAIL remains (required before public push)
 .\metra.ps1 security-audit -Path C:\path\to\TicketTracker
 .\metra.ps1 verify   # includes security-audit FAIL as verify FAIL
 ```
 
 Scan scope: **tracked files** (`git ls-files`) including `site/**` and `packaging/**` source. Built installer binaries are not scanned; rebuild after scrub.
+
+Deny patterns also cover operator-identifying shapes (Tailscale CGNAT `100.64/10`, Apple hardware UDID, known lab MagicDNS, operator usernames/hosts). Put real station values only in gitignored locals (`%LOCALAPPDATA%\Metra\ios-gate.local.json`, `clients/ios/docs/station.local.md`, `Config/Local.xcconfig`).
+
+### Public push gate
+
+Before **`git push` to a public remote** (GitHub/GitLab) or from the Metra product checkout:
+
+1. `.\metra.ps1 security-audit -Force` must be clean (no non-allowlisted FAIL).
+2. For a meaningful ship bite, also run a **security review** that includes identifying-information exposure (same bar as the Cursor security-review pass: secrets, auth, plus names, UDIDs, hostnames, Tailscale addresses, absolute home paths with usernames, device tokens in UI).
+3. Git enforcement: `.\metra.ps1 inspect hooks install` installs `scripts/githooks/pre-push`, which blocks public/Metra pushes when security-audit FAIL remains. Emergency skip: `METRA_SKIP_SECURITY_PUSH=1` (operator-owned; do not use for routine public ships).
+
+Agents must not `git push` a public Metra remote until steps 1-2 are satisfied. See [docs/playbooks/public-push-security.md](docs/playbooks/public-push-security.md).
 
 ### Stage 2 history rewrite
 

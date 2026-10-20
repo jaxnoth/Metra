@@ -6,6 +6,13 @@
         "command": "powershell -NoProfile -ExecutionPolicy Bypass -File .cursor/hooks/session-snapshot.ps1",
         "timeout": 90
       }
+    ],
+    "beforeShellExecution": [
+      {
+        "command": "powershell -NoProfile -ExecutionPolicy Bypass -File .cursor/hooks/public-push-security.ps1",
+        "matcher": "git(\\s+|\\.exe\\s+)push",
+        "timeout": 30
+      }
     ]
   }
 }

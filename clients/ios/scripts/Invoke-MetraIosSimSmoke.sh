@@ -1,6 +1,6 @@
 #!/bin/zsh
 # Simulator smoke: build, install, launch MetraCompanion. Does not claim Ask works
-# (HQ Invoke-MetraIosReachVerify.ps1 owns reach). Run on iwu75208-mac.
+# (HQ Invoke-MetraIosReachVerify.ps1 owns reach). Run on the Mac build station.
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"

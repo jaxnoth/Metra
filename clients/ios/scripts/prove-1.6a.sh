@@ -1,13 +1,16 @@
 #!/bin/zsh
 # Device prove (build + install + LaunchAgent). Prefer GUI Terminal / unlocked keychain.
-# Alias: ~/prove-metra -> this script on iwu75208-mac.
+# Alias: ~/prove-metra -> this script on the Mac build station.
 # Resolve symlinks so ~/prove-metra still finds clients/ios (scar 2026-10-17).
 set -euo pipefail
 SCRIPT_PATH="${0:A}"
 SCRIPT_DIR="${SCRIPT_PATH:h}"
 IOS_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 cd "$IOS_ROOT"
-export METRA_IOS_UDID="${METRA_IOS_UDID:-00008130-0009142834F2001C}"
+# Hardware UDID is operator-local - set METRA_IOS_UDID or let Rebuild auto-detect.
+if [[ -z "${METRA_IOS_UDID:-}" ]]; then
+  echo "METRA_IOS_UDID unset - Rebuild will auto-detect a connected iPhone."
+fi
 chmod +x scripts/Rebuild-MetraCompanion-Device.sh scripts/Invoke-MetraIosSimSmoke.sh 2>/dev/null || true
 ./scripts/Rebuild-MetraCompanion-Device.sh
 echo "PROVE_BUILD_OK"

@@ -37,6 +37,7 @@ Triggers: Metra home, routing, ctx, registry, inspect, profile, decisions, works
 - Portfolio facts need a declared home ([docs/Decisions.md](docs/Decisions.md)) - no parallel homes; no OCC for product policy.
 - Idea/brainstorm: conversational until the operator asks to implement (no edit, commit, or PR).
 - Meaningful code changes: inspect loop ([docs/playbooks/inspect-loop.md](docs/playbooks/inspect-loop.md)).
+- Before `git push` to a public remote (or Metra product checkout): `.\metra.ps1 security-audit -Force` clean; for ship bites also security-review including identifying info ([docs/playbooks/public-push-security.md](docs/playbooks/public-push-security.md)).
 - Durable artifacts: professional prose only; chat may use Metra voice.
 
 ## On-demand playbooks
@@ -54,6 +55,7 @@ Triggers: Metra home, routing, ctx, registry, inspect, profile, decisions, works
 | station install/update, TicketTracker/Codex releases | [docs/playbooks/station-updates.md](docs/playbooks/station-updates.md) |
 | pack station zip after TT/Codex ship | station project `AGENTS.md` Station release + `docs/Station-Release.md`; `build/Pack-Release.ps1` |
 | grep scope, cloud chats, token discipline | [docs/playbooks/token-rules.md](docs/playbooks/token-rules.md) |
+| public push, security-audit, identifying info | [docs/playbooks/public-push-security.md](docs/playbooks/public-push-security.md), [SECURITY.md](SECURITY.md) |
 | multi-root Grep echo, path scoping | [docs/playbooks/search-echo.md](docs/playbooks/search-echo.md) |
 | audit, selfdoc, verify, registry maintenance | [docs/playbooks/maintenance-audit.md](docs/playbooks/maintenance-audit.md) |
 | Tailscale, DNSFilter, campus hosts, Serve enable | [docs/playbooks/tailscale-campus.md](docs/playbooks/tailscale-campus.md) |

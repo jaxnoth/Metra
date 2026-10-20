@@ -27,6 +27,11 @@ function Get-MetraSecuritySurfaceDenyPatterns {
         [PSCustomObject]@{ Id = 'host-build-mac'; Class = 'InternalTopology'; Pattern = "(?i)$orgA" + '75208'; Severity = 'FAIL' }
         [PSCustomObject]@{ Id = 'device-phone'; Class = 'InternalTopology'; Pattern = '(?i)\bSwan' + 'Mobile\b'; Severity = 'FAIL' }
         [PSCustomObject]@{ Id = 'vip-campus'; Class = 'InternalTopology'; Pattern = '\b45\.54\.28\.11\b'; Severity = 'FAIL' }
+        # Tailscale carrier-grade NAT /10 and Apple hardware UDID / Team shapes - operator identity.
+        # ts-cgnat is skipped under tests/ (synthetic peers); see Invoke-MetraSecuritySurfaceAudit.
+        [PSCustomObject]@{ Id = 'ts-cgnat'; Class = 'InternalTopology'; Pattern = '\b100\.(6[4-9]|[7-9][0-9]|1[0-1][0-9]|12[0-7])\.\d{1,3}\.\d{1,3}\b'; Severity = 'FAIL' }
+        [PSCustomObject]@{ Id = 'apple-udid'; Class = 'InternalTopology'; Pattern = '\b0000[0-9A-Fa-f]{4}-[0-9A-Fa-f]{16}\b'; Severity = 'FAIL' }
+        [PSCustomObject]@{ Id = 'apple-team'; Class = 'InternalTopology'; Pattern = '\b642' + 'GT45K9V\b'; Severity = 'FAIL' }
         [PSCustomObject]@{ Id = 'vendor-restricted'; Class = 'RestrictedDataMap'; Pattern = "(?i)\b$vend\b"; Severity = 'FAIL' }
         [PSCustomObject]@{ Id = 'db-dm-hr'; Class = 'RestrictedDataMap'; Pattern = "(?i)\b$dmHr\b"; Severity = 'FAIL' }
         [PSCustomObject]@{ Id = 'fn-vendor'; Class = 'RestrictedDataMap'; Pattern = "(?i)$fnVend"; Severity = 'FAIL' }
@@ -177,6 +182,10 @@ function Invoke-MetraSecuritySurfaceAudit {
             $line = $lines[$i]
             foreach ($p in $patterns) {
                 if ($line -notmatch $p.Pattern) { continue }
+                # Synthetic Tailscale peers in Pester; do not fail the public-surface gate on fixtures.
+                if ($p.Id -eq 'ts-cgnat' -and ($f.RelativePath -match '(?i)^tests[\\/]')) { continue }
+                # Pattern source comments must not self-FAIL the scanner file.
+                if ($p.Id -eq 'ts-cgnat' -and ($f.RelativePath -match '(?i)SecuritySurface\.ps1$')) { continue }
                 $allowed = $false
                 $note = ''
                 foreach ($e in $allowEntries) {

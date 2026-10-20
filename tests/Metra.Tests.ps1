@@ -5884,6 +5884,7 @@ Describe 'Ops Ask sidecar stability (reach)' {
         $prove | Should -Match 'Render LaunchAgent from this checkout'
         $prove | Should -Match 'cat > "\$DEST_PLIST"'
         $prove | Should -Not -Match 'cp -f scripts/com\.metra\.companion\.weekly-reinstall\.plist'
+        $prove | Should -Not -Match '0000[0-9A-Fa-f]{4}-'
         $rebuild = Get-Content -LiteralPath (Join-Path $ios 'scripts\Rebuild-MetraCompanion-Device.sh') -Raw
         # Scar: device discovery JSON must use private mktemp, not fixed /tmp/metra-devices.json.
         $rebuild | Should -Match 'mktemp -t metra-devices'
@@ -5910,6 +5911,24 @@ Describe 'Ops Ask sidecar stability (reach)' {
         # Cross-platform: formal gate must not hardcode a Windows-only shell filename under $PSHOME.
         $gate | Should -Not -Match 'pwsh\.exe'
         $gate | Should -Match 'Get-Process -Id \$PID'
+        # Scar: SSH host keys fail closed (no accept-new); no committed operator SSH identity.
+        $gate | Should -Match 'StrictHostKeyChecking=yes'
+        $gate | Should -Not -Match 'StrictHostKeyChecking=accept-new'
+        $gate | Should -Not -Match 'stephen\.swan@'
+        $reach | Should -Not -Match 'emerald-banana'
+        $localGate = Get-Content -LiteralPath (Join-Path $ios 'scripts\Resolve-MetraIosGateLocal.ps1') -Raw
+        $localGate | Should -Match 'hq\.example\.ts\.net'
+        # Scar: AppData path only when LOCALAPPDATA is set; prefer repo-local ios-gate.local.json.
+        $localGate | Should -Match 'IsNullOrWhiteSpace\(\$appDataRoot\)'
+        $localGate | Should -Match 'PSScriptRoot'
+        $localGate | Should -Match 'ios-gate\.local\.json'
+        # Scar: StrictMode-safe local JSON property reads when config missing.
+        $localGate | Should -Match "PSObject\.Properties\[\$Name\]"
+        $prePush = Get-Content -LiteralPath (Join-Path $root 'scripts\githooks\pre-push.ps1') -Raw
+        # Scar: reset inherited $LASTEXITCODE before in-process security-audit.
+        $prePush | Should -Match '\$LASTEXITCODE = 0'
+        $prePush | Should -Match '-not \$\? -or \$LASTEXITCODE -ne 0'
+        $prePush | Should -Match '\$effectiveRemote'
         # Scar: worker runtime liveness fails closed without parseable startedUtc.
         $workerBridge = Get-Content -LiteralPath (Join-Path $root 'host\MetraHost\CursorWorkerBridge.cs') -Raw
         $workerBridge | Should -Match 'Fail closed: ledger identity requires a parseable startedUtc'

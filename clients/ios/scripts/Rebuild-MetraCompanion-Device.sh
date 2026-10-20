@@ -2,7 +2,7 @@
 # Rebuild MetraCompanion (Debug) and install to a paired iPhone.
 # Phase 1.6a interim: beat Personal Team ~7-day expiry until TestFlight is available.
 #
-# Run on iwu75208-mac with a logged-in GUI session (unlocked login keychain).
+# Run on the Mac build station with a logged-in GUI session (unlocked login keychain).
 # SSH-only codesign often fails with errSecInternalComponent.
 #
 # Usage:

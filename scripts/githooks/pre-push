@@ -1,0 +1,4 @@
+#!/bin/sh
+# Git hook shim: invoke PowerShell implementation (Git Bash / MSYS).
+# Args: remote-name remote-url; stdin lines: local_ref local_sha remote_ref remote_sha
+exec pwsh -NoProfile -File "$(dirname "$0")/pre-push.ps1" "$@"

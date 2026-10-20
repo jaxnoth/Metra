@@ -14,13 +14,17 @@
 #>
 [CmdletBinding()]
 param(
-    [string]$OpsBaseUrl = 'https://jumpbox.emerald-banana.ts.net',
+    [string]$OpsBaseUrl = '',
     [switch]$AllowDegradedAuth,
     [int]$AskTimeoutSec = 90
 )
 
 Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
+
+. (Join-Path $PSScriptRoot 'Resolve-MetraIosGateLocal.ps1')
+$cfg = Resolve-MetraIosGateLocalSettings -OpsBaseUrl $OpsBaseUrl
+$OpsBaseUrl = $cfg.OpsBaseUrl
 
 function Write-Gate([string]$Name, [bool]$Ok, [string]$Detail = '') {
     $mark = if ($Ok) { 'PASS' } else { 'FAIL' }

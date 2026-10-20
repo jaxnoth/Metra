@@ -11,6 +11,8 @@
       3. Device - Mac GUI Terminal ~/prove-metra (-DeviceProve via osascript)
 
     Default is Reach only. Pass -SimSmoke / -DeviceProve after Reach is green.
+    Operator hosts/URLs come from parameters or %LOCALAPPDATA%\Metra\ios-gate.local.json
+    (see ios-gate.local.example.json) - tracked defaults stay placeholders only.
 .EXAMPLE
     pwsh -File .\clients\ios\scripts\Invoke-MetraIosGate.ps1
 .EXAMPLE
@@ -18,12 +20,13 @@
 #>
 [CmdletBinding()]
 param(
-    [string]$OpsBaseUrl = 'https://jumpbox.emerald-banana.ts.net',
+    [string]$OpsBaseUrl = '',
     [switch]$AllowDegradedAuth,
     [switch]$SimSmoke,
     [switch]$DeviceProve,
-    [string]$MacSsh = 'stephen.swan@100.101.163.18',
-    [string]$MacIosRoot = '~/Developer/Metra/clients/ios',
+    [string]$MacSsh = '',
+    [string]$MacIosRoot = '',
+    [string]$SshUserKnownHostsFile = '',
     [int]$AskTimeoutSec = 90
 )
 
@@ -31,6 +34,13 @@ Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
 
 $scriptDir = $PSScriptRoot
+. (Join-Path $scriptDir 'Resolve-MetraIosGateLocal.ps1')
+$cfg = Resolve-MetraIosGateLocalSettings -OpsBaseUrl $OpsBaseUrl -MacSsh $MacSsh -MacIosRoot $MacIosRoot -SshUserKnownHostsFile $SshUserKnownHostsFile
+$OpsBaseUrl = $cfg.OpsBaseUrl
+$MacSsh = $cfg.MacSsh
+$MacIosRoot = $cfg.MacIosRoot
+$SshUserKnownHostsFile = $cfg.SshUserKnownHostsFile
+
 $reachScript = Join-Path $scriptDir 'Invoke-MetraIosReachVerify.ps1'
 if (-not (Test-Path -LiteralPath $reachScript)) {
     Write-Host "Missing reach script: $reachScript"
@@ -71,6 +81,11 @@ if (-not $SimSmoke -and -not $DeviceProve) {
     exit 0
 }
 
+if ([string]::IsNullOrWhiteSpace($MacSsh)) {
+    Write-Host 'GATE_FAIL MacSsh required for -SimSmoke/-DeviceProve. Set -MacSsh or ios-gate.local.json (see ios-gate.local.example.json).'
+    exit 2
+}
+
 function Invoke-MetraIosMacRemote {
     param(
         [Parameter(Mandatory)][string]$RemoteCommand,
@@ -83,20 +98,28 @@ function Invoke-MetraIosMacRemote {
         Write-Host "GATE_FAIL invalid MacSsh (expected user@host, no leading dash / metacharacters)"
         exit 2
     }
-    $sshArgs = @(
-        '-o', 'BatchMode=yes',
-        '-o', 'ConnectTimeout=20',
-        '-o', 'StrictHostKeyChecking=accept-new',
-        '--',
-        $MacSsh,
-        # Mac scripts are zsh; HQ sshd default shell may be bash.
-        "zsh -lc $($remote | ConvertTo-Json -Compress)"
-    )
-    $out = & ssh @sshArgs 2>&1
+    # Fail closed on host keys - never accept-new (first-connect MITM). Seed known_hosts once manually.
+    $sshArgs = [System.Collections.Generic.List[string]]::new()
+    [void]$sshArgs.AddRange([string[]]@(
+            '-o', 'BatchMode=yes',
+            '-o', 'ConnectTimeout=20',
+            '-o', 'StrictHostKeyChecking=yes'
+        ))
+    if (-not [string]::IsNullOrWhiteSpace($SshUserKnownHostsFile)) {
+        [void]$sshArgs.AddRange([string[]]@('-o', "UserKnownHostsFile=$SshUserKnownHostsFile"))
+    }
+    [void]$sshArgs.AddRange([string[]]@(
+            '--',
+            $MacSsh,
+            # Mac scripts are zsh; HQ sshd default shell may be bash.
+            "zsh -lc $($remote | ConvertTo-Json -Compress)"
+        ))
+    $out = & ssh @($sshArgs.ToArray()) 2>&1
     $code = $LASTEXITCODE
     if ($out) { $out | ForEach-Object { Write-Host $_ } }
     if ($code -ne 0) {
         Write-Host "GATE_FAIL stage=$Stage exit=$code"
+        Write-Host 'If host key unknown: ssh once interactively (verify fingerprint), or set sshUserKnownHostsFile in ios-gate.local.json.'
         exit $(if ($code -gt 0) { $code } else { 1 })
     }
 }

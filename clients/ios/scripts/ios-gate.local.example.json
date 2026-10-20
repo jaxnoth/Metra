@@ -1,0 +1,7 @@
+{
+  "opsBaseUrl": "https://hq.example.ts.net",
+  "macSsh": "operator@build-mac.example.ts.net",
+  "macIosRoot": "~/Developer/Metra/clients/ios",
+  "sshUserKnownHostsFile": "",
+  "comment": "Copy to %LOCALAPPDATA%/Metra/ios-gate.local.json (gitignored). Leave sshUserKnownHostsFile empty to use the default OpenSSH known_hosts after a one-time manual ssh with host-key verification."
+}

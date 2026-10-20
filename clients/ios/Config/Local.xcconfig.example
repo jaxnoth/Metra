@@ -1,0 +1,3 @@
+// Copy to Local.xcconfig (gitignored) and set your Apple Development Team id.
+// XcodeGen / project.yml reads DEVELOPMENT_TEAM from the environment or this file when present.
+DEVELOPMENT_TEAM =

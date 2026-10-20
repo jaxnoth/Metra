@@ -181,7 +181,7 @@ No voice work was gated on more trial notes after this scar.
 
 | Lane | Job |
 |------|-----|
-| **Weekly reinstall** (`clients/ios/scripts/`) | Beat ~7-day Personal Team expiry on paired phone via `build-mac01` |
+| **Weekly reinstall** (`clients/ios/scripts/`) | Beat ~7-day Personal Team expiry on paired phone via Mac rebuild job |
 | **Xcode Run** | Active feature bites, debugger, fast iteration |
 
 **Honesty:** This is an automated treadmill, not durable off-Mac install. Mac must be awake; phone must be pairable; codesign needs unlocked login keychain (GUI session preferred).
@@ -242,8 +242,8 @@ No voice work was gated on more trial notes after this scar.
 
 | Need | Why | Status (2026-08-29) |
 |------|-----|---------------------|
-| **Mac with Xcode** (build Mac) | Native iOS app | **Current:** `iwu75208-mac` (`100.101.163.18`), user `stephen.swan`, checkout `~/Developer/Metra`. (2026-08-29 notes used `build-mac01` / `operator@100.64.1.10` - that peer is gone.) Xcode/Swift still assumed present; re-verify if builds fail. **Permanent Cursor Agent** on this Mac - prefer for GUI codesign / weekly-reinstall prove. |
-| SSH to Mac | Land files / light verify | **Works** (2026-10-16): `ssh stephen.swan@100.101.163.18` from HQ. Tailscale peer `iwu75208-mac`. Use Mac Cursor Agent when rebuild needs unlocked keychain. |
+| **Mac with Xcode** (build Mac) | Native iOS app | Operator Mac satellite (hostname/IP/user in gitignored `clients/ios/docs/station.local.md`). Checkout typically `~/Developer/Metra`. Xcode/Swift assumed; re-verify if builds fail. Prefer Cursor Agent on that Mac for GUI codesign / weekly-reinstall prove. |
+| SSH to Mac | Land files / light verify | HQ → Mac over Tailscale after host-key verify (`StrictHostKeyChecking=yes`). Concrete `user@host` only in `ios-gate.local.json`. Use Mac Cursor Agent when rebuild needs unlocked keychain. |
 | Metra Ops host reachable on phone (Tailscale) | Ask/Capture APIs | Confirm when phone testing |
 | Stable `/api/ask` (+ capture/journal as needed) | Already mostly shipped for Ops | Assumed available on Ops host |
 | Operator Apple ID / signing for device runs | Device install | **1.6a:** Personal Team + weekly reinstall. **1.6b (parked):** Program + TestFlight when card available |
@@ -254,7 +254,7 @@ No voice work was gated on more trial notes after this scar.
 Working jumpbox smoke test (key auth, no password):
 
 ```powershell
-ssh operator@100.64.1.10 "hostname"
+ssh operator@build-mac.example.ts.net "hostname"
 ```
 
 Password prompts mean the client is not offering the jumpbox `id_ed25519` (or that pubkey is missing from Mac `~/.ssh/authorized_keys`). Add the client pubkey, or SSH from the jumpbox.
@@ -291,7 +291,7 @@ No Mac → stay on Phase 0 PWA or pause native; do not pretend Windows Cursor ca
 3. ~~Phase 1 implement + smoke~~ - **done** (2026-08-29): simulator build + operator screenshots (Attend / Ask / Settings); live Ask OK.
 4. ~~Phase 1.5 trial~~ - **done** (2026-10-16). Scar: Personal Team 7-day expiry.
    - **UI scar (2026-08-29):** ~~next shell = single Metra home~~ **landed** - presence + chat; gear Settings; no Attend/Ask tabs. Face scales up for voice-only later. User chrome never says Ask.
-5. **Phase 1.6a weekly reinstall** - script + LaunchAgent on `build-mac01` ([clients/ios/README.md](../clients/ios/README.md)). Resume **1.6b TestFlight** when Program can be paid.
+5. **Phase 1.6a weekly reinstall** - script + LaunchAgent on the Mac build station ([clients/ios/README.md](../clients/ios/README.md)). Resume **1.6b TestFlight** when Program can be paid.
 6. Parallel (not blocking): Tailscale WhoIs / device mint ([tailscale-identity-auth.plan.md](tailscale-identity-auth.plan.md)).
 7. Feature work continues on Xcode Run; after 1.6b, TF upload when bites are daily-worthy.
 
@@ -326,12 +326,12 @@ No Mac → stay on Phase 0 PWA or pause native; do not pretend Windows Cursor ca
 
 | Date | Change |
 |------|--------|
-| 2026-10-16 | Phase 2.1 landed: tap-to-talk + speak replies; Vision Ask Company + personalityWanted (max personality). Simulator build OK; device prove needs SwanMobile paired/unlocked. |
+| 2026-10-16 | Phase 2.1 landed: tap-to-talk + speak replies; Vision Ask Company + personalityWanted (max personality). Simulator build OK; device prove needs paired phone unlocked. |
 | 2026-10-16 | Phase 1.5 complete (trial scar: Personal Team expiry). Phase 1.6 TestFlight pulled forward then **pivoted to 1.6a weekly reinstall** (Program deferred: Apple Pay cannot pay fee; wallet/card missing). 1.6b TestFlight parked. |
 | 2026-08-29 | Umbrella plan: unify parked iOS phases with presence, conversation policy, and Siri Voice 4; define next = Mac path + Phase 1 spike. |
-| 2026-08-29 | Mac Tailscale reach confirmed (`build-mac01`); SSH from jumpbox blocked. |
+| 2026-08-29 | Mac Tailscale reach confirmed on prior build peer; SSH from jumpbox blocked that day. |
 | 2026-08-29 | **Xcode verified** via operator paste: macOS 26.6.2, Xcode 26.6, Swift 6.3.3; Phase 1 tooling unblocked. |
-| 2026-08-29 | Jumpbox classic SSH to Mac works (`operator@100.64.1.10`); dedicated `metra_known_hosts` because default known_hosts ACL denies write. |
+| 2026-08-29 | Jumpbox classic SSH to Mac works with a dedicated known_hosts file when default known_hosts ACL denies write. |
 | 2026-08-29 | Jumpbox `known_hosts` ACL fixed + Mac host key merged; plain `ssh` key auth OK. Tailscale SSH blocked on sandboxed/App Store Tailscale - classic SSH is the path. |
 | 2026-08-29 | **Bing: Approve with minor amendments.** Folded: session authority, offline contract, Phase 1 device token, Phase 0.5 rename (Identity sync), Phase 1.5 operator trial, Phase 4 policy telemetry-first, open Qs (native-first, iOS 18+, Tailscale-only, clients/ios), centering scar “phone is not a second Metra.” Status → Approved with minor amendments. |
 | 2026-08-29 | Client auth direction: Tailscale WhoIs + allowlist (+ optional host-minted device token). Linked `tailscale-identity-auth.plan.md` and Decision 2026-08-29. |

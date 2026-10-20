@@ -8,6 +8,7 @@ final class SpeechCapture: NSObject, @unchecked Sendable {
     enum CaptureError: LocalizedError {
         case notAuthorized
         case recognizerUnavailable
+        case onDeviceRequired
         case invalidAudioFormat
         case noSpeech
         case engine(String)
@@ -18,6 +19,8 @@ final class SpeechCapture: NSObject, @unchecked Sendable {
                 return "Microphone or speech recognition permission denied."
             case .recognizerUnavailable:
                 return "Speech recognition unavailable on this device."
+            case .onDeviceRequired:
+                return "On-device speech recognition is required. Enable cloud speech in Settings only if you accept Apple cloud STT, or install on-device assets."
             case .invalidAudioFormat:
                 return "Microphone audio format not ready. Try again."
             case .noSpeech:
@@ -27,6 +30,9 @@ final class SpeechCapture: NSObject, @unchecked Sendable {
             }
         }
     }
+
+    /// UserDefaults key - when true, cloud STT may be used if on-device assets are missing.
+    static let allowCloudSpeechKey = "allowCloudSpeechRecognition"
 
     private let audioEngine = AVAudioEngine()
     private let stateLock = NSLock()
@@ -110,8 +116,17 @@ final class SpeechCapture: NSObject, @unchecked Sendable {
 
         let request = SFSpeechAudioBufferRecognitionRequest()
         request.shouldReportPartialResults = true
-        // Do not force on-device - missing assets can fail hard on some devices.
-        request.requiresOnDeviceRecognition = false
+        // Default fail-closed: on-device only. Cloud STT requires explicit Settings opt-in.
+        let allowCloud = UserDefaults.standard.bool(forKey: Self.allowCloudSpeechKey)
+        if recognizer.supportsOnDeviceRecognition {
+            request.requiresOnDeviceRecognition = !allowCloud
+        } else if allowCloud {
+            request.requiresOnDeviceRecognition = false
+        } else {
+            self.request = nil
+            releaseCaptureSession()
+            throw CaptureError.onDeviceRequired
+        }
         self.request = request
 
         let input = audioEngine.inputNode

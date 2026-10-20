@@ -9,8 +9,9 @@ struct SettingsView: View {
     @AppStorage("speakReplies") private var speakReplies: Bool = true
     @AppStorage(SpeakVoicePreference.storageKey) private var speakVoicePreferenceRaw: String =
         SpeakVoicePreference.metra.rawValue
+    @AppStorage(SpeechCapture.allowCloudSpeechKey) private var allowCloudSpeech: Bool = false
 
-    @State private var deviceTokenPreview: String = ""
+    @State private var deviceTokenMasked: String = ""
     @State private var devicePairStatus: String = ""
     @State private var metaStatus: String = ""
     @State private var metaProbeBusy: Bool = false
@@ -56,6 +57,10 @@ struct SettingsView: View {
             Section("Voice") {
                 Toggle("Voice layout", isOn: $voiceLayoutPreview)
                 Toggle("Speak replies", isOn: $speakReplies)
+                Toggle("Allow cloud speech recognition", isOn: $allowCloudSpeech)
+                Text("Off by default. When off, Metra requires on-device recognition so spoken content stays on this phone. Turn on only if you accept Apple cloud STT when on-device assets are missing.")
+                    .font(.footnote)
+                    .foregroundStyle(.secondary)
                 Picker("Speak voice", selection: speakVoicePreference) {
                     ForEach(SpeakVoicePreference.allCases) { pref in
                         Text(pref.settingsLabel).tag(pref)
@@ -83,10 +88,9 @@ struct SettingsView: View {
                 Text(deviceIdentitySummary)
                     .font(.footnote)
                     .foregroundStyle(.secondary)
-                if !deviceTokenPreview.isEmpty {
-                    Text(deviceTokenPreview)
+                if !deviceTokenMasked.isEmpty {
+                    Text(deviceTokenMasked)
                         .font(.system(.footnote, design: .monospaced))
-                        .textSelection(.enabled)
                 }
                 Button(pairBusy ? "Pairing…" : "Pair with Ops (WhoIs)") {
                     Task { await pairWithOps() }
@@ -98,11 +102,12 @@ struct SettingsView: View {
                         .foregroundStyle(.secondary)
                 }
                 Button("Reset to local stub token") {
-                    DeviceTokenStore.clear()
-                    deviceTokenPreview = DeviceTokenStore.stubToken()
+                    _ = DeviceTokenStore.clear()
+                    _ = DeviceTokenStore.stubToken()
+                    refreshDeviceIdentity()
                     devicePairStatus = "Local stub restored. Pair with Ops when on Tailscale."
                 }
-                Text("Pair uses Tailscale WhoIs on the Ops host, then stores a host-minted device token in Keychain. First-seen nodes may need Approve on Ops Settings.")
+                Text("Pair uses Tailscale WhoIs on the Ops host, then stores a host-minted device token in Keychain. The full token is never shown - only a masked suffix. First-seen nodes may need Approve on Ops Settings.")
                     .font(.footnote)
                     .foregroundStyle(.secondary)
             }
@@ -128,7 +133,14 @@ struct SettingsView: View {
 
     @MainActor
     private func refreshDeviceIdentity() {
-        deviceTokenPreview = DeviceTokenStore.read() ?? ""
+        deviceTokenMasked = Self.maskDeviceToken(DeviceTokenStore.read())
+    }
+
+    /// Show possession without exposing the bearer (screenshot / paste hygiene).
+    private static func maskDeviceToken(_ token: String?) -> String {
+        guard let token, !token.isEmpty else { return "" }
+        if token.count <= 4 { return "••••" }
+        return "••••" + String(token.suffix(4))
     }
 
     @MainActor

@@ -7,7 +7,7 @@
 	<key>NSMicrophoneUsageDescription</key>
 	<string>Metra listens when you tap the mic so you can talk hands-free on Vision.</string>
 	<key>NSSpeechRecognitionUsageDescription</key>
-	<string>Metra turns your speech into text for Vision conversation on this device.</string>
+	<string>Metra turns your speech into text for Vision on this device. Recognition stays on-device unless you allow cloud speech in Settings.</string>
 	<key>UILaunchScreen</key>
 	<dict/>
 </dict>

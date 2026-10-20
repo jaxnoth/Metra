@@ -17,10 +17,11 @@ targets:
       - path: MetraCompanion
     settings:
       PRODUCT_BUNDLE_IDENTIFIER: app.metra.companion
-      DEVELOPMENT_TEAM: "642GT45K9V"
+      # Set via Config/Local.xcconfig (gitignored) or Xcode Signing & Capabilities - do not commit a real Team ID.
+      DEVELOPMENT_TEAM: ""
       INFOPLIST_KEY_CFBundleDisplayName: Metra
       INFOPLIST_KEY_NSMicrophoneUsageDescription: Metra listens when you tap the mic so you can talk on Vision.
-      INFOPLIST_KEY_NSSpeechRecognitionUsageDescription: Metra turns your speech into text for Vision conversation on this device.
+      INFOPLIST_KEY_NSSpeechRecognitionUsageDescription: Metra turns your speech into text for Vision on this device. Recognition stays on-device unless you allow cloud speech in Settings.
       INFOPLIST_KEY_UIApplicationSceneManifest_Generation: true
       INFOPLIST_KEY_UILaunchScreen_Generation: true
       INFOPLIST_KEY_UISupportedInterfaceOrientations: UIInterfaceOrientationPortrait
@@ -35,7 +36,7 @@ targets:
         UISupportedInterfaceOrientations:
           - UIInterfaceOrientationPortrait
         NSMicrophoneUsageDescription: Metra listens when you tap the mic so you can talk hands-free on Vision.
-        NSSpeechRecognitionUsageDescription: Metra turns your speech into text for Vision conversation on this device.
+        NSSpeechRecognitionUsageDescription: Metra turns your speech into text for Vision on this device. Recognition stays on-device unless you allow cloud speech in Settings.
         NSAppTransportSecurity:
           NSAllowsArbitraryLoads: false
 schemes:

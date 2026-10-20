@@ -18,6 +18,12 @@ Entry shape:
 
 ---
 
+## 2026-10-20 - Public push requires security-audit and identifying-info review
+
+- Decision: Before `git push` to a public remote (GitHub/GitLab) or from the Metra product checkout, `.\metra.ps1 security-audit -Force` must report zero non-allowlisted FAIL findings. Meaningful ship bites also require a security review that includes potential identifying information (operator names, UDIDs, Tailscale hosts/IPs, home paths, device tokens shown in UI), not only classic vulns. Git `pre-push` (installed via `inspect hooks install`) enforces the audit; `METRA_SKIP_SECURITY_PUSH=1` is emergency-only.
+- Why: A Metra ship bite landed operator topology and identity in tracked iOS docs/scripts; security-audit already knew many of those patterns but push was not gated, so public GitHub received InternalTopology until a manual review.
+- See: [SECURITY.md](../SECURITY.md) (Public push gate); [docs/playbooks/public-push-security.md](playbooks/public-push-security.md); `scripts/githooks/pre-push.ps1`; `scripts/private/SecuritySurface.ps1`
+
 ## 2026-09-30 - Plan content hash workflow filter is frontmatter-scoped
 
 - Decision: `Get-YarnPlanContentHash` / Surveyor `getPlanContentHash` exclude workflow keys only inside the YAML frontmatter block (opening `---` through closing `---`). Body lines that match workflow-key patterns (e.g. `status: pending` in Markdown) remain in the hashed text.

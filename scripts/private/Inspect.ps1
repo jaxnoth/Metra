@@ -5367,11 +5367,19 @@ function Install-MetraGitHooks {
 
     $preCommit = Join-Path $hooksDir 'pre-commit'
     $preCommitPs1 = Join-Path $hooksDir 'pre-commit.ps1'
+    $prePush = Join-Path $hooksDir 'pre-push'
+    $prePushPs1 = Join-Path $hooksDir 'pre-push.ps1'
     if (-not (Test-Path -LiteralPath $preCommitPs1)) {
         throw "Missing pre-commit hook: $preCommitPs1"
     }
     if (-not (Test-Path -LiteralPath $preCommit)) {
         throw "Missing pre-commit shim: $preCommit"
+    }
+    if (-not (Test-Path -LiteralPath $prePushPs1)) {
+        throw "Missing pre-push hook: $prePushPs1"
+    }
+    if (-not (Test-Path -LiteralPath $prePush)) {
+        throw "Missing pre-push shim: $prePush"
     }
     $hooksPathValue = ($hooksPathValue -replace '\\', '/')
     if (-not $PSCmdlet.ShouldProcess($RepoRoot, "Set core.hooksPath=$hooksPathValue and metra.root=$MetraRoot")) {
@@ -5403,6 +5411,7 @@ function Install-MetraGitHooks {
         hooksPath = $hooksPathValue
         metraRoot = $MetraRoot
         preCommit = $preCommit
+        prePush   = $prePush
     }
 }
 

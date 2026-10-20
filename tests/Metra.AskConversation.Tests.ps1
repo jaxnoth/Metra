@@ -584,7 +584,7 @@ Describe 'Ask Conversation enforce-ops' {
                 [PSCustomObject]@{
                     kind           = 'ticket'
                     label          = 'Ticket 123456'
-                    excerpt        = 'Disk full on prd-sql01; last brief says clear temp and expand volume.'
+                    excerpt        = 'Disk full on host-sql01; last brief says clear temp and expand volume.'
                     factualSupport = $true
                 }
                 [PSCustomObject]@{

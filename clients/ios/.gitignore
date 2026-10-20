@@ -3,3 +3,7 @@
 *.xcworkspace/xcuserdata/
 MetraCompanion.xcodeproj/project.xcworkspace/xcuserdata/
 MetraCompanion.xcodeproj/xcuserdata/
+# Operator-only Apple team / signing (see Config/Local.xcconfig.example)
+Config/Local.xcconfig
+docs/*.local.md
+scripts/ios-gate.local.json
