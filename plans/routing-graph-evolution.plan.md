@@ -1,6 +1,6 @@
 ---
 name: Ask routing graph evolution (master roadmap)
-overview: "P2-P5 program complete (contracts + seeded IWUDATA ops edge). Architecture index only - not a Loom bite. Future work: Backlog wake stub routing-graph-phase6-concept.plan.md."
+overview: "P2-P5 program complete; P5 soak closed zero-candidate 2026-10-20; P6 concept/multi-hop shipped. Architecture index only - not a Loom bite. Phase 7 unauthored."
 status: completed
 shippedAt: 2026-09-06
 bingReviewed: true
@@ -19,9 +19,9 @@ todos:
 
 # Ask routing graph evolution (master roadmap)
 
-**Status: P2–P5 program complete** (2026-09-06). This file is the architecture index for the finished Think→Observe→Remember→Review loop. **Not a Loom implementer plan.**
+**Status: P2-P5 program complete** (2026-09-06); **P5 soak closed** zero-candidate (2026-10-20); **P6 shipped** (2026-10-20). This file is the architecture index for the Think→Observe→Remember→Review loop plus concept/multi-hop. **Not a Loom implementer plan.**
 
-Future gated work lives on the Backlog wake stub: [routing-graph-phase6-concept.plan.md](routing-graph-phase6-concept.plan.md) (Phase 7 stays unauthored until P6 proves need).
+Phase 7 stays unauthored until production need. Soak leaf: [`metra_routing_graph_p5_soak.plan.md`](%USERPROFILE%\.cursor\plans\metra_routing_graph_p5_soak.plan.md). P6: [routing-graph-phase6-concept.plan.md](routing-graph-phase6-concept.plan.md).
 
 Scar: [Decisions.md](../docs/Decisions.md) 2026-08-29 compound intent; Decision Registry `d9b91b622c7`.
 
@@ -75,8 +75,8 @@ Registry (+ optional graph file later)
 | **3 Telemetry** | Observe-only `events.jsonl`; no learning |
 | **4 Persistence** | Durable accepted edges in `graph.json`; apply on score path |
 | **5 Review** | Propose from ambiguous+compound misroutes; affirm/reject; never silent Apply |
-| **6 Concept / multi-hop** | [Wake stub](routing-graph-phase6-concept.plan.md) - fill only after concept gaps in telemetry |
-| **7 Similarity** | Optional tie-break only; never the map; do not author until P6 proves need |
+| **6 Concept / multi-hop** | [Shipped](routing-graph-phase6-concept.plan.md) - concept lexicon + bounded multi-hop (depth ≤ 2) |
+| **7 Similarity** | Optional tie-break only; never the map; do not author until production need |
 
 Operator work is part of arrival: `routing edges accept` / `propose` + `affirm` for real scars. Code-complete without affirmations does not fill the graph.
 
@@ -88,8 +88,8 @@ Operator work is part of arrival: `routing edges accept` / `propose` + `affirm` 
 | **3 Telemetry** | [routing-graph-phase3-telemetry.plan.md](routing-graph-phase3-telemetry.plan.md) | **Shipped** (Bing affirmed) | Observe routes/confirms/ambiguity; **no learning** |
 | **4 Persistence** | [routing-graph-phase4-persistence.plan.md](routing-graph-phase4-persistence.plan.md) | **Shipped** (Bing affirmed) | Durable graph + operator-accepted edges; misroutes ≫ routine confirms |
 | **5 Review** | [routing-graph-phase5-review.plan.md](routing-graph-phase5-review.plan.md) | **Shipped** (Bing affirmed) | Metra proposes from telemetry; operator affirms/rejects; no silent Observe→Apply |
-| **6 Concept / multi-hop** | [routing-graph-phase6-concept.plan.md](routing-graph-phase6-concept.plan.md) | **Deferred** (Backlog wake stub) | Concept→product and bounded cross-stem paths |
-| **7 Similarity tie-break** | unauthored until P6 proves need | Unauthored | Tie-breaker only |
+| **6 Concept / multi-hop** | [routing-graph-phase6-concept.plan.md](routing-graph-phase6-concept.plan.md) | **Shipped** (2026-10-20) | Concept→product and bounded cross-stem paths |
+| **7 Similarity tie-break** | unauthored until production need | Unauthored | Tie-breaker only |
 
 ## Non-goals (this roadmap)
 
@@ -108,6 +108,6 @@ Operator work is part of arrival: `routing edges accept` / `propose` + `affirm` 
 
 ## Next
 
-1. Soak P5: live Ask/routing → `propose` / `affirm` when ambiguous misroutes appear.
-2. Yarn plan-board: **Park** this master + Phases 2–5; keep Phase 6 stub on **Backlog**.
-3. Author Phase 6 contract only when [wake criteria](routing-graph-phase6-concept.plan.md) fire.
+1. P5 soak closed (zero-candidate 2026-10-20). Optional: re-accept IWUDATA ops → Automation seed on stations with empty `graph.json`.
+2. Yarn plan-board: **Park** this master + Phases 2-6.
+3. Author Phase 7 only when production soak proves need for similarity tie-break.
