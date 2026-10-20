@@ -6,6 +6,8 @@ WinForms `NotifyIcon` host with a distinct process identity (`MetraHost.exe`), n
 
 **Host -> Ops -> Ask.** This process never starts the Ask sidecar. Desk start/stop/open go through `scripts/bootstrap/Invoke-MetraOpsHostBridge.ps1`.
 
+When MetraHost is running it owns desk supervision (adopt + atomic `recycle-desk`). Ops owns Ask. Desk lifecycle is serialized with CLI via named mutex `ops-desk-lifecycle` - do not split Host recovery into separate `stop-desk` then `start-child` bridge calls.
+
 Cold start uses one `host-bootstrap` bridge call (single `Import-Module`) for assert, port, session, and desk adopt/start. Start Menu shortcut refresh runs on the first tray timer tick.
 
 Pattern for sibling Host concerns:

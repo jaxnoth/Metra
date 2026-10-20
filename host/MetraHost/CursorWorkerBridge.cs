@@ -28,6 +28,9 @@ internal sealed class CursorWorkerBridge
     public static string ConfigPath =>
         Path.Combine(HostPaths.DataDir, "host", "cursor-worker.local.json");
 
+    public static string RuntimePath =>
+        Path.Combine(HostPaths.DataDir, "host", "cursor-worker-runtime.json");
+
     /// <summary>
     /// Cheap gate: skip ensure spawn when config missing or enabled=false.
     /// </summary>
@@ -44,6 +47,81 @@ internal sealed class CursorWorkerBridge
             using var doc = JsonDocument.Parse(File.ReadAllText(path));
             return doc.RootElement.TryGetProperty("enabled", out var en) &&
                    en.ValueKind == JsonValueKind.True;
+        }
+        catch
+        {
+            return false;
+        }
+    }
+
+    /// <summary>
+    /// True when runtime ledger names a live process (skip ensure bridge spawn).
+    /// </summary>
+    public static bool IsRuntimeProcessAlive(out int processId)
+    {
+        processId = 0;
+        var path = RuntimePath;
+        if (!File.Exists(path))
+        {
+            return false;
+        }
+
+        try
+        {
+            using var doc = JsonDocument.Parse(File.ReadAllText(path));
+            if (!doc.RootElement.TryGetProperty("processId", out var pidEl) ||
+                pidEl.ValueKind != JsonValueKind.Number ||
+                !pidEl.TryGetInt32(out var pid) ||
+                pid <= 0)
+            {
+                return false;
+            }
+
+            using var proc = Process.GetProcessById(pid);
+            if (proc.HasExited)
+            {
+                return false;
+            }
+
+            // Worker daemon is started via pwsh/powershell (see Start-MetraCursorWorkerDaemon).
+            var processName = proc.ProcessName;
+            if (!processName.Equals("pwsh", StringComparison.OrdinalIgnoreCase) &&
+                !processName.Equals("powershell", StringComparison.OrdinalIgnoreCase))
+            {
+                return false;
+            }
+
+            // Fail closed: ledger identity requires a parseable startedUtc (recycled PID defense).
+            if (!doc.RootElement.TryGetProperty("startedUtc", out var startedEl) ||
+                startedEl.ValueKind != JsonValueKind.String ||
+                !DateTimeOffset.TryParse(startedEl.GetString(), out var startedUtc))
+            {
+                return false;
+            }
+
+            try
+            {
+                var startUtc = proc.StartTime.ToUniversalTime();
+                // Symmetric window: reject recycled PIDs that started too early or too late vs ledger.
+                var deltaSec = Math.Abs((startUtc - startedUtc.UtcDateTime).TotalSeconds);
+                if (deltaSec > 120)
+                {
+                    return false;
+                }
+            }
+            catch
+            {
+                // StartTime unavailable - cannot verify ledger identity.
+                return false;
+            }
+
+            processId = pid;
+            return true;
+        }
+        catch (ArgumentException)
+        {
+            // Process gone.
+            return false;
         }
         catch
         {

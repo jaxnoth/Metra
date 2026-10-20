@@ -616,6 +616,9 @@ Describe 'Ask engine lifecycle and routing' {
     It 'restart stops then starts the sidecar' {
         InModuleScope Metra {
             Mock Get-MetraAskSettings { [PSCustomObject]@{ engine = 'cursor'; cursorPort = 7381 } }
+            # Desk down path: sidecar stop/start (not Restart-MetraOpsDesk).
+            Mock Test-MetraOpsDeskResponding { $false }
+            Mock Resolve-MetraOpsDeskBinding { [PSCustomObject]@{ Port = 7380 } }
             Mock Stop-MetraAskEngine { param($IncludePortListeners) $script:AskRestartStopped = $true; $script:AskRestartIncludePort = [bool]$IncludePortListeners }
             Mock Test-MetraAskEngineHealth { $false }
             Mock Get-MetraAskEngineRecordedProcessId { return $null }
@@ -630,6 +633,27 @@ Describe 'Ask engine lifecycle and routing' {
             $script:AskRestartStopped | Should -BeTrue
             $script:AskRestartIncludePort | Should -BeTrue
             $script:AskRestartStarted | Should -BeTrue
+            $cap.available | Should -BeTrue
+        }
+    }
+
+    It 'restart with desk up recycles Ops desk instead of orphan sidecar stop/start' {
+        InModuleScope Metra {
+            Mock Get-MetraAskSettings { [PSCustomObject]@{ engine = 'cursor'; cursorPort = 7381 } }
+            Mock Resolve-MetraOpsDeskBinding { [PSCustomObject]@{ Port = 7380 } }
+            Mock Test-MetraOpsDeskResponding { $true }
+            Mock Restart-MetraOpsDesk {
+                $script:AskRestartDeskRecycled = $true
+                return [PSCustomObject]@{ restarted = $true; childPid = 4242; port = 7380 }
+            }
+            Mock Get-MetraAskCapability {
+                return [PSCustomObject]@{ available = $true; engine = 'cursor'; reason = 'ok' }
+            }
+            Mock Stop-MetraAskEngine { throw 'Stop-MetraAskEngine should not run when desk recycle owns Ask' }
+            Mock Start-MetraAskEngine { throw 'Start-MetraAskEngine should not run when desk recycle owns Ask' }
+            $script:AskRestartDeskRecycled = $false
+            $cap = Restart-MetraAskEngine -Confirm:$false
+            $script:AskRestartDeskRecycled | Should -BeTrue
             $cap.available | Should -BeTrue
         }
     }

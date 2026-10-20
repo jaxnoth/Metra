@@ -5,7 +5,7 @@ status: approved
 
 # Metra iOS Phase 1 spike (official)
 
-**Status:** Phase 1 spike **smoke-passed** (2026-08-29); next = Phase 1.5 trial week  
+**Status:** Phase 1 spike **smoke-passed** (2026-08-29); Phase 1.5 trial **complete** (2026-10-16). Next = umbrella **Phase 1.6a weekly reinstall** (TestFlight parked until Program paid).  
 **Parent:** [ios-companion-app.plan.md](ios-companion-app.plan.md)  
 **Parallel (not a blocker):** [tailscale-identity-auth.plan.md](tailscale-identity-auth.plan.md)  
 **Build machine:** build Mac `build-mac01` (`100.64.1.10`) - Xcode 26.6 / Swift 6.3.3 verified  

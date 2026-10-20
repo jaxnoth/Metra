@@ -13,6 +13,7 @@ param(
         'assert-local',
         'ensure-desk',
         'start-child',
+        'recycle-desk',
         'stop-desk',
         'open-browser',
         'desk-alive',
@@ -214,6 +215,23 @@ try {
                     started  = $true
                     childPid = [int]$child.Id
                     port     = $Port
+                })
+            return
+        }
+        'recycle-desk' {
+            # One bridge call: stop+start under ops-desk-lifecycle (Host must not split stop/start).
+            $qk = $true
+            if ($PSBoundParameters.ContainsKey('Quick')) { $qk = [bool]$Quick }
+            $result = Invoke-MetraHostBridgePrivate {
+                param($root, $port, $quick)
+                Repair-MetraOpsDeskChild -MetraRoot $root -Port $port -Quick:$quick
+            } $MetraRoot $Port $qk
+            Write-MetraHostBridgeJson ([pscustomobject]@{
+                    ok       = [bool]$result.Ok
+                    started  = [bool]$result.Started
+                    childPid = [int](Get-MetraProp -Object $result -Name 'ChildPid' -Default 0)
+                    port     = $Port
+                    error    = [string](Get-MetraProp -Object $result -Name 'Error' -Default $null)
                 })
             return
         }

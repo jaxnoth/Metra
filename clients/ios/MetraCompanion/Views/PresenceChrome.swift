@@ -55,12 +55,14 @@ struct PresenceChrome: View {
 enum PresenceMood: Equatable {
     case attend
     case listening
+    case thinking
     case speaking
 
     var caption: String {
         switch self {
         case .attend: "attend"
         case .listening: "listening"
+        case .thinking: "thinking"
         case .speaking: "speaking"
         }
     }

@@ -2247,8 +2247,9 @@ If no issues: {"findings":[]}. No markdown. No prose outside JSON.
     $engineProvenance = $null
 
     for ($attempt = 0; $attempt -lt 2; $attempt++) {
+        # Large Metra working trees routinely exceed 600s on the inspect model; 900 keeps one assess in-budget.
         $engineResult = Invoke-MetraAskEngine -Prompt $currentPrompt -Cwd $Cwd -MetraRoot $MetraRoot `
-            -Context @{ purpose = 'metra-inspect' } -TimeoutSec 600 `
+            -Context @{ purpose = 'metra-inspect' } -TimeoutSec 900 `
             -Engine $selection.Engine -Model $selection.RequestedModel
         if (-not $engineResult.ok -and $attempt -eq 0 -and (Test-MetraAskSidecarRestartableFailure -EngineResult $engineResult)) {
             Write-Host 'Inspect: Ask engine failed - restarting sidecar and retrying once...' -ForegroundColor Yellow

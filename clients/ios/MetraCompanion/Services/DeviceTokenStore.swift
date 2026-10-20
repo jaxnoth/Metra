@@ -5,8 +5,14 @@ enum DeviceTokenStore {
     private static let service = "app.metra.companion.device"
     private static let account = "X-Metra-Device"
 
-    /// Returns existing Keychain stub token or mints a local UUID stub (Phase 1).
-    /// Replace with Ops WhoIs mint when tailscale-identity-auth ships.
+    /// True when the stored token is a local UUID stub (not host-minted).
+    static func isStub(_ token: String?) -> Bool {
+        guard let token, !token.isEmpty else { return true }
+        return token.hasPrefix("stub-")
+    }
+
+    /// Returns existing Keychain token or mints a local UUID stub for pre-pair Ask smoke.
+    /// Prefer `pairWithOps` (Settings) so WhoIs mints a real device capability token.
     static func stubToken() -> String {
         if let existing = read() {
             return existing
@@ -14,6 +20,11 @@ enum DeviceTokenStore {
         let minted = "stub-" + UUID().uuidString.replacingOccurrences(of: "-", with: "").lowercased()
         _ = write(minted)
         return minted
+    }
+
+    /// Token for Ops headers: Keychain value, or local stub if never paired.
+    static func tokenForRequests() -> String {
+        read() ?? stubToken()
     }
 
     static func read() -> String? {
@@ -45,5 +56,16 @@ enum DeviceTokenStore {
         add[kSecValueData as String] = data
         add[kSecAttrAccessible as String] = kSecAttrAccessibleAfterFirstUnlockThisDeviceOnly
         return SecItemAdd(add as CFDictionary, nil) == errSecSuccess
+    }
+
+    @discardableResult
+    static func clear() -> Bool {
+        let query: [String: Any] = [
+            kSecClass as String: kSecClassGenericPassword,
+            kSecAttrService as String: service,
+            kSecAttrAccount as String: account,
+        ]
+        let status = SecItemDelete(query as CFDictionary)
+        return status == errSecSuccess || status == errSecItemNotFound
     }
 }

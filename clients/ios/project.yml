@@ -19,11 +19,13 @@ targets:
       PRODUCT_BUNDLE_IDENTIFIER: app.metra.companion
       DEVELOPMENT_TEAM: "642GT45K9V"
       INFOPLIST_KEY_CFBundleDisplayName: Metra
+      INFOPLIST_KEY_NSMicrophoneUsageDescription: Metra listens when you tap the mic so you can talk on Vision.
+      INFOPLIST_KEY_NSSpeechRecognitionUsageDescription: Metra turns your speech into text for Vision conversation on this device.
       INFOPLIST_KEY_UIApplicationSceneManifest_Generation: true
       INFOPLIST_KEY_UILaunchScreen_Generation: true
       INFOPLIST_KEY_UISupportedInterfaceOrientations: UIInterfaceOrientationPortrait
       GENERATE_INFOPLIST_FILE: YES
-      CURRENT_PROJECT_VERSION: 1
+      CURRENT_PROJECT_VERSION: 7
       MARKETING_VERSION: "0.1.0"
     info:
       path: MetraCompanion/Info.plist
@@ -32,6 +34,8 @@ targets:
         UILaunchScreen: {}
         UISupportedInterfaceOrientations:
           - UIInterfaceOrientationPortrait
+        NSMicrophoneUsageDescription: Metra listens when you tap the mic so you can talk hands-free on Vision.
+        NSSpeechRecognitionUsageDescription: Metra turns your speech into text for Vision conversation on this device.
         NSAppTransportSecurity:
           NSAllowsArbitraryLoads: false
 schemes:

@@ -113,6 +113,25 @@ Place learning lives in `%LOCALAPPDATA%\Metra\ops\place.json` (gitignored). Corr
 
 When `bindTailscale` is on, Ops start orchestrates Tailscale Serve so the share URL is `https://` (secure context for phone clipboard). Loopback Ops stays available without Serve. Funnel is out of scope.
 
+## Attention ticket UI (ITSM mining)
+
+Metra Ops borrows a few **desk disciplines** from the ITSM ticket UI (`C:\Projects\ITSM\apps\ui`) for Attention + TicketWatch ticket cards only. It does **not** clone a service desk.
+
+| Borrow | Refuse |
+|--------|--------|
+| At most one high-saturation accent per ticket row; subject/meta muted | Christmas-tree status coloring; wholesale ITSM CSS/token paste |
+| Card-shaped skeletons; error + Retry on the affected surface | Page-wide loading that blanks unrelated Attention cards |
+| Scan / Preview Retry reissues a **captured** request (stale-safe) | Auto-replay of Write recommendation after ambiguous failure |
+| Optional TT `matrixHint` string rendered as plain text when present | Client reconstruction of rule explanations or MatrixHint objects |
+| Preview = local **Draft**; Write recommendation = Affirm A only | Affirm B, autoStoreRecommend, catalogue/SLA/portal chrome |
+| One operator-facing skip / Next-evidence line from host/TT summaries (display as supplied) | Ops rewriting or classifying host strings; diagnostics must not be supplied upstream as operator summaries |
+
+**Ownership:** TicketTracker owns match evaluation and explanation generation. The host may transport optional `matrixHint` without interpreting it. Ops renders and shows operator workflow only.
+
+Plan: Cursor leaf `ops_itsm_ui_mining_4b04b1ae.plan.md` (stem `ops-itsm-ui-mining`). Future-Dev pointer under Capture / Ops polish.
+
+**MatrixHint present-case verify:** when the live producer does not emit a sentence string, exercise Ops with a mocked Attention item whose `matrixHint` is a non-empty string (see `MATRIX_HINT_FIXTURE` in `ops/src/attentionItsmUi.ts`). Whitespace-only and structured objects must hide the section.
+
 ## Next attention (attention memory)
 
 The panel is **continuity**, not a task list. Metra remembers observations across snapshot builds in `%LOCALAPPDATA%\Metra\ops\attention.json` (local, gitignored).

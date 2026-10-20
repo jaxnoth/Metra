@@ -346,6 +346,7 @@ function New-MetraVisionAskErrorResponse {
     [CmdletBinding()]
     param(
         [Parameter(Mandatory)]
+        # Keep in sync with Get-MetraVisionAskErrorCodes (cursor_* must round-trip to iOS).
         [ValidateSet(
             'invalid_contract',
             'unsupported_contract_version',
@@ -354,7 +355,10 @@ function New-MetraVisionAskErrorResponse {
             'desk_requires_connectivity',
             'write_not_allowed',
             'route_boundary_violation',
-            'engine_failure'
+            'engine_failure',
+            'cursor_auth_error',
+            'cursor_usage_limit',
+            'cursor_model_unavailable'
         )]
         [string]$Reason,
         [ValidateSet('ops-vision', 'local-assist', 'ops-desk', 'capture', 'client')]

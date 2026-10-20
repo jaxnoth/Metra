@@ -6,8 +6,10 @@ final class ChatViewModel: ObservableObject {
     @Published var draft: String = ""
     @Published var isSending: Bool = false
     @Published var banner: String?
-    /// Settles speaking back to attend after a text reply (voice I/O can own this later).
     @Published private(set) var presenceMood: PresenceMood = .attend
+    @Published private(set) var isListeningVoice: Bool = false
+    /// Last voice transcript or reply caption for the voice surface.
+    @Published private(set) var voiceCaption: String = ""
 
     @Published private(set) var session: Session
     /// Last presence cue from policy events (consume-only; no uncued Playful walks).
@@ -20,6 +22,13 @@ final class ChatViewModel: ObservableObject {
     private var sendGeneration: Int = 0
     /// Company spark-or-quiet state (caps restrict; default deny; no auto-emit in text chat yet).
     private var sparkQuiet = SparkQuietRuntime()
+    private let speechCapture = SpeechCapture()
+    private let speechSpeak = SpeechSpeak.shared
+
+    private var speakRepliesEnabled: Bool {
+        if UserDefaults.standard.object(forKey: "speakReplies") == nil { return true }
+        return UserDefaults.standard.bool(forKey: "speakReplies")
+    }
 
     init(opsURL: @escaping () -> String = {
         UserDefaults.standard.string(forKey: "opsBaseURL") ?? ""
@@ -35,14 +44,71 @@ final class ChatViewModel: ObservableObject {
 
     func send() {
         let text = draft.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !text.isEmpty, !isSending else { return }
-
-        banner = nil
-        messages.append(Message(sessionId: session.sessionId, role: .user, text: text))
+        guard !text.isEmpty else { return }
         draft = ""
+        send(text: text, inputModality: "text", speakReply: speakRepliesEnabled)
+    }
+
+    /// Tap-to-talk: start or stop listening, then Ask with voice modality.
+    func toggleVoiceListen() {
+        if isListeningVoice {
+            finishVoiceListenAndSend()
+        } else {
+            startVoiceListen()
+        }
+    }
+
+    private func startVoiceListen() {
+        guard !isSending else { return }
+        speechSpeak.stop()
+        banner = "Requesting mic…"
+        Task { @MainActor in
+            let ok = await speechCapture.requestAuthorizations()
+            guard ok else {
+                self.banner = SpeechCapture.CaptureError.notAuthorized.errorDescription
+                self.setPresence(.attend)
+                return
+            }
+            // Let permission sheets dismiss before starting the audio engine.
+            try? await Task.sleep(nanoseconds: 250_000_000)
+            do {
+                try speechCapture.start()
+                self.isListeningVoice = true
+                self.voiceCaption = "Listening…"
+                self.banner = nil
+                self.setPresence(.listening)
+                self.consumePresenceEvent(.listening)
+            } catch {
+                self.banner = error.localizedDescription
+                self.isListeningVoice = false
+                self.setPresence(.attend)
+            }
+        }
+    }
+
+    private func finishVoiceListenAndSend() {
+        let text = speechCapture.stop()
+        isListeningVoice = false
+        guard !text.isEmpty else {
+            voiceCaption = ""
+            banner = SpeechCapture.CaptureError.noSpeech.errorDescription
+            setPresence(.attend)
+            return
+        }
+        voiceCaption = text
+        send(text: text, inputModality: "voice", speakReply: true)
+    }
+
+    func send(text: String, inputModality: String, speakReply: Bool) {
+        let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty, !isSending else { return }
+
+        banner = "Waiting on Ops…"
+        messages.append(Message(sessionId: session.sessionId, role: .user, text: trimmed))
         isSending = true
-        setPresence(.listening)
-        consumePresenceEvent(.listening)
+        // Mic-only uses .listening; Ask wait is .thinking (was stuck-looking "listening").
+        setPresence(.thinking)
+        speechSpeak.stop()
 
         sendTask?.cancel()
         sendGeneration += 1
@@ -63,15 +129,16 @@ final class ChatViewModel: ObservableObject {
 
             let client = OpsAskClient(
                 baseURLString: self.opsURL(),
-                deviceToken: DeviceTokenStore.stubToken()
+                deviceToken: DeviceTokenStore.tokenForRequests()
             )
 
             do {
                 try Task.checkCancellation()
                 let reply = try await client.ask(
                     session: self.session,
-                    text: text,
-                    turnId: turnIdAtSend
+                    text: trimmed,
+                    turnId: turnIdAtSend,
+                    inputModality: inputModality
                 )
                 try Task.checkCancellation()
                 guard self.session.sessionId == sessionIdAtSend else { return }
@@ -124,6 +191,8 @@ final class ChatViewModel: ObservableObject {
                     }
                 }
                 self.messages.append(reply.message)
+                self.voiceCaption = reply.message.text
+                self.banner = nil
                 if reply.retentionClass == .ephemeral {
                     self.consumePresenceEvent(.ephemeralActive)
                     self.sparkQuiet.companySilenceAllowed = true
@@ -132,9 +201,23 @@ final class ChatViewModel: ObservableObject {
                     self.sparkQuiet.companySilenceAllowed = false
                     self.sparkQuiet.endQuietEpisode()
                 }
-                // Brief speaking beat, then attend - text mode is not ongoing speech.
-                self.consumePresenceEvent(.speaking)
-                self.setPresence(.speaking, settleToAttendAfter: 1.6)
+                if speakReply {
+                    self.consumePresenceEvent(.speaking)
+                    self.setPresence(.speaking)
+                    if let note = self.speechSpeak.lastResolveNote {
+                        self.banner = note
+                    }
+                    let gen = generation
+                    self.speechSpeak.speak(reply.message.text) { [weak self] in
+                        guard let self else { return }
+                        if self.sendGeneration == gen, self.presenceMood == .speaking, !self.isSending {
+                            self.setPresence(.attend)
+                        }
+                    }
+                } else {
+                    self.consumePresenceEvent(.speaking)
+                    self.setPresence(.speaking, settleToAttendAfter: 1.6)
+                }
             } catch is CancellationError {
                 guard self.session.sessionId == sessionIdAtSend else { return }
                 self.banner = "Send cancelled."
@@ -177,6 +260,11 @@ final class ChatViewModel: ObservableObject {
         sendTask?.cancel()
         sendTask = nil
         isSending = false
+        if isListeningVoice {
+            speechCapture.cancel()
+            isListeningVoice = false
+        }
+        speechSpeak.stop()
         setPresence(.attend)
     }
 
@@ -188,6 +276,7 @@ final class ChatViewModel: ObservableObject {
         messages.removeAll()
         banner = nil
         draft = ""
+        voiceCaption = ""
         consumePresenceEvent(.deskAttend)
         setPresence(.attend)
     }
@@ -203,6 +292,11 @@ final class ChatViewModel: ObservableObject {
     /// Ephemeral episode ends on background; activeTurn cleared so in-flight HTTP
     /// completions cannot display (request may still finish - display is impossible).
     func handleSceneBackground() {
+        if isListeningVoice {
+            speechCapture.cancel()
+            isListeningVoice = false
+        }
+        speechSpeak.stop()
         session.invalidateOnBackground()
         sparkQuiet.companySilenceAllowed = false
         sparkQuiet.endQuietEpisode()

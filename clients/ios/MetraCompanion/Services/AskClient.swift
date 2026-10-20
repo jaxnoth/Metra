@@ -76,5 +76,10 @@ struct AskReply: Sendable {
 }
 
 protocol AskClient: Sendable {
-    func ask(session: Session, text: String, turnId: String) async throws -> AskReply
+    func ask(
+        session: Session,
+        text: String,
+        turnId: String,
+        inputModality: String
+    ) async throws -> AskReply
 }

@@ -47,6 +47,15 @@ export type AttentionItem = {
   ticketStatus?: string
   /** Short code for list rows (O, W, UR, etc.). */
   ticketStatusCode?: string
+  /**
+   * Optional TT-owned why-matched sentence (transport only).
+   * Ops renders plain text when present; hides when absent. Never synthesize from objects.
+   */
+  matrixHint?: string
+  /** Assess gate label from TicketTracker (host-authored; optional). */
+  assessGate?: string
+  /** Single operator-facing skip / next-evidence summary from host/TT (optional). */
+  operatorReason?: string
 }
 
 /** @deprecated Prefer AttentionItem; kept for nextAttention nullability. */

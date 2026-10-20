@@ -165,16 +165,53 @@ Resist expanding Phase 1 until it survives daily use (see Phase 1.5).
 
 ### Phase 1.5 - Mobile operator trial (Bing amendment)
 
-**Between Phase 1 and Phase 2.** Goal: use the Phase 1 app yourself for about a week before voice.
+**Status:** Complete (operator 2026-10-16). Daily use ran well beyond a trial week and drove shell, Vision, and conversation-policy work.
 
-Learn: Did you open it? When (driving, waiting rooms, airport, on-call)? Companion usage pattern matters more than tech polish.
+**Trial scar:** Free Personal Team development installs expire (~7 days). Expiry-driven Xcode Run is the main friction - not "is the shell worth it."
 
-No voice work until this trial produces notes (even short).
+No voice work was gated on more trial notes after this scar.
+
+### Phase 1.6 - Durable install
+
+**Pulled forward from Phase 6** (plan `ios_testflight_durability_7e46c23c`). Does not gate Phase 2/3 feature work.
+
+#### 1.6a - Interim: Personal Team weekly reinstall (active 2026-10-16)
+
+**Why:** Program enroll deferred - Apple Pay does not cover the $99 fee; operator card/wallet unavailable. Stay on free Personal Team.
+
+| Lane | Job |
+|------|-----|
+| **Weekly reinstall** (`clients/ios/scripts/`) | Beat ~7-day Personal Team expiry on paired phone via `build-mac01` |
+| **Xcode Run** | Active feature bites, debugger, fast iteration |
+
+**Honesty:** This is an automated treadmill, not durable off-Mac install. Mac must be awake; phone must be pairable; codesign needs unlocked login keychain (GUI session preferred).
+
+**Done-when (1.6a):** script + LaunchAgent docs landed; one manual rebuild+install succeeds; schedule loaded (or explicitly deferred).
+
+#### 1.6b - Target: TestFlight (parked until Program paid)
+
+| Lane | Job |
+|------|-----|
+| **TestFlight** | Daily driver (~90-day builds); install without Mac |
+| **Xcode Run** | Feature iteration |
+
+**Program fee:** $99/yr Individual when card available; future commercial apps share membership. Prefer web enroll if Developer app says enrollment unavailable.
+
+**Done-when (1.6b, Bing deterministic):** paid signing; Release archive; TF upload; install from TestFlight; Ask smoke; docs dual path. Then retire weekly reinstall job.
+
+**Out of 1.6:** App Store public listing; coworker distribution; WhoIs mint; voice/presence implementation.
 
 ### Phase 2 - Voice listen / speak
 
-- Hands-free listen while driving (parked ladder item).
-- TTS via Siri Voice 4; STT → ask **or** LocalAssist per lane.
+#### 2.1 Tap-to-talk + speak replies (landed 2026-10-16)
+
+- Voice layout: mic tap-to-talk (`SpeechCapture`) → Ops Vision Ask → `SpeechSpeak` (Siri Voice 4).
+- Ask posture **Company** + `personalityWanted` (max personality; not DeskStrict).
+- Presence moods listening / speaking; Appendix A mouth alphabet still deferred.
+- Simulator build verified; device reinstall via `~/prove-metra` when phone paired/unlocked.
+- Hands-free continuous listen while driving: still parked.
+
+- TTS via Siri Voice 4; STT → ask **or** LocalAssist per lane (LocalAssist still deferred).
 - Presence listen/speech overlays per presence Appendix A (can start with rest/mid/closed only).
 
 ### Phase 3 - Presence behavior controller
@@ -197,7 +234,7 @@ No voice work until this trial produces notes (even short).
 ### Phase 6 - Hardening / distribution
 
 - Backgrounding, incident DeskStrict, reduced motion.
-- TestFlight; signing; Mac satellite distribution remains separate/parked.
+- ~~TestFlight; signing~~ - pulled forward as **Phase 1.6** (operator-only). Remaining: public App Store (out of scope for companion), Mac satellite distribution (parked).
 
 ---
 
@@ -205,11 +242,11 @@ No voice work until this trial produces notes (even short).
 
 | Need | Why | Status (2026-08-29) |
 |------|-----|---------------------|
-| **Mac with Xcode** (build Mac) | Native iOS app | **Verified** on `build-mac01` (`100.64.1.10`). Operator paste: macOS **26.6.2** (25G83), Xcode **26.6** (17F113), Swift **6.3.3** arm64, `xcode-select` → `/Applications/Xcode.app/Contents/Developer`. Shell user `operator`; cwd showed existing `Metra` folder. |
-| Jumpbox SSH to Mac | Optional remote verify / agent help | **Works** (2026-08-29): key auth `operator@100.64.1.10` from jumpbox (`id_ed25519` in Mac `authorized_keys`). Jumpbox `known_hosts` ACL fixed; Mac host key merged. **Tailscale SSH:** Mac has App Store / sandboxed Tailscale - `sudo tailscale set --ssh` reports SSH server does not run in sandboxed GUI builds. Need standalone Tailscale pkg for Tailscale SSH, or keep classic SSH. |
+| **Mac with Xcode** (build Mac) | Native iOS app | **Current:** `iwu75208-mac` (`100.101.163.18`), user `stephen.swan`, checkout `~/Developer/Metra`. (2026-08-29 notes used `build-mac01` / `operator@100.64.1.10` - that peer is gone.) Xcode/Swift still assumed present; re-verify if builds fail. **Permanent Cursor Agent** on this Mac - prefer for GUI codesign / weekly-reinstall prove. |
+| SSH to Mac | Land files / light verify | **Works** (2026-10-16): `ssh stephen.swan@100.101.163.18` from HQ. Tailscale peer `iwu75208-mac`. Use Mac Cursor Agent when rebuild needs unlocked keychain. |
 | Metra Ops host reachable on phone (Tailscale) | Ask/Capture APIs | Confirm when phone testing |
 | Stable `/api/ask` (+ capture/journal as needed) | Already mostly shipped for Ops | Assumed available on Ops host |
-| Operator Apple ID / signing for device runs | Device install | Operator-side |
+| Operator Apple ID / signing for device runs | Device install | **1.6a:** Personal Team + weekly reinstall. **1.6b (parked):** Program + TestFlight when card available |
 | Device registration API on Ops | Phase 1 Keychain token | Design in Phase 1 spike - not shipped yet |
 
 **Remote reach:** Tailscale peer online; classic SSH from jumpbox OK. **Tooling proof:** operator Terminal paste - Xcode/Swift ready.
@@ -252,10 +289,11 @@ No Mac → stay on Phase 0 PWA or pause native; do not pretend Windows Cursor ca
 1. ~~Mac on Tailscale~~ / ~~Xcode proof~~ / ~~Bing umbrella review~~ - **done** (2026-08-29).
 2. ~~Phase 1 spike plan~~ - [ios-phase1-spike.plan.md](ios-phase1-spike.plan.md).
 3. ~~Phase 1 implement + smoke~~ - **done** (2026-08-29): simulator build + operator screenshots (Attend / Ask / Settings); live Ask OK.
-4. **Phase 1.5 trial week** - daily use notes before voice (see spike plan). Optional: offline refusal smoke; Ensure stub token if Settings still shows `(none)`.
+4. ~~Phase 1.5 trial~~ - **done** (2026-10-16). Scar: Personal Team 7-day expiry.
    - **UI scar (2026-08-29):** ~~next shell = single Metra home~~ **landed** - presence + chat; gear Settings; no Attend/Ask tabs. Face scales up for voice-only later. User chrome never says Ask.
-5. Parallel (not blocking trial): Tailscale WhoIs / device mint ([tailscale-identity-auth.plan.md](tailscale-identity-auth.plan.md)).
-6. After 1.5 notes: Phase 2 voice (only if trial says the shell is worth it) - presence grows in-pane for voice-only.
+5. **Phase 1.6a weekly reinstall** - script + LaunchAgent on `build-mac01` ([clients/ios/README.md](../clients/ios/README.md)). Resume **1.6b TestFlight** when Program can be paid.
+6. Parallel (not blocking): Tailscale WhoIs / device mint ([tailscale-identity-auth.plan.md](tailscale-identity-auth.plan.md)).
+7. Feature work continues on Xcode Run; after 1.6b, TF upload when bites are daily-worthy.
 
 ---
 
@@ -288,6 +326,8 @@ No Mac → stay on Phase 0 PWA or pause native; do not pretend Windows Cursor ca
 
 | Date | Change |
 |------|--------|
+| 2026-10-16 | Phase 2.1 landed: tap-to-talk + speak replies; Vision Ask Company + personalityWanted (max personality). Simulator build OK; device prove needs SwanMobile paired/unlocked. |
+| 2026-10-16 | Phase 1.5 complete (trial scar: Personal Team expiry). Phase 1.6 TestFlight pulled forward then **pivoted to 1.6a weekly reinstall** (Program deferred: Apple Pay cannot pay fee; wallet/card missing). 1.6b TestFlight parked. |
 | 2026-08-29 | Umbrella plan: unify parked iOS phases with presence, conversation policy, and Siri Voice 4; define next = Mac path + Phase 1 spike. |
 | 2026-08-29 | Mac Tailscale reach confirmed (`build-mac01`); SSH from jumpbox blocked. |
 | 2026-08-29 | **Xcode verified** via operator paste: macOS 26.6.2, Xcode 26.6, Swift 6.3.3; Phase 1 tooling unblocked. |

@@ -1,4 +1,4 @@
-# Ops Ask/Vision single-flight worker (BeginInvoke + SemaphoreSlim).
+# Ops Ask/Vision single-flight worker (in-process Complete + SemaphoreSlim).
 # Gate lives on the Ops listener runspace; workers Import-Module and own HttpListenerResponse.
 
 if ($null -eq (Get-Variable -Name MetraOpsAskGate -Scope Script -ErrorAction SilentlyContinue)) {
@@ -261,6 +261,11 @@ function Start-MetraOpsAskHttpWorker {
     .SYNOPSIS
         Single-flight Ask/Vision worker. Returns Busy=$true when gate not acquired.
         On Busy=$false / Started=$true, caller must not write or close Response.
+    .NOTES
+        Runs Complete-MetraOpsAskHttpWork in-process (same runspace as the listener).
+        A prior BeginInvoke + [powershell]::Create() path passed HttpListenerResponse into a
+        fresh runspace; that hung indefinitely (phone/desk Ask never got a body). Single-flight
+        already serializes Ask, so blocking the accept loop for one Ask is acceptable.
     #>
     [CmdletBinding()]
     param(
@@ -275,54 +280,28 @@ function Start-MetraOpsAskHttpWorker {
         return [PSCustomObject]@{ Busy = $true; Started = $false; Error = $null }
     }
 
-    $gateHeld = $true
-    $ps = $null
+    $script:MetraOpsAskWorkerSeq++
+    $jobId = "ask-{0}" -f $script:MetraOpsAskWorkerSeq
     try {
-        $modulePath = Get-MetraOpsAskWorkerModulePath -MetraRoot $MetraRoot
-        # Serialize work for the child (images may include file paths / small metadata only).
-        $workJson = ($Work | ConvertTo-Json -Depth 12 -Compress)
-        $ps = [powershell]::Create()
-        $null = $ps.AddScript({
-                param($ModulePath, $Root, $WorkJson, $HttpResponse)
-                Import-Module $ModulePath -Force
-                try {
-                    $workObj = $WorkJson | ConvertFrom-Json
-                    Complete-MetraOpsAskHttpWork -Work $workObj -Response $HttpResponse -MetraRoot $Root
-                }
-                catch {
-                    try {
-                        Write-MetraOpsJsonResponse -Response $HttpResponse -StatusCode 500 -Object ([PSCustomObject]@{
-                                error = $_.Exception.Message
-                            })
-                    }
-                    catch { }
-                }
-            }).AddArgument($modulePath).AddArgument($MetraRoot).AddArgument($workJson).AddArgument($Response)
-
-        $async = $ps.BeginInvoke()
-        $script:MetraOpsAskWorkerSeq++
-        $jobId = "ask-{0}" -f $script:MetraOpsAskWorkerSeq
-        $script:MetraOpsAskWorkerHandles[$jobId] = @{
-            PowerShell  = $ps
-            AsyncResult = $async
-            GateHeld    = $true
-            Response    = $Response
-            StartedAt   = [datetime]::UtcNow
-        }
-        $gateHeld = $false
-        $ps = $null
+        Complete-MetraOpsAskHttpWork -Work $Work -Response $Response -MetraRoot $MetraRoot
         return [PSCustomObject]@{ Busy = $false; Started = $true; JobId = $jobId; Error = $null }
     }
     catch {
-        if ($ps) { try { $ps.Dispose() } catch { } }
-        if ($gateHeld) {
-            try { $null = $script:MetraOpsAskGate.Release() } catch { }
+        try {
+            Write-MetraOpsJsonResponse -Response $Response -StatusCode 500 -Object ([PSCustomObject]@{
+                    error = $_.Exception.Message
+                })
         }
+        catch { }
         return [PSCustomObject]@{
             Busy    = $false
-            Started = $false
+            Started = $true
+            JobId   = $jobId
             Error   = $_.Exception.Message
         }
+    }
+    finally {
+        try { $null = $script:MetraOpsAskGate.Release() } catch { }
     }
 }
 

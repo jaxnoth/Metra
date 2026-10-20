@@ -52,6 +52,13 @@ import {
   type AttentionSortMode,
   type AttentionSourceFilter,
 } from './attentionQueueControls'
+import {
+  isStaleWatchResponse,
+  matrixHintDisplayText,
+  newWatchRequestId,
+  operatorReasonLine,
+  type CapturedWatchOp,
+} from './attentionItsmUi'
 import { MetraPresence } from './MetraPresence'
 import type {
   AttentionItem,
@@ -345,12 +352,30 @@ function insertTicketStatusMark(headline: string, code: string | undefined): str
   return `${badge}${headline}`
 }
 
+function attentionHeadlineBase(item: AttentionItem): string {
+  return (item.summary || item.content || item.key || item.id || 'Item').trim()
+}
+
 function attentionHeadline(item: AttentionItem): string {
-  const base = (item.summary || item.content || item.key || item.id || 'Item').trim()
+  const base = attentionHeadlineBase(item)
   if (item.kind === 'ticket') {
     return insertTicketStatusMark(base, item.ticketStatusCode)
   }
   return base
+}
+
+function AttentionTicketSkeleton() {
+  return (
+    <div className="attention-skeleton-card" aria-hidden="true">
+      <span className="attention-skeleton-line medium" />
+      <span className="attention-skeleton-line long" />
+      <span className="attention-skeleton-line short" />
+      <div className="attention-skeleton-actions">
+        <span className="attention-skeleton-line" />
+        <span className="attention-skeleton-line" />
+      </div>
+    </div>
+  )
 }
 
 const TICKET_SCAN_LAST_KEY = 'metra.ticketWatch.lastAutoScanUtc'
@@ -527,20 +552,42 @@ function AttentionCard({
     conf,
     item.notRecheckedSince ? 'Not rechecked recently' : null,
   ].filter(Boolean)
+  const headlineBase = attentionHeadlineBase(item)
+  const statusCode = item.kind === 'ticket' ? item.ticketStatusCode?.trim() : ''
+  const matrixHint = matrixHintDisplayText(item.matrixHint)
+  const reasonLine = operatorReasonLine({
+    operatorReason: item.operatorReason,
+    whyNext: item.whyNext,
+    assessGate: item.assessGate,
+  })
 
   return (
     <div className={primary ? 'attention-card attention-card-primary' : 'attention-card'}>
-      <p className="attention">{attentionHeadline(item)}</p>
+      <p className="attention attention-headline">
+        {statusCode ? (
+          <span
+            className="attention-status-accent"
+            title={item.ticketStatus || statusCode}
+          >
+            {statusCode}
+          </span>
+        ) : null}
+        <span className="attention-headline-text">{headlineBase}</span>
+      </p>
       {item.detail && <p className="muted attention-detail">{item.detail}</p>}
       {(item.existingRecommendation?.trim() || item.hasExistingRecommendation) && (
         <div className="attention-existing-rec" style={{ marginBottom: '0.75rem' }}>
           <p className="muted">
-            Existing Metra AI recommendation
-            {item.recommendationSource === 'isupport'
-              ? ' (iSupport)'
-              : item.recommendationSource === 'local-draft'
-                ? ' (local draft)'
-                : ''}
+            {item.recommendationSource === 'local-draft' ? (
+              <>
+                <span className="attention-draft-badge">Draft</span> Existing local draft (not in
+                iSupport)
+              </>
+            ) : item.recommendationSource === 'isupport' ? (
+              'Existing Metra AI recommendation (iSupport)'
+            ) : (
+              'Existing Metra AI recommendation'
+            )}
           </p>
           {item.existingRecommendation?.trim() ? (
             <RecommendPreviewText text={item.existingRecommendation.trim()} />
@@ -549,6 +596,15 @@ function AttentionCard({
           )}
         </div>
       )}
+      {matrixHint ? (
+        <p className="attention-matrix-hint">
+          <span className="muted">Why matched: </span>
+          {matrixHint}
+        </p>
+      ) : null}
+      {reasonLine && reasonLine !== item.whyNext ? (
+        <p className="attention-reason-line">{reasonLine}</p>
+      ) : null}
       {item.whyNext && <p className="attention-why">{item.whyNext}</p>}
       {advanced && (
         <>
@@ -603,13 +659,26 @@ function ResolveActions({
   const [localBusy, setLocalBusy] = useState(false)
   const [feedback, setFeedback] = useState(attention.note || '')
   const [recommendPreview, setRecommendPreview] = useState<string | null>(null)
+  const [cardError, setCardError] = useState<string | null>(null)
+  const [failedPreview, setFailedPreview] = useState<CapturedWatchOp | null>(null)
+  const [writeNeedsConfirm, setWriteNeedsConfirm] = useState(false)
+  const [cardBusy, setCardBusy] = useState(false)
+  const activeRequestId = useRef<string | null>(null)
   const bridge = getMetraBridge()
   const key = attention.key || attention.id
 
   useEffect(() => {
     setFeedback(attention.note || '')
     setRecommendPreview(null)
-  }, [attention.key, attention.id, attention.note])
+    setCardError(null)
+    setFailedPreview(null)
+    setWriteNeedsConfirm(false)
+    activeRequestId.current = null
+  }, [attention.key, attention.id])
+
+  useEffect(() => {
+    setFeedback(attention.note || '')
+  }, [attention.note])
 
   useEffect(() => {
     return bridge.onHostMessage((message) => {
@@ -799,52 +868,119 @@ function ResolveActions({
     return m ? m[1] : null
   })()
 
-  async function onWatchRecommend(mode: 'preview' | 'confirm', force = false) {
+  async function onWatchRecommend(
+    mode: 'preview' | 'confirm',
+    force = false,
+    captured?: CapturedWatchOp,
+  ) {
     if (!ticketIdFromKey) {
       onStatus('Missing ticket id for recommendation.')
       return
     }
-    if (mode === 'confirm' && force) {
+    if (cardBusy || localBusy) return
+
+    const ticketId =
+      captured && (captured.op === 'preview' || captured.op === 'confirm')
+        ? captured.ticketId
+        : ticketIdFromKey
+    const useForce =
+      captured && (captured.op === 'preview' || captured.op === 'confirm')
+        ? captured.force
+        : force
+    const useMode =
+      captured && (captured.op === 'preview' || captured.op === 'confirm')
+        ? captured.op
+        : mode
+
+    if (useMode === 'confirm' && useForce) {
       const ok = window.confirm(
         'Force write recommendation to iSupport even though local evidence is still thin?',
       )
       if (!ok) return
     }
+    if (useMode === 'confirm' && writeNeedsConfirm && !captured) {
+      // Operator re-affirmed after ambiguous write failure.
+      setWriteNeedsConfirm(false)
+    }
+
+    // Always mint a fresh requestId on retry so a late prior response cannot pass staleness checks.
+    const requestId = newWatchRequestId()
+    const capture: CapturedWatchOp = {
+      op: useMode,
+      ticketId,
+      force: useForce,
+      requestId,
+    }
+    activeRequestId.current = requestId
     setLocalBusy(true)
+    setCardBusy(true)
     onStatus(null)
-    setRecommendPreview(null)
+    setCardError(null)
+    if (useMode === 'preview') setRecommendPreview(null)
     try {
-      const res = await watchRecommend(ticketIdFromKey, {
-        preview: mode === 'preview',
-        confirm: mode === 'confirm',
-        force,
+      const res = await watchRecommend(ticketId, {
+        preview: useMode === 'preview',
+        confirm: useMode === 'confirm',
+        force: useForce,
       })
+      if (isStaleWatchResponse(activeRequestId.current, requestId)) {
+        return
+      }
       if (res.desk) onDeskUpdate(res.desk)
       const store = res.store
       const next = store?.nextSteps || store?.warning || res.error || ''
+      const reason = operatorReasonLine({ nextSteps: next })
       if (!res.ok || !store?.ok) {
-        onStatus(next || 'Recommendation action failed.')
+        const msg = reason || next || 'Recommendation action failed.'
+        setCardError(msg)
+        if (useMode === 'preview') {
+          setFailedPreview(capture)
+        } else {
+          // Durable write: no auto-replay; require a new operator confirmation.
+          setFailedPreview(null)
+          setWriteNeedsConfirm(true)
+        }
+        onStatus(msg)
         return
       }
+      setFailedPreview(null)
+      setWriteNeedsConfirm(false)
       if (store.body) setRecommendPreview(store.body)
-      if (mode === 'preview') {
+      if (useMode === 'preview') {
         const head = store.recommendable
-          ? 'Preview: local recommend-draft saved (no iSupport write).'
-          : 'Preview: next-evidence brief (not a recommendation; no iSupport write).'
+          ? 'Draft saved locally (Preview - no iSupport write).'
+          : 'Draft: next-evidence brief (not a recommendation; no iSupport write).'
         onStatus(next ? `${head} ${next}` : head)
       } else {
         onStatus(
-          'Wrote recommendation to iSupport (store-as-review). Re-run supersedes the same section. Not resolved.',
+          'Wrote recommendation to iSupport (Affirm A store-as-review). Re-run supersedes the same section. Not resolved.',
         )
       }
     } catch (e) {
-      onStatus(e instanceof Error ? e.message : String(e))
+      if (isStaleWatchResponse(activeRequestId.current, requestId)) {
+        return
+      }
+      const msg = e instanceof Error ? e.message : String(e)
+      setCardError(msg)
+      if (useMode === 'preview') {
+        setFailedPreview(capture)
+      } else {
+        setFailedPreview(null)
+        setWriteNeedsConfirm(true)
+      }
+      onStatus(msg)
     } finally {
+      if (activeRequestId.current === requestId) {
+        activeRequestId.current = null
+      }
       setLocalBusy(false)
+      setCardBusy(false)
     }
   }
 
-  const disabled = busy || localBusy
+  const disabled = busy || localBusy || cardBusy
+  const previewRetryBound =
+    failedPreview?.op === 'preview' && failedPreview.ticketId === ticketIdFromKey
 
   return (
     <div className="resolve-actions">
@@ -860,15 +996,20 @@ function ResolveActions({
             disabled={disabled}
             onClick={() => void onWatchRecommend('preview')}
           >
-            Preview recommendation
+            {cardBusy ? 'Working...' : 'Preview draft'}
           </button>
           <button
             type="button"
-            className="btn btn-primary"
+            className="btn btn-primary btn-write-recommend"
             disabled={disabled}
+            title={
+              writeNeedsConfirm
+                ? 'Previous write failed or was indeterminate - confirm again to write'
+                : 'Write recommendation to iSupport (Affirm A)'
+            }
             onClick={() => void onWatchRecommend('confirm')}
           >
-            Write recommendation
+            {writeNeedsConfirm ? 'Confirm write recommendation' : 'Write recommendation'}
           </button>
           <button
             type="button"
@@ -881,9 +1022,35 @@ function ResolveActions({
           </button>
         </div>
       )}
+      {cardBusy && ticketIdFromKey && (
+        <div className="attention-skeleton-list" aria-busy="true" aria-label="Recommendation in progress">
+          <AttentionTicketSkeleton />
+        </div>
+      )}
+      {cardError && (
+        <div className="attention-card-error" role="alert">
+          <p>{cardError}</p>
+          {previewRetryBound && failedPreview && (
+            <button
+              type="button"
+              className="btn btn-secondary"
+              disabled={disabled}
+              onClick={() => void onWatchRecommend('preview', false, failedPreview)}
+            >
+              Retry draft preview
+            </button>
+          )}
+          {writeNeedsConfirm && (
+            <p className="muted" style={{ marginTop: '0.35rem' }}>
+              Write was not auto-retried. Use Write recommendation again to confirm.
+            </p>
+          )}
+        </div>
+      )}
       {recommendPreview && (
         <div style={{ marginBottom: '0.75rem' }}>
-          <p className="muted">New recommendation preview (not yet in iSupport)</p>
+          <span className="attention-draft-badge">Draft</span>
+          <p className="muted">Local draft preview (not yet in iSupport)</p>
           <RecommendPreviewText text={recommendPreview} />
         </div>
       )}
@@ -1348,6 +1515,10 @@ export default function App() {
   const [resolveStatus, setResolveStatus] = useState<string | null>(null)
   const [ticketWatchStatus, setTicketWatchStatus] = useState<string | null>(null)
   const ticketScanInFlight = useRef(false)
+  const [ticketScanLoading, setTicketScanLoading] = useState(false)
+  const [ticketScanError, setTicketScanError] = useState<string | null>(null)
+  const [failedScan, setFailedScan] = useState<CapturedWatchOp | null>(null)
+  const scanRequestIdRef = useRef<string | null>(null)
   const ticketScanFailCount = useRef(0)
   const TICKET_SCAN_MAX_FAILS = 3
   const [ticketScanPaused, setTicketScanPaused] = useState(false)
@@ -1462,24 +1633,37 @@ export default function App() {
   }, [])
 
   const runTicketWatchScan = useCallback(
-    async (opts?: { quiet?: boolean }) => {
+    async (opts?: { quiet?: boolean; captured?: CapturedWatchOp }) => {
       if (!ticketWatchEnabled || ticketScanInFlight.current) return
       if (opts?.quiet && !hasLocalSession) return
       if (opts?.quiet && ticketScanPaused) return
       if (opts?.quiet && !tryAcquireTicketScanLock()) return
+      const draft =
+        opts?.captured?.op === 'scan' ? opts.captured.draft : false
+      // Fresh id per attempt - do not reuse captured.requestId across retries.
+      const requestId = newWatchRequestId()
+      const capture: CapturedWatchOp = { op: 'scan', draft, requestId }
       ticketScanInFlight.current = true
+      scanRequestIdRef.current = requestId
       if (!opts?.quiet) {
         setBusy(true)
+        setTicketScanLoading(true)
         setError(null)
+        setTicketScanError(null)
         setTicketWatchStatus(null)
         setTicketScanPaused(false)
         ticketScanFailCount.current = 0
       }
       try {
-        const res = await watchTickets(false)
+        const res = await watchTickets(draft)
+        if (isStaleWatchResponse(scanRequestIdRef.current, requestId)) {
+          return
+        }
         setDesk(res.desk)
         ticketScanFailCount.current = 0
         setTicketScanPaused(false)
+        setFailedScan(null)
+        setTicketScanError(null)
         if (opts?.quiet && !res.skipped && res.ok) markTicketAutoScanRan()
         const msg = formatTicketWatchStatus(res.watch)
         if (!opts?.quiet) {
@@ -1488,6 +1672,9 @@ export default function App() {
           setTicketWatchStatus(`Auto-scan: ${msg}`)
         }
       } catch (e) {
+        if (isStaleWatchResponse(scanRequestIdRef.current, requestId)) {
+          return
+        }
         const errMsg = e instanceof Error ? e.message : String(e)
         const nonRetriable =
           /403|401|forbidden|local authority|local session/i.test(errMsg)
@@ -1506,13 +1693,20 @@ export default function App() {
         if (opts?.quiet) {
           setTicketWatchStatus(failLabel)
         } else {
-          setError(errMsg)
+          setTicketScanError(errMsg)
+          setFailedScan(capture)
           setTicketWatchStatus(null)
         }
       } finally {
         if (opts?.quiet) releaseTicketScanLock()
+        if (scanRequestIdRef.current === requestId) {
+          scanRequestIdRef.current = null
+        }
         ticketScanInFlight.current = false
-        if (!opts?.quiet) setBusy(false)
+        if (!opts?.quiet) {
+          setBusy(false)
+          setTicketScanLoading(false)
+        }
       }
     },
     [formatTicketWatchStatus, ticketWatchEnabled, ticketScanPaused, hasLocalSession],
@@ -2999,7 +3193,7 @@ export default function App() {
                   <button
                     type="button"
                     className="btn btn-secondary"
-                    disabled={busy || !ticketWatchEnabled}
+                    disabled={busy || ticketScanLoading || !ticketWatchEnabled}
                     title={
                       ticketWatchEnabled
                         ? `Mine-scope tickets into Attention (auto every ${ticketWatchAutoScanMinutes} min). No iSupport writes.`
@@ -3007,7 +3201,7 @@ export default function App() {
                     }
                     onClick={() => void onScanTickets()}
                   >
-                    {busy ? 'Scanning...' : 'Scan tickets'}
+                    {ticketScanLoading ? 'Scanning...' : 'Scan tickets'}
                   </button>
                 </div>
               )}
@@ -3016,6 +3210,33 @@ export default function App() {
               <p className="place-ack" role="status" aria-live="polite">
                 {ticketWatchStatus}
               </p>
+            )}
+            {attentionOpen && ticketScanLoading && (
+              <div
+                className="attention-skeleton-list"
+                aria-busy="true"
+                aria-label="Scanning tickets"
+              >
+                <AttentionTicketSkeleton />
+                <AttentionTicketSkeleton />
+              </div>
+            )}
+            {attentionOpen && ticketScanError && (
+              <div className="attention-card-error" role="alert">
+                <p>{ticketScanError}</p>
+                {failedScan?.op === 'scan' && (
+                  <button
+                    type="button"
+                    className="btn btn-secondary"
+                    disabled={busy || ticketScanLoading}
+                    onClick={() =>
+                      void runTicketWatchScan({ quiet: false, captured: failedScan })
+                    }
+                  >
+                    Retry scan
+                  </button>
+                )}
+              </div>
             )}
             {attentionOpen && (() => {
               const active = desk?.attention?.active ?? (desk?.nextAttention ? [desk.nextAttention] : [])

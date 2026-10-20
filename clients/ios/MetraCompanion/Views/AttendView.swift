@@ -26,6 +26,7 @@ struct MetraPresenceFaceView: View {
                     switch mood {
                     case .attend: return CGFloat(sin(t * 1.15) * 1.2)
                     case .listening: return CGFloat(sin(t * 1.6) * 0.8)
+                    case .thinking: return CGFloat(sin(t * 0.9) * 0.5)
                     case .speaking: return CGFloat(sin(t * 1.4) * 0.9)
                     }
                 }()
@@ -122,6 +123,7 @@ struct MetraPresenceFaceView: View {
             switch mood {
             case .attend: 176
             case .listening: 174
+            case .thinking: 175
             case .speaking: 178
             }
         }()
@@ -135,6 +137,7 @@ struct MetraPresenceFaceView: View {
             switch mood {
             case .attend: 0.85
             case .listening: 0.55
+            case .thinking: 0.7
             case .speaking: 0.95
             }
         }()
@@ -148,6 +151,7 @@ struct MetraPresenceFaceView: View {
             switch mood {
             case .attend: 7.5
             case .listening: 9.5
+            case .thinking: 8.5
             case .speaking: nil
             }
         }()

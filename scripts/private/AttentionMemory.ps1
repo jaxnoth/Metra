@@ -160,6 +160,15 @@ function Get-MetraAttentionMemory {
                 ticketStatusCode   = [string](Get-MetraProp -Object $i -Name 'ticketStatusCode' -Default '')
                 existingRecommendation = [string](Get-MetraProp -Object $i -Name 'existingRecommendation' -Default '')
                 recommendationSource = [string](Get-MetraProp -Object $i -Name 'recommendationSource' -Default '')
+                assessGate         = [string](Get-MetraProp -Object $i -Name 'assessGate' -Default '')
+                matrixHint         = $(
+                    $mhPersist = Get-MetraProp -Object $i -Name 'matrixHint' -Default $null
+                    if ($mhPersist -is [string] -and -not [string]::IsNullOrWhiteSpace([string]$mhPersist)) {
+                        [string]$mhPersist.Trim()
+                    }
+                    else { $null }
+                )
+                operatorReason     = [string](Get-MetraProp -Object $i -Name 'operatorReason' -Default '')
                 command            = [string](Get-MetraProp -Object $i -Name 'command' -Default '')
                 evidenceSignature  = [string](Get-MetraProp -Object $i -Name 'evidenceSignature' -Default '')
                 state              = [string](Get-MetraProp -Object $i -Name 'state' -Default 'active')
@@ -835,6 +844,14 @@ function Merge-MetraAttentionItemFromTicketQueue {
         $ticketStatusCode = Get-MetraTicketAttentionStatusCode -Status $TicketStatus
     }
 
+    $matrixHintMerge = $null
+    $mhMerge = Get-MetraProp -Object $QueueItem -Name 'matrixHint' -Default $null
+    if ($null -eq $mhMerge) { $mhMerge = Get-MetraProp -Object $QueueItem -Name 'MatrixHint' -Default $null }
+    if ($mhMerge -is [string] -and -not [string]::IsNullOrWhiteSpace([string]$mhMerge)) {
+        $matrixHintMerge = [string]$mhMerge.Trim()
+    }
+    $operatorReasonMerge = [string](Get-MetraProp -Object $QueueItem -Name 'operatorReason' -Default '')
+
     foreach ($pair in @(
             @{ Name = 'existingRecommendation'; Value = $existingRecommendation }
             @{ Name = 'recommendationSource'; Value = $recommendationSource }
@@ -844,9 +861,11 @@ function Merge-MetraAttentionItemFromTicketQueue {
             @{ Name = 'whyNext'; Value = [string](Get-MetraProp -Object $QueueItem -Name 'whyNext' -Default '') }
             @{ Name = 'askPrompt'; Value = [string](Get-MetraProp -Object $QueueItem -Name 'askPrompt' -Default '') }
             @{ Name = 'responseObjective'; Value = [string](Get-MetraProp -Object $QueueItem -Name 'responseObjective' -Default '') }
+            @{ Name = 'matrixHint'; Value = $matrixHintMerge }
+            @{ Name = 'operatorReason'; Value = $operatorReasonMerge }
         )) {
         # Skip empty optional assess/display fields so we do not wipe prior values on thin queue items.
-        if ($pair.Name -in @('assessGate', 'summary', 'whyNext', 'askPrompt', 'responseObjective') -and [string]::IsNullOrWhiteSpace([string]$pair.Value)) {
+        if ($pair.Name -in @('assessGate', 'summary', 'whyNext', 'askPrompt', 'responseObjective', 'matrixHint', 'operatorReason') -and [string]::IsNullOrWhiteSpace([string]$pair.Value)) {
             continue
         }
         if ($Item.PSObject.Properties[$pair.Name]) {
@@ -1120,6 +1139,18 @@ function ConvertTo-MetraDeskAttentionView {
         recommendationSource = $recommendationSource
         ticketStatus           = $ticketStatus
         ticketStatusCode       = $ticketStatusCode
+        matrixHint             = $(
+            $mh = Get-MetraProp -Object $MemItem -Name 'matrixHint' -Default $null
+            if ($null -eq $mh) { $mh = Get-MetraProp -Object $MemItem -Name 'MatrixHint' -Default $null }
+            if ($mh -is [string] -and -not [string]::IsNullOrWhiteSpace([string]$mh)) { [string]$mh.Trim() }
+            else { $null }
+        )
+        assessGate             = [string](Get-MetraProp -Object $MemItem -Name 'assessGate' -Default '')
+        operatorReason         = $(
+            $or = [string](Get-MetraProp -Object $MemItem -Name 'operatorReason' -Default '')
+            if (-not [string]::IsNullOrWhiteSpace($or)) { $or.Trim() }
+            else { $null }
+        )
     }
 }
 

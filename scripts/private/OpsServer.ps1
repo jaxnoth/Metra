@@ -2205,39 +2205,49 @@ function Stop-MetraOpsServer {
     .DESCRIPTION
         Stops only the Ops HTTP listener process. Prefer Stop-MetraOpsDesk to stop Ops and Ask together.
         The desk process finally block stops Ask for that session when it exits cleanly.
+        Serialized via Invoke-MetraOpsDeskExclusive when available (ops-desk-lifecycle).
     #>
     [CmdletBinding()]
     param([int]$Port = 7380)
 
-    $pidFile = Get-MetraOpsPidFile -Port $Port
-    $target = $null
+    $stopBody = {
+        $pidFile = Get-MetraOpsPidFile -Port $Port
+        $target = $null
 
-    if (Test-Path -LiteralPath $pidFile) {
-        $recorded = 0
-        if ([int]::TryParse((Get-Content -LiteralPath $pidFile -Raw).Trim(), [ref]$recorded)) {
-            if ($recorded -ne $PID -and (Get-Process -Id $recorded -ErrorAction SilentlyContinue)) {
-                $target = $recorded
+        if (Test-Path -LiteralPath $pidFile) {
+            $recorded = 0
+            if ([int]::TryParse((Get-Content -LiteralPath $pidFile -Raw).Trim(), [ref]$recorded)) {
+                if ($recorded -ne $PID -and (Get-Process -Id $recorded -ErrorAction SilentlyContinue)) {
+                    $target = $recorded
+                }
             }
+            Remove-Item -LiteralPath $pidFile -Force -ErrorAction SilentlyContinue
         }
-        Remove-Item -LiteralPath $pidFile -Force -ErrorAction SilentlyContinue
+
+        if (-not $target) {
+            $target = Get-MetraOpsListenerProcessId -Port $Port
+        }
+
+        if (-not $target) {
+            Write-Host "No Metra Ops desk found on port $Port." -ForegroundColor DarkGray
+            return
+        }
+
+        try {
+            Stop-Process -Id $target -Force -ErrorAction Stop
+            Write-Host "Stopped Metra Ops desk on port $Port (process $target)." -ForegroundColor Green
+        }
+        catch {
+            throw "Could not stop process $target holding port $Port - $($_.Exception.Message)"
+        }
     }
 
-    if (-not $target) {
-        $target = Get-MetraOpsListenerProcessId -Port $Port
-    }
-
-    if (-not $target) {
-        Write-Host "No Metra Ops desk found on port $Port." -ForegroundColor DarkGray
+    if (Get-Command Invoke-MetraOpsDeskExclusive -ErrorAction SilentlyContinue) {
+        Invoke-MetraOpsDeskExclusive -Script $stopBody
         return
     }
 
-    try {
-        Stop-Process -Id $target -Force -ErrorAction Stop
-        Write-Host "Stopped Metra Ops desk on port $Port (process $target)." -ForegroundColor Green
-    }
-    catch {
-        throw "Could not stop process $target holding port $Port - $($_.Exception.Message)"
-    }
+    & $stopBody
 }
 
 function Start-MetraOpsServer {

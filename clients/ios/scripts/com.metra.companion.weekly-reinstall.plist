@@ -1,0 +1,44 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!--
+  Example LaunchAgent shape for MetraCompanion weekly rebuild (Personal Team ~7-day expiry).
+
+  Prefer: clients/ios/scripts/prove-1.6a.sh - it renders a checkout-local plist into
+  ~/Library/LaunchAgents using IOS_ROOT from the script path (no hardcoded checkout).
+
+  Manual install only if you must: replace __METRA_IOS_ROOT__ and __HOME__ below, then:
+    chmod +x __METRA_IOS_ROOT__/scripts/Rebuild-MetraCompanion-Device.sh
+    cp this-file ~/Library/LaunchAgents/com.metra.companion.weekly-reinstall.plist
+    launchctl bootstrap gui/$(id -u) ~/Library/LaunchAgents/com.metra.companion.weekly-reinstall.plist
+    launchctl enable gui/$(id -u)/com.metra.companion.weekly-reinstall
+
+  Logs: ~/Library/Logs/MetraCompanion/weekly-reinstall.log
+  Unload:
+    launchctl bootout gui/$(id -u)/com.metra.companion.weekly-reinstall
+-->
+<plist version="1.0">
+<dict>
+  <key>Label</key>
+  <string>com.metra.companion.weekly-reinstall</string>
+  <key>ProgramArguments</key>
+  <array>
+    <string>/bin/zsh</string>
+    <string>__METRA_IOS_ROOT__/scripts/Rebuild-MetraCompanion-Device.sh</string>
+  </array>
+  <key>WorkingDirectory</key>
+  <string>__METRA_IOS_ROOT__</string>
+  <key>StartInterval</key>
+  <integer>432000</integer>
+  <key>RunAtLoad</key>
+  <true/>
+  <key>StandardOutPath</key>
+  <string>__HOME__/Library/Logs/MetraCompanion/launchd.out.log</string>
+  <key>StandardErrorPath</key>
+  <string>__HOME__/Library/Logs/MetraCompanion/launchd.err.log</string>
+  <key>EnvironmentVariables</key>
+  <dict>
+    <key>PATH</key>
+    <string>/usr/bin:/bin:/usr/sbin:/sbin:/Applications/Xcode.app/Contents/Developer/usr/bin</string>
+  </dict>
+</dict>
+</plist>

@@ -4,6 +4,10 @@
 <dict>
 	<key>CFBundleDisplayName</key>
 	<string>Metra</string>
+	<key>NSMicrophoneUsageDescription</key>
+	<string>Metra listens when you tap the mic so you can talk hands-free on Vision.</string>
+	<key>NSSpeechRecognitionUsageDescription</key>
+	<string>Metra turns your speech into text for Vision conversation on this device.</string>
 	<key>UILaunchScreen</key>
 	<dict/>
 </dict>

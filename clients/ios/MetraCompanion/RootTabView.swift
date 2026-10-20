@@ -1,10 +1,10 @@
 import SwiftUI
 
-/// Phase 1 shell: one Metra home (presence + chat). Settings is gear-only.
+/// Phase 1 shell: one Metra home (presence + chat / voice). Settings is gear-only.
 struct RootTabView: View {
     @StateObject private var model = ChatViewModel()
     @AppStorage("opsBaseURL") private var opsBaseURL: String = ""
-    /// Trial preview until real voice I/O lands - voice surface nearly fills the screen.
+    /// Voice layout nearly fills the screen (STT/TTS).
     @AppStorage("voiceLayoutPreview") private var voiceLayoutPreview: Bool = false
     @FocusState private var composerFocused: Bool
     @Environment(\.scenePhase) private var scenePhase
@@ -36,12 +36,19 @@ struct RootTabView: View {
                             composerFocused = false
                             model.newSession()
                         }
+                    } else {
+                        Button("New") {
+                            model.newSession()
+                        }
                     }
                 }
                 ToolbarItem(placement: .topBarTrailing) {
                     HStack(spacing: 12) {
                         Button {
                             composerFocused = false
+                            if model.isListeningVoice {
+                                model.toggleVoiceListen()
+                            }
                             voiceLayoutPreview.toggle()
                         } label: {
                             Image(systemName: voiceLayoutPreview ? "text.bubble" : "waveform.circle.fill")
@@ -56,7 +63,6 @@ struct RootTabView: View {
                     }
                 }
                 ToolbarItemGroup(placement: .keyboard) {
-                    // Leading Done - trailing sits on top of the send control.
                     Button("Done") {
                         composerFocused = false
                     }
@@ -68,9 +74,6 @@ struct RootTabView: View {
                 if phase == .active {
                     model.handleSceneActive()
                 } else if phase == .background {
-                    // Do not cancel Ask on background - brief Tailscale/Settings hops must not abort.
-                    // Explicit Cancel / New session still cancel. URLSession timeout remains the bound.
-                    // Ephemeral support episode ends on background (stale-episode boundary).
                     model.handleSceneBackground()
                     composerFocused = false
                 }
@@ -97,22 +100,58 @@ struct RootTabView: View {
         }
     }
 
-    /// Voice surface: face nearly fills the screen. STT/TTS still later.
+    /// Voice surface: face nearly fills the screen; tap mic to talk.
     private var voiceHome: some View {
         ZStack {
             MetraBrand.canvas(for: .dark)
                 .ignoresSafeArea()
 
-            PresenceChrome(mood: model.presenceMood, surface: .voice)
-                .padding(.horizontal, 12)
-                .padding(.bottom, 24)
+            VStack(spacing: 16) {
+                PresenceChrome(mood: model.presenceMood, surface: .voice)
+                    .padding(.horizontal, 12)
+                    .frame(maxHeight: .infinity)
 
-            VStack {
-                Spacer()
-                Text("Voice layout preview - full STT/TTS later")
-                    .font(.caption)
-                    .foregroundStyle(MetraBrand.signalTealBright.opacity(0.8))
-                    .padding(.bottom, 12)
+                if let banner = model.banner {
+                    Text(banner)
+                        .font(.footnote)
+                        .foregroundStyle(.orange)
+                        .multilineTextAlignment(.center)
+                        .padding(.horizontal, 16)
+                }
+
+                if !model.voiceCaption.isEmpty {
+                    Text(model.voiceCaption)
+                        .font(.body)
+                        .foregroundStyle(MetraBrand.signalTealBright)
+                        .multilineTextAlignment(.center)
+                        .lineLimit(4)
+                        .padding(.horizontal, 20)
+                }
+
+                HStack(spacing: 28) {
+                    if model.isSending {
+                        Button("Cancel") {
+                            model.cancelSend()
+                        }
+                        .font(.body.weight(.semibold))
+                        .foregroundStyle(.orange)
+                    }
+
+                    Button {
+                        model.toggleVoiceListen()
+                    } label: {
+                        Image(systemName: model.isListeningVoice ? "stop.circle.fill" : "mic.circle.fill")
+                            .font(.system(size: 64))
+                            .foregroundStyle(
+                                model.isListeningVoice
+                                    ? Color.orange
+                                    : MetraBrand.signalTealBright
+                            )
+                            .accessibilityLabel(model.isListeningVoice ? "Stop listening" : "Start listening")
+                    }
+                    .disabled(model.isSending && !model.isListeningVoice)
+                }
+                .padding(.bottom, 28)
             }
         }
     }

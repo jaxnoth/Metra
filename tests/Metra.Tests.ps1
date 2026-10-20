@@ -4688,6 +4688,34 @@ Describe 'Metra Ops host' {
         $source | Should -Match '\$script:MetraOpsFailureStreak = 0'
     }
 
+    It 'serializes desk lifecycle so Host and ask-engine restart cannot race' {
+        $opsHost = Get-Content -LiteralPath (Join-Path (Get-MetraRoot) 'scripts\private\OpsHost.ps1') -Raw
+        $bridge = Get-Content -LiteralPath (Join-Path (Get-MetraRoot) 'scripts\bootstrap\Invoke-MetraOpsHostBridge.ps1') -Raw
+        $tray = Get-Content -LiteralPath (Join-Path (Get-MetraRoot) 'host\MetraHost\TrayApp.cs') -Raw
+        $opsHost | Should -Match 'ops-desk-lifecycle'
+        $opsHost | Should -Match 'function Invoke-MetraOpsDeskExclusive'
+        $opsHost | Should -Match 'function Repair-MetraOpsDeskChild'
+        $opsHost | Should -Match 'Repair-MetraOpsDeskChild'
+        $opsHost | Should -Match 'deskLifecycleUserScript'
+        $opsHost | Should -Match 'GetNewClosure'
+        $bridge | Should -Match "'recycle-desk'"
+        # Host must recycle atomically - split stop+start was the exit -1 race.
+        $tray | Should -Match 'recycle-desk'
+        $tray | Should -Not -Match 'Invoke\("stop-desk".*\r?\n.*Invoke\("start-child"'
+    }
+
+    It 'Invoke-MetraOpsDeskExclusive runs nested bodies without re-wait deadlock' {
+        InModuleScope Metra {
+            $script:DeskExclusiveProbe = 0
+            Invoke-MetraOpsDeskExclusive {
+                Invoke-MetraOpsDeskExclusive {
+                    $script:DeskExclusiveProbe = 1
+                }
+            }
+            $script:DeskExclusiveProbe | Should -Be 1
+        }
+    }
+
     It 'keeps retrying a dead desk instead of giving up after one attempt' {
         $source = Get-Content -LiteralPath (Join-Path (Get-MetraRoot) 'scripts\private\OpsHost.ps1') -Raw
         # An unowned child (console ops, or a desk restarted outside the tray) must still be supervised.
@@ -5810,7 +5838,82 @@ Describe 'Ops Ask sidecar stability (reach)' {
             (Get-MetraVisionAskHttpStatusCode -Envelope ([pscustomobject]@{ status = 'unavailable'; reason = 'cursor_auth_error' })) | Should -Be 502
             (Get-MetraVisionAskHttpStatusCode -Envelope ([pscustomobject]@{ status = 'unavailable'; reason = 'cursor_usage_limit' })) | Should -Be 502
             (Get-MetraVisionAskHttpStatusCode -Envelope ([pscustomobject]@{ status = 'unavailable'; reason = 'cursor_model_unavailable' })) | Should -Be 502
+            # Scar: ValidateSet once omitted cursor_* so phone got a PowerShell 500 instead of a Vision envelope.
+            $env = New-MetraVisionAskErrorResponse -Reason 'cursor_auth_error' -Source 'ops-vision' -Mode 'vision' -Intent 'relational' -Detail 'auth'
+            $env.reason | Should -Be 'cursor_auth_error'
+            $env.status | Should -Be 'unavailable'
+            foreach ($code in @(Get-MetraVisionAskErrorCodes)) {
+                $roundTrip = New-MetraVisionAskErrorResponse -Reason $code -Source 'ops-vision' -Mode 'vision' -Intent 'relational' -Detail 'round-trip'
+                $roundTrip.reason | Should -Be $code
+            }
         }
+    }
+
+    It 'OpsAskWorker runs Ask in-process (no hung BeginInvoke response path)' {
+        $src = Get-Content -LiteralPath (Join-Path (Get-MetraRoot) 'scripts\private\OpsAskWorker.ps1') -Raw
+        $src | Should -Match 'function Complete-MetraOpsAskHttpWork'
+        $src | Should -Match 'function Start-MetraOpsAskHttpWorker'
+        $src | Should -Match 'Complete-MetraOpsAskHttpWork -Work \$Work -Response \$Response'
+        # Scar: BeginInvoke + fresh runspace hung phone/desk Ask; sync Complete must remain the hot path.
+        $src | Should -Match 'Runs Complete-MetraOpsAskHttpWork in-process'
+        $src | Should -Not -Match '\$ps\.BeginInvoke\(\)'
+    }
+
+    It 'iOS formal gate scripts and privacy scars are present' {
+        $root = Get-MetraRoot
+        $ios = Join-Path $root 'clients\ios'
+        @(
+            'scripts\Invoke-MetraIosReachVerify.ps1'
+            'scripts\Invoke-MetraIosGate.ps1'
+            'scripts\Invoke-MetraIosSimSmoke.sh'
+            'scripts\prove-1.6a.sh'
+            'MetraCompanion\Services\SpeechCapture.swift'
+            'MetraCompanion\Services\SpeechSpeak.swift'
+        ) | ForEach-Object {
+            Test-Path -LiteralPath (Join-Path $ios $_) | Should -BeTrue -Because $_
+        }
+        $plist = Get-Content -LiteralPath (Join-Path $ios 'MetraCompanion\Info.plist') -Raw
+        $plist | Should -Match 'NSMicrophoneUsageDescription'
+        $plist | Should -Match 'NSSpeechRecognitionUsageDescription'
+        $ops = Get-Content -LiteralPath (Join-Path $ios 'MetraCompanion\Services\OpsAskClient.swift') -Raw
+        $ops | Should -Match 'personalityWanted'
+        $ops | Should -Match '"posture": "Company"'
+        $prove = Get-Content -LiteralPath (Join-Path $ios 'scripts\prove-1.6a.sh') -Raw
+        $prove | Should -Match 'SCRIPT_PATH="\$\{0:A\}"'
+        # Scar: LaunchAgent must be rendered from IOS_ROOT (not a blind cp of a host-specific plist).
+        $prove | Should -Match 'Render LaunchAgent from this checkout'
+        $prove | Should -Match 'cat > "\$DEST_PLIST"'
+        $prove | Should -Not -Match 'cp -f scripts/com\.metra\.companion\.weekly-reinstall\.plist'
+        $rebuild = Get-Content -LiteralPath (Join-Path $ios 'scripts\Rebuild-MetraCompanion-Device.sh') -Raw
+        # Scar: device discovery JSON must use private mktemp, not fixed /tmp/metra-devices.json.
+        $rebuild | Should -Match 'mktemp -t metra-devices'
+        $rebuild | Should -Match 'trap .*rm -f "\$TMP_JSON"'
+        $rebuild | Should -Not -Match '/tmp/metra-devices\.json'
+        $examplePlist = Get-Content -LiteralPath (Join-Path $ios 'scripts\com.metra.companion.weekly-reinstall.plist') -Raw
+        $examplePlist | Should -Match '__METRA_IOS_ROOT__'
+        $examplePlist | Should -Not -Match '/Users/stephen\.swan/Developer/Metra'
+        $reach = Get-Content -LiteralPath (Join-Path $ios 'scripts\Invoke-MetraIosReachVerify.ps1') -Raw
+        $reach | Should -Match 'VERIFY_OK'
+        $reach | Should -Match 'ValidateSet'
+        # Scar: unavailable with engine_failure/usage/model must fail closed (not PASS vision-ask).
+        $reach | Should -Match 'Fail closed'
+        $reach | Should -Match 'AllowDegradedAuth'
+        $reach | Should -Not -Match 'okReasons'
+        $reach | Should -Match '\(AllowDegradedAuth\)'
+        # Scar: iOS reach records vision-ask failure even when an earlier gate already failed.
+        $reach | Should -Match 'HQ diagnostics stay complete'
+        $reach | Should -Match "failures\.Contains\('vision-ask'\)"
+        $reach | Should -Not -Match 'if \(\$failures\.Count -eq 0\)'
+        $gate = Get-Content -LiteralPath (Join-Path $ios 'scripts\Invoke-MetraIosGate.ps1') -Raw
+        $gate | Should -Match 'Invoke-MetraIosReachVerify'
+        $gate | Should -Match 'GATE_OK'
+        # Cross-platform: formal gate must not hardcode a Windows-only shell filename under $PSHOME.
+        $gate | Should -Not -Match 'pwsh\.exe'
+        $gate | Should -Match 'Get-Process -Id \$PID'
+        # Scar: worker runtime liveness fails closed without parseable startedUtc.
+        $workerBridge = Get-Content -LiteralPath (Join-Path $root 'host\MetraHost\CursorWorkerBridge.cs') -Raw
+        $workerBridge | Should -Match 'Fail closed: ledger identity requires a parseable startedUtc'
+        $workerBridge | Should -Match '!doc\.RootElement\.TryGetProperty\("startedUtc"'
     }
 
     It 'Get-MetraOpsAskMetaSummary returns additive Ask fields without secrets' {

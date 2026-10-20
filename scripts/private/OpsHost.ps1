@@ -1,6 +1,47 @@
 # Metra Ops host: user-session tray supervisor.
 # Ownership: Host -> Ops only. Never start/stop Ask directly (Ops owns Ask).
-# Authority: browser can propose; host/session applies; Ops owns Ask; host owns supervision.
+# Authority: browser can propose; host/session applies; Ops owns Ask; host owns desk supervision.
+# Desk start/stop/recycle share named mutex ops-desk-lifecycle so CLI ask-engine restart
+# cannot race MetraHost's stop+start (scar: Ops child exited early, code -1).
+
+$script:MetraOpsDeskLifecycleDepth = 0
+
+function Invoke-MetraOpsDeskExclusive {
+    <#
+    .SYNOPSIS
+        Serialize Ops desk process start/stop across CLI and MetraHost bridge processes.
+    .DESCRIPTION
+        Cross-process named mutex Local\Metra_ops-desk-lifecycle. Same-process nesting uses
+        MetraOpsDeskLifecycleDepth so Restart/Repair can Stop then Start under one hold.
+
+        Do not call the user scriptblock via a nested variable named `$Script` inside
+        Invoke-MetraWithNamedMutex - that parameter name shadows and infinite-recurses
+        while holding the mutex (high CPU, ask engine restart hang).
+    #>
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory)][scriptblock]$Script,
+        [int]$TimeoutMs = 120000
+    )
+
+    if ($script:MetraOpsDeskLifecycleDepth -gt 0) {
+        return (& $Script)
+    }
+
+    # Capture under a non-conflicting name; GetNewClosure so PS 5.1 keeps the binding.
+    $deskLifecycleUserScript = $Script
+    $deskLifecycleWrapper = {
+        $script:MetraOpsDeskLifecycleDepth++
+        try {
+            return (& $deskLifecycleUserScript)
+        }
+        finally {
+            $script:MetraOpsDeskLifecycleDepth--
+        }
+    }.GetNewClosure()
+
+    return Invoke-MetraWithNamedMutex -Name 'ops-desk-lifecycle' -TimeoutMs $TimeoutMs -Script $deskLifecycleWrapper
+}
 
 function Get-MetraOpsHostDataDir {
     $base = $env:LOCALAPPDATA
@@ -551,20 +592,25 @@ function Stop-MetraOpsDesk {
         $Port = [int](Resolve-MetraOpsDeskBinding -MetraRoot $MetraRoot).Port
     }
 
-    try {
-        $null = Stop-MetraAskEngine -MetraRoot $MetraRoot -IncludePortListeners -Confirm:$false
-    }
-    catch {
-        Write-Warning "Ask sidecar stop during desk stop: $($_.Exception.Message)"
-    }
+    Invoke-MetraOpsDeskExclusive {
+        try {
+            $null = Stop-MetraAskEngine -MetraRoot $MetraRoot -IncludePortListeners -Confirm:$false
+        }
+        catch {
+            Write-Warning "Ask sidecar stop during desk stop: $($_.Exception.Message)"
+        }
 
-    Stop-MetraOpsServer -Port $Port
+        Stop-MetraOpsServer -Port $Port
+    }
 }
 
 function Restart-MetraOpsDesk {
     <#
     .SYNOPSIS
         Recycles Ops desk + Ask sidecar (background child when desk was up).
+    .DESCRIPTION
+        Entire stop+start holds ops-desk-lifecycle so MetraHost supervision cannot kill the
+        replacement child mid-start (ask engine restart race).
     #>
     [CmdletBinding()]
     param(
@@ -578,22 +624,86 @@ function Restart-MetraOpsDesk {
         $Port = [int](Resolve-MetraOpsDeskBinding -MetraRoot $MetraRoot).Port
     }
 
-    $wasUp = Test-MetraOpsDeskResponding -Port $Port -TimeoutSec 2
-    Stop-MetraOpsDesk -Port $Port -MetraRoot $MetraRoot
+    return Invoke-MetraOpsDeskExclusive {
+        $wasUp = Test-MetraOpsDeskResponding -Port $Port -TimeoutSec 2
+        Stop-MetraOpsDesk -Port $Port -MetraRoot $MetraRoot
 
-    if (-not $wasUp) {
+        if (-not $wasUp) {
+            return [PSCustomObject]@{
+                restarted = $false
+                reason    = 'desk_was_down'
+                port      = $Port
+            }
+        }
+
+        $child = Start-MetraOpsChildProcess -MetraRoot $MetraRoot -Port $Port -NoRefresh:$NoRefresh -Quick:$Quick
         return [PSCustomObject]@{
-            restarted = $false
-            reason    = 'desk_was_down'
+            restarted = $true
+            childPid  = $child.Id
             port      = $Port
         }
     }
+}
 
-    $child = Start-MetraOpsChildProcess -MetraRoot $MetraRoot -Port $Port -NoRefresh:$NoRefresh -Quick:$Quick
-    return [PSCustomObject]@{
-        restarted = $true
-        childPid  = $child.Id
-        port      = $Port
+function Repair-MetraOpsDeskChild {
+    <#
+    .SYNOPSIS
+        Host recovery: stop any stale desk/Ask listeners, then start one Ops child.
+    .DESCRIPTION
+        Atomic under ops-desk-lifecycle. Used by MetraHost recycle-desk (not two bridge calls).
+        Unlike Restart-MetraOpsDesk, always attempts start when the desk is down.
+    #>
+    [CmdletBinding()]
+    param(
+        [int]$Port = 0,
+        [string]$MetraRoot = (Get-MetraRoot),
+        [switch]$Quick
+    )
+
+    if ($Port -le 0) {
+        $Port = [int](Resolve-MetraOpsDeskBinding -MetraRoot $MetraRoot).Port
+    }
+
+    return Invoke-MetraOpsDeskExclusive {
+        try {
+            $null = Stop-MetraAskEngine -MetraRoot $MetraRoot -IncludePortListeners -Confirm:$false
+        }
+        catch { }
+        try {
+            Stop-MetraOpsServer -Port $Port
+        }
+        catch { }
+
+        $existing = Get-MetraOpsChildProcessId -Port $Port
+        if ($existing -and (Test-MetraOpsDeskResponding -Port $Port -TimeoutSec 2)) {
+            return [PSCustomObject]@{
+                Ok       = $true
+                Started  = $false
+                ChildPid = [int]$existing
+                Port     = $Port
+                Error    = $null
+            }
+        }
+
+        try {
+            $child = Start-MetraOpsChildProcess -MetraRoot $MetraRoot -Port $Port -NoRefresh -Quick:$Quick
+            return [PSCustomObject]@{
+                Ok       = $true
+                Started  = $true
+                ChildPid = [int]$child.Id
+                Port     = $Port
+                Error    = $null
+            }
+        }
+        catch {
+            return [PSCustomObject]@{
+                Ok       = $false
+                Started  = $false
+                ChildPid = 0
+                Port     = $Port
+                Error    = $_.Exception.Message
+            }
+        }
     }
 }
 
@@ -720,42 +830,77 @@ function Start-MetraOpsChildProcess {
         $Port = [int](Resolve-MetraOpsDeskBinding -MetraRoot $MetraRoot).Port
     }
 
-    $bootstrap = Join-Path $MetraRoot 'scripts\bootstrap\Start-MetraOps.ps1'
-    if (-not (Test-Path -LiteralPath $bootstrap)) {
-        throw "Missing Ops bootstrap: $bootstrap"
-    }
-
-    $argList = @(
-        '-NoProfile'
-        '-ExecutionPolicy', 'Bypass'
-        '-WindowStyle', 'Hidden'
-        '-File', $bootstrap
-        '-NoBrowser'
-        '-Foreground'
-        '-Port', "$Port"
-    )
-    if ($NoRefresh) { $argList += '-NoRefresh' }
-    if ($Quick) { $argList += '-Quick' }
-    if ($env:METRA_OPS_FORCE_LOCAL -match '^(?i)(1|true|yes)$') {
-        $argList += '-ForceLocal'
-    }
-
-    $shellExe = Resolve-MetraOpsChildShellExe
-    $proc = Start-Process -FilePath $shellExe -ArgumentList $argList `
-        -WorkingDirectory $MetraRoot -PassThru -WindowStyle Hidden
-
-    $deadline = [datetime]::UtcNow.AddSeconds(45)
-    while ([datetime]::UtcNow -lt $deadline) {
-        if (Test-MetraOpsDeskResponding -Port $Port -TimeoutSec 2) {
-            return $proc
+    return Invoke-MetraOpsDeskExclusive {
+        $bootstrap = Join-Path $MetraRoot 'scripts\bootstrap\Start-MetraOps.ps1'
+        if (-not (Test-Path -LiteralPath $bootstrap)) {
+            throw "Missing Ops bootstrap: $bootstrap"
         }
-        if ($proc.HasExited) {
-            throw "Ops child exited early (pid $($proc.Id), code $($proc.ExitCode))."
-        }
-        Start-Sleep -Milliseconds 500
-    }
 
-    throw "Ops child started (pid $($proc.Id)) but desk did not answer on port $Port."
+        # Prefer CreateNoWindow over -WindowStyle Hidden - Hidden still allocates a console
+        # and often flashes (especially with Windows Terminal as the default console host).
+        $argList = @(
+            '-NoProfile'
+            '-ExecutionPolicy', 'Bypass'
+            '-File', $bootstrap
+            '-NoBrowser'
+            '-Foreground'
+            '-Port', "$Port"
+        )
+        if ($NoRefresh) { $argList += '-NoRefresh' }
+        if ($Quick) { $argList += '-Quick' }
+        if ($env:METRA_OPS_FORCE_LOCAL -match '^(?i)(1|true|yes)$') {
+            $argList += '-ForceLocal'
+        }
+
+        $shellExe = Resolve-MetraOpsChildShellExe
+        $psi = [System.Diagnostics.ProcessStartInfo]::new()
+        $psi.FileName = $shellExe
+        $psi.WorkingDirectory = $MetraRoot
+        $psi.UseShellExecute = $false
+        $psi.CreateNoWindow = $true
+        # ArgumentList exists on .NET Core / PowerShell 7+; missing on .NET Framework / Windows PowerShell 5.1.
+        # Probe via PSObject - do not touch $psi.ArgumentList under StrictMode when the property is absent.
+        $argListProp = $psi.PSObject.Properties['ArgumentList']
+        if ($null -ne $argListProp -and $null -ne $argListProp.Value) {
+            foreach ($a in $argList) {
+                [void]$argListProp.Value.Add([string]$a)
+            }
+        }
+        else {
+            $quote = {
+                param([string]$Value)
+                # PS 5.1 coerces $null to ''; treat empty as a real argv slot so it is not dropped.
+                if ([string]::IsNullOrEmpty($Value)) { return '""' }
+                $v = [string]$Value
+                if ($v -match '[\s"]') {
+                    # Only double a trailing backslash when wrapping in quotes (Windows cmdline rules).
+                    if ($v.EndsWith('\') -and -not $v.EndsWith('\\')) {
+                        $v = $v + '\'
+                    }
+                    return '"' + ($v -replace '"', '\"') + '"'
+                }
+                return $v
+            }
+            $psi.Arguments = (@($argList | ForEach-Object { & $quote $_ })) -join ' '
+        }
+        $proc = [System.Diagnostics.Process]::Start($psi)
+        if (-not $proc) {
+            throw "Failed to start Ops child ($shellExe)."
+        }
+
+        $deadline = [datetime]::UtcNow.AddSeconds(45)
+        while ([datetime]::UtcNow -lt $deadline) {
+            if (Test-MetraOpsDeskResponding -Port $Port -TimeoutSec 2) {
+                return $proc
+            }
+            if ($proc.HasExited) {
+                throw "Ops child exited early (pid $($proc.Id), code $($proc.ExitCode))."
+            }
+            Start-Sleep -Milliseconds 500
+        }
+
+        throw "Ops child started (pid $($proc.Id)) but desk did not answer on port $Port."
+    }
 }
 
 function Get-MetraOpsChildProcessId {
@@ -818,14 +963,16 @@ function Start-MetraOpsDeskIfDown {
         return [PSCustomObject]@{ Ok = $true; Started = $false; Error = $null }
     }
 
-    try { Stop-MetraOpsServer -Port $Port } catch { }
+    return Invoke-MetraOpsDeskExclusive {
+        try { Stop-MetraOpsServer -Port $Port } catch { }
 
-    try {
-        $child = Start-MetraOpsChildProcess -MetraRoot $MetraRoot -Port $Port -Quick
-        return [PSCustomObject]@{ Ok = $true; Started = $true; ChildPid = $child.Id; Error = $null }
-    }
-    catch {
-        return [PSCustomObject]@{ Ok = $false; Started = $false; Error = $_.Exception.Message }
+        try {
+            $child = Start-MetraOpsChildProcess -MetraRoot $MetraRoot -Port $Port -Quick
+            return [PSCustomObject]@{ Ok = $true; Started = $true; ChildPid = $child.Id; Error = $null }
+        }
+        catch {
+            return [PSCustomObject]@{ Ok = $false; Started = $false; Error = $_.Exception.Message }
+        }
     }
 }
 
@@ -1279,17 +1426,21 @@ function Start-MetraOpsHost {
 
             $script:MetraOpsRestartCount++
             try {
-                # Stop Ask only via Ops cleanup; never start the Ask engine from the host.
-                try { Stop-MetraOpsServer -Port $script:MetraOpsHostPort } catch { }
-                $child = Start-MetraOpsChildProcess -MetraRoot $script:MetraOpsHostRoot -Port $script:MetraOpsHostPort -Quick
-                $script:MetraOpsChildPid = $child.Id
+                # Atomic recycle under ops-desk-lifecycle (never stop then start as two unlocked steps).
+                $repaired = Repair-MetraOpsDeskChild -Port $script:MetraOpsHostPort -MetraRoot $script:MetraOpsHostRoot -Quick
+                if (-not $repaired.Ok) {
+                    $repairErr = [string]$repaired.Error
+                    if ([string]::IsNullOrWhiteSpace($repairErr)) { $repairErr = 'Repair-MetraOpsDeskChild failed.' }
+                    throw $repairErr
+                }
+                $script:MetraOpsChildPid = [int]$repaired.ChildPid
                 $script:MetraOpsOwnedChild = $true
                 $wasFailing = $script:MetraOpsFailureStreak -gt 0
                 $script:MetraOpsFailureStreak = 0
                 $script:MetraOpsNextAttemptUtc = [datetime]::MinValue
                 $script:MetraOpsLastError = $null
-                Write-MetraOpsHostLog "Restarted desk (child $($child.Id)); restart #$($script:MetraOpsRestartCount)."
-                Update-MetraOpsHostHeartbeat -Status 'running' -ChildPid $child.Id
+                Write-MetraOpsHostLog "Restarted desk (child $($repaired.ChildPid)); restart #$($script:MetraOpsRestartCount)."
+                Update-MetraOpsHostHeartbeat -Status 'running' -ChildPid ([int]$repaired.ChildPid)
                 if ($wasFailing) {
                     $notify.ShowBalloonTip(4000, 'Metra Ops', 'Desk is back online.', [System.Windows.Forms.ToolTipIcon]::Info)
                 }

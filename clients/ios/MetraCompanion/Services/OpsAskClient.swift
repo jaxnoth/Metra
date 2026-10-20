@@ -15,7 +15,13 @@ struct OpsAskClient: AskClient {
         self.deviceToken = deviceToken
     }
 
-    func ask(session: Session, text: String, turnId: String) async throws -> AskReply {
+    /// - Parameter inputModality: `voice` or `text` - voice turns still use Vision + Company posture (max personality).
+    func ask(
+        session: Session,
+        text: String,
+        turnId: String,
+        inputModality: String = "text"
+    ) async throws -> AskReply {
         let url = try Self.askURL(from: baseURLString)
 
         var request = URLRequest(url: url)
@@ -25,11 +31,13 @@ struct OpsAskClient: AskClient {
         request.setValue(deviceToken, forHTTPHeaderField: "X-Metra-Device")
         request.timeoutInterval = Self.askTimeoutInterval
 
+        // Vision requires intent=relational. Posture Company = max personality (humor / warmth packs).
         let body: [String: Any] = [
             "contractVersion": "1",
             "mode": "vision",
             "surface": "ios",
             "intent": "relational",
+            "posture": "Company",
             "message": text,
             "conversationId": session.sessionId,
             "turnId": turnId,
@@ -41,6 +49,8 @@ struct OpsAskClient: AskClient {
                 "client": "ops-ios",
                 "clientVersion": Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "",
                 "teachingWanted": false,
+                "inputModality": inputModality,
+                "personalityWanted": true,
             ],
         ]
         request.httpBody = try JSONSerialization.data(withJSONObject: body)
@@ -303,6 +313,95 @@ struct OpsAskClient: AskClient {
         default:
             return false
         }
+    }
+}
+
+// MARK: - Tailscale WhoIs device pair (POST /api/profile/pair)
+
+enum OpsPairResult: Sendable {
+    case paired(deviceId: String, token: String, message: String)
+    case pending(requestId: String, message: String)
+}
+
+enum OpsPairError: LocalizedError {
+    case invalidBaseURL
+    case httpStatus(Int, String)
+    case decoding
+    case rejected(String)
+
+    var errorDescription: String? {
+        switch self {
+        case .invalidBaseURL:
+            return "Ops base URL is not a valid HTTPS URL."
+        case .httpStatus(let code, let body):
+            return "Pair failed (HTTP \(code)): \(body)"
+        case .decoding:
+            return "Pair response was not valid JSON."
+        case .rejected(let message):
+            return message
+        }
+    }
+}
+
+extension OpsAskClient {
+    /// Pair this phone over Tailscale WhoIs; store host-minted device token in Keychain.
+    static func pairWithOps(baseURLString: String, label: String) async throws -> OpsPairResult {
+        let trimmed = baseURLString.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard let base = URL(string: trimmed),
+              let scheme = base.scheme?.lowercased(),
+              scheme == "https",
+              var components = URLComponents(url: base, resolvingAgainstBaseURL: false)
+        else {
+            throw OpsPairError.invalidBaseURL
+        }
+        let path = components.path.trimmingCharacters(in: CharacterSet(charactersIn: "/"))
+        components.path = path.isEmpty ? "/api/profile/pair" : "/\(path)/api/profile/pair"
+        guard let url = components.url else { throw OpsPairError.invalidBaseURL }
+
+        var request = URLRequest(url: url)
+        request.httpMethod = "POST"
+        request.setValue("application/json; charset=utf-8", forHTTPHeaderField: "Content-Type")
+        request.setValue("ops-ios", forHTTPHeaderField: "X-Metra-Client")
+        request.timeoutInterval = 30
+        let body: [String: Any] = ["label": label]
+        request.httpBody = try JSONSerialization.data(withJSONObject: body)
+
+        let (data, response) = try await URLSession.shared.data(for: request)
+        guard let http = response as? HTTPURLResponse else { throw OpsPairError.decoding }
+        let rawBody = String(data: data, encoding: .utf8) ?? ""
+        let json = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any]
+
+        // Pending approve is HTTP 202 with JSON body.
+        if http.statusCode == 202 {
+            let requestId = (json?["requestId"] as? String) ?? ""
+            let message = (json?["message"] as? String) ?? "Pairing pending Ops approve."
+            return .pending(requestId: requestId, message: message)
+        }
+
+        if !(200..<300).contains(http.statusCode) {
+            let err = (json?["error"] as? String) ?? rawBody
+            if http.statusCode == 403 {
+                throw OpsPairError.rejected(err.isEmpty ? "Peer identity not allowlisted." : err)
+            }
+            throw OpsPairError.httpStatus(http.statusCode, String(err.prefix(400)))
+        }
+
+        guard let json else { throw OpsPairError.decoding }
+        if (json["pending"] as? Bool) == true {
+            let requestId = (json["requestId"] as? String) ?? ""
+            let message = (json["message"] as? String) ?? "Pairing pending Ops approve."
+            return .pending(requestId: requestId, message: message)
+        }
+
+        guard let token = json["token"] as? String, !token.isEmpty else {
+            throw OpsPairError.decoding
+        }
+        guard DeviceTokenStore.write(token) else {
+            throw OpsPairError.rejected("Paired with Ops, but Keychain could not store the device token.")
+        }
+        let deviceId = (json["deviceId"] as? String) ?? ""
+        let message = (json["message"] as? String) ?? "Paired."
+        return .paired(deviceId: deviceId, token: token, message: message)
     }
 }
 

@@ -45,7 +45,10 @@ Serve / campus hosts: [tailscale-campus.md](tailscale-campus.md).
 | iOS `OpsAskClient` | 195s; `timedOut` ≠ offline; one early-reachability retry only; **409 `askBusy` → `AskClientError.askBusy`** (not offline) |
 | Ops accept-loop Ask poll | 45s from prior poll **completion** + Ensure |
 | Ensure / opaque Restart | Named mutex `ask-sidecar-ensure` (cross-runspace; poll + worker Restart share it) |
+| Desk start/stop/recycle | Named mutex `ops-desk-lifecycle` (CLI + MetraHost bridge). Host recovery uses one `recycle-desk` bridge call - never split `stop-desk` + `start-child` |
 | `/health` `degradedCode` | Set on auth/usage/model; **clears after one successful finish** (asymmetric vs 2-strike `ok` gate) |
 | Task password | Task Scheduler / LSA only |
+
+**Who owns what:** When MetraHost is running, it owns desk process supervision (adopt/restart). The Ops desk child owns Ask for that session. CLI without Host starts/stops the desk directly. All paths share `ops-desk-lifecycle` so `ask engine restart` cannot race Host into `Ops child exited early (code -1)`.
 
 Tray Host remains optional UX and adopts a running desk; it does not start Ask directly.

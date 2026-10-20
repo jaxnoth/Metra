@@ -1,14 +1,24 @@
 ---
 name: iOS voice identity (provisional)
-status: draft
+status: approved
+bingReviewed: true
+approveForLoom: true
+approveForLoomHash: 29561faa93e942c5e891ba6ab2f86171b071dd3189b4cbed4818f7aeef345974
+externalReviewed: true
+externalReviewHash: 29561faa93e942c5e891ba6ab2f86171b071dd3189b4cbed4818f7aeef345974
 ---
 
 # Plan: iOS voice identity (provisional)
 
-**Status:** Provisional lock (operator 2026-08-29) - no app wiring yet  
-**Owner:** Metra iOS companion speak identity  
-**Related:** [ios-presence-behavior.plan.md](ios-presence-behavior.plan.md) Appendix A.0 (voice identity ≠ face), [ios-conversation-policy.plan.md](ios-conversation-policy.plan.md), Brand.md  
-**Not this plan:** Cloud neural TTS shortlist; Live Speech plumbing; app Settings UI
+**Status:** Approved (Bing 2026-10-16; operator lock 2026-08-29). Identity decision only - no app wiring in this plan.
+
+**Owner:** Metra iOS companion speak identity
+
+**Related:** [ios-presence-behavior.plan.md](ios-presence-behavior.plan.md) Appendix A.0 (voice identity ≠ face), [ios-conversation-policy.plan.md](ios-conversation-policy.plan.md), Brand.md
+
+**Not this plan:** Cloud neural TTS shortlist; Live Speech plumbing; app Settings UI; `AVSpeechSynthesizer` integration (separate Phase 2.1 implementation bite).
+
+**Implementation handoff:** Phase 2.1 (tap-to-talk STT + speak replies) owns wiring. This plan stays the identity lock + Brand pointer.
 
 ---
 
@@ -56,11 +66,13 @@ System / on-device Siri and Spoken Content voices stay on-device for synthesis -
 
 ---
 
-## 5. Next (when companion app exists)
+## 5. Next (implementation bite - not this document)
+
+Do **not** expand this identity plan into an AVSpeech project. A separate Phase 2.1 bite owns:
 
 - Resolve Voice 4 to the concrete `AVSpeechSynthesisVoice` identifier for the installed locale.
 - Settings: default Voice 4; optional AU Voice 4 register; optional Personal Voice when `isPersonalVoice` available.
-- Brand stays the source of “what Metra sounds like”; this plan stays the implementation pointer.
+- Brand stays the source of what Metra sounds like; this plan stays the identity pointer.
 
 ---
 
@@ -68,10 +80,13 @@ System / on-device Siri and Spoken Content voices stay on-device for synthesis -
 
 **Decision (operator 2026-08-29):** Provisional default speak identity is **Siri Voice 4**. Australian Siri Voice 4 is a same-family lower register alternate. Personal Voice is deferred as explicit opt-in only. No app implementation in this bite.
 
+**Bing (2026-10-16):** Approve with editorial cleanup (metadata lines). Do not expand into AVSpeech/Settings implementation here. Ownership: Brand owns character → this plan locks voice identity → later bite owns synthesizer wiring.
+
 ---
 
 ## 7. Revision log
 
 | Date | Change |
 |------|--------|
+| 2026-10-16 | Bing approve; split Status/Owner/Related/Not-this-plan metadata lines; status → approved; explicit handoff to Phase 2.1 for wiring. |
 | 2026-08-29 | Provisional lock: Siri Voice 4 default; AU Voice 4 alternate; Personal Voice opt-in later. |

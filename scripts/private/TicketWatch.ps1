@@ -274,6 +274,16 @@ function Update-MetraTicketAttentionFromAssess {
         $detail = $summary
     }
 
+    # Optional MatrixHint transport: string sentences only (no object reconstruction).
+    $matrixHintRaw = Get-MetraProp -Object $AssessResult -Name 'MatrixHint' -Default $null
+    if ($null -eq $matrixHintRaw) {
+        $matrixHintRaw = Get-MetraProp -Object $AssessResult -Name 'matrixHint' -Default $null
+    }
+    $matrixHintStr = $null
+    if ($matrixHintRaw -is [string] -and -not [string]::IsNullOrWhiteSpace([string]$matrixHintRaw)) {
+        $matrixHintStr = [string]$matrixHintRaw.Trim()
+    }
+
     foreach ($pair in @(
             @{ Name = 'assessGate'; Value = $gate },
             @{ Name = 'summary'; Value = $summary },
@@ -281,8 +291,13 @@ function Update-MetraTicketAttentionFromAssess {
             @{ Name = 'askPrompt'; Value = $(if ($ask) { $ask } else { "Review assess for ticket $id" }) },
             @{ Name = 'responseObjective'; Value = $obj },
             @{ Name = 'command'; Value = ".\TicketTracker.ps1 assess $id" },
-            @{ Name = 'detail'; Value = $detail }
+            @{ Name = 'detail'; Value = $detail },
+            @{ Name = 'matrixHint'; Value = $matrixHintStr },
+            @{ Name = 'operatorReason'; Value = $why }
         )) {
+        if ($null -eq $pair.Value -or ($pair.Value -is [string] -and [string]::IsNullOrWhiteSpace([string]$pair.Value))) {
+            continue
+        }
         if ($QueueItem.PSObject.Properties[$pair.Name]) {
             $QueueItem.($pair.Name) = $pair.Value
         }

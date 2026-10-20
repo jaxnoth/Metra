@@ -26,12 +26,15 @@ internal sealed class TrayApp : ApplicationContext
     private DateTime _nextWorkerEnsureUtc = DateTime.MinValue;
     private int _cadenceBusy;
     private int _workerBusy;
+    private int _proposalSyncBusy;
     private Task? _cadenceTask;
     private Task? _workerTask;
     private string? _lastError;
     private string? _updateNotifiedKey;
     private string _workerStateLabel = "Disabled";
+    private DateTime _nextProposalSyncUtc = DateTime.MinValue;
     private const int WorkerEnsureThrottleSeconds = 45;
+    private const int ProposalSyncThrottleSeconds = 30;
 
     private TrayApp(string metraRoot, int port, bool noBrowser, Mutex mutex, bool startupEnabled)
     {
@@ -265,19 +268,13 @@ internal sealed class TrayApp : ApplicationContext
         }
 
         _state.RestartCount++;
-        try
-        {
-            _bridge.Invoke("stop-desk", _port);
-        }
-        catch
-        {
-            // best-effort cleanup before restart
-        }
-
+        // Atomic recycle under ops-desk-lifecycle. Do not split stop-desk + start-child -
+        // that raced CLI ask-engine restart and force-killed the replacement child (exit -1).
         var started = _bridge.Invoke(
-            "start-child",
+            "recycle-desk",
             _port,
-            new Dictionary<string, string> { ["-Quick"] = string.Empty });
+            new Dictionary<string, string> { ["-Quick"] = string.Empty },
+            timeoutMs: 180_000);
         if (started.Ok)
         {
             var wasFailing = _state.ConsecutiveFailures > 0;
@@ -442,6 +439,18 @@ internal sealed class TrayApp : ApplicationContext
             if (!string.Equals(_workerStateLabel, "Disabled", StringComparison.Ordinal))
             {
                 _workerStateLabel = "Disabled";
+                RefreshTrayTooltip();
+            }
+
+            return;
+        }
+
+        // Worker already live -> skip bridge spawn (avoids periodic console flash).
+        if (CursorWorkerBridge.IsRuntimeProcessAlive(out _))
+        {
+            if (!string.Equals(_workerStateLabel, "Running", StringComparison.Ordinal))
+            {
+                _workerStateLabel = "Running";
                 RefreshTrayTooltip();
             }
 
@@ -614,38 +623,112 @@ internal sealed class TrayApp : ApplicationContext
         }
 
         _nextUpdateCheckUtc = DateTime.UtcNow.AddHours(6);
-        try
+        // Off UI thread - bridge Invoke can take up to 120s and freezes the tray menu.
+        _ = Task.Run(() =>
         {
-            var upd = _bridge.Invoke("check-updates", _port);
-            if (upd.Ok && upd.AnyUpdate && !string.IsNullOrWhiteSpace(upd.UpdateSummary))
+            try
             {
-                if (!string.Equals(upd.UpdateSummary, _updateNotifiedKey, StringComparison.Ordinal))
+                if (_intentionalExit || _cleanedUp)
                 {
-                    _updateNotifiedKey = upd.UpdateSummary;
-                    Balloon($"Update available: {upd.UpdateSummary}. Open Settings to update.", ToolTipIcon.Info);
+                    return;
+                }
+
+                var upd = _bridge.Invoke("check-updates", _port);
+                if (upd.Ok && upd.AnyUpdate && !string.IsNullOrWhiteSpace(upd.UpdateSummary))
+                {
+                    if (!string.Equals(upd.UpdateSummary, _updateNotifiedKey, StringComparison.Ordinal))
+                    {
+                        _updateNotifiedKey = upd.UpdateSummary;
+                        var summary = upd.UpdateSummary!;
+                        try
+                        {
+                            if (!_cleanedUp && _notify.ContextMenuStrip?.InvokeRequired == true)
+                            {
+                                _notify.ContextMenuStrip.BeginInvoke(new Action(() =>
+                                    Balloon($"Update available: {summary}. Open Settings to update.", ToolTipIcon.Info)));
+                            }
+                            else if (!_cleanedUp)
+                            {
+                                Balloon($"Update available: {summary}. Open Settings to update.", ToolTipIcon.Info);
+                            }
+                        }
+                        catch
+                        {
+                            // ignore balloon races
+                        }
+                    }
                 }
             }
-        }
-        catch (Exception ex)
-        {
-            HostLog.Write($"Update check failed - {ex.Message}", "warn");
-        }
+            catch (Exception ex)
+            {
+                HostLog.Write($"Update check failed - {ex.Message}", "warn");
+            }
+        });
     }
 
+    /// <summary>
+    /// Proposal apply poll. Must not run on the UI thread - a stuck bridge Invoke
+    /// freezes the tray ContextMenuStrip (no hover highlight, no clicks).
+    /// </summary>
     private void MaybeSyncProposals()
     {
-        try
+        if (DateTime.UtcNow < _nextProposalSyncUtc)
         {
-            var r = _bridge.Invoke("sync-proposals", _port);
-            if (r.Ok && r.AppliedOk > 0)
+            return;
+        }
+
+        _nextProposalSyncUtc = DateTime.UtcNow.AddSeconds(ProposalSyncThrottleSeconds);
+
+        // No pendingApply -> do not spawn console pwsh (avoids tray flash every poll).
+        if (!HostProposalGate.ShouldInvokeBridgeSync())
+        {
+            return;
+        }
+
+        if (Interlocked.CompareExchange(ref _proposalSyncBusy, 1, 0) != 0)
+        {
+            return;
+        }
+
+        _ = Task.Run(() =>
+        {
+            try
             {
-                Balloon("Applied proposal.", ToolTipIcon.Info);
+                if (_intentionalExit || _cleanedUp)
+                {
+                    return;
+                }
+
+                var r = _bridge.Invoke("sync-proposals", _port);
+                if (r.Ok && r.AppliedOk > 0)
+                {
+                    try
+                    {
+                        if (!_cleanedUp && _notify.ContextMenuStrip?.InvokeRequired == true)
+                        {
+                            _notify.ContextMenuStrip.BeginInvoke(
+                                new Action(() => Balloon("Applied proposal.", ToolTipIcon.Info)));
+                        }
+                        else if (!_cleanedUp)
+                        {
+                            Balloon("Applied proposal.", ToolTipIcon.Info);
+                        }
+                    }
+                    catch
+                    {
+                        // ignore balloon races during shutdown
+                    }
+                }
             }
-        }
-        catch (Exception ex)
-        {
-            HostLog.Write($"Proposal apply poll failed - {ex.Message}", "warn");
-        }
+            catch (Exception ex)
+            {
+                HostLog.Write($"Proposal apply poll failed - {ex.Message}", "warn");
+            }
+            finally
+            {
+                Interlocked.Exchange(ref _proposalSyncBusy, 0);
+            }
+        });
     }
 
     /// <summary>
