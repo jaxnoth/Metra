@@ -37,7 +37,7 @@ param(
     [ValidateSet(
         'list', 'status', 'pull', 'fetch', 'run', 'new', 'apply', 'workspace',
         'audit', 'snapshot', 'selfdoc', 'ops', 'host', 'chats', 'roots', 'paths', 'export', 'routing',
-        'export-profile', 'import-profile', 'ctx', 'setup', 'verify', 'security-audit', 'unblock', 'tailscale', 'satellite', 'desk', 'profile', 'decisions', 'coverage', 'ask', 'capture', 'narrative', 'watch', 'inspect', 'azdo', 'atlas', 'loom', 'yarn', 'plan-board', 'porter', 'autoprogram', 'help'
+        'export-profile', 'import-profile', 'ctx', 'setup', 'verify', 'security-audit', 'unblock', 'tailscale', 'satellite', 'desk', 'profile', 'decisions', 'coverage', 'ask', 'capture', 'narrative', 'watch', 'inspect', 'azdo', 'atlas', 'loom', 'yarn', 'plan-board', 'porter', 'autoprogram', 'future', 'help'
     )]
     [string]$Command = 'help',
 
@@ -100,6 +100,7 @@ param(
     [switch]$AcceptAsk,
     [switch]$Quiet,
     [switch]$WhatIf,
+    [switch]$Check,
     [int]$Last = 0,
     [int]$MinCount = 0,
     [string]$Status,
@@ -260,6 +261,13 @@ Usage:
       Break-glass Profile Sync bearer (optional). Prefer profile pair / Tailscale identity.
   .\metra.ps1 decisions show|note|promote|forget|search|get|supersede|gc|review|harvest|seed
       Decision Registry / Operational Why Memory (candidates -> promote; review = hygiene visibility).
+  .\metra.ps1 future validate
+      Check docs/future.local.yaml. Fails on duplicate ids, bad status, a fourth now, a missing program child, or an unresolved plan ref.
+  .\metra.ps1 future reconcile
+      After validate succeeds, print warnings and exit 0. Writes nothing.
+  .\metra.ps1 future render [-Check]
+      Write Parked, the index, and the canvas data region from docs/future.local.yaml.
+      -Check compares those files to a fresh render and writes nothing. A bad model or marker pair writes nothing.
   .\metra.ps1 ask log|sessions|get|recall [-Local] [-OpsBaseUrl https://...]
       Session Journal. Mode B (remote OpsBaseUrl) queries HQ; -Local reads the local journal file.
       Session Journal (recent Ask conversations - continuity window, not permanent memory).
@@ -1139,6 +1147,24 @@ switch ($Command) {
         }
         $result = Invoke-MetraCaptureCommand -Subcommand $sub -ArgsRest $subArgs
         $result | Format-List
+    }
+
+    'future' {
+        if (-not $Rest -or $Rest.Count -eq 0) {
+            throw "future requires validate, reconcile, or render. Example: .\metra.ps1 future validate"
+        }
+        $futurePath = $null
+        if (-not [string]::IsNullOrWhiteSpace($Path)) {
+            $futurePath = [string]$Path
+        }
+        else {
+            for ($i = 1; $i -lt $Rest.Count; $i++) {
+                if ($Rest[$i] -eq '-Path' -and ($i + 1) -lt $Rest.Count) {
+                    $futurePath = [string]$Rest[$i + 1]
+                }
+            }
+        }
+        Invoke-MetraFutureCommand -Subcommand ([string]$Rest[0]) -Path $futurePath -Check:$Check -WhatIf:$WhatIf
     }
 
     'narrative' {

@@ -1,0 +1,68 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://metra.local/future-item.schema.json",
+  "title": "Future item",
+  "description": "One unshipped intent. Status is pickup priority, not plan implementation status.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["id", "title", "status", "audience", "product", "tags", "plans"],
+  "properties": {
+    "id": {
+      "type": "string",
+      "pattern": "^[a-z0-9]+(?:-[a-z0-9]+)*$"
+    },
+    "title": {
+      "type": "string",
+      "minLength": 1
+    },
+    "summary": {
+      "type": "string",
+      "description": "Why the bite exists. One physical line. Not Home prose."
+    },
+    "status": {
+      "type": "string",
+      "enum": ["now", "next", "parked", "cold", "skip"]
+    },
+    "audience": {
+      "type": "string",
+      "enum": ["human", "agent", "both"]
+    },
+    "product": {
+      "type": "string",
+      "minLength": 1
+    },
+    "tags": {
+      "type": "array",
+      "items": { "type": "string", "minLength": 1 }
+    },
+    "program": {
+      "type": "string",
+      "pattern": "^[a-z0-9]+(?:-[a-z0-9]+)*$"
+    },
+    "plans": {
+      "type": "array",
+      "items": { "$ref": "#/$defs/planLink" }
+    },
+    "next": { "type": "string" },
+    "verify": { "type": "string" },
+    "hardOffs": { "type": "string" }
+  },
+  "$defs": {
+    "planLink": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["ref", "role", "source"],
+      "properties": {
+        "ref": { "type": "string", "minLength": 1 },
+        "role": {
+          "type": "string",
+          "enum": ["parent", "supporting", "related"]
+        },
+        "source": {
+          "type": "string",
+          "enum": ["repo", "cursor", "missing"]
+        }
+      }
+    }
+  }
+}

@@ -80,6 +80,7 @@ runtimes/node/
 
 # Operator-private notes (not for public/team clones)
 docs/*.local.md
+docs/*.local.yaml
 config/routing-concepts.local.json
 
 # Editor

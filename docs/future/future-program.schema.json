@@ -1,0 +1,40 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://metra.local/future-program.schema.json",
+  "title": "Future program",
+  "description": "Groups Future items. Status is not the item vocabulary, and children are ids only.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["id", "title", "product", "status", "plan", "children"],
+  "properties": {
+    "id": {
+      "type": "string",
+      "pattern": "^[a-z0-9]+(?:-[a-z0-9]+)*$"
+    },
+    "title": {
+      "type": "string",
+      "minLength": 1
+    },
+    "product": {
+      "type": "string",
+      "minLength": 1
+    },
+    "status": {
+      "type": "string",
+      "enum": ["active", "parked", "expired", "completed"]
+    },
+    "plan": {
+      "type": "string",
+      "minLength": 1,
+      "description": "Primary repo plan stem. Not a copied child status."
+    },
+    "children": {
+      "type": "array",
+      "items": {
+        "type": "string",
+        "pattern": "^[a-z0-9]+(?:-[a-z0-9]+)*$"
+      },
+      "uniqueItems": true
+    }
+  }
+}
