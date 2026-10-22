@@ -1,5 +1,6 @@
 ---
 name: Routing graph Phase 4 - Persistence
+product: Metra
 overview: "Shipped contract - durable operator-accepted edges in graph.json; apply +4 with edge:id after compound cues; candidates Observe-only; no silent Observe→Apply."
 status: completed
 shippedAt: 2026-08-30

@@ -1,5 +1,6 @@
 ---
 name: Tailscale identity auth (Ask + Profile Sync)
+product: Metra
 status: completed
 ---
 

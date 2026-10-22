@@ -1,5 +1,6 @@
 ---
 name: iOS conversation policy (Desk / Company / Deliver)
+product: Metra
 overview: "Normative Desk / Company / Deliver / DeskStrict conversation policy for iOS (+ Ops Ask CE). Spec approved; implementation map Bing-approved 2026-10-14 with null/version/registry amendments. Agent build from p4-telemetry."
 status: approved
 bingReviewed: true

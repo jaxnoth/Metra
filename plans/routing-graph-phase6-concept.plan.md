@@ -1,5 +1,6 @@
 ---
 name: Routing graph Phase 6 - Concept / multi-hop
+product: Metra
 overview: "Concept/multi-hop shipped; Bing pack review 2026-10-20 found no routing regression. No embedding map; no silent Apply. P5 soak remains separate operator evidence."
 status: completed
 phase: routing-graph-6

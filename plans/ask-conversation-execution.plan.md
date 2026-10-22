@@ -1,5 +1,6 @@
 ---
 name: Ask Conversation Execution
+product: Metra
 overview: "Replace AskLane regex template/ops-status fork with Conversation Execution (secrets preflight → intent → policy → depth → engine → voice) for Bounded Ops/phone Ask. Bing Conditional Affirm 2026-09-06 closed into locked contract. Shipped 0.1.19 behind flag."
 status: completed
 bingReviewed: true

@@ -1,5 +1,6 @@
 ---
 name: "Sprint: Coworker developer + ticket analysis ready (2026-09-10)"
+product: Metra
 status: pending
 ---
 

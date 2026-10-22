@@ -1,5 +1,6 @@
 ---
 name: Ask routing graph evolution (master roadmap)
+product: Metra
 overview: "P2-P5 program complete; P5 soak closed zero-candidate 2026-10-20; P6 concept/multi-hop shipped. Architecture index only - not a Loom bite. Phase 7 unauthored."
 status: completed
 shippedAt: 2026-09-06

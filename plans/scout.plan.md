@@ -1,5 +1,6 @@
 ---
 name: Scout (parked)
+product: Metra
 status: stub
 ---
 

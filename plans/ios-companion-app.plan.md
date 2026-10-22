@@ -1,5 +1,6 @@
 ---
 name: Metra iOS companion app (umbrella)
+product: Metra
 status: approved
 ---
 

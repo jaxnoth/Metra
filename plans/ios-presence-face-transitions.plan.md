@@ -1,5 +1,6 @@
 ---
 name: Moved
+product: Metra
 status: completed
 ---
 

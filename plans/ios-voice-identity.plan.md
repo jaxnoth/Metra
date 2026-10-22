@@ -1,5 +1,6 @@
 ---
 name: iOS voice identity (provisional)
+product: Metra
 status: approved
 bingReviewed: true
 approveForLoom: true

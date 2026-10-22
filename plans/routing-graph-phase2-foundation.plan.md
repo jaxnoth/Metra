@@ -1,5 +1,6 @@
 ---
 name: Routing graph Phase 2 - Foundation
+product: Metra
 overview: "Shipped contract - in-memory Ops|Sql family graph + compound cue boost (+4) so product+ops intent prefers Automation without replacing haystack keywords."
 status: completed
 shippedAt: 2026-08-29

@@ -1,5 +1,6 @@
 ---
 name: Loom product boundary
+product: Metra
 overview: "Product-boundary correction: Loom as a first-class governed-execution domain, Metra-hosted with extractable module boundary. Pause feature work until M0ΓÇôM2 complete. Do not move into Forge. Bing approved with amendments 2026-08-31."
 status: completed
 phase: boundary-correction

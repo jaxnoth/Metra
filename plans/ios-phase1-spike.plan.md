@@ -1,5 +1,6 @@
 ---
 name: Metra iOS Phase 1 spike (official)
+product: Metra
 status: approved
 ---
 
