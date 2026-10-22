@@ -47,7 +47,31 @@ Governed execution harness (queue, journal, triage, branch runner). Metra hosts 
 | Atomic claim | `run` and `loop` share claim helpers under the `loom_queue` namespace lock: reload → busy lanes → select → `queued`→`claimed` → persist and journal → unlock |
 | Selection | Among free lanes: `scores.total` desc → `effectiveImpact` desc → `createdAt` asc → `id` asc |
 | Acceptance | `completed` → `accepted-pending-commit` (human ACCEPT; lane busy) → `accepted` after observe-only local commit verification. No commit/push/merge in verify. Verified `accepted` fail-open notifies Yarn Plan Board (Shipped); `accepted-pending-commit` does not. |
-| Ritual split | Triage no longer promotes Capture→candidate. Daily §3 points plan review at Yarn. Manual `loom enqueue -FromPlan` remains break-glass for Approved plans only. Allowed roots include `%USERPROFILE%\.cursor\plans`, `<project>\plans` (index + `authority: repo` scars), and legacy `<project>\docs`. Prefer `Resolve-MetraPlanPath` / WorkingPath over raw dual-home picks when a stem is known. Ingest/enqueue `allowedPaths` starts at `scripts`/`tests`/`docs` and adds curated roots/files the plan names (`AGENTS.md`, `modules`, `engines`, …). |
+| Ritual split | Triage no longer promotes Capture→candidate. Daily §3 points plan review at Yarn. Manual `loom enqueue -FromPlan` remains break-glass for Approved plans only. Allowed roots include `%USERPROFILE%\.cursor\plans`, `<project>\plans` (index + `authority: repo` scars), and legacy `<project>\docs`. Prefer `Resolve-MetraPlanPath` / WorkingPath over raw dual-home picks when a stem is known. Ingest/enqueue `allowedPaths` starts at `scripts`/`tests`/`docs` and adds curated roots/files the plan names (`AGENTS.md`, `modules`, `engines`, …). Optional registry `loomAllowedPaths` are added for that project only. |
+
+## Personal project policy
+
+Optional fields on a registry entry (`projects.local.json` or a root `registryFile`). Shared `projects.json` stays a routing list. Plan prose cannot add paths or verify commands.
+
+Registry Loom policy is trusted local operator configuration. `loomVerifyCommands` runs in the routed project checkout. Loom does not sandbox that string. Do not take these fields from shared, generated, or remotely synchronized project metadata.
+
+| Field | Effect |
+|-------|--------|
+| `loomAllowedPaths` | Relative prefixes always allowed for that project, unioned with the curated list. `..`, absolute paths, and UNC are dropped. |
+| `loomVerifyCommands` | Fallback when the plan has no recognized verify line (`.\metra.ps1 verify` or `Invoke-Pester ...`). A recognized plan line still wins. |
+| `loomCursorModel` | Cursor model slug for this project's implementer run. Empty keeps the Ask `cursorModel` pin. |
+
+Verify resolution:
+
+- Field absent: ordinary default (`.\metra.ps1 verify` when a default is allowed).
+- Field present with at least one usable command: use the usable commands. Unusable entries are dropped.
+- Field present but none usable: enqueue, ingest, and triage throw `policy-validation`. Loom does not substitute `.\metra.ps1 verify`.
+
+```json
+"loomAllowedPaths": ["internal", "cmd"],
+"loomVerifyCommands": ["go test ./..."],
+"loomCursorModel": "claude-sonnet-5-5-high"
+```
 
 ## Slice 6 loop (unattended to daily gate)
 

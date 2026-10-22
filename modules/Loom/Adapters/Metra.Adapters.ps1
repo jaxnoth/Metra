@@ -75,7 +75,224 @@ function Get-LoomRoutingAmbiguity {
             Mode      = 'adapter-unavailable'
         }
     }
-    return & (Get-Command Get-MetraRoutingAmbiguity) -Query $Query -SkipTelemetry:$SkipTelemetry
+    $cmd = Get-Command -Name Get-MetraRoutingAmbiguity -Module Metra -ErrorAction SilentlyContinue
+    if (-not $cmd) {
+        $cmd = Get-Command Get-MetraRoutingAmbiguity -ErrorAction SilentlyContinue
+    }
+    if (-not $cmd) {
+        return [PSCustomObject]@{
+            Primary   = $null
+            Ambiguous = $true
+            Mode      = 'adapter-unavailable'
+        }
+    }
+    return & $cmd -Query $Query -SkipTelemetry:$SkipTelemetry
+}
+
+function Test-LoomRoutingResultUnavailable {
+    <#
+    .SYNOPSIS
+        True only for the explicit adapter-unavailable result.
+    .DESCRIPTION
+        Get-MetraRoutingAmbiguity does not set Mode. Reading a missing property under
+        StrictMode throws; callers must use Get-LoomProp rather than $result.Mode.
+    #>
+    [CmdletBinding()]
+    param($Result)
+    $mode = [string](Get-LoomProp -Object $Result -Name 'Mode' -Default '')
+    return ($mode -eq 'adapter-unavailable')
+}
+
+function Resolve-LoomRoutedProjectRoot {
+    <#
+    .SYNOPSIS
+        Existing checkout directory for a scored routing row.
+    .DESCRIPTION
+        Registry rows use Root as the portfolio label (work, personal) and Path as the
+        checkout. A label is not a project root. Prefer Path. Accept Root only when it
+        is already a rooted directory that exists.
+    #>
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory)]$Route
+    )
+
+    $candidates = @(
+        [string](Get-LoomProp -Object $Route -Name 'Path' -Default '')
+        [string](Get-LoomProp -Object $Route -Name 'Root' -Default '')
+    )
+    foreach ($candidate in $candidates) {
+        if ([string]::IsNullOrWhiteSpace($candidate)) { continue }
+        if (-not [System.IO.Path]::IsPathRooted($candidate)) { continue }
+        try {
+            $full = [System.IO.Path]::GetFullPath($candidate)
+        }
+        catch { continue }
+        if (Test-Path -LiteralPath $full -PathType Container) {
+            return $full
+        }
+    }
+    return ''
+}
+
+$script:LoomRegistryPolicyOverride = $null
+
+function Get-LoomEmptyRegistryPolicy {
+    return [PSCustomObject]@{
+        allowedPaths    = @()
+        verifyCommands  = @()
+        verifyInvalid   = $false
+        cursorModel     = ''
+    }
+}
+
+function ConvertTo-LoomRegistryPolicyStringList {
+    param($Value)
+    if ($null -eq $Value) { return @() }
+    if ($Value -is [string]) {
+        if ([string]::IsNullOrWhiteSpace($Value)) { return @() }
+        return @($Value)
+    }
+    $list = New-Object System.Collections.Generic.List[string]
+    foreach ($item in @($Value)) {
+        if ($null -eq $item) { continue }
+        $text = [string]$item
+        if (-not [string]::IsNullOrWhiteSpace($text)) { [void]$list.Add($text) }
+    }
+    return @($list.ToArray())
+}
+
+function ConvertTo-LoomRegistryRelativePath {
+    <#
+    .SYNOPSIS
+        Relative repo prefix from a registry loomAllowedPaths entry, or null when unsafe.
+    #>
+    param([string]$Path)
+    $raw = ([string]$Path).Trim()
+    if ([string]::IsNullOrWhiteSpace($raw)) { return $null }
+    if ($raw -match '[\r\n\0]') { return $null }
+    if ([System.IO.Path]::IsPathRooted($raw)) { return $null }
+    if ($raw -match '^[A-Za-z]:' -or $raw.StartsWith('\\') -or $raw.StartsWith('/')) { return $null }
+    $norm = ($raw -replace '\\', '/') -replace '^\./', ''
+    $norm = $norm.Trim('/')
+    if ([string]::IsNullOrWhiteSpace($norm)) { return $null }
+    if ($norm -match ':') { return $null }
+    foreach ($part in @($norm -split '/')) {
+        if ([string]::IsNullOrWhiteSpace($part) -or $part -eq '.' -or $part -eq '..') { return $null }
+    }
+    return $norm
+}
+
+function ConvertTo-LoomRegistryVerifyCommand {
+    param([string]$Command)
+    $text = ([string]$Command).Trim()
+    if ([string]::IsNullOrWhiteSpace($text)) { return $null }
+    if ($text.Length -gt 240) { return $null }
+    if ($text -match '[\r\n\0]') { return $null }
+    return $text
+}
+
+function ConvertTo-LoomRegistryCursorModel {
+    param([string]$Model)
+    $text = ([string]$Model).Trim()
+    if ([string]::IsNullOrWhiteSpace($text)) { return '' }
+    if ($text.Length -gt 80) { return '' }
+    if ($text -match '[\r\n\0]') { return '' }
+    if ($text -match '\.\.') { return '' }
+    if ($text -notmatch '^[A-Za-z0-9][A-Za-z0-9._/-]{0,79}$') { return '' }
+    return $text
+}
+
+function Test-LoomRegistryPropertySpecified {
+    param(
+        $Entry,
+        [Parameter(Mandatory)][string]$Name
+    )
+    if ($null -eq $Entry) { return $false }
+    if ($Entry -is [System.Collections.IDictionary]) {
+        foreach ($key in @($Entry.Keys)) {
+            if ([string]::Equals([string]$key, $Name, [StringComparison]::OrdinalIgnoreCase)) { return $true }
+        }
+        return $false
+    }
+    foreach ($propName in @($Entry.PSObject.Properties.Name)) {
+        if ([string]::Equals([string]$propName, $Name, [StringComparison]::OrdinalIgnoreCase)) { return $true }
+    }
+    return $false
+}
+
+function ConvertTo-LoomRegistryPolicy {
+    param($Entry)
+    $paths = New-Object System.Collections.Generic.List[string]
+    foreach ($raw in @(ConvertTo-LoomRegistryPolicyStringList -Value (Get-LoomProp -Object $Entry -Name 'loomAllowedPaths' -Default @()))) {
+        $rel = ConvertTo-LoomRegistryRelativePath -Path $raw
+        if ([string]::IsNullOrWhiteSpace($rel)) { continue }
+        $seen = $false
+        foreach ($have in $paths) {
+            if ([string]::Equals($have, $rel, [StringComparison]::OrdinalIgnoreCase)) { $seen = $true; break }
+        }
+        if (-not $seen) { [void]$paths.Add($rel) }
+    }
+    $verifySpecified = Test-LoomRegistryPropertySpecified -Entry $Entry -Name 'loomVerifyCommands'
+    $commands = New-Object System.Collections.Generic.List[string]
+    if ($verifySpecified) {
+        foreach ($raw in @(ConvertTo-LoomRegistryPolicyStringList -Value (Get-LoomProp -Object $Entry -Name 'loomVerifyCommands' -Default @()))) {
+            $cmd = ConvertTo-LoomRegistryVerifyCommand -Command $raw
+            if ([string]::IsNullOrWhiteSpace($cmd)) { continue }
+            $seen = $false
+            foreach ($have in $commands) {
+                if ([string]::Equals($have, $cmd, [StringComparison]::OrdinalIgnoreCase)) { $seen = $true; break }
+            }
+            if (-not $seen) { [void]$commands.Add($cmd) }
+        }
+    }
+    return [PSCustomObject]@{
+        allowedPaths   = @($paths.ToArray())
+        verifyCommands = @($commands.ToArray())
+        verifyInvalid  = ($verifySpecified -and $commands.Count -eq 0)
+        cursorModel    = (ConvertTo-LoomRegistryCursorModel -Model ([string](Get-LoomProp -Object $Entry -Name 'loomCursorModel' -Default '')))
+    }
+}
+
+function Get-LoomRegistryLoomPolicy {
+    <#
+    .SYNOPSIS
+        Operator Loom policy for one registry project (paths, verify, optional Cursor model).
+    .DESCRIPTION
+        Reads loomAllowedPaths, loomVerifyCommands, and loomCursorModel from the merged
+        registry. Missing Metra or a missing entry yields an empty policy. Plan text cannot
+        supply these values.
+    #>
+    [CmdletBinding()]
+    param([string]$RegistryName)
+
+    if ($null -ne $script:LoomRegistryPolicyOverride) {
+        return ConvertTo-LoomRegistryPolicy -Entry $script:LoomRegistryPolicyOverride
+    }
+    if ([string]::IsNullOrWhiteSpace($RegistryName)) {
+        return Get-LoomEmptyRegistryPolicy
+    }
+    $cmd = Get-Command -Name Get-MetraProjectRegistry -Module Metra -ErrorAction SilentlyContinue
+    if (-not $cmd) {
+        $cmd = Get-Command Get-MetraProjectRegistry -ErrorAction SilentlyContinue
+    }
+    if (-not $cmd) { return Get-LoomEmptyRegistryPolicy }
+    try {
+        $registry = & $cmd
+    }
+    catch {
+        return Get-LoomEmptyRegistryPolicy
+    }
+    $entry = $null
+    foreach ($project in @($(Get-LoomProp -Object $registry -Name 'projects' -Default @()))) {
+        $name = [string](Get-LoomProp -Object $project -Name 'name' -Default '')
+        if ([string]::Equals($name, $RegistryName, [StringComparison]::OrdinalIgnoreCase)) {
+            $entry = $project
+            break
+        }
+    }
+    if (-not $entry) { return Get-LoomEmptyRegistryPolicy }
+    return ConvertTo-LoomRegistryPolicy -Entry $entry
 }
 
 function Get-LoomCaptureLedger {
@@ -123,7 +340,7 @@ function Get-LoomRoutingContext {
         }
     }
     $amb = Get-LoomRoutingAmbiguity -Query $(if ($query) { $query } else { $planPath }) -SkipTelemetry
-    if ($amb.Mode -eq 'adapter-unavailable') {
+    if (Test-LoomRoutingResultUnavailable -Result $amb) {
         $invalid = [PSCustomObject]@{
             schemaVersion     = 1
             registryName      = ''
@@ -136,17 +353,19 @@ function Get-LoomRoutingContext {
         Test-LoomContract -Schema 'routing-context.result' -Object $invalid | Out-Null
         return $invalid
     }
-    if ($amb.Primary) {
-        $score = [int]$amb.Primary.Score
+    $primary = Get-LoomProp -Object $amb -Name 'Primary' -Default $null
+    if ($primary) {
+        $score = [int](Get-LoomProp -Object $primary -Name 'Score' -Default 0)
         $conf = if ($score -ge 2) { 0.90 } elseif ($score -eq 1) { 0.75 } else { 0.50 }
+        $root = Resolve-LoomRoutedProjectRoot -Route $primary
         $resolved = [PSCustomObject]@{
             schemaVersion     = 1
-            registryName      = [string]$amb.Primary.Name
-            root              = [string]$amb.Primary.Root
+            registryName      = [string](Get-LoomProp -Object $primary -Name 'Name' -Default '')
+            root              = $root
             routingConfidence = $conf
             routingEvidence   = 'routing-ambiguity-primary'
             minimumConfidence = $min
-            eligible          = ($conf -ge $min)
+            eligible          = (($conf -ge $min) -and -not [string]::IsNullOrWhiteSpace($root))
         }
         Test-LoomContract -Schema 'routing-context.result' -Object $resolved | Out-Null
         return $resolved

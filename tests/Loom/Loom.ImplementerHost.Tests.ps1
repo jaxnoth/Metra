@@ -78,6 +78,49 @@ Describe 'Invoke-MetraLoomImplementer host matrix' {
         }
     }
 
+    It 'uses registry loomCursorModel for that project implementer run' {
+        $loom = @(Get-Module -All -Name Loom) | Select-Object -First 1
+        $setOverride = $loom.NewBoundScriptBlock({
+            param($Entry)
+            $script:LoomRegistryPolicyOverride = $Entry
+        })
+        & $setOverride ([PSCustomObject]@{ loomCursorModel = 'claude-sonnet-test' })
+        $req = [PSCustomObject]@{
+            schemaVersion = 1
+            itemId        = 'AP-HOST-1'
+            projectRoot   = $script:proj
+            registryName  = 'SamplePersonal'
+            summary       = 'host test'
+            planBody      = '# test'
+        }
+        $p = @{ Proj = $script:proj; Run = $script:run; Req = $req }
+        try {
+            InModuleScope Metra -Parameters $p {
+                param($Proj, $Run, $Req)
+                Mock Get-MetraAskNodePath { return (Join-Path $env:WINDIR 'System32\cmd.exe') }
+                Mock Get-MetraCursorApiKey { return 'test-secret-key-value-xyz' }
+                $script:seenModel = $null
+                $launcher = {
+                    param($NodePath, $ScriptPath, $RequestPath, $ProjectRoot, $ApiKey, $CursorModel, $CursorOptimizeFor)
+                    $script:seenModel = $CursorModel
+                    return [PSCustomObject]@{
+                        ExitCode = 0
+                        StdOut   = '{"schemaVersion":1,"status":"completed","message":"ok"}'
+                        StdErr   = ''
+                        Arguments = 'node --request x'
+                        WorkingDirectory = $ProjectRoot
+                    }
+                }
+                $r = Invoke-MetraLoomImplementer -Request $Req -ProjectRoot $Proj -RunDir $Run -Launcher $launcher
+                $r.status | Should -Be 'completed'
+                $script:seenModel | Should -Be 'claude-sonnet-test'
+            }
+        }
+        finally {
+            & $setOverride $null
+        }
+    }
+
     It 'keeps API key out of arguments and returned output' {
         $p = @{ Proj = $script:proj; Run = $script:run; Req = $script:req }
         InModuleScope Metra -Parameters $p {

@@ -13,6 +13,7 @@
         'Get-LoomActiveTransitions'
         'Get-LoomRoutingContext'
         'Test-LoomRoutingAdapterAvailable'
+        'Get-LoomRegistryLoomPolicy'
         'Test-LoomCaptureAdapterAvailable'
         'Test-LoomContract'
         'Invoke-LoomInspectAdapter'

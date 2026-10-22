@@ -233,6 +233,18 @@ function Invoke-MetraLoomImplementer {
         try { $ask = Get-MetraAskSettings -MetraRoot $MetraRoot } catch { $ask = $null }
         $rawModel = if ($ask) { [string](Get-MetraProp -Object $ask -Name 'cursorModel' -Default '') } else { '' }
         $rawOpt = if ($ask) { [string](Get-MetraProp -Object $ask -Name 'cursorOptimizeFor' -Default 'cost') } else { 'cost' }
+        $registryName = [string](Get-MetraProp -Object $Request -Name 'registryName' -Default '')
+        if (-not [string]::IsNullOrWhiteSpace($registryName)) {
+            $policyCmd = Get-Command Get-LoomRegistryLoomPolicy -ErrorAction SilentlyContinue
+            if ($policyCmd) {
+                try {
+                    $policy = & $policyCmd -RegistryName $registryName
+                    $pinned = [string](Get-MetraProp -Object $policy -Name 'cursorModel' -Default '')
+                    if (-not [string]::IsNullOrWhiteSpace($pinned)) { $rawModel = $pinned }
+                }
+                catch { }
+            }
+        }
         $resolved = Resolve-MetraAskCursorModelSelection -Model $rawModel -OptimizeFor $rawOpt
         if (-not $resolved -or [string]::IsNullOrWhiteSpace([string]$resolved.cursorModel)) {
             return New-MetraLoomImplementerResult -Status 'failed' -Message 'Model selection returned no usable model.' -ExitCode 1

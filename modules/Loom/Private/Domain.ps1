@@ -774,7 +774,50 @@ function Resolve-MetraLoomAllowedPathsFromPlan {
             if (-not $already) { [void]$found.Add($e) }
         }
     }
+
+    $registryName = [string](Get-LoomProp -Object (Get-LoomProp -Object $Plan -Name 'project' -Default $null) -Name 'registryName' -Default '')
+    $policy = Get-LoomRegistryLoomPolicy -RegistryName $registryName
+    foreach ($extra in @($policy.allowedPaths)) {
+        $already = $false
+        foreach ($f in $found) {
+            if ([string]::Equals([string]$f, [string]$extra, [StringComparison]::OrdinalIgnoreCase)) { $already = $true; break }
+        }
+        if (-not $already) { [void]$found.Add([string]$extra) }
+    }
     return @($found.ToArray())
+}
+
+function Resolve-MetraLoomVerifyCommands {
+    <#
+    .SYNOPSIS
+        Verify commands for a formal plan.
+    .DESCRIPTION
+        Recognized plan lines win. Otherwise a present, valid registry loomVerifyCommands list is used.
+        The metra.ps1 verify default applies only when -UseDefault is set and the registry field is absent.
+        A present field with no usable command throws policy-validation instead of that default.
+    #>
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory)]$Plan,
+        [switch]$UseDefault
+    )
+
+    $fromPlan = New-Object System.Collections.Generic.List[string]
+    foreach ($cmd in @($(Get-LoomProp -Object $Plan -Name 'verifyCommands' -Default @()))) {
+        $text = ([string]$cmd).Trim()
+        if (-not [string]::IsNullOrWhiteSpace($text)) { [void]$fromPlan.Add($text) }
+    }
+    if ($fromPlan.Count -gt 0) { return @($fromPlan.ToArray()) }
+
+    $registryName = [string](Get-LoomProp -Object (Get-LoomProp -Object $Plan -Name 'project' -Default $null) -Name 'registryName' -Default '')
+    $policy = Get-LoomRegistryLoomPolicy -RegistryName $registryName
+    if ($policy.verifyInvalid) {
+        $who = $(if ([string]::IsNullOrWhiteSpace($registryName)) { '(unknown project)' } else { $registryName })
+        throw "Loom policy-validation: loomVerifyCommands for $who is present but has no usable command"
+    }
+    if (@($policy.verifyCommands).Count -gt 0) { return @($policy.verifyCommands) }
+    if ($UseDefault) { return @('.\metra.ps1 verify') }
+    return @()
 }
 
 function Resolve-MetraLoomPlanProject {
@@ -813,13 +856,15 @@ function Resolve-MetraLoomPlanProject {
         if ([string]::IsNullOrWhiteSpace($query)) { $query = $Title }
         try {
             $amb = Get-LoomRoutingAmbiguity -Query $query -SkipTelemetry
-            if ($amb.Mode -ne 'adapter-unavailable' -and $amb.Primary) {
-                $route = $amb.Primary
-                $score = [int]$route.Score
+            # Do not read .Mode directly. Real routing rows omit it, and StrictMode
+            # throws; that throw used to be swallowed as unresolved.
+            $primary = Get-LoomProp -Object $amb -Name 'Primary' -Default $null
+            if (-not (Test-LoomRoutingResultUnavailable -Result $amb) -and $primary) {
+                $score = [int](Get-LoomProp -Object $primary -Name 'Score' -Default 0)
                 $conf = if ($score -ge 2) { 0.90 } elseif ($score -eq 1) { 0.75 } else { 0.50 }
                 return [PSCustomObject]@{
-                    registryName      = [string]$route.Name
-                    root              = [string]$route.Root
+                    registryName      = [string](Get-LoomProp -Object $primary -Name 'Name' -Default '')
+                    root              = (Resolve-LoomRoutedProjectRoot -Route $primary)
                     routingConfidence = $conf
                     routingEvidence   = 'routing-ambiguity-primary'
                 }
@@ -911,18 +956,11 @@ function Resolve-MetraLoomProjectRootForKey {
     if (Test-LoomRoutingAdapterAvailable) {
         try {
             $amb = Get-LoomRoutingAmbiguity -Query $key -SkipTelemetry
-            if ($amb.Mode -ne 'adapter-unavailable' -and $amb.Primary -and [string]$amb.Primary.Name -eq $key) {
-                $root = [string]$amb.Primary.Root
-                if ([string]::IsNullOrWhiteSpace($root)) { return $null }
-                try {
-                    $rootFull = [System.IO.Path]::GetFullPath($root)
-                }
-                catch {
-                    return $null
-                }
-                if (-not (Test-Path -LiteralPath $rootFull -PathType Container)) {
-                    return $null
-                }
+            $primary = Get-LoomProp -Object $amb -Name 'Primary' -Default $null
+            $primaryName = [string](Get-LoomProp -Object $primary -Name 'Name' -Default '')
+            if (-not (Test-LoomRoutingResultUnavailable -Result $amb) -and $primary -and $primaryName -eq $key) {
+                $rootFull = Resolve-LoomRoutedProjectRoot -Route $primary
+                if ([string]::IsNullOrWhiteSpace($rootFull)) { return $null }
                 # Routed roots must still sit under the same workspaces parent as Metra.
                 if (-not $rootFull.StartsWith($parentPrefix, [StringComparison]::OrdinalIgnoreCase)) {
                     return $null
@@ -1157,11 +1195,12 @@ function Invoke-MetraLoomTriage {
             externalSideEffect   = $false
             manualTestClass      = 'none'
         }
+        $verify = @(Resolve-MetraLoomVerifyCommands -Plan $plan -UseDefault:$plan.approved)
         $scoresIn = @{
             impact          = $(if ($plan.approved) { 4 } else { 2 })
             confidence      = $(if ($plan.approved) { 5 } else { 2 })
             userTestBurden  = 1
-            autoVerifiable  = $(if (@($plan.verifyCommands).Count -gt 0) { 5 } else { 1 })
+            autoVerifiable  = $(if (@($verify).Count -gt 0) { 5 } else { 1 })
             dependencyValue = 3
         }
         $contract = [PSCustomObject]@{
@@ -1169,13 +1208,10 @@ function Invoke-MetraLoomTriage {
             allowedPaths   = @(Resolve-MetraLoomAllowedPathsFromPlan -Plan $plan)
             forbiddenPaths = @('docs/Decisions.md')
             doneWhen       = @($plan.doneWhen)
-            verifyCommands = @($plan.verifyCommands)
+            verifyCommands = @($verify)
         }
         if (@($contract.doneWhen).Count -eq 0 -and $plan.approved) {
             $contract.doneWhen = @('Plan slice acceptance criteria met.')
-        }
-        if (@($contract.verifyCommands).Count -eq 0 -and $plan.approved) {
-            $contract.verifyCommands = @('.\metra.ps1 verify')
         }
 
         $score = Measure-MetraLoomTriageScore -Classification $classification -Scores $scoresIn -Project $plan.project
@@ -1419,11 +1455,12 @@ function Invoke-MetraLoomIngestApprovedPlan {
         externalSideEffect = $false
         manualTestClass    = 'none'
     }
+    $verify = @(Resolve-MetraLoomVerifyCommands -Plan $plan -UseDefault)
     $scoresIn = @{
         impact          = 4
         confidence      = 5
         userTestBurden  = 1
-        autoVerifiable  = 5
+        autoVerifiable  = $(if (@($verify).Count -gt 0) { 5 } else { 1 })
         dependencyValue = 3
     }
     $contract = [PSCustomObject]@{
@@ -1431,7 +1468,7 @@ function Invoke-MetraLoomIngestApprovedPlan {
         allowedPaths   = @(Resolve-MetraLoomAllowedPathsFromPlan -Plan $plan)
         forbiddenPaths = @('docs/Decisions.md')
         doneWhen       = @($(if (@($plan.doneWhen).Count -gt 0) { $plan.doneWhen } else { 'Plan slice acceptance criteria met.' }))
-        verifyCommands = @($(if (@($plan.verifyCommands).Count -gt 0) { $plan.verifyCommands } else { '.\metra.ps1 verify' }))
+        verifyCommands = @($verify)
     }
     $score = Measure-MetraLoomTriageScore -Classification $classification -Scores $scoresIn -Project $project
     $elig = Test-MetraLoomEligibility -Classification $classification -Project $project -Contract $contract
@@ -1571,13 +1608,18 @@ function Invoke-MetraLoomEnqueueFromPlan {
         reversibility = 'code'; crossRoot = $false; productionTouch = $false
         externalSideEffect = $false; manualTestClass = 'none'
     }
-    $scoresIn = @{ impact = 4; confidence = 5; userTestBurden = 1; autoVerifiable = 5; dependencyValue = 3 }
+    $verify = @(Resolve-MetraLoomVerifyCommands -Plan $plan -UseDefault)
+    $scoresIn = @{
+        impact = 4; confidence = 5; userTestBurden = 1
+        autoVerifiable = $(if (@($verify).Count -gt 0) { 5 } else { 1 })
+        dependencyValue = 3
+    }
     $contract = [PSCustomObject]@{
         objective      = [string]$plan.overview
         allowedPaths   = @(Resolve-MetraLoomAllowedPathsFromPlan -Plan $plan)
         forbiddenPaths = @('docs/Decisions.md')
         doneWhen       = @($(if (@($plan.doneWhen).Count -gt 0) { $plan.doneWhen } else { 'Plan slice acceptance criteria met.' }))
-        verifyCommands = @($(if (@($plan.verifyCommands).Count -gt 0) { $plan.verifyCommands } else { '.\metra.ps1 verify' }))
+        verifyCommands = @($verify)
     }
     $score = Measure-MetraLoomTriageScore -Classification $classification -Scores $scoresIn -Project $plan.project
     $elig = Test-MetraLoomEligibility -Classification $classification -Project $plan.project -Contract $contract
