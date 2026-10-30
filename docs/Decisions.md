@@ -18,6 +18,12 @@ Entry shape:
 
 ---
 
+## 2026-10-30 - Inspect untracked files pack as unified add diffs
+
+- Decision: Working-tree untracked text included in inspect/diff packs is emitted as git-style unified add hunks (`diff --git`, `new file mode`, `--- /dev/null`, `+++ b/<path>`, `+` lines), not prose `UNTRACKED FILE:` prefixes. Legacy `UNTRACKED FILE:` detection remains for rename-collapse fixtures and older fixtures only.
+- Why: Bing review packs treat normal staged adds correctly; prose new-file bodies were hard to read as diffs and forced a short-term workaround of staging/committing before pack.
+- See: `Format-MetraInspectUntrackedAsUnifiedDiff` / `Get-MetraInspectUntrackedFiles` in `scripts/private/Inspect.ps1`; `docs/playbooks/inspect-loop.md`
+
 ## 2026-10-20 - Public push requires security-audit and identifying-info review
 
 - Decision: Before `git push` to a public remote (GitHub/GitLab) or from the Metra product checkout, `.\metra.ps1 security-audit -Force` must report zero non-allowlisted FAIL findings. Meaningful ship bites also require a security review that includes potential identifying information (operator names, UDIDs, Tailscale hosts/IPs, home paths, device tokens shown in UI), not only classic vulns. Git `pre-push` (installed via `inspect hooks install`) enforces the audit; `METRA_SKIP_SECURITY_PUSH=1` is emergency-only.

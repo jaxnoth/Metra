@@ -718,6 +718,19 @@ Describe 'Inspect git base validation' {
 }
 
 Describe 'Inspect untracked working-tree inclusion' {
+    It 'formats untracked bodies as /dev/null unified add hunks' {
+        InModuleScope Metra {
+            $text = Format-MetraInspectUntrackedAsUnifiedDiff -Path 'src/New.ps1' -Body "Write-Host 1`nWrite-Host 2`n"
+            $text | Should -Match '(?m)^--- /dev/null$'
+            $text | Should -Match '(?m)^\+\+\+ b/src/New\.ps1$'
+            $text | Should -Match '(?m)^new file mode 100644$'
+            $text | Should -Match '(?m)^\+Write-Host 1$'
+            $text | Should -Match '(?m)^\+Write-Host 2$'
+            Test-MetraInspectDiffFileIsAdd -File ([PSCustomObject]@{ path = 'src/New.ps1'; content = $text }) | Should -BeTrue
+            Test-MetraInspectDiffFileIsDelete -File ([PSCustomObject]@{ path = 'src/New.ps1'; content = $text }) | Should -BeFalse
+        }
+    }
+
     It 'includes untracked text files in a temp git repo' {
         InModuleScope Metra {
             $tmp = Join-Path $env:TEMP ("metra-inspect-git-" + [guid]::NewGuid().ToString('n'))
@@ -742,7 +755,11 @@ Describe 'Inspect untracked working-tree inclusion' {
                 $diff.UntrackedCount | Should -BeGreaterThan 0
                 $diff.BaseMode | Should -Be 'working-tree'
                 ($diff.Files | Where-Object { $_.path -eq 'new-feature.ps1' }).Count | Should -Be 1
-                ($diff.Files | Where-Object { $_.path -eq 'new-feature.ps1' }).content | Should -Match 'UNTRACKED FILE'
+                $content = [string](($diff.Files | Where-Object { $_.path -eq 'new-feature.ps1' }).content)
+                $content | Should -Match '(?m)^--- /dev/null$'
+                $content | Should -Match '(?m)^\+\+\+ b/new-feature\.ps1$'
+                $content | Should -Match '(?m)^\+Write-Host "hi"$'
+                $content | Should -Not -Match 'UNTRACKED FILE'
             }
             finally {
                 Remove-Item -LiteralPath $tmp -Recurse -Force -ErrorAction SilentlyContinue
@@ -753,7 +770,10 @@ Describe 'Inspect untracked working-tree inclusion' {
     It 'Reduce keeps untracked-shaped code files' {
         InModuleScope Metra {
             $files = @(
-                [PSCustomObject]@{ path = 'fresh.ps1'; content = "UNTRACKED FILE`nWrite-Host 1" }
+                [PSCustomObject]@{
+                    path    = 'fresh.ps1'
+                    content = (Format-MetraInspectUntrackedAsUnifiedDiff -Path 'fresh.ps1' -Body "Write-Host 1`n")
+                }
             )
             $r = Reduce-MetraInspectDiffFiles -Files $files
             $r.ReducedFileCount | Should -Be 1

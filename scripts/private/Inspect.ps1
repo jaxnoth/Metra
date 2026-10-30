@@ -132,10 +132,72 @@ function Resolve-MetraInspectGitBase {
     return $trimmed
 }
 
+function Format-MetraInspectUntrackedAsUnifiedDiff {
+    <#
+    .SYNOPSIS
+        Emit an untracked working-tree file as a git-style add hunk (--- /dev/null).
+    .NOTES
+        Bing review packs need unified-diff add shape; prose "UNTRACKED FILE" bodies are hard to read as diffs.
+    #>
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory)][string]$Path,
+        [AllowEmptyString()][AllowNull()][string]$Body = ''
+    )
+
+    $normPath = ([string]$Path).Replace('\', '/')
+    $raw = if ($null -eq $Body) { '' } else { [string]$Body }
+
+    $contentLines = @()
+    $endsWithNewline = $true
+    if ($raw.Length -gt 0) {
+        $endsWithNewline = $raw.EndsWith("`n")
+        # Do not pass a negative Max-substrings to -split (that counts from the end and can keep the whole body as one element).
+        $splitParts = [regex]::Split($raw, '\r?\n')
+        if ($endsWithNewline -and $splitParts.Count -gt 0 -and [string]$splitParts[-1] -eq '') {
+            if ($splitParts.Count -eq 1) {
+                $contentLines = @()
+            }
+            else {
+                $contentLines = @($splitParts[0..($splitParts.Count - 2)])
+            }
+        }
+        else {
+            $contentLines = @($splitParts)
+        }
+    }
+
+    # LF-only: matches git unified diffs and keeps (?m)$ anchors reliable for pack tests.
+    $nl = "`n"
+    $parts = New-Object System.Collections.Generic.List[string]
+    [void]$parts.Add("diff --git a/$normPath b/$normPath")
+    [void]$parts.Add('new file mode 100644')
+    [void]$parts.Add('--- /dev/null')
+    [void]$parts.Add("+++ b/$normPath")
+
+    $n = $contentLines.Count
+    if ($n -eq 0) {
+        [void]$parts.Add('@@ -0,0 +0,0 @@')
+    }
+    else {
+        [void]$parts.Add("@@ -0,0 +1,$n @@")
+        foreach ($line in $contentLines) {
+            [void]$parts.Add("+$line")
+        }
+        if (-not $endsWithNewline) {
+            [void]$parts.Add('\ No newline at end of file')
+        }
+    }
+
+    return (($parts -join $nl) + $nl)
+}
+
 function Get-MetraInspectUntrackedFiles {
     <#
     .SYNOPSIS
         Reads includable untracked text files for working-tree inspect (cwd must be repo root).
+    .NOTES
+        Bodies are unified add diffs (--- /dev/null) so Bing pack review matches staged new-file hunks.
     #>
     [CmdletBinding()]
     param(
@@ -158,12 +220,10 @@ function Get-MetraInspectUntrackedFiles {
         if (-not (Test-Path -LiteralPath $full -PathType Leaf)) { continue }
 
         $body = ''
-        $truncated = $false
         try {
             $item = Get-Item -LiteralPath $full -ErrorAction Stop
             $byteCap = $MaxChars * 4
             if ($item.Length -gt $byteCap) {
-                $truncated = $true
                 $bytes = New-Object byte[] $byteCap
                 $stream = [System.IO.File]::OpenRead($full)
                 try {
@@ -183,7 +243,6 @@ function Get-MetraInspectUntrackedFiles {
             if ($null -eq $raw) { $raw = '' }
             if ($raw.Length -gt $MaxChars) {
                 $body = $raw.Substring(0, $MaxChars) + "`n...[truncated]..."
-                $truncated = $true
             }
             else {
                 $body = $raw
@@ -194,11 +253,9 @@ function Get-MetraInspectUntrackedFiles {
             continue
         }
 
-        $prefix = "UNTRACKED FILE: $path`nThis entire file is new in the working tree."
-        if ($truncated) { $prefix = "$prefix (truncated)" }
         [void]$files.Add([PSCustomObject]@{
                 path    = $path
-                content = "$prefix`n$body"
+                content = (Format-MetraInspectUntrackedAsUnifiedDiff -Path $path -Body $body)
             })
     }
     return @($files.ToArray())

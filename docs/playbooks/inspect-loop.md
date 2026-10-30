@@ -74,6 +74,7 @@ Independence of review matters more than the specific model. The safety net is i
 ```
 
 - Default diff (no `-Base`) includes unstaged + staged + untracked text files (scope-reducer still skips secrets/binaries/lockfiles).
+- Untracked files are emitted as unified add hunks (`--- /dev/null` / `+++ b/...` with `+` lines) so Bing packs match staged new-file diffs.
 - `-Base <rev>` is three-dot `Base...HEAD` only; local working-tree edits are not included (yellow warning when dirty).
 - `-WhatIf` skips the Ask engine after scope reduce.
 - Pack rebuilds scrubbed appendix bodies from current disk; findings stay from the assessed report (stale warning when inputHash differs).
