@@ -18,6 +18,14 @@ Entry shape:
 
 ---
 
+## 2026-11-01 - Inspect pack: Swift is code; bulk generated corpora last
+
+- Decision: `Get-MetraInspectFileClass` treats `.swift`, `.m`, `.mm`, `.kt`, and `.kts` as **code** (same file-cap tier as `.ps1` / `.py` / `.ts`).
+- Decision: Bulk generated corpora are class **generated** and fill **after** code, config, and docs: `gems-site/v1/**`, any `**/generated/**` path segment, and `brands/*/generated/**`. Manifests and indexes under `gems-site/` (for example `index.json`, `areas/*.json`, `_headers`) stay **config**.
+- Decision: Under `MaxFiles`, leftover slots may still include a path-sorted sample of generated tiles; exhaustive tile dumps must not crowd out implementation or tests.
+- Why: Wayside bite 16e Bing pack graded trust-boundary Swift and tests Grade C while ~360 `gems-site/v1/*.json` bodies consumed the 64-file Bing cap (6.7% body coverage). Swift had been falling through to config and sorting behind `gems-site/`. "Findings: none" on that pack was not acceptance evidence.
+- See: `scripts/private/Inspect.ps1` (`Get-MetraInspectFileClass`, `Reduce-MetraInspectDiffFiles`); `tests/Metra.Inspect.Tests.ps1`; Bing review of Wayside 16e pack-diff (2026-11-01)
+
 ## 2026-10-30 - Inspect untracked files pack as unified add diffs
 
 - Decision: Working-tree untracked text included in inspect/diff packs is emitted as git-style unified add hunks (`diff --git`, `new file mode`, `--- /dev/null`, `+++ b/<path>`, `+` lines), not prose `UNTRACKED FILE:` prefixes. Legacy `UNTRACKED FILE:` detection remains for rename-collapse fixtures and older fixtures only.

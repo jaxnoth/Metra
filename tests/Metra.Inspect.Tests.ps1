@@ -42,6 +42,26 @@ Describe 'Inspect file classification' {
             Get-MetraInspectFileClass -RelativePath 'AGENTS.md' | Should -Be 'docs'
         }
     }
+
+    It 'classifies Swift and Objective-C as code' {
+        InModuleScope Metra {
+            Get-MetraInspectFileClass -RelativePath 'xcode-drop/Wayside/Gems/HTTPClient.swift' | Should -Be 'code'
+            Get-MetraInspectFileClass -RelativePath 'xcode-drop/WaysideTests/Bite16eTests.swift' | Should -Be 'code'
+            Get-MetraInspectFileClass -RelativePath 'Sources/Foo.m' | Should -Be 'code'
+            Get-MetraInspectFileClass -RelativePath 'Sources/Bar.mm' | Should -Be 'code'
+        }
+    }
+
+    It 'demotes bulk gem tiles and generated trees; keeps manifests as config' {
+        InModuleScope Metra {
+            Get-MetraInspectFileClass -RelativePath 'gems-site/v1/160_-350.json' | Should -Be 'generated'
+            Get-MetraInspectFileClass -RelativePath 'gems-site/index.json' | Should -Be 'config'
+            Get-MetraInspectFileClass -RelativePath 'gems-site/areas/illinois.json' | Should -Be 'config'
+            Get-MetraInspectFileClass -RelativePath 'gems-site/_headers' | Should -Be 'config'
+            Get-MetraInspectFileClass -RelativePath 'brands/wayne-autosales/generated/index.html' | Should -Be 'generated'
+            Get-MetraInspectFileClass -RelativePath 'site/generated/out.css' | Should -Be 'generated'
+        }
+    }
 }
 
 Describe 'Inspect scope reducer' {
@@ -56,6 +76,38 @@ Describe 'Inspect scope reducer' {
             $r.SkippedFileCount | Should -Be 1
             ($r.Files | Where-Object { $_.path -eq 'src/App.ps1' }).Count | Should -Be 1
             ($r.Files | Where-Object { $_.class -eq 'docs' }).Count | Should -BeGreaterThan 0
+        }
+    }
+
+    It 'keeps Swift implementation ahead of bulk gem tiles under the Bing file cap' {
+        InModuleScope Metra {
+            $files = New-Object System.Collections.Generic.List[object]
+            foreach ($i in 1..80) {
+                [void]$files.Add([PSCustomObject]@{
+                        path    = ("gems-site/v1/{0}_-350.json" -f (100 + $i))
+                        content = "{`"id`":$i}"
+                    })
+            }
+            foreach ($name in @('HTTPClient.swift', 'WebLink.swift', 'ExampleTrip.swift', 'Bite16eTests.swift')) {
+                [void]$files.Add([PSCustomObject]@{
+                        path    = "xcode-drop/Wayside/$name"
+                        content = "// $name body"
+                    })
+            }
+            [void]$files.Add([PSCustomObject]@{ path = 'gems-site/index.json'; content = '{"areas":[]}' })
+            [void]$files.Add([PSCustomObject]@{ path = 'tools/build_gems.py'; content = 'def main(): pass' })
+
+            $r = Reduce-MetraInspectDiffFiles -Files @($files.ToArray()) -MaxFiles 64 -MaxBytesPerFile 96000 -IncludeDocs
+            $kept = @($r.Files | ForEach-Object { $_.path })
+            $kept | Should -Contain 'xcode-drop/Wayside/HTTPClient.swift'
+            $kept | Should -Contain 'xcode-drop/Wayside/WebLink.swift'
+            $kept | Should -Contain 'xcode-drop/Wayside/ExampleTrip.swift'
+            $kept | Should -Contain 'xcode-drop/Wayside/Bite16eTests.swift'
+            $kept | Should -Contain 'tools/build_gems.py'
+            $kept | Should -Contain 'gems-site/index.json'
+            (@($kept | Where-Object { $_ -like 'gems-site/v1/*' }).Count) | Should -BeLessThan 60
+            $r.OmittedByFileCap.Count | Should -BeGreaterThan 0
+            (@($r.OmittedByFileCap | Where-Object { $_ -like 'gems-site/v1/*' }).Count) | Should -BeGreaterThan 0
         }
     }
 }

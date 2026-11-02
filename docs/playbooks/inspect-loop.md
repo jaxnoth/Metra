@@ -114,6 +114,7 @@ Rules:
 - `.\metra.ps1 inspect budget -Name <Project>` — no engine call; estimates prompt payload chars and band before inspect.
 - Round 1 assess: full collapsed reduced diff. Verify rounds: touch-set bodies only; outside paths are names-only indicators.
 - Rename collapse (`git-rename`, `suffix-pair`) runs before the file cap; ambiguous pairs stay uncollapsed.
+- Pack file-cap order: **code** (includes `.swift`) → **config** (manifests/indexes) → **docs** → **generated** bulk tiles (`gems-site/v1/`, `**/generated/**`). Generated corpora may sample leftover slots; they must not crowd out implementation or tests (Decision 2026-11-01).
 
 ## Project lane desk hop (Metra only)
 

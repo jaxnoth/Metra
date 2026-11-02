@@ -41,7 +41,16 @@ function Get-MetraInspectFileClass {
         return 'skip'
     }
 
-    if ($ext -in @('.ps1', '.psm1', '.psd1', '.cs', '.py', '.ts', '.tsx', '.js', '.jsx', '.sql', '.go', '.rs', '.java', '.cpp', '.c', '.h')) {
+    # Bulk generated corpora (tile dumps, framework output trees) lose the file-cap contest to
+    # implementation and tests. Manifests and indexes stay config (see Get-MetraInspectFileClass tests).
+    # Scar: Wayside 16e Bing pack - gems-site/v1/*.json filled MaxFiles before Swift (2026-11-01).
+    if ($p -match '(^|/)gems-site/v1(/|$)' -or
+        $p -match '(^|/)generated(/|$)' -or
+        $p -match '(^|/)brands/[^/]+/generated(/|$)') {
+        return 'generated'
+    }
+
+    if ($ext -in @('.ps1', '.psm1', '.psd1', '.cs', '.py', '.ts', '.tsx', '.js', '.jsx', '.sql', '.go', '.rs', '.java', '.kt', '.kts', '.swift', '.m', '.mm', '.cpp', '.c', '.h')) {
         return 'code'
     }
 
@@ -1275,12 +1284,13 @@ function Reduce-MetraInspectDiffFiles {
     $skipped = @($ordered | Where-Object { $_.class -eq 'skip' })
     $nonSkip = @($ordered | Where-Object { $_.class -ne 'skip' })
     $kept = New-Object System.Collections.Generic.List[object]
-    foreach ($cls in @('code', 'config', 'docs')) {
+    # code / config / docs first; generated corpora fill leftover MaxFiles slots only (sampled by path).
+    foreach ($cls in @('code', 'config', 'docs', 'generated')) {
         foreach ($item in @($nonSkip | Where-Object { $_.class -eq $cls } | Sort-Object path)) {
             [void]$kept.Add($item)
         }
     }
-    foreach ($item in @($nonSkip | Where-Object { $_.class -notin @('code', 'config', 'docs') } | Sort-Object path)) {
+    foreach ($item in @($nonSkip | Where-Object { $_.class -notin @('code', 'config', 'docs', 'generated') } | Sort-Object path)) {
         [void]$kept.Add($item)
     }
 
