@@ -658,6 +658,65 @@ Describe 'Ask engine lifecycle and routing' {
         }
     }
 
+    It 'restart -SidecarOnly with desk up stops/starts sidecar and does not recycle Ops desk' {
+        InModuleScope Metra {
+            Mock Get-MetraAskSettings { [PSCustomObject]@{ engine = 'cursor'; cursorPort = 7381 } }
+            Mock Resolve-MetraOpsDeskBinding { [PSCustomObject]@{ Port = 7380 } }
+            Mock Test-MetraOpsDeskResponding { $true }
+            Mock Restart-MetraOpsDesk { throw 'Restart-MetraOpsDesk should not run for -SidecarOnly' }
+            Mock Stop-MetraAskEngine { param($IncludePortListeners) $script:AskRestartStopped = $true; $script:AskRestartIncludePort = [bool]$IncludePortListeners }
+            Mock Test-MetraAskEngineHealth { $false }
+            Mock Get-MetraAskEngineRecordedProcessId { return $null }
+            Mock Start-MetraAskEngine {
+                $script:AskRestartStarted = $true
+                return [PSCustomObject]@{ available = $true; engine = 'cursor'; reason = 'ok' }
+            }
+            $script:AskRestartStopped = $false
+            $script:AskRestartStarted = $false
+            $script:AskRestartIncludePort = $false
+            $cap = Restart-MetraAskEngine -SidecarOnly -Confirm:$false
+            $script:AskRestartStopped | Should -BeTrue
+            $script:AskRestartIncludePort | Should -BeTrue
+            $script:AskRestartStarted | Should -BeTrue
+            $cap.available | Should -BeTrue
+            Should -Invoke Restart-MetraOpsDesk -Times 0
+        }
+    }
+
+    It 'cursor_auth_error is a credential failure and is not sidecar-restartable' {
+        InModuleScope Metra {
+            $authFail = [PSCustomObject]@{
+                ok            = $false
+                status        = 'error'
+                error         = 'engine_request_failed'
+                errorCode     = 'cursor_auth_error'
+                errorDetail   = 'Authentication error If you are logged in, try logging out and back in.'
+                retryClass    = 'model_error'
+                message       = 'The Ask engine run failed: Authentication error If you are logged in, try logging out and back in.'
+                secretsRefuse = $false
+            }
+            (Test-MetraAskCredentialFailure -EngineResult $authFail) | Should -BeTrue
+            (Test-MetraAskSidecarRestartableFailure -EngineResult $authFail) | Should -BeFalse
+        }
+    }
+
+    It 'auth wording without errorCode is still not sidecar-restartable' {
+        InModuleScope Metra {
+            $authFail = [PSCustomObject]@{
+                ok            = $false
+                status        = 'error'
+                error         = 'engine_request_failed'
+                errorCode     = ''
+                errorDetail   = 'Authentication error If you are logged in, try logging out and back in.'
+                retryClass    = 'model_error'
+                message       = 'Authentication error If you are logged in, try logging out and back in.'
+                secretsRefuse = $false
+            }
+            (Test-MetraAskCredentialFailure -EngineResult $authFail) | Should -BeTrue
+            (Test-MetraAskSidecarRestartableFailure -EngineResult $authFail) | Should -BeFalse
+        }
+    }
+
     It 'Stop-MetraAskEngine can stop orphan port listeners when PID file is missing' {
         InModuleScope Metra {
             Mock Get-MetraAskSettings { [PSCustomObject]@{ engine = 'cursor'; cursorPort = 7381 } }
@@ -1078,6 +1137,29 @@ Describe 'Ask cursor health response and opaque recovery' {
             $r = Invoke-MetraAskCursorOpaqueRecovery -EngineResult $failed -Prompt 'ping' -Cwd (Get-MetraRoot)
             $r.attempted | Should -BeFalse
             $r.result.errorDetail | Should -Be 'quota exhausted'
+        }
+    }
+
+    It 'cursor_auth_error does not fall through opaque recovery into a sidecar restart' {
+        InModuleScope Metra {
+            $authFail = [PSCustomObject]@{
+                ok            = $false
+                status        = 'error'
+                error         = 'engine_request_failed'
+                errorCode     = 'cursor_auth_error'
+                errorDetail   = 'Authentication error If you are logged in, try logging out and back in.'
+                retryClass    = 'model_error'
+                message       = 'The Ask engine run failed: Authentication error If you are logged in, try logging out and back in.'
+                secretsRefuse = $false
+            }
+            Mock Invoke-MetraAskCursorSingleFlightRestart { throw 'opaque recovery must not restart on auth' }
+            Mock Restart-MetraAskEngine { throw 'Restart-MetraAskEngine must not run on auth' }
+            Mock Invoke-MetraAskEngine { throw 'opaque recovery must not retry Ask on auth' }
+            $r = Invoke-MetraAskCursorOpaqueRecovery -EngineResult $authFail -Prompt 'ping' -Cwd (Get-MetraRoot)
+            $r.attempted | Should -BeFalse
+            $r.result.errorCode | Should -Be 'cursor_auth_error'
+            Should -Invoke Invoke-MetraAskCursorSingleFlightRestart -Times 0
+            Should -Invoke Restart-MetraAskEngine -Times 0
         }
     }
 }

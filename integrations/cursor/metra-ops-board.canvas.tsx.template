@@ -10,7 +10,6 @@ import {
   Grid,
   H1,
   H2,
-  H3,
   Pill,
   Row,
   Select,
@@ -22,6 +21,7 @@ import {
   TextInput,
   useCanvasAction,
   useCanvasState,
+  useEffect,
   useHostTheme,
 } from "cursor/canvas";
 
@@ -54,7 +54,7 @@ type ProjectRow = {
   hasReadme: boolean;
   drift: boolean;
   findings: string[];
-  largeFiles: LargeFile[];
+  largeFiles?: LargeFile[];
   status: string;
   pinned: boolean;
   whyHere: WhyHereRow[];
@@ -64,6 +64,8 @@ type ProjectRow = {
   gitBehind: number;
   gitBranch: string;
   gitSummary: string;
+  /** Present in snapshot embed; board UI does not surface it. */
+  gitRepoPath?: string;
   gitChecked: boolean;
 };
 type MetaTodo = {
@@ -104,7 +106,11 @@ type MetaSnapshot = {
   verifyChecked?: boolean;
   projectCount: number;
   driftCount: number;
+  /** Alias of driftCount from snapshot export. */
+  auditDriftCount?: number;
   driftProjects: number;
+  /** Alias of driftProjects from snapshot export. */
+  driftProjectCount?: number;
   notInstalled?: number;
   missingAgents: number;
   missingIgnore: number;
@@ -152,6 +158,8 @@ type MetaSnapshot = {
     missingDecisionsCount?: number;
     uncovered?: string[];
     uncoveredCount?: number;
+    azdoAdvisory?: string;
+    azdoAdvisoryAvailable?: boolean;
   };
   review?: {
     ledgerExists: boolean;
@@ -523,6 +531,14 @@ function ActionPaths({
   const [copiedId, setCopiedId] = useCanvasState("copiedCommandId", "");
   const copied = copiedId === copyId && Boolean(command);
 
+  useEffect(() => {
+    if (!copied) return;
+    const handle = window.setTimeout(() => {
+      setCopiedId((prev: string) => (prev === copyId ? "" : prev));
+    }, 1500);
+    return () => window.clearTimeout(handle);
+  }, [copied, copyId]);
+
   return (
     <Stack gap={8}>
       <Text size="small" weight="semibold">
@@ -551,9 +567,6 @@ function ActionPaths({
             void copyCommandToClipboard(command)
               .then(() => {
                 setCopiedId(copyId);
-                window.setTimeout(() => {
-                  setCopiedId((prev) => (prev === copyId ? "" : prev));
-                }, 1500);
               })
               .catch(() => {
                 setCopiedId("");
@@ -1005,7 +1018,7 @@ export default function MetraOpsBoard() {
                 </Stack>
                 <TextInput
                   value={query}
-                  onChange={(value) => {
+                  onChange={(value: string) => {
                     setQuery(value);
                     setPrimary("");
                     setAttentionId("");
@@ -1199,21 +1212,20 @@ export default function MetraOpsBoard() {
             {!verifyChecked ? (
               <Pill size="sm">verify not checked</Pill>
             ) : (
-              <Pill
-                size="sm"
-                active={SNAPSHOT.verify?.status === "PASS"}
-                tone={
-                  SNAPSHOT.verify?.status === "FAIL"
-                    ? "warning"
-                    : SNAPSHOT.verify?.status === "WARN"
-                      ? "warning"
-                      : "neutral"
-                }
-              >
+              <Pill size="sm" active={SNAPSHOT.verify?.status === "PASS"}>
                 verify {SNAPSHOT.verify?.status}
               </Pill>
             )}
           </Row>
+          {verifyChecked &&
+          (SNAPSHOT.verify?.status === "FAIL" || SNAPSHOT.verify?.status === "WARN") ? (
+            <Callout
+              tone={SNAPSHOT.verify?.status === "FAIL" ? "danger" : "warning"}
+              title={`Verify ${SNAPSHOT.verify?.status}`}
+            >
+              Run .\metra.ps1 verify and clear FAIL/WARN rows before trusting routing smoke.
+            </Callout>
+          ) : null}
 
           <Grid columns={3} gap={12}>
             <Stat
@@ -1330,13 +1342,7 @@ export default function MetraOpsBoard() {
 
           {selected ? (
             <Card>
-              <CardHeader
-                trailing={
-                  <Button variant="secondary" onClick={() => setPrimary(selected.name)}>
-                    Use as route primary
-                  </Button>
-                }
-              >
+              <CardHeader trailing={<Pill size="sm">{selected.status}</Pill>}>
                 {selected.name}
               </CardHeader>
               <CardBody>
@@ -1355,6 +1361,9 @@ export default function MetraOpsBoard() {
                     </Text>
                   ) : null}
                   <WhyHereList rows={selected.whyHere || []} label="Why here?" />
+                  <Button variant="secondary" onClick={() => setPrimary(selected.name)}>
+                    Use as route primary
+                  </Button>
                 </Stack>
               </CardBody>
             </Card>

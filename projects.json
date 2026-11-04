@@ -1,6 +1,6 @@
 {
   "version": 2,
-  "updated": "2026-07-31",
+  "updated": "2026-10-30",
   "note": "Shared routing registry. Only entries meant for coworkers live here. Machine-private entries belong in projects.local.json; entries that travel with a project root belong in that root's registryFile (see metra.config.json).",
   "routing": {
     "ticketFirst": true,
@@ -73,7 +73,7 @@
       "excludePaths": [
         "ops/node_modules",
         "ops/dist/assets",
-                                "projects.local.json",
+        "projects.local.json",
         "docs/decision-registry.json",
         "docs/operator-contract.json"
       ],
@@ -267,6 +267,49 @@
       "related": [
         "TicketTracker",
         "CredentialHelper"
+      ]
+    },
+    {
+      "name": "Smartsheet",
+      "purpose": "IT project-plan desk against Smartsheet (personal API token). Smartsheet stays system of record for plan rows.",
+      "share": true,
+      "featured": false,
+      "optional": true,
+      "triggers": [
+        "smartsheet",
+        "ss task",
+        "project plan"
+      ],
+      "entry": "AGENTS.md",
+      "capabilities": [
+        "sheet-list",
+        "task-mine",
+        "task-brief",
+        "task-update"
+      ],
+      "serves": [
+        "Data Ops",
+        "IT project operators"
+      ],
+      "whenPresent": "Use .\\Smartsheet.ps1 auth status, task mine / brief for plan rows, task update -WhatIf then -Confirm for gated writes. Do not steal Metra Yarn/Loom product-plan work.",
+      "whenMissing": "No Smartsheet checkout. Ask for sheet/row details or install C:\\Projects\\Smartsheet; do not invent sheet ids.",
+      "preferredPaths": [
+        "README.md",
+        "AGENTS.md",
+        "Smartsheet.ps1",
+        "docs",
+        "module"
+      ],
+      "excludePaths": [
+        "credentials/config.json",
+        "config/settings.json",
+        "cache",
+        "bin",
+        "obj"
+      ],
+      "related": [
+        "TicketTracker",
+        "M365"
       ]
     }
   ]

@@ -82,6 +82,37 @@ let cachedAvailableModelIds = null
 let cachedAvailableModelIdsAt = 0
 const MODEL_CACHE_MS = 5 * 60 * 1000
 let activeModelLabel = MODEL
+/** Overlapping /v1/complete count - logged on auth blips (Inspect + Ops can overlap). */
+let inFlightCompletes = 0
+
+function purposeFromContext(context) {
+  if (!context || typeof context !== 'object') return ''
+  const p = context.purpose || context.intent || ''
+  return p ? String(p).trim() : ''
+}
+
+function formatRunFailureLog({
+  result,
+  detail,
+  classified,
+  modelLabel,
+  selectionId,
+  phase,
+  newSession,
+  sessionId,
+  purpose,
+  workDir,
+}) {
+  const cwdBase = workDir ? path.basename(String(workDir)) : ''
+  return (
+    `[ask-cursor] run error id=${result?.id || 'n/a'} requestId=${result?.requestId || 'n/a'} ` +
+    `durationMs=${result?.durationMs ?? 'n/a'} detail=${detail || '(none)'} ` +
+    `retryClass=${classified?.retryClass || 'n/a'} errorCode=${classified?.errorCode || 'n/a'} ` +
+    `phase=${phase || 'n/a'} model=${modelLabel || 'n/a'} selectionId=${selectionId || 'n/a'} ` +
+    `newSession=${Boolean(newSession)} sessionId=${sessionId || 'n/a'} ` +
+    `purpose=${purpose || 'n/a'} cwd=${cwdBase || 'n/a'} inFlight=${inFlightCompletes}`
+  )
+}
 
 async function getAvailableModelIds(apiKey) {
   const now = Date.now()
@@ -651,6 +682,8 @@ async function complete({ prompt, cwd, context, sessionId, images, model }) {
   const workDir = cwd && typeof cwd === 'string' && cwd.length > 0 ? cwd : process.cwd()
   const sdkImages = loadImagesFromRefs(images)
 
+  const purpose = purposeFromContext(ctxScrub.value || context || {})
+
   async function createAgentForSelection(currentSelection) {
     const opt = toSdkModelOpt(currentSelection)
     try {
@@ -662,6 +695,23 @@ async function complete({ prompt, cwd, context, sessionId, images, model }) {
       return { agent, selection: currentSelection }
     } catch (err) {
       const msg = String(err?.message || '')
+      const classifiedCreate = classifyRunError(msg)
+      if (classifiedCreate.errorCode === 'cursor_auth_error') {
+        appendRunsLog(
+          formatRunFailureLog({
+            result: { id: 'n/a', requestId: 'n/a', durationMs: 'n/a' },
+            detail: msg,
+            classified: classifiedCreate,
+            modelLabel: currentSelection.label || currentSelection.id,
+            selectionId: currentSelection.id,
+            phase: 'create',
+            newSession: true,
+            sessionId: sessionId || null,
+            purpose,
+            workDir,
+          }),
+        )
+      }
       const shouldFallback =
         (currentSelection.id === 'auto-smart' &&
           err instanceof CursorAgentError &&
@@ -781,8 +831,8 @@ async function complete({ prompt, cwd, context, sessionId, images, model }) {
       const classified = classifyRunError(scrubbed.text || '')
       const failedModelId = selection.id
 
-      // Personal / restricted keys often auth-fail on pinned inspect models (e.g. gemini).
-      // Retry once on a concrete catalog fallback; do not retry usage/billing limits.
+      // Model-policy denials ("cannot use this model") get one catalog fallback.
+      // Cursor auth/session strings are NOT model policy - do not recycle or relabel the pin.
       if (isRetryableModelFailure(scrubbed.text || classified.errorDetail || '')) {
         const available = (await getAvailableModelIds(apiKey)) || [
           'default',
@@ -834,7 +884,18 @@ async function complete({ prompt, cwd, context, sessionId, images, model }) {
         const message = scrubbedFinal.text
           ? `The Ask engine run failed: ${scrubbedFinal.text}`
           : 'The Ask engine run failed. Try again, or use Classify for routing only.'
-        const errLine = `[ask-cursor] run error id=${result.id || 'n/a'} requestId=${result.requestId || 'n/a'} durationMs=${result.durationMs ?? 'n/a'} detail=${scrubbedFinal.text || '(none)'} retryClass=${classifiedFinal.retryClass}`
+        const errLine = formatRunFailureLog({
+          result,
+          detail: scrubbedFinal.text || '(none)',
+          classified: classifiedFinal,
+          modelLabel,
+          selectionId: selection.id,
+          phase: 'send',
+          newSession,
+          sessionId: id,
+          purpose,
+          workDir,
+        })
         console.error(errLine)
         appendRunsLog(errLine)
         await retireSession(id, entry)
@@ -924,6 +985,20 @@ async function complete({ prompt, cwd, context, sessionId, images, model }) {
     } else {
       recordDegradedFailure(classified)
     }
+    appendRunsLog(
+      formatRunFailureLog({
+        result: { id: 'n/a', requestId: 'n/a', durationMs: 'n/a' },
+        detail: scrubbed.text || err?.message || '(none)',
+        classified,
+        modelLabel,
+        selectionId: selection?.id,
+        phase: entry ? 'send-or-create' : 'create',
+        newSession,
+        sessionId: id || requestedId || null,
+        purpose,
+        workDir,
+      }),
+    )
     if (entry && id) {
       await retireSession(id, entry)
     }
@@ -975,6 +1050,7 @@ const server = http.createServer(async (req, res) => {
   if (req.method === 'POST' && url.pathname === '/v1/complete') {
     // Node http does not serialize handlers; overlapping /v1/complete is real (Inspect + Ops).
     // Session activeRuns lease is the disposal safety net (defense in depth).
+    inFlightCompletes += 1
     try {
       const body = await readJson(req)
       const prompt = String(body.prompt || '').trim()
@@ -999,6 +1075,8 @@ const server = http.createServer(async (req, res) => {
         model: MODEL,
         status: 'error',
       })
+    } finally {
+      inFlightCompletes = Math.max(0, inFlightCompletes - 1)
     }
     return
   }

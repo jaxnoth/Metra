@@ -251,6 +251,43 @@ Describe 'Inspect engine parse retry' {
             $script:AskCount | Should -Be 2
         }
     }
+
+    It 'cursor auth failure does not restart sidecar or Ops desk' {
+        InModuleScope Metra {
+            Mock Resolve-MetraInspectEngineSelection {
+                [PSCustomObject]@{
+                    Engine             = 'cursor'
+                    RequestedModel     = 'gemini-3.7-flash'
+                    ConfigurationSource = 'inspect'
+                    Independence       = 'unknown'
+                }
+            }
+            Mock Write-MetraInspectReviewerBanner { }
+            Mock Invoke-MetraAskEngine {
+                [PSCustomObject]@{
+                    ok            = $false
+                    status        = 'error'
+                    error         = 'engine_request_failed'
+                    errorCode     = 'cursor_auth_error'
+                    errorDetail   = 'Authentication error If you are logged in, try logging out and back in.'
+                    retryClass    = 'model_error'
+                    message       = 'The Ask engine run failed: Authentication error If you are logged in, try logging out and back in.'
+                    engine        = 'cursor'
+                    model         = 'gemini-3.7-flash'
+                    secretsRefuse = $false
+                }
+            }
+            Mock Restart-MetraAskEngine { throw 'Inspect must not restart Ask on cursor_auth_error' }
+            Mock Restart-MetraOpsDesk { throw 'Inspect must not recycle Ops desk on cursor_auth_error' }
+            $r = Invoke-MetraInspectEngine -Prompt 'review diff' -Cwd 'C:\Projects\_meta'
+            $r.Ok | Should -BeFalse
+            $r.Message | Should -Match 'Authentication error'
+            $r.RetryAttempt | Should -Be 0
+            Should -Invoke Restart-MetraAskEngine -Times 0
+            Should -Invoke Restart-MetraOpsDesk -Times 0
+            Should -Invoke Invoke-MetraAskEngine -Times 1
+        }
+    }
 }
 
 Describe 'Inspect report wrapper' {

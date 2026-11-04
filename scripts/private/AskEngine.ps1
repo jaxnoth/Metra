@@ -1650,7 +1650,10 @@ function Test-MetraAskOpaqueSdkFailure {
 function Test-MetraAskCredentialFailure {
     <#
     .SYNOPSIS
-        True when the failure is a credential/config problem that sidecar restart will not fix.
+        True when the failure is a credential/config/model-policy problem that sidecar restart will not fix.
+    .NOTES
+        Includes Cursor auth/usage/model codes. Cursor often returns "Authentication error... log out
+        and back in" for session/model policy blips; recycling the sidecar (or Ops desk) does not fix those.
     #>
     [CmdletBinding()]
     param($EngineResult)
@@ -1658,14 +1661,24 @@ function Test-MetraAskCredentialFailure {
     if ($null -eq $EngineResult) { return $false }
     if ([bool](Get-MetraProp -Object $EngineResult -Name 'secretsRefuse' -Default $false)) { return $true }
 
+    $errorCode = [string](Get-MetraProp -Object $EngineResult -Name 'errorCode' -Default '')
+    if ($errorCode -in @('cursor_auth_error', 'cursor_usage_limit', 'cursor_billing_limit', 'cursor_model_unavailable')) {
+        return $true
+    }
+
     $blob = @(
         [string](Get-MetraProp -Object $EngineResult -Name 'message' -Default '')
         [string](Get-MetraProp -Object $EngineResult -Name 'errorDetail' -Default '')
         [string](Get-MetraProp -Object $EngineResult -Name 'error' -Default '')
         [string](Get-MetraProp -Object $EngineResult -Name 'retryClass' -Default '')
+        $errorCode
     ) -join ' '
 
     if ($blob -match '(?i)invalid.?api.?key|api.?key.?not|missing.?api.?key|credential(s)? (invalid|missing|not configured)|forbidden.?key') {
+        return $true
+    }
+    # Cursor SDK auth/session wording - not a dead sidecar. Do not recycle on these.
+    if ($blob -match '(?i)authentication error|not authenticated|unauthorized|\b401\b|log(?:ging)? out and back in') {
         return $true
     }
     return $false
@@ -1674,7 +1687,10 @@ function Test-MetraAskCredentialFailure {
 function Test-MetraAskSidecarRestartableFailure {
     <#
     .SYNOPSIS
-        True when recycling the Cursor Ask sidecar may fix the failure (opaque SDK, transport, session auth).
+        True when recycling the Cursor Ask sidecar may fix the failure (opaque SDK, transport).
+    .NOTES
+        Auth, usage, and model-pin failures are not restartable - see Test-MetraAskCredentialFailure.
+        Inspect/opaque recovery must use Restart-MetraAskEngine -SidecarOnly so Ops desk stays up.
     #>
     [CmdletBinding()]
     param($EngineResult)
@@ -1692,7 +1708,8 @@ function Test-MetraAskSidecarRestartableFailure {
         [string](Get-MetraProp -Object $EngineResult -Name 'retryClass' -Default '')
     ) -join ' '
 
-    if ($blob -match '(?i)authentication|unauthorized|\b401\b|connection reset|econnreset|engine run failed|sidecar') {
+    # Transport / dead-sidecar only. Auth strings are handled above as credential failures.
+    if ($blob -match '(?i)connection reset|econnreset|engine run failed|sidecar|ECONNREFUSED|actively refused') {
         return $true
     }
     return $false
@@ -1793,7 +1810,8 @@ function Invoke-MetraAskCursorSingleFlightRestart {
     }
 
     try {
-        $cap = Restart-MetraAskEngine -MetraRoot $MetraRoot -Confirm:$false
+        # Opaque recovery never recycles Ops desk - sidecar-only under the ensure mutex.
+        $cap = Restart-MetraAskEngine -MetraRoot $MetraRoot -SidecarOnly -Confirm:$false
         $ok = [bool](Get-MetraProp -Object $cap -Name 'available' -Default $false) -and `
             [bool](Get-MetraProp -Object $cap -Name 'engineHealthy' -Default $false)
         if (-not $ok) {
@@ -1923,26 +1941,37 @@ function Restart-MetraAskEngine {
     <#
     .SYNOPSIS
         Stops then starts the Cursor Ask sidecar (no-op start path for non-cursor engines).
+    .PARAMETER SidecarOnly
+        Recycle only the Ask node sidecar. Default (CLI / key change) still recycles Ops desk when
+        the desk is up so Ask stays one product lifecycle with Ops. Inspect and opaque recovery
+        must pass -SidecarOnly - desk recycle on every SDK blip was killing MetraHost child and
+        cascading listen-ok restarts during Wayside/inspect work.
     #>
     [CmdletBinding(SupportsShouldProcess = $true, ConfirmImpact = 'Medium')]
-    param([string]$MetraRoot = (Get-MetraRoot))
+    param(
+        [string]$MetraRoot = (Get-MetraRoot),
+        [switch]$SidecarOnly
+    )
 
     $settings = Get-MetraAskSettings -MetraRoot $MetraRoot
     if ($settings.engine -ne 'cursor') {
         return Get-MetraAskCapability -MetraRoot $MetraRoot
     }
 
-    if (-not $PSCmdlet.ShouldProcess('Ask Cursor sidecar', 'Restart')) {
+    $targetLabel = if ($SidecarOnly) { 'Ask Cursor sidecar (sidecar-only)' } else { 'Ask Cursor sidecar' }
+    if (-not $PSCmdlet.ShouldProcess($targetLabel, 'Restart')) {
         $cancelled = Get-MetraAskCapability -MetraRoot $MetraRoot
         $cancelled | Add-Member -NotePropertyName available -NotePropertyValue $false -Force
         $cancelled | Add-Member -NotePropertyName reason -NotePropertyValue 'restart_cancelled' -Force
         return $cancelled
     }
 
-    $port = [int](Resolve-MetraOpsDeskBinding -MetraRoot $MetraRoot).Port
-    if (Test-MetraOpsDeskResponding -Port $port -TimeoutSec 2) {
-        $null = Restart-MetraOpsDesk -Port $port -MetraRoot $MetraRoot -NoRefresh
-        return Get-MetraAskCapability -MetraRoot $MetraRoot
+    if (-not $SidecarOnly) {
+        $port = [int](Resolve-MetraOpsDeskBinding -MetraRoot $MetraRoot).Port
+        if (Test-MetraOpsDeskResponding -Port $port -TimeoutSec 2) {
+            $null = Restart-MetraOpsDesk -Port $port -MetraRoot $MetraRoot -NoRefresh
+            return Get-MetraAskCapability -MetraRoot $MetraRoot
+        }
     }
 
     # Same ask-sidecar-ensure mutex as poll Ensure: no interleave of Stop between another Ensure spawn.

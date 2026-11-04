@@ -510,6 +510,14 @@ Withdraws the same-day draft that renamed the iOS app to Metra Scout or styled t
 
 ---
 
+## 2026-11-04 - Ask engine restart must not desk-nuke on auth blips
+
+- Decision: `cursor_auth_error` / Cursor "Authentication error... log out and back in" (and usage/model-pin codes) are **not** sidecar-restartable. Inspect and opaque recovery call `Restart-MetraAskEngine -SidecarOnly`. Default CLI `ask engine restart` may still recycle Ops desk when the desk is up (one product lifecycle for intentional operator restart / key change). Auth strings with a present key are treated as Cursor SDK session/cloud blips until richer run-log fields (`phase`, `model`, `purpose`, `inFlight`) prove otherwise - do not tell the operator to rotate a known-good key as the first fix.
+- Why: Wayside inspect treated auth as restartable; `Restart-MetraAskEngine` recycled the whole Ops desk; MetraHost cascaded desk restarts (41+) while the key still worked for auto-smart and gemini.
+- See: `scripts/private/AskEngine.ps1` (`Test-MetraAskCredentialFailure`, `Test-MetraAskSidecarRestartableFailure`, `Restart-MetraAskEngine -SidecarOnly`); `scripts/private/Inspect.ps1`; `engines/cursor/server.mjs` run-error log fields
+
+---
+
 ## 2026-08-30 - Durable routing edges are operator-applied only
 
 - Decision: Accepted routing edges persist machine-locally under `%LOCALAPPDATA%\Metra\routing\graph.json` and apply only via explicit `routing edges accept` / `affirm` / `remove`. Routing telemetry and `routing edges candidates` remain Observe-only and never write accepted edges. Review proposals live in `proposals.json`; `propose` and `reject` never write `graph.json`.

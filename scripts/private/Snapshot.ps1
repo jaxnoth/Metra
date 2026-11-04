@@ -1131,7 +1131,29 @@ function Export-MetraCanvasSnapshot {
         verify            = [PSCustomObject]$verifySummary
     }
 
+    # Pretty JSON for the desk sidecar; compressed for the canvas embed so the
+    # Cursor canvas compile service is less likely to stop on a 200KB+ file.
+    # Drop fields the board types/UI do not need - excess keys on the typed
+    # SNAPSHOT literal fail canvas TypeScript checks.
+    $canvasSnapshot = $snapshot | ConvertTo-Json -Depth 8 | ConvertFrom-Json
+    foreach ($proj in @($canvasSnapshot.projects)) {
+        if ($null -ne $proj.PSObject.Properties['gitRepoPath']) {
+            $proj.PSObject.Properties.Remove('gitRepoPath')
+        }
+        if ($null -ne $proj.PSObject.Properties['largeFiles']) {
+            $proj.PSObject.Properties.Remove('largeFiles')
+        }
+    }
+    if ($canvasSnapshot.coverage) {
+        if ($null -ne $canvasSnapshot.coverage.PSObject.Properties['azdoAdvisory']) {
+            $canvasSnapshot.coverage.PSObject.Properties.Remove('azdoAdvisory')
+        }
+        if ($null -ne $canvasSnapshot.coverage.PSObject.Properties['azdoAdvisoryAvailable']) {
+            $canvasSnapshot.coverage.PSObject.Properties.Remove('azdoAdvisoryAvailable')
+        }
+    }
     $json = ($snapshot | ConvertTo-Json -Depth 8)
+    $canvasJson = ($canvasSnapshot | ConvertTo-Json -Depth 8 -Compress)
     Write-MetraAtomicUtf8Text -Path $OutPath -Text ($json + "`r`n")
     Write-Host ("Wrote snapshot: {0}" -f $OutPath) -ForegroundColor Green
 
@@ -1150,7 +1172,7 @@ function Export-MetraCanvasSnapshot {
                 $embedEnd = '// </metra-ops-snapshot>'
                 $embed = @"
 $embedBegin
-const SNAPSHOT: MetaSnapshot = $json;
+const SNAPSHOT: MetaSnapshot = $canvasJson;
 $embedEnd
 "@
                 $updated = $canvas.Substring(0, $bi) + $embed + $canvas.Substring($ei + $end.Length)

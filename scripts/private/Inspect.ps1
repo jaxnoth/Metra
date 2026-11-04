@@ -2319,8 +2319,9 @@ If no issues: {"findings":[]}. No markdown. No prose outside JSON.
             -Context @{ purpose = 'metra-inspect' } -TimeoutSec 900 `
             -Engine $selection.Engine -Model $selection.RequestedModel
         if (-not $engineResult.ok -and $attempt -eq 0 -and (Test-MetraAskSidecarRestartableFailure -EngineResult $engineResult)) {
-            Write-Host 'Inspect: Ask engine failed - restarting sidecar and retrying once...' -ForegroundColor Yellow
-            $null = Restart-MetraAskEngine -MetraRoot $MetraRoot -Confirm:$false
+            Write-Host 'Inspect: Ask engine failed - restarting sidecar (sidecar-only) and retrying once...' -ForegroundColor Yellow
+            # Never Restart-MetraOpsDesk from Inspect - desk recycle races MetraHost and amplifies SDK blips.
+            $null = Restart-MetraAskEngine -MetraRoot $MetraRoot -SidecarOnly -Confirm:$false
             continue
         }
         if (-not $engineResult.ok) {
