@@ -288,6 +288,7 @@ Usage:
   .\metra.ps1 inspect prepare-bing [-Name Metra] [-Reset]
   .\metra.ps1 inspect pre-commit [-Name Metra]
   .\metra.ps1 inspect gate affirm|status [-Name Metra]
+  .\metra.ps1 inspect review import|status [-Name Metra] [-Clipboard] [-Text <markdown>] [-Path <review.md>]
   .\metra.ps1 inspect hooks install
   .\metra.ps1 inspect plan [-Latest] [-Path <file>] [<filename-fragment>] -Name <Project> [-WhatIf]
   .\metra.ps1 inspect pack [plan] [-WhatIf]

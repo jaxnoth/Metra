@@ -18,6 +18,32 @@ Entry shape:
 
 ---
 
+## 2026-11-06 - Bing review return is chat-first; Metra lands review.md
+
+- Decision: Preferred Bing/Copilot return is a chat `## Metra External Review` block (echo `contentHash`). Writing sibling Share `review.md` is optional only when the surface can create/update markdown. `inspect review import` accepts `-Clipboard` / `-Text` / `-Path` / existing Share `review.md`, and on success still writes the full body to local slot + Share `review.md` when share is available. Do not modify `pack-diff.md` or `handoff.md`. Copilot verdict still does not affirm the Bing gate.
+- Why: Copilot SharePoint tools available in review chats can locate/copy/rename but not write markdown content, so a write-review.md-only contract cannot be fulfilled. Chat paste + Metra import is the workable loop.
+- See: `Format-MetraInspectBingShareHandoff`, `Import-MetraInspectExternalReview` in `scripts/private/Inspect.ps1`; [docs/playbooks/inspect-loop.md](playbooks/inspect-loop.md)
+
+## 2026-11-06 - Bing handoff requires writing sibling review.md (superseded)
+
+- Decision: Superseded by chat-first return (same day). Earlier handoff asked Copilot to write sibling `review.md` as the primary path.
+- Why: Kept as scar; Share markdown create/update was not available to Bing in practice.
+- See: following Decision "Bing review return is chat-first"
+
+## 2026-11-06 - Inspect Bing share mirror lands in Share\\Project (not inspect subfolder)
+
+- Decision: Bing pack mirror files (`pack-diff.md`, `handoff.md`, imported `review.md`) land directly under `{shareRoot}\Share\<Project>\`, same project folder as other Metra share exports. Do not nest an `inspect\` subfolder.
+- Why: Operator expected the project share subfolder; the extra `inspect\` leaf looked like the wrong destination.
+- See: `Get-MetraInspectBingShareInspectDir` in `scripts/private/Inspect.ps1`
+
+## 2026-11-06 - Inspect Bing OneDrive share mirror and external review return
+
+- Decision: After a successful local diff pack write, Metra soft-publishes an exact `$PackText` mirror to `{shareRoot}\Share\<Project>\pack-diff.md` plus a tiny `handoff.md`. Share publish failure warns and does not fail the local pack. Plan/agents packs are not mirrored.
+- Decision: Diff packs emit `contentHash` from a single helper (`Get-MetraInspectDiffContentHash`) that reads assess `inputHash`. The same helper is used by pack headers, handoff, `inspect review import` stale checks, and `inspect gate affirm`.
+- Decision: `inspect review import` parses `## Metra External Review`, rejects missing/mismatched `contentHash`, persists metadata plus the **full** normalized review body under the inspect slot, and may writeback Share `review.md` (latest-only under `Share\<Project>\`). Copilot `verdict` is recommendation only and never creates or updates `bing-gate.json` or plan `approveForLoom` / `externalReviewed`. Operator `inspect gate affirm` / Surveyor Approve remain the authority advance.
+- Why: Bing can open M365 OneDrive markdown directly; clipboard paste of large packs is a weak handoff. Authority boundaries stay local while removing review friction.
+- See: `Publish-MetraInspectBingShareMirror`, `Import-MetraInspectExternalReview`, `Get-MetraInspectDiffContentHash` in `scripts/private/Inspect.ps1`; [docs/playbooks/inspect-loop.md](playbooks/inspect-loop.md); `tests/Metra.Inspect.Tests.ps1` (Inspect Bing share mirror and external review)
+
 ## 2026-11-06 - Inspect pack: ForceInclude pin-before-cap
 
 - Decision: Bing / pack-only diff packs support `-ForceInclude path ...` (comma-separated or repeated). Forced paths are pinned ahead of the usual code/config/docs/generated MaxFiles contest; duplicates appear once; missing forced paths invent no bodies; byte truncation still applies; when forced paths themselves exceed MaxFiles, pin order is kept and the remainder is omitted deterministically into `OmittedByFileCap`.

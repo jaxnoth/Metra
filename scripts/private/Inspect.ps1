@@ -3256,7 +3256,8 @@ function Format-MetraInspectPackMarkdown {
         [string[]]$AssessedFilesFallback = @(),
         [string]$PackManifest,
         [string]$TestCatalog,
-        [string]$AgentsAuditSummary
+        [string]$AgentsAuditSummary,
+        [string]$ContentHash
     )
 
     $sb = New-Object System.Text.StringBuilder
@@ -3279,6 +3280,10 @@ function Format-MetraInspectPackMarkdown {
     if (-not [string]::IsNullOrWhiteSpace($Project)) {
         $rootBit = if (-not [string]::IsNullOrWhiteSpace($Root)) { " ($Root)" } else { '' }
         [void]$sb.AppendLine("Project: $Project$rootBit")
+    }
+    if ($Mode -eq 'diff') {
+        $hashOut = if (-not [string]::IsNullOrWhiteSpace($ContentHash)) { $ContentHash } else { '(none)' }
+        [void]$sb.AppendLine("contentHash: $hashOut")
     }
     if (-not [string]::IsNullOrWhiteSpace($PackManifest)) {
         [void]$sb.AppendLine('')
@@ -3366,7 +3371,8 @@ function Write-MetraInspectPackArtifact {
         [Parameter(Mandatory)][string]$SlotKey,
         [ValidateSet('diff', 'plan', 'agents')][string]$Mode,
         [switch]$Stale,
-        [switch]$NoClipboard
+        [switch]$NoClipboard,
+        [string]$ContentHash
     )
 
     if ([string]::IsNullOrWhiteSpace($SlotKey)) { $SlotKey = 'default' }
@@ -3382,6 +3388,8 @@ function Write-MetraInspectPackArtifact {
             Text         = $PackText
             Skipped      = $true
             Clipboard    = $false
+            SharePack    = $null
+            ShareHandoff = $null
         }
     }
 
@@ -3403,14 +3411,33 @@ function Write-MetraInspectPackArtifact {
         }
     }
     Write-Host ("Pack file: {0}" -f $packPath)
+
+    $sharePack = $null
+    $shareHandoff = $null
+    if ($Mode -eq 'diff') {
+        $hashForShare = $ContentHash
+        if ([string]::IsNullOrWhiteSpace($hashForShare)) {
+            $hashForShare = Get-MetraInspectDiffContentHash -SlotKey $SlotKey
+        }
+        $mirror = Publish-MetraInspectBingShareMirror -Project $SlotKey -PackText $PackText -ContentHash $hashForShare
+        if ($mirror -and $mirror.Ok) {
+            $sharePack = [string]$mirror.PackPath
+            $shareHandoff = [string]$mirror.HandoffPath
+            Write-Host ("Bing share pack: {0}" -f $sharePack)
+            Write-Host ("Bing share handoff: {0}" -f $shareHandoff)
+        }
+    }
+
     return [PSCustomObject]@{
-        Path      = $packPath
-        Stale     = $Stale
-        Mode      = $Mode
-        SlotKey   = $SlotKey
-        Text      = $PackText
-        Skipped   = $false
-        Clipboard = $clipped
+        Path         = $packPath
+        Stale        = $Stale
+        Mode         = $Mode
+        SlotKey      = $SlotKey
+        Text         = $PackText
+        Skipped      = $false
+        Clipboard    = $clipped
+        SharePack    = $sharePack
+        ShareHandoff = $shareHandoff
     }
 }
 
@@ -3552,13 +3579,18 @@ function Invoke-MetraInspectPackOnly {
         }
     }
 
+    $contentHash = ''
+    if ($Mode -eq 'diff' -and -not [string]::IsNullOrWhiteSpace($project)) {
+        $contentHash = Get-MetraInspectDiffContentHash -SlotKey $project
+    }
     $packText = Format-MetraInspectPackMarkdown -Mode $Mode -Findings @() -PackBody $packBody -PackFileList $packFileList `
         -BingOnly -Project $project -Root $root -PlanPath $planPathOut -InspectedAtUtc $packedAtUtc `
         -PackManifest $packManifest `
         -TestCatalog $(if (($Mode -eq 'diff' -or $Mode -eq 'agents') -and $appendix) { [string]$appendix.TestCatalog } else { $null }) `
-        -AgentsAuditSummary $agentsAuditSummary
+        -AgentsAuditSummary $agentsAuditSummary `
+        -ContentHash $contentHash
 
-    return Write-MetraInspectPackArtifact -PackText $packText -Mode $Mode -SlotKey $project -Stale:$false
+    return Write-MetraInspectPackArtifact -PackText $packText -Mode $Mode -SlotKey $project -Stale:$false -ContentHash $contentHash
 }
 
 function Invoke-MetraInspectPack {
@@ -3711,6 +3743,10 @@ function Invoke-MetraInspectPack {
     }
 
     $assessedFilesFallback = @(@(Get-MetraProp -Object $report.provenance -Name 'assessedFiles' -Default @()) | ForEach-Object { $_ })
+    $contentHash = ''
+    if ($Mode -eq 'diff') {
+        $contentHash = Get-MetraInspectDiffContentHash -SlotKey $slotKey
+    }
     $packText = Format-MetraInspectPackMarkdown -Mode $Mode -Findings @($report.findings) -PackBody $packBody -PackFileList $packFileList `
         -AssessedReportPath $reportFull -InspectedAtUtc ([string]$report.provenance.inspectedAtUtc) `
         -Engine ([string]$report.provenance.engine) -Model ([string]$report.provenance.model) `
@@ -3718,9 +3754,10 @@ function Invoke-MetraInspectPack {
         -PlanPath ([string](Get-MetraProp -Object $report.provenance -Name 'planPath' -Default '')) `
         -Project ([string](Get-MetraProp -Object $report.provenance -Name 'project' -Default '')) `
         -Root ([string](Get-MetraProp -Object $report.provenance -Name 'root' -Default '')) `
-        -AssessedFilesFallback $assessedFilesFallback -PackManifest $packManifest -TestCatalog $testCatalog
+        -AssessedFilesFallback $assessedFilesFallback -PackManifest $packManifest -TestCatalog $testCatalog `
+        -ContentHash $contentHash
 
-    return Write-MetraInspectPackArtifact -PackText $packText -Mode $Mode -SlotKey $slotKey -Stale:$stale -NoClipboard:$NoClipboard
+    return Write-MetraInspectPackArtifact -PackText $packText -Mode $Mode -SlotKey $slotKey -Stale:$stale -NoClipboard:$NoClipboard -ContentHash $contentHash
 }
 
 function Get-MetraInspectReviewLoopMaxLoops {
@@ -5531,6 +5568,373 @@ function Install-MetraGitHooks {
     }
 }
 
+function Get-MetraInspectDiffContentHash {
+    <#
+    .SYNOPSIS
+        Central assess inputHash for pack contentHash, review import, and Bing gate affirm.
+    #>
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory)][string]$SlotKey
+    )
+
+    $assess = Get-MetraInspectSlotDiffAssess -SlotKey $SlotKey
+    if (-not $assess) { return '' }
+    $hash = [string]$assess.inputHash
+    if ([string]::IsNullOrWhiteSpace($hash) -or $hash -eq 'empty') { return '' }
+    return $hash
+}
+
+function Get-MetraInspectBingShareInspectDir {
+    <#
+    .SYNOPSIS
+        Project share folder for Bing pack mirror files (Share\<Project>\ - not an inspect subfolder).
+    #>
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory)][string]$Project,
+        [switch]$NoCreate
+    )
+
+    $shareProject = Get-MetraShareProjectPath -Project $Project -NoCreate:$NoCreate
+    $dirFull = [System.IO.Path]::GetFullPath($shareProject)
+    $shareContainer = [System.IO.Path]::GetFullPath((Join-Path (Get-MetraShareRoot) 'Share'))
+    if (-not (Test-MetraPathWithinRoot -Path $dirFull -Root $shareContainer)) {
+        throw 'Inspect share path escaped share root.'
+    }
+    return $dirFull
+}
+
+function Format-MetraInspectBingShareHandoff {
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory)][string]$Project,
+        [string]$ContentHash
+    )
+
+    $hashOut = if (-not [string]::IsNullOrWhiteSpace($ContentHash)) { $ContentHash } else { '(none)' }
+    $utc = [datetime]::UtcNow.ToString('o')
+    $sb = New-Object System.Text.StringBuilder
+    [void]$sb.AppendLine('# Metra Inspect Bing handoff')
+    [void]$sb.AppendLine('')
+    [void]$sb.AppendLine("Project: $Project")
+    [void]$sb.AppendLine("PackedAtUtc: $utc")
+    [void]$sb.AppendLine("contentHash: $hashOut")
+    [void]$sb.AppendLine('')
+    [void]$sb.AppendLine('Open sibling pack-diff.md in Bing / Copilot (M365 OneDrive file).')
+    [void]$sb.AppendLine('Classify concerns as Observed, Missing visibility, or Recommendation.')
+    [void]$sb.AppendLine('')
+    [void]$sb.AppendLine('Preferred return: reply in chat with ## Metra External Review including verdict (approve | changes-requested | blocked) and this contentHash echoed.')
+    [void]$sb.AppendLine('Only write sibling review.md in this Share project folder when your surface can create/update markdown content. Many Copilot/SharePoint tool lanes cannot.')
+    [void]$sb.AppendLine('Do not modify pack-diff.md or handoff.md. Recommendation only - does not affirm the Bing gate.')
+    [void]$sb.AppendLine('')
+    [void]$sb.AppendLine("Operator next: copy the chat review, then .\metra.ps1 inspect review import -Name $Project -Clipboard")
+    [void]$sb.AppendLine('(or -Path review.md / Share/<Project>/review.md when a file already exists)')
+    [void]$sb.AppendLine("Then: .\metra.ps1 inspect gate affirm -Name $Project")
+    [void]$sb.AppendLine('')
+    [void]$sb.AppendLine('Share copy is a mirror. Local %LOCALAPPDATA%\Metra\inspect pack and assess hashes remain authoritative.')
+    return ($sb.ToString().TrimEnd() + "`n")
+}
+
+function Publish-MetraInspectBingShareMirror {
+    <#
+    .SYNOPSIS
+        Soft-fail mirror of exact PackText + handoff.md into OneDrive Metra Share.
+    #>
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory)][string]$Project,
+        [Parameter(Mandatory)][AllowEmptyString()][string]$PackText,
+        [string]$ContentHash
+    )
+
+    try {
+        $dir = Get-MetraInspectBingShareInspectDir -Project $Project
+        $packPath = Join-Path $dir 'pack-diff.md'
+        $handoffPath = Join-Path $dir 'handoff.md'
+        Write-MetraAtomicUtf8Text -Path $packPath -Text $PackText
+        $handoff = Format-MetraInspectBingShareHandoff -Project $Project -ContentHash $ContentHash
+        Write-MetraAtomicUtf8Text -Path $handoffPath -Text $handoff
+        return [PSCustomObject]@{
+            Ok          = $true
+            PackPath    = $packPath
+            HandoffPath = $handoffPath
+            ContentHash = $ContentHash
+        }
+    }
+    catch {
+        Write-Warning ("Bing share mirror skipped: {0}" -f $_.Exception.Message)
+        return [PSCustomObject]@{
+            Ok          = $false
+            PackPath    = $null
+            HandoffPath = $null
+            ContentHash = $ContentHash
+            Error       = $_.Exception.Message
+        }
+    }
+}
+
+function Get-MetraInspectExternalReviewPaths {
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory)][string]$SlotKey
+    )
+
+    $slot = Resolve-MetraInspectReviewSlotRoot -SlotKey $SlotKey
+    return [PSCustomObject]@{
+        MetaPath = Join-Path $slot.SlotRoot 'external-review.json'
+        BodyPath = Join-Path $slot.SlotRoot 'external-review.body.md'
+        SlotRoot = $slot.SlotRoot
+    }
+}
+
+function ConvertFrom-MetraInspectExternalReviewMarkdown {
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory)][AllowEmptyString()][string]$Text
+    )
+
+    # Normalize CR/LF only (CRLF then lone CR -> LF). Use regex escapes so packs cannot be
+    # misread as replacing the letters r/n when PowerShell backticks render poorly in markdown.
+    $normalized = [regex]::Replace([string]$Text, '\r\n?', "`n")
+    if ($normalized -notmatch '(?m)^##\s*Metra External Review\s*$') {
+        throw 'External review must include heading ## Metra External Review.'
+    }
+
+    $field = {
+        param([string]$Name)
+        if ($normalized -match "(?im)^\s*$Name\s*:\s*(.+?)\s*$") {
+            return $Matches[1].Trim()
+        }
+        return ''
+    }
+
+    $contentHash = & $field 'contentHash'
+    $verdict = (& $field 'verdict').ToLowerInvariant()
+    $reviewer = & $field 'reviewer'
+    $reviewType = & $field 'reviewType'
+    $project = & $field 'project'
+
+    if ([string]::IsNullOrWhiteSpace($contentHash)) {
+        throw 'External review missing contentHash.'
+    }
+    $allowed = @('approve', 'changes-requested', 'blocked')
+    if ($allowed -notcontains $verdict) {
+        throw "External review verdict must be one of: $($allowed -join ', ')."
+    }
+
+    $body = $normalized.TrimEnd() + "`n"
+    return [PSCustomObject]@{
+        ContentHash = $contentHash
+        Verdict     = $verdict
+        Reviewer    = $reviewer
+        ReviewType  = $reviewType
+        Project     = $project
+        Body        = $body
+    }
+}
+
+function Get-MetraInspectExternalReviewRecord {
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory)][string]$SlotKey
+    )
+
+    $paths = Get-MetraInspectExternalReviewPaths -SlotKey $SlotKey
+    if (-not (Test-Path -LiteralPath $paths.MetaPath)) { return $null }
+    try {
+        $meta = Get-Content -LiteralPath $paths.MetaPath -Raw -ErrorAction Stop | ConvertFrom-Json -ErrorAction Stop
+    }
+    catch {
+        return $null
+    }
+    $body = ''
+    if (Test-Path -LiteralPath $paths.BodyPath) {
+        $body = [System.IO.File]::ReadAllText($paths.BodyPath, (Get-MetraUtf8NoBomEncoding))
+    }
+    return [PSCustomObject]@{
+        Meta     = $meta
+        Body     = $body
+        MetaPath = $paths.MetaPath
+        BodyPath = $paths.BodyPath
+    }
+}
+
+function Import-MetraInspectExternalReview {
+    <#
+    .SYNOPSIS
+        Import Bing Metra External Review against current assess contentHash. Never affirms the Bing gate.
+    .NOTES
+        Prefer chat paste via -Clipboard / -Text when Copilot cannot write Share review.md.
+        Still lands Share review.md + local body on success when share is available.
+    #>
+    [CmdletBinding(SupportsShouldProcess)]
+    param(
+        [string]$Name,
+        [string]$Path,
+        [string]$Text,
+        [switch]$Clipboard
+    )
+
+    $ctx = Resolve-MetraInspectProjectContext -Name $Name -Mode diff
+    if (-not $ctx.Ok) { throw $ctx.Error }
+    $slotKey = [string]$ctx.Project
+    if ([string]::IsNullOrWhiteSpace($slotKey)) { $slotKey = 'default' }
+
+    $currentHash = Get-MetraInspectDiffContentHash -SlotKey $slotKey
+    if ([string]::IsNullOrWhiteSpace($currentHash)) {
+        throw "No current assess contentHash for '$slotKey'. Run .\metra.ps1 inspect prepare-bing -Name $slotKey first."
+    }
+
+    $raw = $null
+    $sourceLabel = $null
+    if (-not [string]::IsNullOrWhiteSpace($Text)) {
+        $raw = [string]$Text
+        $sourceLabel = '(text)'
+    }
+    elseif ($Clipboard) {
+        try {
+            $raw = [string](Get-Clipboard -Raw -ErrorAction Stop)
+        }
+        catch {
+            throw "Clipboard unavailable: $($_.Exception.Message)"
+        }
+        if ([string]::IsNullOrWhiteSpace($raw)) {
+            throw 'Clipboard is empty. Copy the ## Metra External Review chat block, then re-run with -Clipboard.'
+        }
+        $sourceLabel = '(clipboard)'
+    }
+    else {
+        $sourcePath = $Path
+        if ([string]::IsNullOrWhiteSpace($sourcePath)) {
+            try {
+                $shareDir = Get-MetraInspectBingShareInspectDir -Project $slotKey -NoCreate
+                $candidate = Join-Path $shareDir 'review.md'
+                if (Test-Path -LiteralPath $candidate -PathType Leaf) {
+                    $sourcePath = $candidate
+                }
+            }
+            catch {
+                # share may be unresolved; fall through
+            }
+        }
+        if ([string]::IsNullOrWhiteSpace($sourcePath)) {
+            throw "inspect review import requires -Clipboard (preferred for chat paste), -Text, -Path <review.md>, or Share/<Project>/review.md present."
+        }
+        $sourceFull = [System.IO.Path]::GetFullPath($ExecutionContext.SessionState.Path.GetUnresolvedProviderPathFromPSPath($sourcePath))
+        if (-not (Test-Path -LiteralPath $sourceFull -PathType Leaf)) {
+            throw "Review file missing: $sourceFull"
+        }
+        $raw = [System.IO.File]::ReadAllText($sourceFull, (Get-MetraUtf8NoBomEncoding))
+        $sourceLabel = $sourceFull
+    }
+
+    $parsed = ConvertFrom-MetraInspectExternalReviewMarkdown -Text $raw
+    if ($parsed.ContentHash -ne $currentHash) {
+        throw ("External review contentHash is stale or mismatched (review={0}; assess={1})." -f $parsed.ContentHash, $currentHash)
+    }
+
+    $paths = Get-MetraInspectExternalReviewPaths -SlotKey $slotKey
+    [void](Ensure-MetraInspectSlotDirectory -SlotKey $slotKey)
+    $meta = [ordered]@{
+        schemaVersion = 1
+        project       = $slotKey
+        contentHash   = $parsed.ContentHash
+        verdict       = $parsed.Verdict
+        reviewer      = $parsed.Reviewer
+        reviewType    = $parsed.ReviewType
+        importedAtUtc = [datetime]::UtcNow.ToString('o')
+        sourcePath    = $sourceLabel
+        bodyPath      = $paths.BodyPath
+    }
+
+    if (-not $PSCmdlet.ShouldProcess($paths.MetaPath, 'Import external Bing review (does not affirm gate)')) {
+        return [PSCustomObject]@{
+            ok          = $false
+            skipped     = $true
+            contentHash = $parsed.ContentHash
+            verdict     = $parsed.Verdict
+        }
+    }
+
+    Write-MetraAtomicUtf8Text -Path $paths.BodyPath -Text $parsed.Body
+    Write-MetraAtomicUtf8Text -Path $paths.MetaPath -Text (($meta | ConvertTo-Json -Depth 6) + "`n")
+
+    $shareReview = $null
+    try {
+        $shareDir = Get-MetraInspectBingShareInspectDir -Project $slotKey
+        $shareReview = Join-Path $shareDir 'review.md'
+        Write-MetraAtomicUtf8Text -Path $shareReview -Text $parsed.Body
+        Write-Host ("Bing share review: {0}" -f $shareReview)
+    }
+    catch {
+        Write-Warning ("Bing share review.md writeback skipped: {0}" -f $_.Exception.Message)
+    }
+
+    Write-Host ("External review imported for {0}: verdict={1}; contentHash={2} (gate not affirmed)." -f $slotKey, $parsed.Verdict, $parsed.ContentHash)
+
+    return [PSCustomObject]@{
+        ok            = $true
+        skipped       = $false
+        project       = $slotKey
+        contentHash   = $parsed.ContentHash
+        verdict       = $parsed.Verdict
+        reviewer      = $parsed.Reviewer
+        metaPath      = $paths.MetaPath
+        bodyPath      = $paths.BodyPath
+        shareReview   = $shareReview
+        gateAffirmed  = $false
+    }
+}
+
+function Show-MetraInspectExternalReviewStatus {
+    [CmdletBinding()]
+    param(
+        [string]$Name
+    )
+
+    $ctx = Resolve-MetraInspectProjectContext -Name $Name -Mode diff
+    if (-not $ctx.Ok) { throw $ctx.Error }
+    $slotKey = [string]$ctx.Project
+    if ([string]::IsNullOrWhiteSpace($slotKey)) { $slotKey = 'default' }
+
+    $currentHash = Get-MetraInspectDiffContentHash -SlotKey $slotKey
+    $rec = Get-MetraInspectExternalReviewRecord -SlotKey $slotKey
+    $state = 'missing'
+    $importedHash = ''
+    $verdict = ''
+    $reviewer = ''
+    $importedAtUtc = ''
+    if ($rec -and $rec.Meta) {
+        $importedHash = [string](Get-MetraProp -Object $rec.Meta -Name 'contentHash' -Default '')
+        $verdict = [string](Get-MetraProp -Object $rec.Meta -Name 'verdict' -Default '')
+        $reviewer = [string](Get-MetraProp -Object $rec.Meta -Name 'reviewer' -Default '')
+        $importedAtUtc = [string](Get-MetraProp -Object $rec.Meta -Name 'importedAtUtc' -Default '')
+        if ([string]::IsNullOrWhiteSpace($currentHash)) {
+            $state = 'stale'
+        }
+        elseif ($importedHash -eq $currentHash) {
+            $state = 'current'
+        }
+        else {
+            $state = 'stale'
+        }
+    }
+
+    return [PSCustomObject]@{
+        project            = $slotKey
+        state              = $state
+        assessContentHash  = $currentHash
+        importedContentHash = $importedHash
+        verdict            = $verdict
+        reviewer           = $reviewer
+        importedAtUtc      = $importedAtUtc
+        metaPath           = if ($rec) { $rec.MetaPath } else { (Get-MetraInspectExternalReviewPaths -SlotKey $slotKey).MetaPath }
+        bodyPath           = if ($rec) { $rec.BodyPath } else { (Get-MetraInspectExternalReviewPaths -SlotKey $slotKey).BodyPath }
+        bodyLength         = if ($rec -and $rec.Body) { $rec.Body.Length } else { 0 }
+    }
+}
+
 function Get-MetraInspectBingGatePath {
     [CmdletBinding()]
     param(
@@ -5639,7 +6043,7 @@ function Test-MetraInspectBingGateCommitAllowed {
         }
     }
 
-    $assessHash = [string]$assess.inputHash
+    $assessHash = Get-MetraInspectDiffContentHash -SlotKey $SlotKey
     if ([string]::IsNullOrWhiteSpace($assessHash)) {
         return [PSCustomObject]@{
             allowed         = $false
@@ -5706,8 +6110,8 @@ function Set-MetraInspectBingGateAffirm {
     if (-not $assess) {
         throw "No diff inspect report for '$slotKey'. Run .\metra.ps1 inspect prepare-bing -Name $slotKey first."
     }
-    $assessHash = [string]$assess.inputHash
-    if ([string]::IsNullOrWhiteSpace($assessHash) -or $assessHash -eq 'empty') {
+    $assessHash = Get-MetraInspectDiffContentHash -SlotKey $slotKey
+    if ([string]::IsNullOrWhiteSpace($assessHash)) {
         throw 'No inspectable diff to affirm.'
     }
     if ($live.inputHash -ne $assessHash) {
@@ -5757,8 +6161,7 @@ function Show-MetraInspectBingGateStatus {
     if ([string]::IsNullOrWhiteSpace($slotKey)) { $slotKey = 'default' }
 
     $live = Get-MetraInspectCurrentDiffInput -ProjectContext $ctx
-    $assess = Get-MetraInspectSlotDiffAssess -SlotKey $slotKey
-    $assessHash = if ($assess) { [string]$assess.inputHash } else { '' }
+    $assessHash = Get-MetraInspectDiffContentHash -SlotKey $slotKey
     $gateRecord = Get-MetraInspectBingGateRecord -SlotKey $slotKey
     $gateHash = [string](Get-MetraProp -Object $gateRecord -Name 'inputHash' -Default '')
     $triad = Test-MetraInspectBingGateCommitAllowed -SlotKey $slotKey -LiveInputHash $live.inputHash
@@ -6050,6 +6453,9 @@ function Show-MetraInspectCli {
     $maxLoops = 0
     $hookSub = $null
     $gateSub = $null
+    $reviewSub = $null
+    $reviewClipboard = $false
+    $reviewText = $null
 
     $i = 0
     if ($argsRest.Count -gt 0 -and $argsRest[0] -ieq 'budget') {
@@ -6063,6 +6469,14 @@ function Show-MetraInspectCli {
     elseif ($argsRest.Count -gt 0 -and $argsRest[0] -ieq 'pre-commit') {
         $mode = 'pre-commit'
         $i = 1
+    }
+    elseif ($argsRest.Count -gt 0 -and $argsRest[0] -ieq 'review') {
+        $mode = 'review'
+        $i = 1
+        if ($argsRest.Count -gt 1 -and @('import', 'status') -contains $argsRest[1].ToLowerInvariant()) {
+            $reviewSub = $argsRest[1].ToLowerInvariant()
+            $i = 2
+        }
     }
     elseif ($argsRest.Count -gt 0 -and $argsRest[0] -ieq 'gate') {
         $mode = 'gate'
@@ -6191,6 +6605,16 @@ function Show-MetraInspectCli {
             $i += 2
             continue
         }
+        if (($mode -eq 'review') -and $tok -ieq '-Clipboard') {
+            $reviewClipboard = $true
+            $i++
+            continue
+        }
+        if (($mode -eq 'review') -and $tok -ieq '-Text' -and ($i + 1) -lt $argsRest.Count) {
+            $reviewText = [string]$argsRest[$i + 1]
+            $i += 2
+            continue
+        }
         if ($tok -ieq '-Name' -and ($i + 1) -lt $argsRest.Count) {
             $nameFromRest = [string]$argsRest[$i + 1]
             $i += 2
@@ -6291,6 +6715,19 @@ function Show-MetraInspectCli {
         }
         'pre-commit' {
             return Invoke-MetraInspectPreCommitHook -Name $projectName
+        }
+        'review' {
+            if ($reviewSub -eq 'import') {
+                $importParams = @{ Name = $projectName }
+                if ($planPath) { $importParams.Path = $planPath }
+                if ($reviewClipboard) { $importParams.Clipboard = $true }
+                if (-not [string]::IsNullOrWhiteSpace($reviewText)) { $importParams.Text = $reviewText }
+                return Import-MetraInspectExternalReview @importParams @common
+            }
+            if ($reviewSub -eq 'status') {
+                return Show-MetraInspectExternalReviewStatus -Name $projectName
+            }
+            throw 'inspect review requires import or status. Example: .\metra.ps1 inspect review import -Name Metra -Clipboard'
         }
         'gate' {
             if ($gateSub -eq 'affirm') {

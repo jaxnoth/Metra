@@ -2608,6 +2608,219 @@ Describe 'Inspect Bing gate affirm policy' {
     }
 }
 
+Describe 'Inspect Bing share mirror and external review' {
+    It 'mirrors exact PackText on diff write and skips plan/agents' {
+        InModuleScope Metra {
+            $stateRoot = Join-Path $env:TEMP ("metra-share-m-" + [guid]::NewGuid().ToString('n'))
+            $shareRoot = Join-Path $env:TEMP ("metra-share-s-" + [guid]::NewGuid().ToString('n'))
+            New-Item -ItemType Directory -Path (Join-Path $shareRoot 'Share') -Force | Out-Null
+            Mock Get-MetraInspectStateRoot { $stateRoot }
+            Mock Get-MetraShareRoot { $shareRoot }
+            Mock Get-MetraInspectDiffContentHash { 'hash-exact-1' }
+            $slot = "ShareM_$([guid]::NewGuid().ToString('N').Substring(0, 8))"
+            $packText = "# pack body`ncontentHash: hash-exact-1`n"
+            try {
+                $diff = Write-MetraInspectPackArtifact -PackText $packText -SlotKey $slot -Mode 'diff' -NoClipboard -ContentHash 'hash-exact-1' -Confirm:$false
+                $sharePack = Join-Path $shareRoot "Share\$slot\pack-diff.md"
+                $handoff = Join-Path $shareRoot "Share\$slot\handoff.md"
+                Test-Path -LiteralPath $sharePack | Should -BeTrue
+                Test-Path -LiteralPath $handoff | Should -BeTrue
+                $localBytes = [System.IO.File]::ReadAllBytes($diff.Path)
+                $shareBytes = [System.IO.File]::ReadAllBytes($sharePack)
+                ($shareBytes.Length) | Should -Be $localBytes.Length
+                for ($i = 0; $i -lt $localBytes.Length; $i++) {
+                    $shareBytes[$i] | Should -Be $localBytes[$i]
+                }
+                $handoffText = [System.IO.File]::ReadAllText($handoff, (Get-MetraUtf8NoBomEncoding))
+                $slotEscaped = [regex]::Escape($slot)
+                $handoffText | Should -Match $slotEscaped
+                $handoffText | Should -Match 'contentHash: hash-exact-1'
+                $handoffText | Should -Match 'Metra External Review'
+                $handoffText | Should -Match 'Preferred return: reply in chat'
+                $handoffText | Should -Match '-Clipboard'
+                $handoffText | Should -Match 'Do not modify pack-diff\.md or handoff\.md'
+                $handoffText | Should -Match 'inspect review import'
+                $handoffText | Should -Match 'inspect gate affirm'
+
+                $planSlot = "ShareP_$([guid]::NewGuid().ToString('N').Substring(0, 8))"
+                Write-MetraInspectPackArtifact -PackText '# plan only' -SlotKey $planSlot -Mode 'plan' -NoClipboard -Confirm:$false
+                Test-Path -LiteralPath (Join-Path $shareRoot "Share\$planSlot\pack-diff.md") | Should -BeFalse
+
+                $agentsSlot = "ShareA_$([guid]::NewGuid().ToString('N').Substring(0, 8))"
+                Write-MetraInspectPackArtifact -PackText '# agents only' -SlotKey $agentsSlot -Mode 'agents' -NoClipboard -Confirm:$false
+                Test-Path -LiteralPath (Join-Path $shareRoot "Share\$agentsSlot\pack-diff.md") | Should -BeFalse
+            }
+            finally {
+                Remove-Item -LiteralPath $stateRoot -Recurse -Force -ErrorAction SilentlyContinue
+                Remove-Item -LiteralPath $shareRoot -Recurse -Force -ErrorAction SilentlyContinue
+            }
+        }
+    }
+
+    It 'soft-fails share mirror without failing local pack write' {
+        InModuleScope Metra {
+            $stateRoot = Join-Path $env:TEMP ("metra-share-soft-" + [guid]::NewGuid().ToString('n'))
+            Mock Get-MetraInspectStateRoot { $stateRoot }
+            Mock Get-MetraInspectDiffContentHash { 'hash-soft' }
+            Mock Get-MetraShareRoot { throw 'share root unavailable for test' }
+            $slot = "ShareSoft_$([guid]::NewGuid().ToString('N').Substring(0, 8))"
+            try {
+                $result = Write-MetraInspectPackArtifact -PackText '# still local' -SlotKey $slot -Mode 'diff' -NoClipboard -ContentHash 'hash-soft' -Confirm:$false
+                $result.Skipped | Should -BeFalse
+                Test-Path -LiteralPath $result.Path | Should -BeTrue
+                $result.SharePack | Should -BeNullOrEmpty
+            }
+            finally {
+                Remove-Item -LiteralPath $stateRoot -Recurse -Force -ErrorAction SilentlyContinue
+            }
+        }
+    }
+
+    It 'imports matching review with full body and does not affirm gate; rejects stale hash' {
+        InModuleScope Metra {
+            $stateRoot = Join-Path $env:TEMP ("metra-rev-" + [guid]::NewGuid().ToString('n'))
+            $shareRoot = Join-Path $env:TEMP ("metra-rev-s-" + [guid]::NewGuid().ToString('n'))
+            New-Item -ItemType Directory -Path (Join-Path $shareRoot 'Share') -Force | Out-Null
+            Mock Get-MetraInspectStateRoot { $stateRoot }
+            Mock Get-MetraShareRoot { $shareRoot }
+            Mock Resolve-MetraInspectProjectContext {
+                [PSCustomObject]@{ Ok = $true; Project = 'Metra'; Root = (Get-MetraRoot); Error = $null }
+            }
+            Mock Get-MetraInspectDiffContentHash { 'hash-review-1' }
+
+            $slot = Join-Path $stateRoot 'Metra'
+            New-Item -ItemType Directory -Path $slot -Force | Out-Null
+            $reviewBody = @"
+## Metra External Review
+
+reviewer: Microsoft Copilot
+reviewType: diff
+project: Metra
+contentHash: hash-review-1
+verdict: approve
+
+### Findings
+
+#### Blocking
+None.
+
+#### Recommended
+- Keep contentHash centralized.
+
+#### Optional
+None.
+
+### Review
+Ship it.
+"@
+            $reviewPath = Join-Path $env:TEMP ("metra-ext-rev-" + [guid]::NewGuid().ToString('n') + '.md')
+            [System.IO.File]::WriteAllText($reviewPath, $reviewBody, (Get-MetraUtf8NoBomEncoding))
+            try {
+                $imported = Import-MetraInspectExternalReview -Name 'Metra' -Path $reviewPath -Confirm:$false
+                $imported.ok | Should -BeTrue
+                $imported.verdict | Should -Be 'approve'
+                $imported.gateAffirmed | Should -BeFalse
+                Test-Path -LiteralPath (Join-Path $slot 'bing-gate.json') | Should -BeFalse
+                $bodyPath = Join-Path $slot 'external-review.body.md'
+                Test-Path -LiteralPath $bodyPath | Should -BeTrue
+                $storedBody = [System.IO.File]::ReadAllText($bodyPath, (Get-MetraUtf8NoBomEncoding))
+                $storedBody | Should -Match 'Keep contentHash centralized'
+                $storedBody | Should -Match 'Ship it'
+                $storedBody.Length | Should -BeGreaterThan 100
+                $status = Show-MetraInspectExternalReviewStatus -Name 'Metra'
+                $status.state | Should -Be 'current'
+                $status.bodyLength | Should -BeGreaterThan 0
+
+                Mock Get-MetraInspectDiffContentHash { 'hash-review-2' }
+                { Import-MetraInspectExternalReview -Name 'Metra' -Path $reviewPath -Confirm:$false } |
+                    Should -Throw '*stale or mismatched*'
+                $staleStatus = Show-MetraInspectExternalReviewStatus -Name 'Metra'
+                $staleStatus.state | Should -Be 'stale'
+            }
+            finally {
+                Remove-Item -LiteralPath $reviewPath -Force -ErrorAction SilentlyContinue
+                Remove-Item -LiteralPath $stateRoot -Recurse -Force -ErrorAction SilentlyContinue
+                Remove-Item -LiteralPath $shareRoot -Recurse -Force -ErrorAction SilentlyContinue
+            }
+        }
+    }
+
+    It 'pack header contentHash comes from Get-MetraInspectDiffContentHash' {
+        InModuleScope Metra {
+            $text = Format-MetraInspectPackMarkdown -Mode 'diff' -Findings @() -PackBody 'x' -PackFileList @('a.ps1') `
+                -BingOnly -Project 'Metra' -InspectedAtUtc '2026-01-01T00:00:00Z' -ContentHash 'central-hash-9'
+            $text | Should -Match '(?m)^contentHash: central-hash-9\s*$'
+        }
+    }
+
+    It 'imports external review from -Text and lands Share review.md' {
+        InModuleScope Metra {
+            $stateRoot = Join-Path $env:TEMP ("metra-rev-text-" + [guid]::NewGuid().ToString('n'))
+            $shareRoot = Join-Path $env:TEMP ("metra-rev-text-s-" + [guid]::NewGuid().ToString('n'))
+            New-Item -ItemType Directory -Path (Join-Path $shareRoot 'Share') -Force | Out-Null
+            Mock Get-MetraInspectStateRoot { $stateRoot }
+            Mock Get-MetraShareRoot { $shareRoot }
+            Mock Resolve-MetraInspectProjectContext {
+                [PSCustomObject]@{ Ok = $true; Project = 'Metra'; Root = (Get-MetraRoot); Error = $null }
+            }
+            Mock Get-MetraInspectDiffContentHash { 'hash-text-1' }
+            New-Item -ItemType Directory -Path (Join-Path $stateRoot 'Metra') -Force | Out-Null
+            $text = @"
+## Metra External Review
+
+reviewer: Microsoft Copilot
+reviewType: diff
+project: Metra
+contentHash: hash-text-1
+verdict: changes-requested
+
+### Review
+Paste path works.
+"@
+            try {
+                $imported = Import-MetraInspectExternalReview -Name 'Metra' -Text $text -Confirm:$false
+                $imported.ok | Should -BeTrue
+                $imported.verdict | Should -Be 'changes-requested'
+                Test-Path -LiteralPath (Join-Path $stateRoot 'Metra\bing-gate.json') | Should -BeFalse
+                $shareReview = Join-Path $shareRoot 'Share\Metra\review.md'
+                Test-Path -LiteralPath $shareReview | Should -BeTrue
+                (Get-Content -LiteralPath $shareReview -Raw) | Should -Match 'Paste path works'
+                $meta = Get-Content -LiteralPath (Join-Path $stateRoot 'Metra\external-review.json') -Raw | ConvertFrom-Json
+                [string]$meta.sourcePath | Should -Be '(text)'
+            }
+            finally {
+                Remove-Item -LiteralPath $stateRoot -Recurse -Force -ErrorAction SilentlyContinue
+                Remove-Item -LiteralPath $shareRoot -Recurse -Force -ErrorAction SilentlyContinue
+            }
+        }
+    }
+
+    It 'external review CRLF normalization keeps letter r/rn and only collapses newlines' {
+        InModuleScope Metra {
+            $crlf = ([string][char]13) + ([string][char]10)
+            $body = @(
+                '## Metra External Review'
+                ''
+                'reviewer: Microsoft Copilot'
+                'reviewType: diff'
+                'project: Metra'
+                'contentHash: hash-crlf-1'
+                'verdict: approve'
+                ''
+                '### Review'
+                'Keep words like review and return and rn intact across CRLF lines.'
+            ) -join $crlf
+            $body.Contains([char]13) | Should -BeTrue
+            $parsed = ConvertFrom-MetraInspectExternalReviewMarkdown -Text $body
+            $parsed.ContentHash | Should -Be 'hash-crlf-1'
+            $parsed.Verdict | Should -Be 'approve'
+            $parsed.Body | Should -Match 'Keep words like review and return and rn intact'
+            $parsed.Body.Contains([char]13) | Should -BeFalse
+            ($parsed.Body -split "`n").Count | Should -BeGreaterThan 5
+        }
+    }
+}
+
 Describe 'Inspect hooks install' {
     It 'throws for an invalid named project instead of installing against cwd' {
         InModuleScope Metra {

@@ -27,7 +27,7 @@ Always-on rule: [`.cursor/rules/metra-inspect-loop.mdc`](../../.cursor/rules/met
 | After every plan revision | `.\metra.ps1 inspect pack-only plan <fragment-or-Path> -Name <Project>` | Agent runs automatically; report pack path + clipboard. Skip only on explicit operator opt-out |
 | Before implement (plan-driven work) | `.\metra.ps1 inspect plan -Latest -Name <Project>` (or fragment / `-Path`) | Optional Ask assess; summarize findings in chat; operator picks fix / defer / reject before coding |
 | After each coherent code batch | `.\metra.ps1 inspect prepare-bing -Name <Project> -Reset` then fix and re-run until `readyForBing=true` | Agent auto-fixes Critical/High/Medium; pack built when loop completes |
-| Before `git commit` | Operator Bing review + `inspect gate affirm` | **Only manual gate**; hook blocks without affirm (or when assess ≠ gate). Live working-tree drift vs affirmed assessment is a warning only. |
+| Before `git commit` | Operator Bing review; optional `inspect review import`; then `inspect gate affirm` | **Only manual gate**; import records Copilot recommendation against contentHash (never affirms). Hook blocks without affirm (or when assess ≠ gate). Live working-tree drift vs affirmed assessment is a warning only. |
 | After affirmed fixes | `inspect loop` again (same session) | Stop when goal met (Critical=0, High=0, Medium<=2), convergence detected, or MaxLoops=5 fence |
 | Metra executable ship (calibration) | `prepare-bing` auto-builds pack; Bing comparison lane | Re-run prepare-bing after fixes; pack is never manual |
 | A2 desk split external review | `.\metra.ps1 inspect pack-only agents -Name <Project>` | Bing-only stub + playbooks scope; no unrelated working-tree noise |
@@ -87,9 +87,13 @@ Independence of review matters more than the specific model. The safety net is i
 |----------|----------|------|
 | Fix queue + latest report | Cursor Agent (implement/verify) | `%LOCALAPPDATA%\Metra\inspect\<Project>\fix-queue.json`, `latest.json` |
 | Diff pack | Bing / operator review only | `%LOCALAPPDATA%\Metra\inspect\<Project>\pack-diff.md` (Track I; legacy root `pack-diff.md` until migrated) |
+| Diff pack OneDrive mirror | Bing / Copilot (M365 open) | `{shareRoot}\Share\<Project>\pack-diff.md` + `handoff.md` (exact PackText mirror; soft-fail if share unresolved) |
+| External review record | Operator / Metra | Local `external-review.json` + full `external-review.body.md`; Share `review.md` latest-only after import |
 | Plan pack | Bing / operator review only | `%LOCALAPPDATA%\Metra\inspect\<Project>\pack-plan.md` (Track I; legacy root `pack-plan.md` until migrated) |
 
 Parallel products: each `-Name <Project>` owns its slot - serial or concurrent work does not overwrite another product's pack.
+
+**Bing share + review return:** Diff pack writes auto-mirror exact `pack-diff.md` into the Metra OneDrive share project folder and a tiny `handoff.md` (includes `contentHash` = assess `inputHash`). Preferred Bing return is a chat `## Metra External Review` block (many Copilot/SharePoint tool lanes cannot create/update markdown). Operator copies it and runs `.\metra.ps1 inspect review import -Name <Project> -Clipboard` (or `-Text` / `-Path` / Share `review.md` when a file already exists); import lands local body + Share `review.md` when share is available. Then `.\metra.ps1 inspect gate affirm -Name <Project>`. Three authority states: Copilot verdict (recommendation) -> Metra hash-bound import (full local body) -> operator gate affirm / Surveyor Approve. An imported `verdict: approve` never writes the Bing gate.
 
 **Evidence fidelity (Bing packs):** Diff packs include an Evidence fidelity section (grades A/B/C, file truncated vs pack cutoff, coverage chars). Bing preamble requires Observed / Missing visibility / Recommendation; Missing visibility must not also be a defect. Do not treat Grade B/C as proof that protections are absent. Proven-behavior / runtime verification is a separate follow-up plan (`inspect_runtime_verification_a1b2c3d4`), not part of fidelity grades. Policy: [Decisions.md](../Decisions.md) (Inspect pack evidence fidelity).
 

@@ -28,6 +28,9 @@ Describe 'Inspect per-slot pack isolation' {
 
     It 'isolates pack-diff paths between two project slots' {
         InModuleScope Metra {
+            Mock Publish-MetraInspectBingShareMirror {
+                [PSCustomObject]@{ Ok = $true; PackPath = 'mock-pack'; HandoffPath = 'mock-handoff' }
+            }
             $a = "PackIsoA_$([guid]::NewGuid().ToString('N').Substring(0, 8))"
             $b = "PackIsoB_$([guid]::NewGuid().ToString('N').Substring(0, 8))"
             try {
