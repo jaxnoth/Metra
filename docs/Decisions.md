@@ -18,6 +18,12 @@ Entry shape:
 
 ---
 
+## 2026-11-06 - Inspect pack: ForceInclude pin-before-cap
+
+- Decision: Bing / pack-only diff packs support `-ForceInclude path ...` (comma-separated or repeated). Forced paths are pinned ahead of the usual code/config/docs/generated MaxFiles contest; duplicates appear once; missing forced paths invent no bodies; byte truncation still applies; when forced paths themselves exceed MaxFiles, pin order is kept and the remainder is omitted deterministically into `OmittedByFileCap`.
+- Why: Wayside `0b42a0d` permission-outreach / event-coverage Bing pack had 56.7% body coverage - high-volume catalog JSON migrations filled the 64-file cap before the control-plane specs, settings, and full outreach/Google Calendar bodies needed for acceptance. Pack size should stay capped; which evidence is reviewable must not be an accident of sort order.
+- See: `Reduce-MetraInspectDiffFiles` / `Invoke-MetraInspectPackOnly` (`-ForceInclude`) in `scripts/private/Inspect.ps1`; `tests/Metra.Inspect.Tests.ps1` (Inspect ForceInclude pin-before-cap); Bing review of Wayside pack-diff forceinclude (2026-11-06)
+
 ## 2026-11-01 - Inspect pack: Swift is code; bulk generated corpora last
 
 - Decision: `Get-MetraInspectFileClass` treats `.swift`, `.m`, `.mm`, `.kt`, and `.kts` as **code** (same file-cap tier as `.ps1` / `.py` / `.ts`).

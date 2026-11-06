@@ -2754,6 +2754,94 @@ Describe 'Inspect KeepPaths reduction' {
     }
 }
 
+Describe 'Inspect ForceInclude pin-before-cap' {
+    # Scar: Wayside permission-outreach Bing pack (2026-11-06) - catalog JSON filled MaxFiles
+    # before control-plane docs/settings. Pin-before-cap keeps pack size while choosing evidence.
+
+    It 'includes a late-sorting forced path and drops ordinary files past MaxFiles' {
+        InModuleScope Metra {
+            $files = New-Object System.Collections.Generic.List[object]
+            for ($i = 1; $i -le 5; $i++) {
+                [void]$files.Add([PSCustomObject]@{
+                        path    = ("tools/sources/entries/a{0:D2}.json" -f $i)
+                        content = "{`"id`":$i}"
+                    })
+            }
+            [void]$files.Add([PSCustomObject]@{
+                    path    = 'tools/sources/outreach-settings.json'
+                    content = '{"fromAddress":"partners@example.app"}'
+                })
+            $r = Reduce-MetraInspectDiffFiles -Files @($files.ToArray()) -MaxFiles 3 -MaxBytesPerFile 96000 -IncludeDocs `
+                -ForceInclude @('tools/sources/outreach-settings.json')
+            $paths = @($r.Files | ForEach-Object { [string]$_.path })
+            $paths | Should -Contain 'tools/sources/outreach-settings.json'
+            $paths[0] | Should -Be 'tools/sources/outreach-settings.json'
+            @($r.Files | Where-Object { $_.path -notlike '(*)' }).Count | Should -Be 3
+            $r.OmittedByFileCap.Count | Should -BeGreaterThan 0
+            $r.OmittedByFileCap | Should -Not -Contain 'tools/sources/outreach-settings.json'
+        }
+    }
+
+    It 'dedupes forced paths that also appear in normal order' {
+        InModuleScope Metra {
+            $files = @(
+                [PSCustomObject]@{ path = 'src/A.ps1'; content = 'a' }
+                [PSCustomObject]@{ path = 'src/B.ps1'; content = 'b' }
+                [PSCustomObject]@{ path = 'docs/plan.md'; content = '# plan' }
+            )
+            $r = Reduce-MetraInspectDiffFiles -Files $files -MaxFiles 10 -IncludeDocs `
+                -ForceInclude @('docs/plan.md', 'docs/plan.md')
+            @($r.Files | Where-Object { $_.path -eq 'docs/plan.md' }).Count | Should -Be 1
+        }
+    }
+
+    It 'ignores nonexistent forced paths without inventing bodies' {
+        InModuleScope Metra {
+            $files = @(
+                [PSCustomObject]@{ path = 'src/A.ps1'; content = 'a' }
+            )
+            $r = Reduce-MetraInspectDiffFiles -Files $files -MaxFiles 5 -IncludeDocs `
+                -ForceInclude @('docs/missing-control-plane.md')
+            @($r.Files | ForEach-Object { $_.path }) | Should -Not -Contain 'docs/missing-control-plane.md'
+            @($r.Files | Where-Object { $_.path -eq 'src/A.ps1' }).Count | Should -Be 1
+        }
+    }
+
+    It 'still truncates force-included bodies at MaxBytesPerFile' {
+        InModuleScope Metra {
+            $body = 'x' * 500
+            $files = @(
+                [PSCustomObject]@{ path = 'tools/outreach.py'; content = $body }
+            )
+            $r = Reduce-MetraInspectDiffFiles -Files $files -MaxFiles 5 -MaxBytesPerFile 100 -IncludeDocs `
+                -ForceInclude @('tools/outreach.py')
+            $f = @($r.Files | Where-Object { $_.path -eq 'tools/outreach.py' })[0]
+            $f.truncated | Should -Be $true
+            $f.visibleChars | Should -Be 100
+            $f.content | Should -Match '\[truncated:'
+        }
+    }
+
+    It 'keeps forced order when forced count exceeds MaxFiles and omits the rest deterministically' {
+        InModuleScope Metra {
+            $files = @(
+                [PSCustomObject]@{ path = 'docs/a.md'; content = 'a' }
+                [PSCustomObject]@{ path = 'docs/b.md'; content = 'b' }
+                [PSCustomObject]@{ path = 'docs/c.md'; content = 'c' }
+                [PSCustomObject]@{ path = 'src/z.ps1'; content = 'z' }
+            )
+            $r = Reduce-MetraInspectDiffFiles -Files $files -MaxFiles 2 -IncludeDocs `
+                -ForceInclude @('docs/c.md', 'docs/a.md', 'docs/b.md')
+            $paths = @($r.Files | Where-Object { $_.path -notlike '(*)' } | ForEach-Object { $_.path })
+            $paths.Count | Should -Be 2
+            $paths[0] | Should -Be 'docs/c.md'
+            $paths[1] | Should -Be 'docs/a.md'
+            $r.OmittedByFileCap | Should -Contain 'docs/b.md'
+            $r.OmittedByFileCap | Should -Contain 'src/z.ps1'
+        }
+    }
+}
+
 Describe 'Inspect budget estimator' {
     It 'returns band without calling the Ask engine' {
         InModuleScope Metra {

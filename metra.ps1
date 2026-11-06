@@ -291,10 +291,11 @@ Usage:
   .\metra.ps1 inspect hooks install
   .\metra.ps1 inspect plan [-Latest] [-Path <file>] [<filename-fragment>] -Name <Project> [-WhatIf]
   .\metra.ps1 inspect pack [plan] [-WhatIf]
-  .\metra.ps1 inspect pack-only [-Name <Project>] [-Base <rev>] [-WhatIf]
+  .\metra.ps1 inspect pack-only [-Name <Project>] [-Base <rev>] [-ForceInclude path ...] [-WhatIf]
   .\metra.ps1 inspect pack-only agents -Name <Project> [-Base <rev>] [-WhatIf]
   .\metra.ps1 inspect pack-only plan [-Latest] [-Path <file>] [<fragment>] -Name <Project> [-WhatIf]
       pack-only: Bing comparison lane without Ask engine (scrubbed diff/plan + preamble).
+      -ForceInclude: pin path(s) ahead of the MaxFiles contest (comma-separated or repeated).
       inspect pack: requires a prior inspect run; includes assessed findings.
       inspect loop: goal-based review session (Critical/High/Medium/Low counts; stops at goal, convergence, or MaxLoops=5).
       inspect prepare-bing: agent loop (-RunAll) + auto pack when session completes; re-run after fixes.

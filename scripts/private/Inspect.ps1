@@ -1244,7 +1244,11 @@ function Reduce-MetraInspectDiffFiles {
         [int]$MaxBytesPerFile = 24000,
         [switch]$IncludeDocs,
         [switch]$SkipCollapse,
-        [AllowEmptyCollection()][string[]]$KeepPaths = @()
+        [AllowEmptyCollection()][string[]]$KeepPaths = @(),
+        # Paths that must win the MaxFiles contest (pin before class/path order). Scar: Wayside
+        # permission-outreach Bing pack (2026-11-06) - 93 catalog JSON entries filled config slots
+        # before plan bites and outreach-settings (docs/config control plane).
+        [AllowEmptyCollection()][string[]]$ForceInclude = @()
     )
 
     $sourceFiles = @($Files)
@@ -1257,6 +1261,14 @@ function Reduce-MetraInspectDiffFiles {
 
     $useKeepFilter = @($KeepPaths).Count -gt 0
     $outsideTouch = New-Object System.Collections.Generic.List[string]
+
+    $forceSet = New-Object 'System.Collections.Generic.HashSet[string]' ([StringComparer]::OrdinalIgnoreCase)
+    $forceOrder = New-Object System.Collections.Generic.List[string]
+    foreach ($fp in @($ForceInclude)) {
+        $nk = Get-MetraInspectNormalizedRepoPath -Path ([string]$fp)
+        if ([string]::IsNullOrWhiteSpace($nk)) { continue }
+        if ($forceSet.Add($nk)) { [void]$forceOrder.Add($nk) }
+    }
 
     $ordered = @(
         $sourceFiles |
@@ -1284,13 +1296,27 @@ function Reduce-MetraInspectDiffFiles {
     $skipped = @($ordered | Where-Object { $_.class -eq 'skip' })
     $nonSkip = @($ordered | Where-Object { $_.class -ne 'skip' })
     $kept = New-Object System.Collections.Generic.List[object]
-    # code / config / docs first; generated corpora fill leftover MaxFiles slots only (sampled by path).
+    # ForceInclude pins first (operator / Bing control-plane), then code / config / docs;
+    # generated corpora fill leftover MaxFiles slots only (sampled by path).
+    if ($forceOrder.Count -gt 0) {
+        $byPath = @{}
+        foreach ($item in $nonSkip) {
+            $byPath[[string]$item.path] = $item
+        }
+        foreach ($fp in $forceOrder) {
+            if ($byPath.ContainsKey($fp)) {
+                [void]$kept.Add($byPath[$fp])
+            }
+        }
+    }
     foreach ($cls in @('code', 'config', 'docs', 'generated')) {
         foreach ($item in @($nonSkip | Where-Object { $_.class -eq $cls } | Sort-Object path)) {
+            if ($forceSet.Contains([string]$item.path)) { continue }
             [void]$kept.Add($item)
         }
     }
     foreach ($item in @($nonSkip | Where-Object { $_.class -notin @('code', 'config', 'docs', 'generated') } | Sort-Object path)) {
+        if ($forceSet.Contains([string]$item.path)) { continue }
         [void]$kept.Add($item)
     }
 
@@ -2869,7 +2895,8 @@ function Build-MetraInspectPackDiffAppendix {
     param(
         [Parameter(Mandatory)][string]$Root,
         [Parameter(Mandatory)][object[]]$Files,
-        [ValidateSet('bing', 'default')][string]$Profile = 'bing'
+        [ValidateSet('bing', 'default')][string]$Profile = 'bing',
+        [AllowEmptyCollection()][string[]]$ForceInclude = @()
     )
 
     $maxFiles = 24
@@ -2884,7 +2911,14 @@ function Build-MetraInspectPackDiffAppendix {
         $includeDocs = [bool](Get-MetraProp -Object $bing -Name 'IncludeDocs' -Default $true)
     }
 
-    $reduced = Reduce-MetraInspectDiffFiles -Files $Files -MaxFiles $maxFiles -MaxBytesPerFile $maxBytesPerFile -IncludeDocs:$includeDocs
+    $reduceParams = @{
+        Files            = $Files
+        MaxFiles         = $maxFiles
+        MaxBytesPerFile  = $maxBytesPerFile
+        IncludeDocs      = $includeDocs
+    }
+    if (@($ForceInclude).Count -gt 0) { $reduceParams.ForceInclude = @($ForceInclude) }
+    $reduced = Reduce-MetraInspectDiffFiles @reduceParams
     $scrubbedFiles = @(ConvertTo-MetraInspectScrubbedDiffParts -Files $reduced.Files)
     $packFileList = @($scrubbedFiles | ForEach-Object { $_.path })
 
@@ -3388,7 +3422,8 @@ function Invoke-MetraInspectPackOnly {
         [switch]$Latest,
         [string]$Path,
         [string]$Fragment,
-        [string]$Base
+        [string]$Base,
+        [AllowEmptyCollection()][string[]]$ForceInclude = @()
     )
 
     $packBody = $null
@@ -3447,7 +3482,7 @@ function Invoke-MetraInspectPackOnly {
             Write-Host ("WARNING: {0}" -f $diff.Warning) -ForegroundColor Yellow
         }
 
-        $appendix = Build-MetraInspectPackDiffAppendix -Root $ctx.Root -Files $diff.Files -Profile bing
+        $appendix = Build-MetraInspectPackDiffAppendix -Root $ctx.Root -Files $diff.Files -Profile bing -ForceInclude $ForceInclude
         $packFileList = @($appendix.FileList)
         $packBody = [string]$appendix.Body
         $packManifest = [string]$appendix.Manifest
@@ -6092,6 +6127,7 @@ function Show-MetraInspectCli {
     $loopRecordMode = $null
     $loopSummary = $null
     $loopPackageId = $null
+    $forceInclude = [System.Collections.Generic.List[string]]::new()
 
     while ($i -lt $argsRest.Count) {
         $tok = [string]$argsRest[$i]
@@ -6165,6 +6201,18 @@ function Show-MetraInspectCli {
             $i += 2
             continue
         }
+        if (($mode -eq 'pack-only') -and $tok -ieq '-ForceInclude' -and ($i + 1) -lt $argsRest.Count) {
+            # Comma-separated or repeated -ForceInclude path [path...] until next -flag.
+            $i++
+            while ($i -lt $argsRest.Count -and -not ([string]$argsRest[$i]).StartsWith('-')) {
+                foreach ($piece in @(([string]$argsRest[$i]) -split ',')) {
+                    $p = $piece.Trim()
+                    if (-not [string]::IsNullOrWhiteSpace($p)) { [void]$forceInclude.Add($p) }
+                }
+                $i++
+            }
+            continue
+        }
         if ($tok -like '-*') {
             throw "Unknown inspect argument: $tok"
         }
@@ -6185,7 +6233,16 @@ function Show-MetraInspectCli {
 
     switch ($mode) {
         'pack-only' {
-            return Invoke-MetraInspectPackOnly -Mode $packMode -Name $projectName -Latest:$latest -Path $planPath -Fragment $fragment -Base $baseRev @common
+            $packOnlyParams = @{
+                Mode     = $packMode
+                Name     = $projectName
+                Latest   = $latest
+                Path     = $planPath
+                Fragment = $fragment
+                Base     = $baseRev
+            }
+            if ($forceInclude.Count -gt 0) { $packOnlyParams.ForceInclude = @($forceInclude.ToArray()) }
+            return Invoke-MetraInspectPackOnly @packOnlyParams @common
         }
         'pack' {
             return Invoke-MetraInspectPack -Mode $packMode @common
