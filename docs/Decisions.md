@@ -518,6 +518,14 @@ Withdraws the same-day draft that renamed the iOS app to Metra Scout or styled t
 
 ---
 
+## 2026-11-06 - Inspect Ask hang gets a hard timeout and sidecar-only recycle
+
+- Decision: Cursor Ask `/v1/complete` enforces a hard `Agent.wait()` timeout (`body.timeoutSec`, default 180s, cap 900s). Inspect assess uses a **300s** client budget (was 900s) and passes `timeoutSec` so the sidecar fails structured (`ask_timeout` / `transport_timeout`) while `/health` can flip after consecutive hangs. On timeout the sidecar **tries `Run.cancel()`** first and reports `cancelSucceeded` when wait settles; Inspect/opaque recovery **soft-retries without SidecarOnly** when cancel cleared the wait, and uses **-SidecarOnly** only when cancel did not unstick (blunt fallback). Auth/usage/model failures remain non-restartable.
+- Why: ColleagueDataMover `prepare-bing` stalled 5-10+ minutes after the reviewer line with `ask engine show` still healthy - hung `wait()` never classified as transport failure, so auto-recycle never ran. Restart abandons the wedged waiter; cancel is the in-process unstick when the SDK honors it.
+- See: `engines/cursor/server.mjs` (`withTimeout`, `tryCancelRunAfterTimeout`, `timeoutSec`); `scripts/private/Inspect.ps1`; `Test-MetraAskTimeoutCancelCleared`; `Test-MetraAskSidecarRestartableFailure`; `docs/playbooks/ops-ask-reach.md`
+
+---
+
 ## 2026-08-30 - Durable routing edges are operator-applied only
 
 - Decision: Accepted routing edges persist machine-locally under `%LOCALAPPDATA%\Metra\routing\graph.json` and apply only via explicit `routing edges accept` / `affirm` / `remove`. Routing telemetry and `routing edges candidates` remain Observe-only and never write accepted edges. Review proposals live in `proposals.json`; `propose` and `reject` never write `graph.json`.

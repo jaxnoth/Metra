@@ -288,6 +288,107 @@ Describe 'Inspect engine parse retry' {
             Should -Invoke Invoke-MetraAskEngine -Times 1
         }
     }
+
+    It 'ask_timeout recycles sidecar-only once then retries assess' {
+        InModuleScope Metra {
+            Mock Resolve-MetraInspectEngineSelection {
+                [PSCustomObject]@{
+                    Engine              = 'cursor'
+                    RequestedModel      = 'gemini-3.7-flash'
+                    ConfigurationSource = 'inspect'
+                    Independence        = 'unknown'
+                }
+            }
+            Mock Write-MetraInspectReviewerBanner { }
+            $script:AskCount = 0
+            Mock Invoke-MetraAskEngine {
+                $script:AskCount++
+                if ($script:AskCount -eq 1) {
+                    return [PSCustomObject]@{
+                        ok              = $false
+                        status          = 'error'
+                        error           = 'ask_timeout'
+                        errorCode       = 'ask_timeout'
+                        errorDetail     = 'Ask complete timed out after 285s'
+                        retryClass      = 'transport_timeout'
+                        cancelAttempted = $true
+                        cancelSucceeded = $false
+                        cancelDetail    = 'wait_still_pending_after_cancel'
+                        message         = 'The Ask engine run failed: Ask complete timed out after 285s'
+                        engine          = 'cursor'
+                        model           = 'gemini-3.7-flash'
+                        secretsRefuse   = $false
+                    }
+                }
+                return [PSCustomObject]@{
+                    ok      = $true
+                    message = '{"findings":[]}'
+                    engine  = 'cursor'
+                    model   = 'gemini-3.7-flash'
+                }
+            }
+            Mock Restart-MetraAskEngine {
+                param($SidecarOnly)
+                if (-not $SidecarOnly) { throw 'Inspect timeout recovery must use -SidecarOnly' }
+                $script:SidecarOnlyRestart = $true
+                return [PSCustomObject]@{ available = $true; engineHealthy = $true }
+            }
+            Mock Restart-MetraOpsDesk { throw 'Inspect must not recycle Ops desk on ask_timeout' }
+            $script:SidecarOnlyRestart = $false
+            $r = Invoke-MetraInspectEngine -Prompt 'review diff' -Cwd 'C:\Projects\ColleagueDataMover'
+            $r.Ok | Should -BeTrue
+            $script:AskCount | Should -Be 2
+            $script:SidecarOnlyRestart | Should -BeTrue
+            Should -Invoke Restart-MetraAskEngine -Times 1
+            Should -Invoke Restart-MetraOpsDesk -Times 0
+        }
+    }
+
+    It 'ask_timeout with cancelSucceeded soft-retries without sidecar recycle' {
+        InModuleScope Metra {
+            Mock Resolve-MetraInspectEngineSelection {
+                [PSCustomObject]@{
+                    Engine              = 'cursor'
+                    RequestedModel      = 'gemini-3.7-flash'
+                    ConfigurationSource = 'inspect'
+                    Independence        = 'unknown'
+                }
+            }
+            Mock Write-MetraInspectReviewerBanner { }
+            $script:AskCount = 0
+            Mock Invoke-MetraAskEngine {
+                $script:AskCount++
+                if ($script:AskCount -eq 1) {
+                    return [PSCustomObject]@{
+                        ok              = $false
+                        status          = 'error'
+                        errorCode       = 'ask_timeout'
+                        retryClass      = 'transport_timeout'
+                        cancelAttempted = $true
+                        cancelSucceeded = $true
+                        cancelDetail    = 'wait_settled_after_cancel'
+                        message         = 'Ask complete timed out after 285s'
+                        engine          = 'cursor'
+                        model           = 'gemini-3.7-flash'
+                        secretsRefuse   = $false
+                    }
+                }
+                return [PSCustomObject]@{
+                    ok      = $true
+                    message = '{"findings":[]}'
+                    engine  = 'cursor'
+                    model   = 'gemini-3.7-flash'
+                }
+            }
+            Mock Restart-MetraAskEngine { throw 'cancel-cleared Inspect must not recycle sidecar' }
+            Mock Restart-MetraOpsDesk { throw 'Inspect must not recycle Ops desk' }
+            $r = Invoke-MetraInspectEngine -Prompt 'review diff' -Cwd 'C:\Projects\ColleagueDataMover'
+            $r.Ok | Should -BeTrue
+            $script:AskCount | Should -Be 2
+            Should -Invoke Restart-MetraAskEngine -Times 0
+            Should -Invoke Restart-MetraOpsDesk -Times 0
+        }
+    }
 }
 
 Describe 'Inspect report wrapper' {

@@ -273,6 +273,7 @@ Usage:
       Session Journal (recent Ask conversations - continuity window, not permanent memory).
       get <sessionId> resumes/reads one session; recall "<query>" searches prompts/answers.
   .\metra.ps1 ask engine show|set|restart|recommend|menu
+      restart [-SidecarOnly] recycles Ask only when -SidecarOnly; default may recycle Ops desk when up.
   .\metra.ps1 ask key status|set|clear
   .\metra.ps1 ask recommend|accept [-RuntimeOnly] [-SkipInstall] [-WhatIf]
       Ask engine: Ollama recommended path; Cursor premium; enterprise when configured.

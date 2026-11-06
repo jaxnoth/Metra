@@ -668,7 +668,31 @@ function Invoke-MetraAskEngineCommand {
                     if ($band) { $p['SizeBand'] = $band }
                     return Set-MetraAskEngine @p
                 }
-                'restart' { return Restart-MetraAskEngine @shouldProcessParams }
+                'restart' {
+                    # Forward -SidecarOnly from CLI (inspect/opaque recovery shape). Default still
+                    # recycles Ops desk when up - intentional for operator key/lifecycle restart.
+                    $restartParams = @{} + $shouldProcessParams
+                    for ($ri = 1; $ri -lt $ArgsRest.Count; $ri++) {
+                        $tok = [string]$ArgsRest[$ri]
+                        if ($tok -eq '-SidecarOnly' -or $tok -eq '-SidecarOnly:$true') {
+                            $restartParams['SidecarOnly'] = $true
+                            continue
+                        }
+                        if ($tok -eq '-SidecarOnly:$false') {
+                            $restartParams['SidecarOnly'] = $false
+                            continue
+                        }
+                        if ($tok -eq '-Confirm:$false' -or $tok -eq '-Confirm:False') {
+                            $restartParams['Confirm'] = $false
+                            continue
+                        }
+                        if ($tok -eq '-Confirm' -or $tok -eq '-Confirm:$true') {
+                            $restartParams['Confirm'] = $true
+                            continue
+                        }
+                    }
+                    return Restart-MetraAskEngine @restartParams
+                }
                 'recommend' { return Get-MetraAskEngineRecommendation }
                 'menu' { return Get-MetraAskEngineMenu }
                 default { throw "Unknown ask engine action: $action. Use show|set|restart|recommend|menu." }

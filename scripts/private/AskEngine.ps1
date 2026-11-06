@@ -1303,6 +1303,10 @@ function Invoke-MetraAskEngine {
             # Path/id only - sidecar reads quarantine bytes. Never put base64 in this JSON.
             $body.images = @($imageRefs)
         }
+        # Sidecar aborts Agent.wait() slightly before the HTTP client budget so Inspect gets a
+        # structured ask_timeout (status:error) instead of a hung socket past the Ops 180s ceiling.
+        $sidecarBudgetSec = [Math]::Max(30, $TimeoutSec - 15)
+        $body.timeoutSec = $sidecarBudgetSec
         $json = $body | ConvertTo-Json -Depth 8 -Compress
         try {
             $response = Invoke-RestMethod -Uri $url -Method Post -Body $json -ContentType 'application/json; charset=utf-8' -TimeoutSec $TimeoutSec
@@ -1383,23 +1387,26 @@ function Convert-MetraAskCursorResponse {
             $retryClass = 'sdk_run_error'
         }
         return [PSCustomObject]@{
-            ok              = $false
-            message         = $errMsg
-            engine          = [string](Get-MetraProp -Object $Response -Name 'engine' -Default $Settings.engine)
-            model           = [string](Get-MetraProp -Object $Response -Name 'model' -Default $Settings.model)
-            resolvedModel   = $resolvedModel
-            sessionId       = [string](Get-MetraProp -Object $Response -Name 'sessionId' -Default $SessionId)
-            status          = $status
-            error           = 'engine_request_failed'
-            errorCode       = $errorCode
-            errorDetail     = $errorDetail
-            retryClass      = $retryClass
-            secretsRefuse   = $false
-            secretsReason   = $null
-            secretsNotice   = $notice
-            secretsScrubbed = [bool]($PromptScrub.Matched -or $CtxScrub.Matched -or $msgScrub.Matched)
-            secretsKinds    = @($PromptScrub.Kinds) + @($CtxScrub.Kinds) + @($msgScrub.Kinds)
-            scrubbedPrompt  = [string]$PromptScrub.Text
+            ok               = $false
+            message          = $errMsg
+            engine           = [string](Get-MetraProp -Object $Response -Name 'engine' -Default $Settings.engine)
+            model            = [string](Get-MetraProp -Object $Response -Name 'model' -Default $Settings.model)
+            resolvedModel    = $resolvedModel
+            sessionId        = [string](Get-MetraProp -Object $Response -Name 'sessionId' -Default $SessionId)
+            status           = $status
+            error            = 'engine_request_failed'
+            errorCode        = $errorCode
+            errorDetail      = $errorDetail
+            retryClass       = $retryClass
+            cancelAttempted  = [bool](Get-MetraProp -Object $Response -Name 'cancelAttempted' -Default $false)
+            cancelSucceeded  = [bool](Get-MetraProp -Object $Response -Name 'cancelSucceeded' -Default $false)
+            cancelDetail     = [string](Get-MetraProp -Object $Response -Name 'cancelDetail' -Default '')
+            secretsRefuse    = $false
+            secretsReason    = $null
+            secretsNotice    = $notice
+            secretsScrubbed  = [bool]($PromptScrub.Matched -or $CtxScrub.Matched -or $msgScrub.Matched)
+            secretsKinds     = @($PromptScrub.Kinds) + @($CtxScrub.Kinds) + @($msgScrub.Kinds)
+            scrubbedPrompt   = [string]$PromptScrub.Text
         }
     }
     return [PSCustomObject]@{
@@ -1462,15 +1469,27 @@ function ConvertTo-MetraAskEngineSafeError {
 
 function New-MetraAskEngineErrorResult {
     param($Settings, [string]$SessionId, [string]$ErrorMessage, $PromptScrub, $CtxScrub)
+    $raw = [string]$ErrorMessage
+    $isTimeout = $raw -match '(?i)timed?\s*out|timeout|TaskCanceled|HttpClient\.Timeout|operation was canceled'
     $safe = ConvertTo-MetraAskEngineSafeError -ErrorMessage $ErrorMessage
+    $message = if ($isTimeout) {
+        'Ask engine timed out waiting for a response (sidecar may be wedged; Inspect may recycle sidecar-only once).'
+    }
+    else {
+        [string]$safe.Message
+    }
+    $code = if ($isTimeout) { 'ask_timeout' } else { [string]$safe.Code }
     return [PSCustomObject]@{
         ok              = $false
-        message         = [string]$safe.Message
+        message         = $message
         engine          = $Settings.engine
         model           = $Settings.model
         sessionId       = $SessionId
         status          = 'error'
-        error           = [string]$safe.Code
+        error           = $code
+        errorCode       = $(if ($isTimeout) { 'ask_timeout' } else { $null })
+        errorDetail     = $(if ($isTimeout) { $raw } else { $null })
+        retryClass      = $(if ($isTimeout) { 'transport_timeout' } else { $null })
         secretsRefuse   = $false
         secretsReason   = $null
         secretsNotice   = $(if ($PromptScrub.Matched -or $CtxScrub.Matched) {
@@ -1684,6 +1703,23 @@ function Test-MetraAskCredentialFailure {
     return $false
 }
 
+function Test-MetraAskTimeoutCancelCleared {
+    <#
+    .SYNOPSIS
+        True when ask_timeout already unstuck via SDK Run.cancel() (soft-retry; no SidecarOnly).
+    #>
+    [CmdletBinding()]
+    param($EngineResult)
+
+    if ($null -eq $EngineResult) { return $false }
+    if (-not [bool](Get-MetraProp -Object $EngineResult -Name 'cancelSucceeded' -Default $false)) {
+        return $false
+    }
+    $errorCode = [string](Get-MetraProp -Object $EngineResult -Name 'errorCode' -Default '')
+    $retryClass = [string](Get-MetraProp -Object $EngineResult -Name 'retryClass' -Default '')
+    return ($errorCode -eq 'ask_timeout' -or $retryClass -eq 'transport_timeout')
+}
+
 function Test-MetraAskSidecarRestartableFailure {
     <#
     .SYNOPSIS
@@ -1691,6 +1727,7 @@ function Test-MetraAskSidecarRestartableFailure {
     .NOTES
         Auth, usage, and model-pin failures are not restartable - see Test-MetraAskCredentialFailure.
         Inspect/opaque recovery must use Restart-MetraAskEngine -SidecarOnly so Ops desk stays up.
+        ask_timeout after a successful Run.cancel() is soft-retry only (not blunt-restartable).
     #>
     [CmdletBinding()]
     param($EngineResult)
@@ -1701,15 +1738,24 @@ function Test-MetraAskSidecarRestartableFailure {
     if ([bool](Get-MetraProp -Object $EngineResult -Name 'ok' -Default $false)) { return $false }
     if ([bool](Get-MetraProp -Object $EngineResult -Name 'secretsRefuse' -Default $false)) { return $false }
 
+    $errorCode = [string](Get-MetraProp -Object $EngineResult -Name 'errorCode' -Default '')
+    $retryClass = [string](Get-MetraProp -Object $EngineResult -Name 'retryClass' -Default '')
+    if ($errorCode -eq 'ask_timeout' -or $retryClass -eq 'transport_timeout') {
+        # Cancel cleared the wait in-process - retry without killing Node.
+        if (Test-MetraAskTimeoutCancelCleared -EngineResult $EngineResult) { return $false }
+        return $true
+    }
+
     $blob = @(
         [string](Get-MetraProp -Object $EngineResult -Name 'message' -Default '')
         [string](Get-MetraProp -Object $EngineResult -Name 'errorDetail' -Default '')
         [string](Get-MetraProp -Object $EngineResult -Name 'error' -Default '')
-        [string](Get-MetraProp -Object $EngineResult -Name 'retryClass' -Default '')
+        $retryClass
+        $errorCode
     ) -join ' '
 
-    # Transport / dead-sidecar only. Auth strings are handled above as credential failures.
-    if ($blob -match '(?i)connection reset|econnreset|engine run failed|sidecar|ECONNREFUSED|actively refused') {
+    # Transport / dead-sidecar / hung complete only. Auth strings are credential failures above.
+    if ($blob -match '(?i)connection reset|econnreset|engine run failed|sidecar|ECONNREFUSED|actively refused|timed?\s*out|timeout|TaskCanceled|ask_timeout|transport_timeout') {
         return $true
     }
     return $false
@@ -1861,7 +1907,7 @@ function Invoke-MetraAskCursorSingleFlightRestart {
 function Invoke-MetraAskCursorOpaqueRecovery {
     <#
     .SYNOPSIS
-        One Restart (single-flight) + one retry for opaque Cursor SDK failures.
+        Soft retry after cancel-cleared timeout, else one Restart (single-flight) + one retry.
     #>
     [CmdletBinding()]
     param(
@@ -1875,6 +1921,36 @@ function Invoke-MetraAskCursorOpaqueRecovery {
         [int]$TimeoutSec = 180
     )
 
+    $safeContext = @{}
+    if ($null -ne $Context) {
+        foreach ($k in @($Context.Keys)) {
+            $safeContext[$k] = $Context[$k]
+        }
+    }
+    $safeContext['forceContinuity'] = $true
+
+    # Timeout path already called Run.cancel() and wait settled - retry without killing Node.
+    if (Test-MetraAskTimeoutCancelCleared -EngineResult $EngineResult) {
+        $retry = Invoke-MetraAskEngine -Prompt $Prompt -Cwd $Cwd -Context $safeContext `
+            -SessionId $SessionId -Images $Images -MetraRoot $MetraRoot -TimeoutSec $TimeoutSec
+        $trail = if ([bool](Get-MetraProp -Object $retry -Name 'ok' -Default $false)) {
+            'ask_timeout: run.cancel() cleared wait; soft retry succeeded (no sidecar recycle)'
+        }
+        else {
+            'ask_timeout: run.cancel() cleared wait; soft retry still failed (no sidecar recycle)'
+        }
+        $retry | Add-Member -NotePropertyName recoveryTrail -NotePropertyValue $trail -Force
+        return [PSCustomObject]@{
+            attempted = $true
+            result    = $retry
+            restart   = [PSCustomObject]@{
+                ok      = $true
+                skipped = $true
+                reason  = 'cancel_cleared'
+            }
+        }
+    }
+
     if (-not (Test-MetraAskSidecarRestartableFailure -EngineResult $EngineResult)) {
         return [PSCustomObject]@{
             attempted = $false
@@ -1884,14 +1960,6 @@ function Invoke-MetraAskCursorOpaqueRecovery {
 
     $failedGen = Get-MetraAskCursorSidecarGeneration -MetraRoot $MetraRoot
     $restart = Invoke-MetraAskCursorSingleFlightRestart -FailedGenerationToken $failedGen.Token -MetraRoot $MetraRoot
-
-    $safeContext = @{}
-    if ($null -ne $Context) {
-        foreach ($k in @($Context.Keys)) {
-            $safeContext[$k] = $Context[$k]
-        }
-    }
-    $safeContext['forceContinuity'] = $true
 
     if (-not [bool]$restart.ok -and -not [bool]$restart.skipped) {
         $trail = "Cursor Ask failed after one sidecar recycle attempt. Initial failure: opaque SDK error. Restart: $($restart.reason)."

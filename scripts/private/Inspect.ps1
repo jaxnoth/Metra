@@ -2314,15 +2314,28 @@ If no issues: {"findings":[]}. No markdown. No prose outside JSON.
     $engineProvenance = $null
 
     for ($attempt = 0; $attempt -lt 2; $attempt++) {
-        # Large Metra working trees routinely exceed 600s on the inspect model; 900 keeps one assess in-budget.
+        # Hard ceiling 300s (was 900). Wedged gemini Agent.wait() previously sat silent 5-10+ minutes
+        # with /health still green; Ops Ask budget is 180s - Inspect gets one longer pass, then
+        # timeout is recycle-eligible (sidecar-only) for a single retry.
         $engineResult = Invoke-MetraAskEngine -Prompt $currentPrompt -Cwd $Cwd -MetraRoot $MetraRoot `
-            -Context @{ purpose = 'metra-inspect' } -TimeoutSec 900 `
+            -Context @{ purpose = 'metra-inspect' } -TimeoutSec 300 `
             -Engine $selection.Engine -Model $selection.RequestedModel
-        if (-not $engineResult.ok -and $attempt -eq 0 -and (Test-MetraAskSidecarRestartableFailure -EngineResult $engineResult)) {
-            Write-Host 'Inspect: Ask engine failed - restarting sidecar (sidecar-only) and retrying once...' -ForegroundColor Yellow
-            # Never Restart-MetraOpsDesk from Inspect - desk recycle races MetraHost and amplifies SDK blips.
-            $null = Restart-MetraAskEngine -MetraRoot $MetraRoot -SidecarOnly -Confirm:$false
-            continue
+        if (-not $engineResult.ok -and $attempt -eq 0) {
+            # Prefer soft retry when sidecar already Run.cancel()'d a wedged wait.
+            if (Test-MetraAskTimeoutCancelCleared -EngineResult $engineResult) {
+                Write-Host 'Inspect: Ask timed out; run.cancel() cleared wait - retrying once without sidecar recycle...' -ForegroundColor Yellow
+                continue
+            }
+            if (Test-MetraAskSidecarRestartableFailure -EngineResult $engineResult) {
+                $failCode = [string](Get-MetraProp -Object $engineResult -Name 'errorCode' -Default '')
+                $failClass = [string](Get-MetraProp -Object $engineResult -Name 'retryClass' -Default '')
+                Write-Host ("Inspect: Ask engine failed ({0}/{1}) - restarting sidecar (sidecar-only) and retrying once..." -f `
+                        $(if ($failCode) { $failCode } else { 'error' }), `
+                        $(if ($failClass) { $failClass } else { 'restartable' })) -ForegroundColor Yellow
+                # Never Restart-MetraOpsDesk from Inspect - desk recycle races MetraHost and amplifies SDK blips.
+                $null = Restart-MetraAskEngine -MetraRoot $MetraRoot -SidecarOnly -Confirm:$false
+                continue
+            }
         }
         if (-not $engineResult.ok) {
             $msg = [string](Get-MetraProp -Object $engineResult -Name 'message' -Default 'Ask engine failed.')

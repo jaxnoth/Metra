@@ -753,6 +753,21 @@ Describe 'Ask engine lifecycle and routing' {
         }
     }
 
+    It 'ask engine restart -SidecarOnly forwards switch to Restart-MetraAskEngine' {
+        InModuleScope Metra {
+            $script:GotSidecarOnly = $false
+            Mock Restart-MetraAskEngine {
+                param($SidecarOnly)
+                $script:GotSidecarOnly = [bool]$SidecarOnly
+                return [PSCustomObject]@{ available = $true; engine = 'cursor'; reason = 'ok' }
+            }
+            $r = Invoke-MetraAskEngineCommand -Subcommand 'engine' -ArgsRest @('restart', '-SidecarOnly', '-Confirm:$false')
+            $r.available | Should -BeTrue
+            $script:GotSidecarOnly | Should -BeTrue
+            Should -Invoke Restart-MetraAskEngine -Times 1
+        }
+    }
+
     It 'ask engine restart -WhatIf forwards ShouldProcess without stopping the sidecar' {
         InModuleScope Metra {
             Mock Get-MetraAskSettings {
@@ -1161,5 +1176,93 @@ Describe 'Ask cursor health response and opaque recovery' {
             Should -Invoke Invoke-MetraAskCursorSingleFlightRestart -Times 0
             Should -Invoke Restart-MetraAskEngine -Times 0
         }
+    }
+
+    It 'ask_timeout / transport_timeout is sidecar-restartable' {
+        InModuleScope Metra {
+            $timeoutFail = [PSCustomObject]@{
+                ok            = $false
+                status        = 'error'
+                error         = 'ask_timeout'
+                errorCode     = 'ask_timeout'
+                errorDetail   = 'Ask complete timed out after 300s'
+                retryClass    = 'transport_timeout'
+                message       = 'The Ask engine run failed: Ask complete timed out after 300s'
+                secretsRefuse = $false
+            }
+            (Test-MetraAskCredentialFailure -EngineResult $timeoutFail) | Should -BeFalse
+            (Test-MetraAskSidecarRestartableFailure -EngineResult $timeoutFail) | Should -BeTrue
+        }
+    }
+
+    It 'ask_timeout with cancelSucceeded is soft-retry only (not blunt-restartable)' {
+        InModuleScope Metra {
+            $cleared = [PSCustomObject]@{
+                ok              = $false
+                status          = 'error'
+                error           = 'ask_timeout'
+                errorCode       = 'ask_timeout'
+                errorDetail     = 'Ask complete timed out after 300s'
+                retryClass      = 'transport_timeout'
+                cancelAttempted = $true
+                cancelSucceeded = $true
+                cancelDetail    = 'wait_settled_after_cancel'
+                message         = 'The Ask engine run failed: Ask complete timed out after 300s'
+                secretsRefuse   = $false
+            }
+            (Test-MetraAskTimeoutCancelCleared -EngineResult $cleared) | Should -BeTrue
+            (Test-MetraAskSidecarRestartableFailure -EngineResult $cleared) | Should -BeFalse
+        }
+    }
+
+    It 'opaque recovery soft-retries cancel-cleared timeout without sidecar restart' {
+        InModuleScope Metra {
+            $cleared = [PSCustomObject]@{
+                ok              = $false
+                status          = 'error'
+                errorCode       = 'ask_timeout'
+                retryClass      = 'transport_timeout'
+                cancelSucceeded = $true
+                message         = 'timed out'
+                secretsRefuse   = $false
+            }
+            Mock Invoke-MetraAskEngine {
+                return [PSCustomObject]@{ ok = $true; message = 'pong'; engine = 'cursor' }
+            }
+            Mock Invoke-MetraAskCursorSingleFlightRestart { throw 'cancel-cleared must not recycle sidecar' }
+            Mock Restart-MetraAskEngine { throw 'cancel-cleared must not Restart-MetraAskEngine' }
+            $r = Invoke-MetraAskCursorOpaqueRecovery -EngineResult $cleared -Prompt 'ping' -Cwd (Get-MetraRoot)
+            $r.attempted | Should -BeTrue
+            $r.result.ok | Should -BeTrue
+            $r.restart.skipped | Should -BeTrue
+            $r.restart.reason | Should -Be 'cancel_cleared'
+            Should -Invoke Invoke-MetraAskCursorSingleFlightRestart -Times 0
+        }
+    }
+
+    It 'New-MetraAskEngineErrorResult maps HTTP timeout text to ask_timeout' {
+        InModuleScope Metra {
+            $settings = [PSCustomObject]@{ engine = 'cursor'; model = 'auto-smart/cost' }
+            $scrub = [PSCustomObject]@{ Matched = $false; Notice = $null; Kinds = @(); Text = 'x' }
+            $r = New-MetraAskEngineErrorResult -Settings $settings -SessionId 's1' `
+                -ErrorMessage 'The operation has timed out.' -PromptScrub $scrub -CtxScrub $scrub
+            $r.ok | Should -BeFalse
+            $r.errorCode | Should -Be 'ask_timeout'
+            $r.retryClass | Should -Be 'transport_timeout'
+            (Test-MetraAskSidecarRestartableFailure -EngineResult $r) | Should -BeTrue
+        }
+    }
+
+    It 'cursor sidecar wraps primary and fallback sendAndWait with ask_timeout' {
+        $serverPath = Join-Path (Get-MetraRoot) 'engines\cursor\server.mjs'
+        Test-Path -LiteralPath $serverPath | Should -BeTrue
+        $src = Get-Content -LiteralPath $serverPath -Raw
+        $src | Should -Match 'withTimeout\('
+        $src | Should -Match "phase:\s*'wait-timeout'|timeoutErrorPayload\(waitErr,\s*'wait-timeout'\)"
+        $src | Should -Match "fallback-wait-timeout"
+        $src | Should -Match 'body\.timeoutSec|timeoutSec'
+        $src | Should -Match 'tryCancelRunAfterTimeout'
+        $src | Should -Match 'cancelSucceeded'
+        $src | Should -Match '\.cancel\('
     }
 }

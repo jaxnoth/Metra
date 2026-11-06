@@ -303,6 +303,13 @@ export function classifyRunError(detailScrubbed) {
       retryClass: 'model_error',
     }
   }
+  if (/ask_timeout|timed?\s*out|timeout after|taskcanceled|operation was canceled/.test(lower)) {
+    return {
+      errorCode: 'ask_timeout',
+      errorDetail: detail,
+      retryClass: 'transport_timeout',
+    }
+  }
   const opaque =
     !detail ||
     detail.startsWith('requestId=') ||

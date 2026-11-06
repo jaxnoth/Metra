@@ -646,13 +646,73 @@ async function extractRunErrorDetailAsync(result, run) {
   return detail
 }
 
-async function complete({ prompt, cwd, context, sessionId, images, model }) {
+function resolveCompleteTimeoutMs(timeoutSec) {
+  const envDefault = Number(process.env.METRA_ASK_COMPLETE_TIMEOUT_SEC || 180)
+  const raw = timeoutSec == null || timeoutSec === '' ? envDefault : Number(timeoutSec)
+  const sec = Number.isFinite(raw) ? raw : envDefault
+  // Floor 30s (smoke), ceiling 900s (legacy inspect upper bound).
+  return Math.round(Math.min(900, Math.max(30, sec)) * 1000)
+}
+
+async function withTimeout(promise, ms, label) {
+  let timer
+  const timeoutPromise = new Promise((_, reject) => {
+    timer = setTimeout(() => {
+      const err = new Error(`${label} timed out after ${Math.round(ms / 1000)}s`)
+      err.code = 'ask_timeout'
+      reject(err)
+    }, ms)
+  })
+  try {
+    return await Promise.race([promise, timeoutPromise])
+  } finally {
+    if (timer) clearTimeout(timer)
+  }
+}
+
+/**
+ * Best-effort unstick after Agent.wait() timeout: SDK Run.cancel(), then a short
+ * settle window on the same wait promise. cancelSucceeded means wait settled
+ * (PowerShell can soft-retry without SidecarOnly). Failure keeps blunt recycle eligible.
+ * @param {object} activeRun
+ * @param {Promise} waitPromise
+ */
+async function tryCancelRunAfterTimeout(activeRun, waitPromise) {
+  const meta = { attempted: false, succeeded: false, detail: '' }
+  const canCancel =
+    activeRun &&
+    typeof activeRun.cancel === 'function' &&
+    (typeof activeRun.supports !== 'function' || activeRun.supports('cancel'))
+  if (!canCancel) {
+    meta.detail = 'cancel_unsupported'
+    return meta
+  }
+  meta.attempted = true
+  try {
+    await withTimeout(activeRun.cancel(), 5000, 'Ask cancel')
+  } catch (cancelErr) {
+    meta.detail = `cancel_failed:${String(cancelErr?.message || cancelErr || '')}`
+  }
+  try {
+    // Same wait() promise - if cancel unstuck the run, this settles quickly.
+    await withTimeout(Promise.resolve(waitPromise), 3000, 'Ask wait-after-cancel')
+    meta.succeeded = true
+    if (!meta.detail) meta.detail = 'wait_settled_after_cancel'
+  } catch {
+    if (!meta.detail) meta.detail = 'wait_still_pending_after_cancel'
+    meta.succeeded = false
+  }
+  return meta
+}
+
+async function complete({ prompt, cwd, context, sessionId, images, model, timeoutSec }) {
   const apiKey = process.env.CURSOR_API_KEY
   if (!apiKey) {
     const err = new Error('CURSOR_API_KEY missing')
     err.code = 'key_missing'
     throw err
   }
+  const completeTimeoutMs = resolveCompleteTimeoutMs(timeoutSec)
 
   let selection =
     model != null && String(model).trim()
@@ -820,11 +880,91 @@ async function complete({ prompt, cwd, context, sessionId, images, model }) {
         sdkImages.length > 0
           ? await activeAgent.send({ text: wrapped, images: sdkImages })
           : await activeAgent.send(wrapped)
-      const activeResult = await activeRun.wait()
-      return { run: activeRun, result: activeResult }
+      // Hard ceiling: hung Agent.wait() previously left /v1/complete open forever while
+      // /health stayed green (Inspect 900s client budget masked the wedge).
+      const waitPromise = activeRun.wait()
+      try {
+        const activeResult = await withTimeout(
+          waitPromise,
+          completeTimeoutMs,
+          'Ask complete',
+        )
+        return { run: activeRun, result: activeResult }
+      } catch (waitErr) {
+        if (waitErr?.code === 'ask_timeout') {
+          const cancelMeta = await tryCancelRunAfterTimeout(activeRun, waitPromise)
+          waitErr.cancelAttempted = cancelMeta.attempted
+          waitErr.cancelSucceeded = cancelMeta.succeeded
+          waitErr.cancelDetail = cancelMeta.detail
+          appendRunsLog(
+            `run cancel-after-timeout attempted=${cancelMeta.attempted} succeeded=${cancelMeta.succeeded} detail=${cancelMeta.detail || '(none)'}`,
+          )
+        }
+        throw waitErr
+      }
     }
 
-    let { run, result } = await sendAndWait(agent)
+    async function timeoutErrorPayload(waitErr, phase) {
+      const waitMsg = String(waitErr?.message || waitErr || '')
+      const waitClassified = classifyRunError(waitMsg)
+      if (!(waitErr?.code === 'ask_timeout' || waitClassified.errorCode === 'ask_timeout')) {
+        return null
+      }
+      if (countsTowardHealthGate(waitClassified)) {
+        recordRunError()
+      } else {
+        recordDegradedFailure(waitClassified)
+      }
+      const cancelAttempted = Boolean(waitErr?.cancelAttempted)
+      const cancelSucceeded = Boolean(waitErr?.cancelSucceeded)
+      const cancelDetail = String(waitErr?.cancelDetail || '')
+      const errLine = formatRunFailureLog({
+        result: { id: 'n/a', requestId: 'n/a', durationMs: completeTimeoutMs },
+        detail: waitMsg || '(none)',
+        classified: waitClassified,
+        modelLabel,
+        selectionId: selection.id,
+        phase: cancelAttempted
+          ? `${phase};cancel=${cancelSucceeded ? 'ok' : 'fail'}`
+          : phase,
+        newSession,
+        sessionId: id,
+        purpose,
+        workDir,
+      })
+      console.error(errLine)
+      appendRunsLog(errLine)
+      if (entry && id) {
+        await retireSession(id, entry)
+      }
+      // 200 + status:error so PowerShell Convert-MetraAskCursorResponse keeps errorCode/retryClass
+      // (Invoke-RestMethod drops JSON bodies on 5xx).
+      return {
+        message: `The Ask engine run failed: ${waitMsg}`,
+        engine: ENGINE,
+        model: modelLabel,
+        sessionId: id,
+        status: 'error',
+        runId: null,
+        requestId: null,
+        errorCode: waitClassified.errorCode || 'ask_timeout',
+        errorDetail: waitClassified.errorDetail || waitMsg,
+        retryClass: waitClassified.retryClass || 'transport_timeout',
+        cancelAttempted,
+        cancelSucceeded,
+        cancelDetail,
+      }
+    }
+
+    let run
+    let result
+    try {
+      ;({ run, result } = await sendAndWait(agent))
+    } catch (waitErr) {
+      const timedOut = await timeoutErrorPayload(waitErr, 'wait-timeout')
+      if (timedOut) return timedOut
+      throw waitErr
+    }
     if (result.status === 'error') {
       const detail = await extractRunErrorDetailAsync(result, run)
       const scrubbed = detail ? scrubSecretsText(detail) : { text: '' }
@@ -868,7 +1008,13 @@ async function complete({ prompt, cwd, context, sessionId, images, model }) {
           newSession = true
           id = requestedId || agent.agentId || `local-${Date.now()}`
           await putSession(id, entry)
-          ;({ run, result } = await sendAndWait(agent))
+          try {
+            ;({ run, result } = await sendAndWait(agent))
+          } catch (fallbackWaitErr) {
+            const timedOut = await timeoutErrorPayload(fallbackWaitErr, 'fallback-wait-timeout')
+            if (timedOut) return timedOut
+            throw fallbackWaitErr
+          }
         }
       }
 
@@ -1065,6 +1211,7 @@ const server = http.createServer(async (req, res) => {
         sessionId: body.sessionId,
         images: body.images,
         model: body.model,
+        timeoutSec: body.timeoutSec,
       })
       sendJson(res, 200, result)
     } catch (err) {

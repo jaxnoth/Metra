@@ -183,6 +183,18 @@ test('classifyRunError opaque vs nonempty', () => {
   assert.equal(countsTowardHealthGate(classifyRunError('Your team has reached its usage limit')), false)
   assert.equal(countsTowardHealthGate(classifyRunError('Cannot use this model: auto-smart')), false)
   assert.equal(countsTowardHealthGate(classifyRunError('rate limited')), true)
+  assert.equal(
+    classifyRunError('Ask complete timed out after 300s').errorCode,
+    'ask_timeout',
+  )
+  assert.equal(
+    classifyRunError('Ask complete timed out after 300s').retryClass,
+    'transport_timeout',
+  )
+  assert.equal(
+    countsTowardHealthGate(classifyRunError('Ask complete timed out after 300s')),
+    true,
+  )
 })
 
 test('disposeAgent tolerates null and prefer asyncDispose once', async () => {

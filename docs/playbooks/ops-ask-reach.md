@@ -41,7 +41,8 @@ Serve / campus hosts: [tailscale-campus.md](tailscale-campus.md).
 
 | Layer | Budget / rule |
 |-------|----------------|
-| Engine `Invoke-MetraAskEngine` | 180s |
+| Engine `Invoke-MetraAskEngine` | 180s default; sidecar `Agent.wait()` hard-stops via `timeoutSec` (slightly under client) |
+| Inspect assess | 300s client (+ sidecar `timeoutSec`); hang → `ask_timeout` → try `Run.cancel()`; soft-retry if cancel cleared wait, else one **sidecar-only** recycle + retry |
 | iOS `OpsAskClient` | 195s; `timedOut` ≠ offline; one early-reachability retry only; **409 `askBusy` → `AskClientError.askBusy`** (not offline) |
 | Ops accept-loop Ask poll | 45s from prior poll **completion** + Ensure |
 | Ensure / opaque Restart | Named mutex `ask-sidecar-ensure` (cross-runspace; poll + worker Restart share it) |
