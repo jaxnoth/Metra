@@ -18,6 +18,18 @@ Entry shape:
 
 ---
 
+## 2026-11-09 - Ask Desk TeachingWanted is dynamic (Wire)
+
+- Decision: Desk Ask passes `-TeachingWanted` when `Test-MetraAskTeachingWanted` matches the current turn (exploring / how-it-works, onboarding/setup, stuck/blocked, explicit explain). It is not always-on Desk. Company and Deliver still load teaching when the pack is present. Incident / DeskStrict / IntentClass urgent stay off. Routine ops prompts without those cues stay flat.
+- Why: Teaching-gentle never loaded on Desk because Ask never passed `-TeachingWanted`. Operator chose Wire (dynamic) over Document-only so Metra leans in when the turn is teaching-shaped without making Desk permanently professorial.
+- See: `Test-MetraAskTeachingWanted` in `scripts/private/AskConversation.Engine.ps1`; `New-MetraConversationPrompt`; [docs/playbooks/persona-voice-examples.md](playbooks/persona-voice-examples.md) Teaching Mode table; plan `metra_memory_continuity_b00667f1`
+
+## 2026-11-09 - Ask continuity Bite 1 contracts (head-tail, WhyHere MinScore, sidecar journal)
+
+- Decision: Extractive Ask session summaries use head+tail (3 opening + 9 recent older turns within MaxBullets 12). OpenAI-compat Context JSON is shortened (continuity first) instead of dropped past the 4800-char ceiling. Cursor sidecar includes journal continuity only on session-cache miss (`includeJournalContinuity`), forceContinuity, or explicit recall - not when `hasJournalContext` alone is true. Ask WhyHere passes the user prompt with stop-word filtering and MinScore 2 on TokenScore (project bonus excluded); no-hit returns empty (no most-recent fallback).
+- Why: Long Ask sessions lost the middle; compat engines lost all continuity past the ceiling; Cursor double-injected journal when the agent already had history; unqueried WhyHere contaminated prompts with unrelated decisions.
+- See: `Select-MetraAskSummaryTurns` / `New-MetraAskSessionSummaryText` / `ConvertTo-MetraSnapshotWhyHere` in `scripts/private/Snapshot.ps1`; `Compress-MetraAskOpenAICompatContextJson` in `scripts/private/AskOpenAICompat.ps1`; `shouldIncludeJournalContinuity` in `engines/cursor/prompt-build.mjs`; `Get-MetraWhyHere -MinScore` in `scripts/private/DecisionRegistry.ps1`
+
 ## 2026-11-06 - Bing review return is chat-first; Metra lands review.md
 
 - Decision: Preferred Bing/Copilot return is a chat `## Metra External Review` block (echo `contentHash`). Writing sibling Share `review.md` is optional only when the surface can create/update markdown. `inspect review import` accepts `-Clipboard` / `-Text` / `-Path` / existing Share `review.md`, and on success still writes the full body to local slot + Share `review.md` when share is available. Do not modify `pack-diff.md` or `handoff.md`. Copilot verdict still does not affirm the Bing gate.

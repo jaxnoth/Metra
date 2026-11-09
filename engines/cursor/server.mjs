@@ -30,6 +30,7 @@ import {
   releaseSessionLease,
   retireSession,
 } from './session-cache.mjs'
+import { shouldIncludeJournalContinuity } from './prompt-build.mjs'
 
 const PORT = Number(process.env.METRA_ASK_PORT || 7381)
 const ENGINE = 'cursor'
@@ -223,11 +224,10 @@ function buildPrompt(userPrompt, context, options = {}) {
   const evidenceBlock = formatEvidenceItems(evidence?.items, maxItems, maxCharsPerItem)
   const capability = context?.capability && typeof context.capability === 'object' ? context.capability : null
   const capStatus = capability?.status ? String(capability.status) : ''
-  const includeJournal =
-    Boolean(options.includeJournalContinuity) ||
-    Boolean(context?.forceContinuity) ||
-    Boolean(context?.recall) ||
-    Boolean(context?.continuity?.hasJournalContext)
+  // Journal inclusion is owned here (session-cache miss via includeJournalContinuity /
+  // force / recall). Do not key off continuity.hasJournalContext - that is true whenever
+  // prior turns exist and would double-inject when the agent already has history.
+  const includeJournal = shouldIncludeJournalContinuity(context, options)
 
   const sessionSummary =
     includeJournal &&

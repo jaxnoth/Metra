@@ -12,6 +12,126 @@ function Get-MetraAskOpenAICompatContextJsonMaxChars {
     return ($maxTotal * [int]$script:MetraAskOpenAICompatContextJsonMultiplier)
 }
 
+function Compress-MetraAskOpenAICompatContextJson {
+    <#
+    .SYNOPSIS
+        Fit Ask Context JSON under the OpenAI-compat ceiling by shortening continuity first.
+    .NOTES
+        Never returns empty solely because the full JSON exceeded the ceiling. Drops/shortens
+        continuity (recentTurns, sessionSummary, recall) before other fields.
+    #>
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory)]$Context,
+        [int]$Ceiling = 0
+    )
+
+    if ($Ceiling -lt 1) { $Ceiling = Get-MetraAskOpenAICompatContextJsonMaxChars }
+
+    $toJson = {
+        param($obj)
+        try { return ($obj | ConvertTo-Json -Depth 6 -Compress) } catch { return $null }
+    }
+
+    $json = & $toJson $Context
+    if (-not $json) { return $null }
+    if ($json.Length -lt $Ceiling) { return $json }
+
+    # Work on a shallow-cloned ordered bag so we can shrink continuity without mutating caller.
+    $bag = [ordered]@{}
+    if ($Context -is [hashtable] -or $Context -is [System.Collections.IDictionary]) {
+        foreach ($k in @($Context.Keys)) { $bag[[string]$k] = $Context[$k] }
+    }
+    else {
+        foreach ($p in @($Context.PSObject.Properties)) {
+            $bag[$p.Name] = $p.Value
+        }
+    }
+
+    $copyBagBag = {
+        param($obj)
+        $c = [ordered]@{}
+        if ($null -eq $obj) { return $c }
+        if ($obj -is [hashtable] -or $obj -is [System.Collections.IDictionary]) {
+            foreach ($k in @($obj.Keys)) { $c[[string]$k] = $obj[$k] }
+        }
+        else {
+            foreach ($p in @($obj.PSObject.Properties)) { $c[$p.Name] = $p.Value }
+        }
+        return $c
+    }
+
+    $shrinkContinuity = {
+        param($cont, [int]$promptMax, [int]$messageMax, [int]$maxRecent)
+        if ($null -eq $cont) { return $null }
+        $c = & $copyBagBag $cont
+        if ($c.Contains('sessionSummary') -and $c['sessionSummary']) {
+            $sum = [string]$c['sessionSummary']
+            if ($sum.Length -gt 400) { $c['sessionSummary'] = $sum.Substring(0, 397) + '...' }
+        }
+        if ($c.Contains('recallSummary') -and $c['recallSummary']) {
+            $rec = [string]$c['recallSummary']
+            if ($rec.Length -gt 300) { $c['recallSummary'] = $rec.Substring(0, 297) + '...' }
+        }
+        $recent = @($c['recentTurns'])
+        if ($recent.Count -gt $maxRecent) { $recent = @($recent | Select-Object -Last $maxRecent) }
+        $trimmed = foreach ($t in $recent) {
+            if ($null -eq $t) { continue }
+            $p = [string](Get-MetraProp -Object $t -Name 'prompt' -Default '')
+            $m = [string](Get-MetraProp -Object $t -Name 'message' -Default '')
+            if ($p.Length -gt $promptMax) { $p = $p.Substring(0, [Math]::Max(0, $promptMax - 3)) + '...' }
+            if ($m.Length -gt $messageMax) { $m = $m.Substring(0, [Math]::Max(0, $messageMax - 3)) + '...' }
+            [PSCustomObject]@{
+                turnIndex = Get-MetraProp -Object $t -Name 'turnIndex' -Default $null
+                prompt    = $p
+                message   = $m
+            }
+        }
+        $c['recentTurns'] = @($trimmed)
+        return [PSCustomObject]$c
+    }
+
+    $steps = @(
+        @{ promptMax = 80; messageMax = 120; maxRecent = 2 }
+        @{ promptMax = 40; messageMax = 60; maxRecent = 1 }
+        @{ promptMax = 20; messageMax = 40; maxRecent = 0 }
+    )
+
+    foreach ($step in $steps) {
+        if ($bag.Contains('continuity')) {
+            $bag['continuity'] = & $shrinkContinuity $bag['continuity'] $step.promptMax $step.messageMax $step.maxRecent
+        }
+        if ($bag.Contains('continuityEvidence')) {
+            $bag['continuityEvidence'] = & $shrinkContinuity $bag['continuityEvidence'] $step.promptMax $step.messageMax $step.maxRecent
+        }
+        if ($step.maxRecent -eq 0) {
+            if ($bag.Contains('continuity') -and $bag['continuity']) {
+                $c = & $copyBagBag $bag['continuity']
+                $c['sessionSummary'] = $null
+                $c['recallSummary'] = $null
+                $c['recentTurns'] = @()
+                $bag['continuity'] = [PSCustomObject]$c
+            }
+        }
+        $json = & $toJson ([PSCustomObject]$bag)
+        if ($json -and $json.Length -lt $Ceiling) { return $json }
+    }
+
+    # Last resort: tiny valid JSON only (never substring-slice serialized JSON).
+    $whereLeaf = 'Metra'
+    if ($bag.Contains('where') -and $null -ne $bag['where']) {
+        $whereLeaf = ([string]$bag['where'])
+        if ($whereLeaf.Length -gt 80) { $whereLeaf = $whereLeaf.Substring(0, 77) + '...' }
+    }
+    $safe = [ordered]@{
+        where      = $whereLeaf
+        continuity = 'truncated'
+    }
+    $json = & $toJson ([PSCustomObject]$safe)
+    if ($json -and $json.Length -lt $Ceiling) { return $json }
+    return '{"where":"Metra","continuity":"truncated"}'
+}
+
 function Get-MetraAskOpenAICompatHealthResult {
     <#
     .SYNOPSIS
@@ -360,10 +480,10 @@ function Invoke-MetraAskOpenAICompatComplete {
         }
         if (-not $isInspect) {
             try {
-                $ctxJson = ($Context | ConvertTo-Json -Depth 6 -Compress)
-                # Ceiling = evidence maxTotalChars * multiplier (route/continuity/capability headroom).
+                # Ceiling = evidence maxTotalChars * multiplier; shrink continuity instead of dropping.
                 $ceiling = Get-MetraAskOpenAICompatContextJsonMaxChars
-                if ($ctxJson -and $ctxJson.Length -lt $ceiling) {
+                $ctxJson = Compress-MetraAskOpenAICompatContextJson -Context $Context -Ceiling $ceiling
+                if ($ctxJson) {
                     $systemParts += "Context JSON: $ctxJson"
                 }
             }

@@ -84,6 +84,17 @@ humor pack MARKER
         }
     }
 
+    It 'Test-MetraAskTeachingWanted is dynamic for explore/setup/stuck and off for urgent' {
+        InModuleScope Metra {
+            Test-MetraAskTeachingWanted -Prompt 'how does Ask continuity work?' | Should -BeTrue
+            Test-MetraAskTeachingWanted -Prompt 'help me with first setup and overlay' | Should -BeTrue
+            Test-MetraAskTeachingWanted -Prompt "I'm stuck after a failed path" | Should -BeTrue
+            Test-MetraAskTeachingWanted -Prompt 'post recommend on ticket 123456' | Should -BeFalse
+            Test-MetraAskTeachingWanted -Prompt 'how does routing work?' -IncidentActive | Should -BeFalse
+            Test-MetraAskTeachingWanted -Prompt 'explain anything' -Intent ([PSCustomObject]@{ IntentClass = 'urgent' }) | Should -BeFalse
+        }
+    }
+
     It 'identityHash is stable for same inputs and flips when content changes' {
         InModuleScope Metra {
             $root = Join-Path $TestDrive 'metra-hash'

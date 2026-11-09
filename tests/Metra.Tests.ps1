@@ -1116,6 +1116,39 @@ Describe 'Decision Registry' {
         }
     }
 
+    It 'Ask WhyHere uses MinScore 2 with stop words and returns empty on unrelated prompts' {
+        $root = $script:decisionRoot
+        InModuleScope Metra -Parameters @{ DecisionRoot = $root } {
+            param($DecisionRoot)
+            # MinScore constant locked by plan (token matches only; project bonus excluded).
+            $MinScore = 2
+
+            Add-MetraDecisionRegistryCandidate `
+                -Title 'Continuity journal head tail' `
+                -Decision 'Ask session summary keeps opening and recent older turns.' `
+                -Why 'Middle-only truncation lost long-session continuity.' `
+                -Project 'Metra' `
+                -Confidence high `
+                -Evidence @('docs/portfolio-memory-path.md') `
+                -Origin backfill `
+                -MetraRoot $DecisionRoot | Out-Null
+            $note = @(Show-MetraDecisionRegistry -MetraRoot $DecisionRoot).Candidates |
+                Where-Object { $_.title -match 'Continuity journal' } |
+                Select-Object -First 1
+            Promote-MetraDecisionRegistryEntry -IdOrTitle $note.id -MetraRoot $DecisionRoot | Out-Null
+
+            $hit = @(Get-MetraWhyHere -Project Metra -Query 'session continuity journal summary opening turns' -MinScore $MinScore -MetraRoot $DecisionRoot)
+            $hit.Count | Should -BeGreaterThan 0
+            [int]$hit[0].TokenScore | Should -BeGreaterOrEqual $MinScore
+
+            $miss = @(Get-MetraWhyHere -Project Metra -Query 'please help with lunch catering menu' -MinScore $MinScore -MetraRoot $DecisionRoot)
+            $miss.Count | Should -Be 0
+
+            $snap = @(ConvertTo-MetraSnapshotWhyHere -Project Metra -Query 'please help with lunch catering menu' -MetraRoot $DecisionRoot)
+            $snap.Count | Should -Be 0
+        }
+    }
+
     It 'Test-MetraRoutingAmbiguity follows close-score rules' {
         InModuleScope Metra {
             Test-MetraRoutingAmbiguity -PrimaryScore 3 -RunnerUpScore 2 | Should -BeTrue
@@ -3781,6 +3814,31 @@ Hello from Ask.
             finally {
                 Remove-Item -LiteralPath $root -Recurse -Force -ErrorAction SilentlyContinue
             }
+        }
+    }
+
+    It 'extractive summary keeps opening and recent older turns (3 head + 9 tail)' {
+        InModuleScope Metra {
+            $older = 1..36 | ForEach-Object {
+                [PSCustomObject]@{
+                    turnIndex = $_
+                    prompt    = "prompt-marker-$_"
+                    message   = "message-$_"
+                }
+            }
+            $text = New-MetraAskSessionSummaryText -Turns $older -MaxBullets 12 -HeadCount 3
+            $text | Should -Match 'Turn 1'
+            $text | Should -Match 'Turn 2'
+            $text | Should -Match 'Turn 3'
+            $text | Should -Match 'Turn 28'
+            $text | Should -Match 'Turn 36'
+            $text | Should -Not -Match 'Turn 12'
+            $text | Should -Not -Match 'Turn 20'
+            $selected = @(Select-MetraAskSummaryTurns -Turns $older -MaxBullets 12 -HeadCount 3)
+            $selected.Count | Should -Be 12
+            $selected[0].turnIndex | Should -Be 1
+            $selected[2].turnIndex | Should -Be 3
+            $selected[-1].turnIndex | Should -Be 36
         }
     }
 

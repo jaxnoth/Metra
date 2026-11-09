@@ -180,17 +180,27 @@ function ConvertTo-MetraSnapshotWhyHere {
     <#
     .SYNOPSIS
         Bounded Why Here rows for the Ops board snapshot (no evidence dumps).
+    .NOTES
+        When Query is set (Ask handoff), MinScore defaults to 2 and no-hit returns empty
+        (no fallback to most-recent decisions).
     #>
     [CmdletBinding()]
     param(
         [Parameter(Mandatory)][string]$Project,
+        [string]$Query,
         [string]$MetraRoot = (Get-MetraRoot),
-        [int]$Limit = 3
+        [int]$Limit = 3,
+        [int]$MinScore = -1
     )
+
+    $resolvedMin = $MinScore
+    if ($resolvedMin -lt 0) {
+        $resolvedMin = if (-not [string]::IsNullOrWhiteSpace($Query)) { 2 } else { 0 }
+    }
 
     $rows = @()
     try {
-        $rows = @(Get-MetraWhyHere -Project $Project -Limit $Limit -MetraRoot $MetraRoot)
+        $rows = @(Get-MetraWhyHere -Project $Project -Query $Query -Limit $Limit -MinScore $resolvedMin -MetraRoot $MetraRoot)
     }
     catch {
         return @()
@@ -205,6 +215,7 @@ function ConvertTo-MetraSnapshotWhyHere {
                 why        = [string](Get-MetraProp -Object $_ -Name 'Why' -Default '')
                 confidence = [string](Get-MetraProp -Object $_ -Name 'Confidence' -Default '')
                 project    = [string](Get-MetraProp -Object $_ -Name 'Project' -Default $Project)
+                tokenScore = [int](Get-MetraProp -Object $_ -Name 'TokenScore' -Default 0)
             }
         }
     )
@@ -1819,20 +1830,50 @@ function Search-MetraDeskAskJournal {
     return @($hits | Select-Object -First $Limit)
 }
 
+function Select-MetraAskSummaryTurns {
+    <#
+    .SYNOPSIS
+        Head+tail selection for extractive Ask session summaries (opening + recent older turns).
+    #>
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory)][AllowEmptyCollection()][object[]]$Turns,
+        [int]$MaxBullets = 12,
+        [int]$HeadCount = 3
+    )
+
+    $arr = @($Turns)
+    if ($MaxBullets -lt 1) { return @() }
+    if ($arr.Count -le $MaxBullets) { return $arr }
+
+    $head = [Math]::Max(0, [Math]::Min($HeadCount, $MaxBullets))
+    $tail = $MaxBullets - $head
+    $headTurns = if ($head -gt 0) { @($arr | Select-Object -First $head) } else { @() }
+    $rest = @($arr | Select-Object -Skip $head)
+    if ($tail -le 0) { return $headTurns }
+    if ($rest.Count -le $tail) { return @($headTurns) + @($rest) }
+    return @($headTurns) + @($rest | Select-Object -Last $tail)
+}
+
 function New-MetraAskSessionSummaryText {
     <#
     .SYNOPSIS
         Extractive bullet summary of older Ask turns (not an LLM rewrite).
+    .NOTES
+        Uses head+tail selection: first HeadCount opening turns plus most recent older turns
+        within MaxBullets (default 3 + 9).
     #>
     [CmdletBinding()]
     param(
-        [Parameter(Mandatory)][object[]]$Turns,
+        [Parameter(Mandatory)][AllowEmptyCollection()][object[]]$Turns,
         [int]$PromptMax = 120,
         [int]$MessageMax = 200,
-        [int]$MaxBullets = 12
+        [int]$MaxBullets = 12,
+        [int]$HeadCount = 3
     )
 
-    $lines = foreach ($t in @($Turns | Select-Object -First $MaxBullets)) {
+    $selected = @(Select-MetraAskSummaryTurns -Turns $Turns -MaxBullets $MaxBullets -HeadCount $HeadCount)
+    $lines = foreach ($t in $selected) {
         $ti = Get-MetraProp -Object $t -Name 'turnIndex' -Default $null
         $label = if ($null -ne $ti) { "Turn $ti" } else { 'Turn' }
         $p = Truncate-MetraAskContinuitySnippet -Text ([string](Get-MetraProp -Object $t -Name 'prompt' -Default '')) -Max $PromptMax
@@ -2703,7 +2744,7 @@ function Get-MetraDeskHandoff {
     $serves = @()
     $purpose = ''
     if ($primary) {
-        $why = @(ConvertTo-MetraSnapshotWhyHere -Project $primary.Name -MetraRoot $MetraRoot -Limit 3)
+        $why = @(ConvertTo-MetraSnapshotWhyHere -Project $primary.Name -Query $q -MetraRoot $MetraRoot -Limit 3 -MinScore 2)
         try {
             $reg = Get-MetraProjectRegistry
             $row = @($reg.projects | Where-Object { [string]$_.name -eq [string]$primary.Name } | Select-Object -First 1)

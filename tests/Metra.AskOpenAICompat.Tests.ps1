@@ -179,6 +179,37 @@ Describe 'OpenAI-compat completion helpers' {
         }
     }
 
+    It 'Compress-MetraAskOpenAICompatContextJson shortens continuity instead of returning empty past ceiling' {
+        InModuleScope Metra {
+            $ceiling = 4800
+            $recent = 1..30 | ForEach-Object {
+                [PSCustomObject]@{
+                    turnIndex = $_
+                    prompt    = ('P' * 200) + "-turn-$_"
+                    message   = ('M' * 320) + "-ans-$_"
+                }
+            }
+            $ctx = [PSCustomObject]@{
+                where      = 'Metra'
+                what       = 'portfolio ops'
+                evidence   = @{ quality = 'adequate'; items = @(); limits = @{ maxTotalChars = 2400 } }
+                continuity = [PSCustomObject]@{
+                    hasJournalContext = $true
+                    sessionSummary    = ('- Turn x: ' + ('S' * 800)) * 5
+                    recentTurns       = $recent
+                    recallSummary     = ('R' * 600)
+                }
+            }
+            $full = ($ctx | ConvertTo-Json -Depth 6 -Compress)
+            $full.Length | Should -BeGreaterThan $ceiling
+
+            $compressed = Compress-MetraAskOpenAICompatContextJson -Context $ctx -Ceiling $ceiling
+            $compressed | Should -Not -BeNullOrEmpty
+            $compressed.Length | Should -BeLessThan $ceiling
+            $compressed | Should -Match 'where'
+        }
+    }
+
     It 'desk max_tokens default is 1024 and inspect is 4096' {
         InModuleScope Metra {
             $script:MetraAskOpenAICompatMaxTokensDesk | Should -Be 1024

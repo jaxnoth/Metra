@@ -802,10 +802,49 @@ function Write-MetraDecisionRegistryReview {
     }
 }
 
+function Get-MetraDecisionQueryStopWords {
+    <#
+    .SYNOPSIS
+        Stop words stripped from Decision Registry / WhyHere query tokens.
+    #>
+    @(
+        'a', 'an', 'the', 'and', 'or', 'but', 'if', 'then', 'so', 'to', 'of', 'in', 'on', 'at', 'by', 'for',
+        'from', 'with', 'about', 'as', 'is', 'are', 'was', 'were', 'be', 'been', 'am', 'do', 'does', 'did',
+        'can', 'could', 'should', 'would', 'will', 'just', 'also', 'than', 'that', 'this', 'these', 'those',
+        'it', 'its', 'my', 'me', 'we', 'our', 'you', 'your', 'please', 'help', 'need', 'want', 'get', 'got',
+        'what', 'when', 'where', 'who', 'whom', 'which', 'how', 'why', 'into', 'over', 'under', 'again'
+    )
+}
+
+function Get-MetraDecisionQueryTokens {
+    <#
+    .SYNOPSIS
+        Tokenize a Decision Registry query; optionally drop stop words.
+    #>
+    [CmdletBinding()]
+    param(
+        [string]$Query,
+        [switch]$ApplyStopWords
+    )
+
+    if ([string]::IsNullOrWhiteSpace($Query)) { return @() }
+    $raw = @(
+        ($Query.ToLowerInvariant() -split '[^a-z0-9_+]+') |
+            Where-Object { $_ -and $_.Length -gt 1 } |
+            Select-Object -Unique
+    )
+    if (-not $ApplyStopWords) { return $raw }
+    $stop = @{}
+    foreach ($w in @(Get-MetraDecisionQueryStopWords)) { $stop[$w] = $true }
+    return @($raw | Where-Object { -not $stop.ContainsKey($_) })
+}
+
 function Search-MetraDecisionRegistry {
     <#
     .SYNOPSIS
         Token-scores confirmed (and optionally candidate) decisions.
+    .NOTES
+        TokenScore is match count before project bonus. Score = TokenScore (+5 when project matches).
     #>
     [CmdletBinding()]
     param(
@@ -814,19 +853,13 @@ function Search-MetraDecisionRegistry {
         [int]$Limit = 10,
         [switch]$IncludeCandidates,
         [switch]$IncludeSuperseded,
+        [switch]$ApplyStopWords,
         [string]$MetraRoot = (Get-MetraRoot)
     )
 
     if ($Limit -lt 1) { $Limit = 10 }
     $registry = Get-MetraDecisionRegistry -MetraRoot $MetraRoot
-    $tokens = @()
-    if (-not [string]::IsNullOrWhiteSpace($Query)) {
-        $tokens = @(
-            ($Query.ToLowerInvariant() -split '[^a-z0-9_+]+') |
-                Where-Object { $_ -and $_.Length -gt 1 } |
-                Select-Object -Unique
-        )
-    }
+    $tokens = @(Get-MetraDecisionQueryTokens -Query $Query -ApplyStopWords:$ApplyStopWords)
     $projectFilter = Normalize-MetraDecisionText $Project
     $projectFilterLower = if ($projectFilter) { $projectFilter.ToLowerInvariant() } else { '' }
 
@@ -860,8 +893,10 @@ function Search-MetraDecisionRegistry {
                 [string](Get-MetraProp -Object $item -Name 'source' -Default '')
             ) -join ' '
             $hayLower = $hay.ToLowerInvariant()
+            $tokenScore = 0
             $score = 0
             if ($tokens.Count -eq 0) {
+                # Empty query: recency path (TokenScore 0; Score is ranking only).
                 $score = 1
                 if ($projectFilterLower -and $itemProjectLower -eq $projectFilterLower) {
                     $score += 5
@@ -869,9 +904,10 @@ function Search-MetraDecisionRegistry {
             }
             else {
                 foreach ($t in $tokens) {
-                    if ($hayLower.Contains($t)) { $score++ }
+                    if ($hayLower.Contains($t)) { $tokenScore++ }
                 }
-                if ($score -le 0) { continue }
+                if ($tokenScore -le 0) { continue }
+                $score = $tokenScore
                 if ($projectFilterLower -and $itemProjectLower -eq $projectFilterLower) {
                     $score += 5
                 }
@@ -891,6 +927,7 @@ function Search-MetraDecisionRegistry {
                     Tags       = @(Get-MetraProp -Object $item -Name 'tags' -Default @())
                     Bucket     = $bucket.Name
                     Score      = $score
+                    TokenScore = $tokenScore
                     Date       = [string](Get-MetraProp -Object $item -Name 'date' -Default '')
                 })
         }
@@ -910,12 +947,16 @@ function Get-MetraWhyHere {
     <#
     .SYNOPSIS
         Bounded Decision Registry explanations for a routed project (ledger only).
+    .NOTES
+        MinScore filters on TokenScore (project bonus does not count). Ask path uses MinScore 2.
+        No-hit with a query returns empty - no fallback to most-recent.
     #>
     [CmdletBinding()]
     param(
         [Parameter(Mandatory)][string]$Project,
         [string]$Query,
         [int]$Limit = 3,
+        [int]$MinScore = 0,
         [string]$MetraRoot = (Get-MetraRoot)
     )
 
@@ -923,8 +964,21 @@ function Get-MetraWhyHere {
     $projectName = Normalize-MetraDecisionText $Project
     if (-not $projectName) { return @() }
 
+    $hasQuery = -not [string]::IsNullOrWhiteSpace($Query)
+    $applyStop = $hasQuery -and ($MinScore -gt 0)
     try {
-        return @(Search-MetraDecisionRegistry -Project $projectName -Query $Query -Limit $Limit -MetraRoot $MetraRoot)
+        # Fetch a wider pool when filtering by MinScore so Limit still fills when possible.
+        $fetchLimit = if ($MinScore -gt 0) { [Math]::Max($Limit * 5, 15) } else { $Limit }
+        $hits = @(Search-MetraDecisionRegistry `
+                -Project $projectName `
+                -Query $Query `
+                -Limit $fetchLimit `
+                -ApplyStopWords:$applyStop `
+                -MetraRoot $MetraRoot)
+        if ($MinScore -gt 0 -and $hasQuery) {
+            $hits = @($hits | Where-Object { [int](Get-MetraProp -Object $_ -Name 'TokenScore' -Default 0) -ge $MinScore })
+        }
+        return @($hits | Select-Object -First $Limit)
     }
     catch {
         return @()

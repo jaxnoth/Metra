@@ -1,5 +1,42 @@
 # Ask Conversation Engine - policy overlay prompt + typed engine envelope.
 
+function Test-MetraAskTeachingWanted {
+    <#
+    .SYNOPSIS
+        Dynamic Desk TeachingWanted cue from the current turn (not always-on Desk).
+    .NOTES
+        Matches Teaching Mode situations: exploring / planning / how-it-works, onboarding/setup,
+        stuck/blocked, explicit explain. Off for urgent/incident. Routine work stays false unless
+        the prompt asks how/why/explain.
+    #>
+    [CmdletBinding()]
+    param(
+        [AllowEmptyString()][string]$Prompt = '',
+        $Intent,
+        [switch]$IncidentActive
+    )
+
+    if ($IncidentActive) { return $false }
+
+    $intentClass = [string](Get-MetraProp -Object $Intent -Name 'IntentClass' -Default '')
+    if ($intentClass -eq 'urgent') { return $false }
+
+    $q = if ($null -eq $Prompt) { '' } else { $Prompt.Trim() }
+    if ([string]::IsNullOrWhiteSpace($q)) { return $false }
+
+    if ($q -match '(?i)\b(how does|how do i|how do we|how to|what is|what are|walk me through|teach me|explain|why does|why do|why is)\b') {
+        return $true
+    }
+    if ($q -match '(?i)\b(onboard|onboarding|first (time|run|setup)|sample pack|clone|overlay|set up|setup|getting started)\b') {
+        return $true
+    }
+    if ($q -match "(?i)\b(i('|\u2019)?m stuck|im stuck|blocked|not working|doesn('|\u2019)?t work|failed path|what next)\b") {
+        return $true
+    }
+
+    return $false
+}
+
 function Test-MetraAskExplicitListPeersIntent {
     <#
     .SYNOPSIS
@@ -175,12 +212,17 @@ function New-MetraConversationPrompt {
     # CE policy overlay stays after identity text - same path, not same words as Vision.
     if (Get-Command Get-MetraConversationIdentityPrompt -ErrorAction SilentlyContinue) {
         $identitySurface = if ($Surface -in @('Ask', 'Vision', 'Cursor', 'iOS', 'OpsPresence')) { $Surface } else { 'Ask' }
+        $teachingWanted = $false
+        if ($identitySurface -eq 'Ask' -and (Get-Command Test-MetraAskTeachingWanted -ErrorAction SilentlyContinue)) {
+            $teachingWanted = [bool](Test-MetraAskTeachingWanted -Prompt $Prompt -Intent $Intent -IncidentActive:$IncidentActive)
+        }
         $identity = Get-MetraConversationIdentityPrompt `
             -MetraRoot $MetraRoot `
             -Surface $identitySurface `
             -Posture $resolvedPosture `
             -PortfolioShaped:$PortfolioShaped `
             -IncidentActive:$IncidentActive `
+            -TeachingWanted:$teachingWanted `
             -ContinuityEvidence $ContinuityEvidence
         [void]$lines.Add([string]$identity.Text)
     }
