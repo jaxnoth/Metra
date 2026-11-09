@@ -16,3 +16,16 @@ export function shouldIncludeJournalContinuity(context, options = {}) {
     Boolean(context?.continuity?.recall)
   )
 }
+
+/**
+ * Derived MDR project brief Ask slot (max 1500). Independent of journal inclusion.
+ */
+export function resolveProjectBriefForPrompt(context, maxChars = 1500) {
+  let text = context?.projectBrief || context?.continuity?.projectBrief
+    ? String(context.projectBrief || context.continuity.projectBrief).trim()
+    : ''
+  if (text.length > maxChars) text = text.slice(0, maxChars)
+  const meta = context?.projectBriefMeta || context?.continuity?.projectBriefMeta || null
+  const staleness = meta?.staleness ? String(meta.staleness) : ''
+  return { text, staleness, charCount: text.length }
+}

@@ -418,6 +418,28 @@ function New-MetraAskEvidencePack {
         }
     }
 
+    # 5b) MDR project brief (derived; dedicated 1500-char Ask slot - not factualSupport)
+    $projectBriefText = ''
+    $projectBriefStaleness = ''
+    if (-not [string]::IsNullOrWhiteSpace($where) -and
+        (Get-Command Test-MetraAskBriefEnabled -ErrorAction SilentlyContinue) -and
+        (Test-MetraAskBriefEnabled -MetraRoot $MetraRoot) -and
+        (Get-Command Get-MetraBriefShow -ErrorAction SilentlyContinue)) {
+        try {
+            $briefShow = Get-MetraBriefShow -Project $where -MetraRoot $MetraRoot
+            $projectBriefText = [string](Get-MetraProp -Object $briefShow -Name 'text' -Default '')
+            $projectBriefStaleness = [string](Get-MetraProp -Object $briefShow -Name 'staleness' -Default '')
+            if ($projectBriefText.Length -gt 1500) {
+                $projectBriefText = $projectBriefText.Substring(0, 1500)
+            }
+            # Dedicated context.projectBrief slot carries the text - do not add a pack pointer
+            # item (kind 'brief' is TicketTracker; a pointer would also burn a maxItems slot).
+        }
+        catch {
+            $projectBriefText = ''
+        }
+    }
+
     # 6) Fallback route labels
     if ($items.Count -eq 0 -and -not [string]::IsNullOrWhiteSpace($where)) {
         $items.Add((New-MetraAskEvidenceItem -Kind 'route' -Label "Routed home $where" `
@@ -492,6 +514,15 @@ function New-MetraAskEvidencePack {
             } else { [System.Collections.Generic.List[object]]::new() })
         recallSummary     = $(if ($Continuity) { Get-MetraProp -Object $Continuity -Name 'recallSummary' -Default $null } else { $null })
         recallSessionId   = $(if ($Continuity) { Get-MetraProp -Object $Continuity -Name 'recallSessionId' -Default $null } else { $null })
+        projectBrief      = $(if (-not [string]::IsNullOrWhiteSpace($projectBriefText)) { $projectBriefText } else { $null })
+        projectBriefMeta  = $(if (-not [string]::IsNullOrWhiteSpace($projectBriefText)) {
+                [ordered]@{
+                    project   = $where
+                    staleness = $projectBriefStaleness
+                    derived   = $true
+                    charCount = $projectBriefText.Length
+                }
+            } else { $null })
     }
 
     $capBag = [ordered]@{
@@ -514,6 +545,10 @@ function New-MetraAskEvidencePack {
         score      = $routeObj.score
     }
     if ($contBag.sessionSummary) { $context['sessionSummary'] = [string]$contBag.sessionSummary }
+    if ($contBag.projectBrief) {
+        $context['projectBrief'] = [string]$contBag.projectBrief
+        $context['projectBriefMeta'] = $contBag.projectBriefMeta
+    }
     $recentForFlat = @(Get-MetraProp -Object $contBag -Name 'recentTurns' -Default @())
     if ($recentForFlat.Count -gt 0) {
         $rtFlat = [System.Collections.Generic.List[object]]::new()

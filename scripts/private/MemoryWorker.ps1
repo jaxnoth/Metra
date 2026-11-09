@@ -1126,7 +1126,16 @@ function Invoke-MetraMemoryWorkerDrain {
                                 $outcome = Invoke-MetraMemoryAskSummaryJob @jobParams
                             }
                             'project-brief' {
-                                $outcome = [PSCustomObject]@{ Ok = $true; Reason = 'brief_deferred'; Written = $false }
+                                $briefParams = @{
+                                    Item       = $item
+                                    MetraRoot  = $MetraRoot
+                                    TimeoutSec = $ItemTimeoutSec
+                                }
+                                if ($null -ne $SummarizerScript) {
+                                    # Reuse SummarizerScript slot as OpsScript when tests inject brief ops.
+                                    $briefParams.OpsScript = $SummarizerScript
+                                }
+                                $outcome = Invoke-MetraMemoryProjectBriefJob @briefParams
                             }
                             default {
                                 $outcome = [PSCustomObject]@{ Ok = $false; Reason = 'unknown_type'; Written = $false }

@@ -246,6 +246,8 @@
         'Set-MetraConfiguredOpsBaseUrl',
         'Invoke-MetraCaptureCommand',
         'Invoke-MetraMemoryCommand',
+        'Invoke-MetraBriefCommand',
+        'Get-MetraBriefShow',
         'Request-MetraMemoryWorkerNudge',
         'Invoke-MetraNarrativeCommand',
         'Invoke-MetraFutureCommand',

@@ -1741,26 +1741,110 @@ function Write-MetraAskSessionsIndex {
     Write-MetraAtomicUtf8Text -Path $path -Text (($payload | ConvertTo-Json -Depth 8) + "`r`n")
 }
 
+function ConvertTo-MetraAskIndexStringMap {
+    <#
+    .SYNOPSIS
+        Normalize hashtable / PSCustomObject property bags to a PSCustomObject map for index JSON.
+    #>
+    [CmdletBinding()]
+    param([AllowNull()]$Map)
+    $bag = [ordered]@{}
+    if ($null -eq $Map) {
+        return [PSCustomObject]$bag
+    }
+    if ($Map -is [hashtable] -or $Map -is [System.Collections.IDictionary]) {
+        foreach ($key in @($Map.Keys)) {
+            $bag[[string]$key] = $Map[$key]
+        }
+        return [PSCustomObject]$bag
+    }
+    foreach ($prop in @($Map.PSObject.Properties)) {
+        $bag[[string]$prop.Name] = $prop.Value
+    }
+    return [PSCustomObject]$bag
+}
+
+function Get-MetraAskIndexMapInt {
+    [CmdletBinding()]
+    param(
+        [AllowNull()]$Map,
+        [Parameter(Mandatory)][string]$Key,
+        [int]$Default = 0
+    )
+    if ($null -eq $Map -or [string]::IsNullOrWhiteSpace($Key)) { return $Default }
+    if ($Map -is [hashtable] -or $Map -is [System.Collections.IDictionary]) {
+        if ($Map.ContainsKey($Key)) {
+            try { return [int]$Map[$Key] } catch { return $Default }
+        }
+        return $Default
+    }
+    $names = @($Map.PSObject.Properties | ForEach-Object { [string]$_.Name })
+    if ($Key -notin $names) { return $Default }
+    try { return [int](Get-MetraProp -Object $Map -Name $Key -Default $Default) } catch { return $Default }
+}
+
 function Update-MetraAskSessionsIndexEntry {
+    <#
+    .SYNOPSIS
+        Upsert ask-sessions index row. Preserves briefedThroughByProject; merges routedProjects / projectTurnMax.
+    #>
     [CmdletBinding()]
     param(
         [Parameter(Mandatory)][string]$SessionId,
         [Parameter(Mandatory)][string]$LastActivityAt,
         [int]$TurnCount = 0,
+        [string]$RoutedProject = '',
+        [int]$ProjectTurnIndex = 0,
         [string]$MetraRoot = (Get-MetraRoot)
     )
     $index = Read-MetraAskSessionsIndex -MetraRoot $MetraRoot
     $sessions = [System.Collections.Generic.List[object]]::new()
+    $existing = $null
     foreach ($row in @($index.sessions)) {
         $sid = [string](Get-MetraProp -Object $row -Name 'sessionId' -Default '')
-        if ($sid -eq $SessionId) { continue }
+        if ($sid -eq $SessionId) {
+            $existing = $row
+            continue
+        }
         [void]$sessions.Add($row)
     }
+
+    $routed = [System.Collections.Generic.List[string]]::new()
+    foreach ($p in @((Get-MetraProp -Object $existing -Name 'routedProjects' -Default @()))) {
+        $pn = [string]$p
+        if (-not [string]::IsNullOrWhiteSpace($pn) -and $pn -notin $routed) {
+            [void]$routed.Add($pn)
+        }
+    }
+    if (-not [string]::IsNullOrWhiteSpace($RoutedProject) -and $RoutedProject.Trim() -notin $routed) {
+        [void]$routed.Add($RoutedProject.Trim())
+    }
+
+    $turnMaxHash = @{}
+    $rawTurnMax = Get-MetraProp -Object $existing -Name 'projectTurnMax' -Default $null
+    if ($null -ne $rawTurnMax) {
+        $normMax = ConvertTo-MetraAskIndexStringMap -Map $rawTurnMax
+        foreach ($prop in @($normMax.PSObject.Properties)) {
+            try { $turnMaxHash[[string]$prop.Name] = [int]$prop.Value } catch { }
+        }
+    }
+    if (-not [string]::IsNullOrWhiteSpace($RoutedProject) -and $ProjectTurnIndex -gt 0) {
+        $pk = $RoutedProject.Trim()
+        $prev = if ($turnMaxHash.ContainsKey($pk)) { [int]$turnMaxHash[$pk] } else { 0 }
+        if ($ProjectTurnIndex -gt $prev) { $turnMaxHash[$pk] = $ProjectTurnIndex }
+    }
+
+    $briefedRaw = Get-MetraProp -Object $existing -Name 'briefedThroughByProject' -Default $null
+    $briefedMap = ConvertTo-MetraAskIndexStringMap -Map $briefedRaw
+
     [void]$sessions.Add([PSCustomObject]@{
-            sessionId      = $SessionId
-            lastActivityAt = $LastActivityAt
-            turnCount      = $TurnCount
-            file           = (Get-MetraAskSessionFileSafeId -SessionId $SessionId) + '.json'
+            sessionId               = $SessionId
+            lastActivityAt          = $LastActivityAt
+            turnCount               = $TurnCount
+            file                    = (Get-MetraAskSessionFileSafeId -SessionId $SessionId) + '.json'
+            routedProjects          = @($routed)
+            projectTurnMax          = (ConvertTo-MetraAskIndexStringMap -Map $turnMaxHash)
+            briefedThroughByProject = $briefedMap
         })
     $index = [PSCustomObject]@{
         schemaVersion = Get-MetraAskJournalSchemaVersion
@@ -1768,6 +1852,64 @@ function Update-MetraAskSessionsIndexEntry {
         sessions      = @($sessions)
     }
     Write-MetraAskSessionsIndex -Index $index -MetraRoot $MetraRoot
+}
+
+function Set-MetraAskSessionBriefedThrough {
+    <#
+    .SYNOPSIS
+        Record per-project briefedThroughTurn on the ask-sessions index (catch-up skip without opening files).
+    #>
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory)][string]$SessionId,
+        [Parameter(Mandatory)][string]$Project,
+        [Parameter(Mandatory)][int]$ThroughTurnIndex,
+        [string]$MetraRoot = (Get-MetraRoot)
+    )
+    if ([string]::IsNullOrWhiteSpace($SessionId) -or [string]::IsNullOrWhiteSpace($Project) -or $ThroughTurnIndex -lt 1) {
+        return [PSCustomObject]@{ Ok = $false; Reason = 'bad_args' }
+    }
+    $index = Read-MetraAskSessionsIndex -MetraRoot $MetraRoot
+    $sessions = [System.Collections.Generic.List[object]]::new()
+    $found = $false
+    $pk = $Project.Trim()
+    foreach ($row in @($index.sessions)) {
+        $sid = [string](Get-MetraProp -Object $row -Name 'sessionId' -Default '')
+        if ($sid -ne $SessionId) {
+            [void]$sessions.Add($row)
+            continue
+        }
+        $found = $true
+        $briefedHash = @{}
+        $raw = Get-MetraProp -Object $row -Name 'briefedThroughByProject' -Default $null
+        if ($null -ne $raw) {
+            $norm = ConvertTo-MetraAskIndexStringMap -Map $raw
+            foreach ($prop in @($norm.PSObject.Properties)) {
+                try { $briefedHash[[string]$prop.Name] = [int]$prop.Value } catch { }
+            }
+        }
+        $prev = if ($briefedHash.ContainsKey($pk)) { [int]$briefedHash[$pk] } else { 0 }
+        if ($ThroughTurnIndex -gt $prev) { $briefedHash[$pk] = $ThroughTurnIndex }
+        $copy = [PSCustomObject]@{
+            sessionId               = $sid
+            lastActivityAt          = [string](Get-MetraProp -Object $row -Name 'lastActivityAt' -Default '')
+            turnCount               = [int](Get-MetraProp -Object $row -Name 'turnCount' -Default 0)
+            file                    = [string](Get-MetraProp -Object $row -Name 'file' -Default ((Get-MetraAskSessionFileSafeId -SessionId $sid) + '.json'))
+            routedProjects          = @((Get-MetraProp -Object $row -Name 'routedProjects' -Default @()))
+            projectTurnMax          = (ConvertTo-MetraAskIndexStringMap -Map (Get-MetraProp -Object $row -Name 'projectTurnMax' -Default $null))
+            briefedThroughByProject = (ConvertTo-MetraAskIndexStringMap -Map $briefedHash)
+        }
+        [void]$sessions.Add($copy)
+    }
+    if (-not $found) {
+        return [PSCustomObject]@{ Ok = $false; Reason = 'session_not_in_index' }
+    }
+    Write-MetraAskSessionsIndex -Index ([PSCustomObject]@{
+            schemaVersion = Get-MetraAskJournalSchemaVersion
+            migratedFrom  = $index.migratedFrom
+            sessions      = @($sessions)
+        }) -MetraRoot $MetraRoot
+    return [PSCustomObject]@{ Ok = $true; Reason = 'updated' }
 }
 
 function ConvertFrom-MetraLegacyAskLogItems {
@@ -2077,6 +2219,7 @@ function Add-MetraDeskAskEntry {
                 }
             }
         )
+        $routedProject = [string](Get-MetraProp -Object $Handoff -Name 'where' -Default '')
         $row = [PSCustomObject]@{
             id            = [guid]::NewGuid().ToString('N')
             sessionId     = $sess
@@ -2085,6 +2228,7 @@ function Add-MetraDeskAskEntry {
             prompt        = [string]$scrubbedPrompt.Text
             message       = $cleanMessage
             handoff       = $Handoff
+            project       = $(if ([string]::IsNullOrWhiteSpace($routedProject)) { $null } else { $routedProject.Trim() })
             engine        = $(if ([string]::IsNullOrWhiteSpace($Engine)) { $null } else { $Engine })
             model         = $(if ([string]::IsNullOrWhiteSpace($Model)) { $null } else { $Model })
             answered      = [bool]$Answered
@@ -2101,17 +2245,26 @@ function Add-MetraDeskAskEntry {
             $items = @($items | Select-Object -Last $cap)
         }
         Write-MetraAskSessionFile -Path $path -SessionId $sess -Items $items -LastActivityAt $row.at
-        Update-MetraAskSessionsIndexEntry -SessionId $sess -LastActivityAt $row.at -TurnCount $items.Count -MetraRoot $MetraRoot
+        Update-MetraAskSessionsIndexEntry -SessionId $sess -LastActivityAt $row.at -TurnCount $items.Count `
+            -RoutedProject $routedProject -ProjectTurnIndex ([int]$row.turnIndex) -MetraRoot $MetraRoot
         Invoke-MetraAskJournalPruneBestEffort -MetraRoot $MetraRoot
         return $row
     }
 
-    # Outside journal mutex: enqueue model-summary refresh + detach worker (never blocks Ask).
+    # Outside journal mutex: enqueue model-summary / brief catch-up (never blocks Ask).
     try {
-        $project = [string](Get-MetraProp -Object $Handoff -Name 'where' -Default '')
+        $project = [string](Get-MetraProp -Object $entry -Name 'project' -Default '')
+        if ([string]::IsNullOrWhiteSpace($project)) {
+            $project = [string](Get-MetraProp -Object $Handoff -Name 'where' -Default '')
+        }
         if (Get-Command Request-MetraAskSummaryRefreshIfDue -ErrorAction SilentlyContinue) {
             Request-MetraAskSummaryRefreshIfDue -SessionId ([string]$entry.sessionId) `
                 -ThroughTurnIndex ([int]$entry.turnIndex) -Project $project -MetraRoot $MetraRoot -StartWorker | Out-Null
+        }
+        if (-not [string]::IsNullOrWhiteSpace($project) -and
+            (Get-Command Request-MetraProjectBriefCatchUpIfDue -ErrorAction SilentlyContinue)) {
+            Request-MetraProjectBriefCatchUpIfDue -Project $project `
+                -CurrentSessionId ([string]$entry.sessionId) -MetraRoot $MetraRoot -StartWorker | Out-Null
         }
     }
     catch {

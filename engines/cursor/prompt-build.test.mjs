@@ -4,7 +4,7 @@
  */
 import assert from 'node:assert/strict'
 import test from 'node:test'
-import { shouldIncludeJournalContinuity } from './prompt-build.mjs'
+import { resolveProjectBriefForPrompt, shouldIncludeJournalContinuity } from './prompt-build.mjs'
 
 test('omits journal when agent has history even if hasJournalContext is true', () => {
   const ctx = {
@@ -43,4 +43,26 @@ test('hasJournalContext alone never includes journal', () => {
     shouldIncludeJournalContinuity({ continuity: { hasJournalContext: true } }, {}),
     false,
   )
+})
+
+test('project brief slot is included when present and capped at 1500', () => {
+  const long = 'x'.repeat(1600)
+  const resolved = resolveProjectBriefForPrompt({
+    projectBrief: long,
+    projectBriefMeta: { project: 'Metra', staleness: 'fresh', derived: true },
+  })
+  assert.equal(resolved.charCount, 1500)
+  assert.equal(resolved.staleness, 'fresh')
+  assert.equal(resolved.text.length, 1500)
+})
+
+test('project brief resolves from continuity nest', () => {
+  const resolved = resolveProjectBriefForPrompt({
+    continuity: {
+      projectBrief: 'staleness: fresh\n- (thread) FRIDAY reboot',
+      projectBriefMeta: { staleness: 'likely_stale' },
+    },
+  })
+  assert.match(resolved.text, /FRIDAY reboot/)
+  assert.equal(resolved.staleness, 'likely_stale')
 })

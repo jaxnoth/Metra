@@ -30,7 +30,7 @@ import {
   releaseSessionLease,
   retireSession,
 } from './session-cache.mjs'
-import { shouldIncludeJournalContinuity } from './prompt-build.mjs'
+import { resolveProjectBriefForPrompt, shouldIncludeJournalContinuity } from './prompt-build.mjs'
 
 const PORT = Number(process.env.METRA_ASK_PORT || 7381)
 const ENGINE = 'cursor'
@@ -242,6 +242,11 @@ function buildPrompt(userPrompt, context, options = {}) {
   const recallSid = context?.recallSessionId || context?.continuity?.recallSessionId
     ? String(context.recallSessionId || context.continuity.recallSessionId).trim()
     : ''
+  // MDR project brief: derived longitudinal slot (max 1500). Always eligible when present -
+  // not gated on journal session-cache miss (separate continuity layer).
+  const briefResolved = resolveProjectBriefForPrompt(context, 1500)
+  const projectBrief = briefResolved.text
+  const projectBriefStaleness = briefResolved.staleness
 
   const thinOrNone = quality === 'thin' || quality === 'none'
   const hasImageEvidence =
@@ -326,6 +331,13 @@ function buildPrompt(userPrompt, context, options = {}) {
           '',
           'Recent Ask turns from Session Journal (use for continued Ops conversation; do not invent beyond these):',
           recentBlock,
+        ].join('\n')
+      : null,
+    projectBrief
+      ? [
+          '',
+          `Project brief (derived MDR items${projectBriefStaleness ? `; staleness=${projectBriefStaleness}` : ''} - not Decisions/OCC; do not treat as authoritative):`,
+          projectBrief,
         ].join('\n')
       : null,
     recallBlock

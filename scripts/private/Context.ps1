@@ -263,6 +263,32 @@ function Export-MetraContextPack {
             }
         )
 
+        # Bite 3: derived MDR project brief (render-only slot; never Decisions/OCC).
+        $pack['projectBrief'] = $null
+        if ((Get-Command Get-MetraBriefShow -ErrorAction SilentlyContinue) -and
+            (Get-Command Test-MetraAskBriefEnabled -ErrorAction SilentlyContinue) -and
+            (Test-MetraAskBriefEnabled -MetraRoot $metraRoot)) {
+            try {
+                if (Get-Command Request-MetraProjectBriefCatchUpIfDue -ErrorAction SilentlyContinue) {
+                    Request-MetraProjectBriefCatchUpIfDue -Project $primaryName -MetraRoot $metraRoot -StartWorker | Out-Null
+                }
+                $briefShow = Get-MetraBriefShow -Project $primaryName -MetraRoot $metraRoot
+                if ($null -ne $briefShow -and -not [string]::IsNullOrWhiteSpace([string]$briefShow.text)) {
+                    $pack['projectBrief'] = [ordered]@{
+                        project   = [string]$briefShow.project
+                        staleness = [string]$briefShow.staleness
+                        charCount = [int]$briefShow.charCount
+                        openCount = [int]$briefShow.openCount
+                        text      = [string]$briefShow.text
+                        derived   = $true
+                    }
+                }
+            }
+            catch {
+                $pack['projectBrief'] = $null
+            }
+        }
+
         # Bounded Atlas citations (retrieve-on-demand). Never always-on / Ask / OCC.
         $pack['atlasCitations'] = @()
         try {
@@ -454,6 +480,15 @@ function Export-MetraContextPack {
             [void]$md.AppendLine(('  - decision: {0}' -f (Format-MetraContextText -Text $d.decision -MaxChars 300)))
             [void]$md.AppendLine(('  - why: {0}' -f (Format-MetraContextText -Text $d.why -MaxChars 300)))
         }
+    }
+    if ((Test-MetraOrderedKey -Pack $pack -Key 'projectBrief') -and $null -ne $pack.projectBrief) {
+        $pb = $pack.projectBrief
+        [void]$md.AppendLine('')
+        [void]$md.AppendLine(('## Project brief ({0}, {1})' -f [string]$pb.project, [string]$pb.staleness))
+        [void]$md.AppendLine('')
+        [void]$md.AppendLine([string]$pb.text)
+        [void]$md.AppendLine('')
+        [void]$md.AppendLine('_Derived MDR brief - not Decisions/OCC authority._')
     }
     if ((Test-MetraOrderedKey -Pack $pack -Key 'atlasCitations') -and @($pack.atlasCitations).Count -gt 0) {
         [void]$md.AppendLine('')

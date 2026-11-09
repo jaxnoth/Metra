@@ -37,7 +37,7 @@ param(
     [ValidateSet(
         'list', 'status', 'pull', 'fetch', 'run', 'new', 'apply', 'workspace',
         'audit', 'snapshot', 'selfdoc', 'ops', 'host', 'chats', 'roots', 'paths', 'export', 'routing',
-        'export-profile', 'import-profile', 'ctx', 'setup', 'verify', 'security-audit', 'unblock', 'tailscale', 'satellite', 'desk', 'profile', 'decisions', 'coverage', 'ask', 'capture', 'memory', 'narrative', 'watch', 'inspect', 'azdo', 'atlas', 'loom', 'yarn', 'plan-board', 'porter', 'autoprogram', 'future', 'help'
+        'export-profile', 'import-profile', 'ctx', 'setup', 'verify', 'security-audit', 'unblock', 'tailscale', 'satellite', 'desk', 'profile', 'decisions', 'coverage', 'ask', 'capture', 'memory', 'brief', 'narrative', 'watch', 'inspect', 'azdo', 'atlas', 'loom', 'yarn', 'plan-board', 'porter', 'autoprogram', 'future', 'help'
     )]
     [string]$Command = 'help',
 
@@ -280,7 +280,9 @@ Usage:
   .\metra.ps1 capture list|get|note|dismiss|promote|from-ask
       Capture Inbox (thin portfolio intake; promote on affirm - never auto).
   .\metra.ps1 memory worker|queue|nudge|summary
-      Detached memory worker drains ops\memory-queue.jsonl (Ask model summaries; briefs later).
+      Detached memory worker drains ops\memory-queue.jsonl (Ask summaries + project briefs).
+  .\metra.ps1 brief show|note|correct|pin|rebuild|refresh|close|catch-up
+      MDR structured project brief (items.json authoritative; brief.md render-only).
       summary <sessionId> reads ops\ask-summary cache. Kill switch: ask.continuity.modelSummary.enabled.
   .\metra.ps1 narrative packs|start|status|moves|move|narrate|end|list|expire|forget|lifecycle|compile
       Narrative Engine (Ink packs; state-first; Ask narrates only).
@@ -1160,6 +1162,24 @@ switch ($Command) {
         }
         else {
             $result | Format-Table -AutoSize
+        }
+    }
+
+    'brief' {
+        if (-not $Rest -or $Rest.Count -eq 0) {
+            throw "brief requires a subcommand. Example: .\metra.ps1 brief show Metra"
+        }
+        $sub = $Rest[0]
+        $subArgs = @()
+        if ($Rest.Count -gt 1) {
+            $subArgs = @($Rest[1..($Rest.Count - 1)])
+        }
+        $result = Invoke-MetraBriefCommand -Subcommand $sub -ArgsRest $subArgs
+        if ($sub -match '^(?i)(show)$') {
+            $result | Format-List project, root, updatedAt, staleness, openCount, itemCount, charCount, text, itemsPath
+        }
+        else {
+            $result | Format-List
         }
     }
 

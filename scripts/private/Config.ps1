@@ -156,6 +156,72 @@ function Get-MetraAskSummaryCachePath {
     return Join-Path (Get-MetraOpsAskSummaryRoot -MetraRoot $MetraRoot) ($safe + '.json')
 }
 
+function Get-MetraMdrBriefsRoot {
+    <#
+    .SYNOPSIS
+        Machine-local MDR briefs root (%LOCALAPPDATA%\Metra\MDR\briefs).
+    #>
+    [CmdletBinding()]
+    param([string]$MetraRoot = (Get-MetraRoot))
+    $root = Join-Path (Get-MetraMachineDataRoot -MetraRoot $MetraRoot) 'MDR\briefs'
+    [void][System.IO.Directory]::CreateDirectory($root)
+    return $root
+}
+
+function Get-MetraMdrBriefProjectDir {
+    <#
+    .SYNOPSIS
+        Per-project brief directory: MDR\briefs\<root>\<project>\
+    .NOTES
+        Segment names are alphanumeric/underscore/hyphen only (no dots) so '..' cannot escape.
+        Resolved path must stay under Get-MetraMdrBriefsRoot.
+    #>
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory)][string]$Project,
+        [string]$RootName = 'work',
+        [string]$MetraRoot = (Get-MetraRoot)
+    )
+    $safeRoot = ($RootName.Trim() -replace '[^A-Za-z0-9_-]', '_')
+    $safeRoot = $safeRoot.Trim('_')
+    if ([string]::IsNullOrWhiteSpace($safeRoot)) { $safeRoot = 'work' }
+    $safeProj = ($Project.Trim() -replace '[^A-Za-z0-9_-]', '_')
+    $safeProj = $safeProj.Trim('_')
+    if ([string]::IsNullOrWhiteSpace($safeProj)) {
+        throw 'Project is required for MDR brief path.'
+    }
+    $briefsRoot = Get-MetraMdrBriefsRoot -MetraRoot $MetraRoot
+    $dir = Join-Path $briefsRoot (Join-Path $safeRoot $safeProj)
+    $fullDir = [System.IO.Path]::GetFullPath($dir)
+    $fullRoot = [System.IO.Path]::GetFullPath($briefsRoot)
+    if (-not ($fullDir.StartsWith($fullRoot, [System.StringComparison]::OrdinalIgnoreCase))) {
+        throw "MDR brief path escaped briefs root for project '$Project'."
+    }
+    [void][System.IO.Directory]::CreateDirectory($fullDir)
+    [void][System.IO.Directory]::CreateDirectory((Join-Path $fullDir '.history'))
+    return $fullDir
+}
+
+function Get-MetraMdrBriefItemsPath {
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory)][string]$Project,
+        [string]$RootName = 'work',
+        [string]$MetraRoot = (Get-MetraRoot)
+    )
+    return Join-Path (Get-MetraMdrBriefProjectDir -Project $Project -RootName $RootName -MetraRoot $MetraRoot) 'items.json'
+}
+
+function Get-MetraMdrBriefRenderPath {
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory)][string]$Project,
+        [string]$RootName = 'work',
+        [string]$MetraRoot = (Get-MetraRoot)
+    )
+    return Join-Path (Get-MetraMdrBriefProjectDir -Project $Project -RootName $RootName -MetraRoot $MetraRoot) 'brief.md'
+}
+
 function Get-MetraOpsCapturePath {
     [CmdletBinding()]
     param([string]$MetraRoot = (Get-MetraRoot))
