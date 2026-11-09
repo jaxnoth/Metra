@@ -18,6 +18,12 @@ Entry shape:
 
 ---
 
+## 2026-11-09 - Ask Session Journal is per-session files (Bite 1b)
+
+- Decision: Canonical Ask Session Journal storage is `%LOCALAPPDATA%\Metra\ops\ask-sessions\<sessionId>.json` plus `index.json`. Per-session turn cap is 100. Global prune is post-write best-effort (30-day age and max 200 session files) and must not fail Ask append. `ask-log.json` remains as an idempotent migrate backup and is not deleted. `Get-MetraDeskAskLog` is a facade: sessions by `lastActivityAt` descending (`sessionId` ascending on ties); within each session newest-first for Limit windows. `Get-MetraDeskAskSessionTurns` stays chronological ascending.
+- Why: A single 100-turn global log evicted other sessions on busy days; readers that filtered by sessionId after Limit 100 still lost turns. Per-session files isolate retention without changing Capture/Ops CLI call sites.
+- See: `Ensure-MetraAskJournalStore`, `Invoke-MetraAskJournalMigrateFromLegacy`, `Add-MetraDeskAskEntry` in `scripts/private/Snapshot.ps1`; `Get-MetraOpsAskSessionsRoot` in `scripts/private/Config.ps1`; plan `metra_memory_continuity_b00667f1`
+
 ## 2026-11-09 - Ask Desk TeachingWanted is dynamic (Wire)
 
 - Decision: Desk Ask passes `-TeachingWanted` when `Test-MetraAskTeachingWanted` matches the current turn (exploring / how-it-works, onboarding/setup, stuck/blocked, explicit explain). It is not always-on Desk. Company and Deliver still load teaching when the pack is present. Incident / DeskStrict / IntentClass urgent stay off. Routine ops prompts without those cues stay flat.

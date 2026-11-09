@@ -1247,7 +1247,40 @@ function Get-MetraDeskAskLogPath {
 }
 
 function Get-MetraAskJournalSchemaVersion {
-    return 1
+    # v2 = per-session files under ops/ask-sessions (ask-log.json retained as migrate backup).
+    return 2
+}
+
+function Get-MetraAskJournalPerSessionTurnCap {
+    return 100
+}
+
+function Get-MetraAskJournalMaxSessionFiles {
+    return 200
+}
+
+function Get-MetraAskJournalSessionMaxAgeDays {
+    return 30
+}
+
+function Get-MetraAskSessionFileSafeId {
+    param([Parameter(Mandatory)][string]$SessionId)
+    $s = $SessionId.Trim()
+    if ([string]::IsNullOrWhiteSpace($s)) { return 'unknown' }
+    $safe = ($s -replace '[^A-Za-z0-9_-]', '_')
+    if ([string]::IsNullOrWhiteSpace($safe)) { return 'unknown' }
+    if ($safe.Length -gt 120) { $safe = $safe.Substring(0, 120) }
+    return $safe
+}
+
+function Get-MetraAskSessionFilePath {
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory)][string]$SessionId,
+        [string]$MetraRoot = (Get-MetraRoot)
+    )
+    $safe = Get-MetraAskSessionFileSafeId -SessionId $SessionId
+    return Join-Path (Get-MetraOpsAskSessionsRoot -MetraRoot $MetraRoot) ($safe + '.json')
 }
 
 function Get-MetraAskMessageMaxChars {
@@ -1584,38 +1617,398 @@ function Invoke-MetraWithNamedMutex {
     }
 }
 
-function Get-MetraDeskAskLog {
+function Read-MetraAskSessionFile {
     [CmdletBinding()]
     param(
-        [string]$MetraRoot = (Get-MetraRoot),
-        [int]$Limit = 20
+        [Parameter(Mandatory)][string]$Path
     )
-
-    $path = Get-MetraDeskAskLogPath -MetraRoot $MetraRoot
-    if (-not (Test-Path -LiteralPath $path)) {
-        return @()
+    if (-not (Test-Path -LiteralPath $Path)) {
+        return [PSCustomObject]@{
+            schemaVersion  = Get-MetraAskJournalSchemaVersion
+            sessionId      = $null
+            lastActivityAt = $null
+            items          = @()
+        }
     }
     try {
         $enc = Get-MetraUtf8NoBomEncoding
-        $text = [System.IO.File]::ReadAllText($path, $enc)
-        $raw = $text | ConvertFrom-Json
-        $items = @($raw)
+        $raw = [System.IO.File]::ReadAllText($Path, $enc) | ConvertFrom-Json
+        $items = @()
         if ($raw -is [PSCustomObject] -and $raw.PSObject.Properties.Name -contains 'items') {
             $items = @($raw.items)
         }
-        return @($items | Select-Object -First $Limit)
+        elseif ($raw -is [System.Collections.IEnumerable] -and -not ($raw -is [string])) {
+            $items = @($raw)
+        }
+        return [PSCustomObject]@{
+            schemaVersion  = [int](Get-MetraProp -Object $raw -Name 'schemaVersion' -Default (Get-MetraAskJournalSchemaVersion))
+            sessionId      = [string](Get-MetraProp -Object $raw -Name 'sessionId' -Default '')
+            lastActivityAt = [string](Get-MetraProp -Object $raw -Name 'lastActivityAt' -Default '')
+            items          = $items
+        }
+    }
+    catch {
+        return [PSCustomObject]@{
+            schemaVersion  = Get-MetraAskJournalSchemaVersion
+            sessionId      = $null
+            lastActivityAt = $null
+            items          = @()
+        }
+    }
+}
+
+function Write-MetraAskSessionFile {
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory)][string]$Path,
+        [Parameter(Mandatory)][string]$SessionId,
+        [Parameter(Mandatory)][AllowEmptyCollection()][object[]]$Items,
+        [string]$LastActivityAt
+    )
+    $dir = Split-Path -Parent $Path
+    if ($dir) { [void][System.IO.Directory]::CreateDirectory($dir) }
+    $at = if (-not [string]::IsNullOrWhiteSpace($LastActivityAt)) {
+        $LastActivityAt
+    }
+    else {
+        $last = @($Items | Select-Object -Last 1)
+        if ($last.Count -gt 0) {
+            [string](Get-MetraProp -Object $last[0] -Name 'at' -Default ((Get-Date).ToUniversalTime().ToString('o')))
+        }
+        else {
+            (Get-Date).ToUniversalTime().ToString('o')
+        }
+    }
+    $payload = [ordered]@{
+        schemaVersion  = Get-MetraAskJournalSchemaVersion
+        sessionId      = $SessionId
+        lastActivityAt = $at
+        items          = @($Items)
+    }
+    Write-MetraAtomicUtf8Text -Path $Path -Text (($payload | ConvertTo-Json -Depth 10) + "`r`n")
+}
+
+function Read-MetraAskSessionsIndex {
+    [CmdletBinding()]
+    param([string]$MetraRoot = (Get-MetraRoot))
+    $path = Get-MetraOpsAskSessionsIndexPath -MetraRoot $MetraRoot
+    if (-not (Test-Path -LiteralPath $path)) {
+        return [PSCustomObject]@{
+            schemaVersion = Get-MetraAskJournalSchemaVersion
+            migratedFrom  = $null
+            sessions      = @()
+        }
+    }
+    try {
+        $enc = Get-MetraUtf8NoBomEncoding
+        $raw = [System.IO.File]::ReadAllText($path, $enc) | ConvertFrom-Json
+        return [PSCustomObject]@{
+            schemaVersion = [int](Get-MetraProp -Object $raw -Name 'schemaVersion' -Default (Get-MetraAskJournalSchemaVersion))
+            migratedFrom  = Get-MetraProp -Object $raw -Name 'migratedFrom' -Default $null
+            sessions      = @((Get-MetraProp -Object $raw -Name 'sessions' -Default @()))
+        }
+    }
+    catch {
+        return [PSCustomObject]@{
+            schemaVersion = Get-MetraAskJournalSchemaVersion
+            migratedFrom  = $null
+            sessions      = @()
+        }
+    }
+}
+
+function Write-MetraAskSessionsIndex {
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory)]$Index,
+        [string]$MetraRoot = (Get-MetraRoot)
+    )
+    $path = Get-MetraOpsAskSessionsIndexPath -MetraRoot $MetraRoot
+    $payload = [ordered]@{
+        schemaVersion = Get-MetraAskJournalSchemaVersion
+        migratedFrom  = Get-MetraProp -Object $Index -Name 'migratedFrom' -Default $null
+        sessions      = @((Get-MetraProp -Object $Index -Name 'sessions' -Default @()))
+    }
+    Write-MetraAtomicUtf8Text -Path $path -Text (($payload | ConvertTo-Json -Depth 8) + "`r`n")
+}
+
+function Update-MetraAskSessionsIndexEntry {
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory)][string]$SessionId,
+        [Parameter(Mandatory)][string]$LastActivityAt,
+        [int]$TurnCount = 0,
+        [string]$MetraRoot = (Get-MetraRoot)
+    )
+    $index = Read-MetraAskSessionsIndex -MetraRoot $MetraRoot
+    $sessions = [System.Collections.Generic.List[object]]::new()
+    foreach ($row in @($index.sessions)) {
+        $sid = [string](Get-MetraProp -Object $row -Name 'sessionId' -Default '')
+        if ($sid -eq $SessionId) { continue }
+        [void]$sessions.Add($row)
+    }
+    [void]$sessions.Add([PSCustomObject]@{
+            sessionId      = $SessionId
+            lastActivityAt = $LastActivityAt
+            turnCount      = $TurnCount
+            file           = (Get-MetraAskSessionFileSafeId -SessionId $SessionId) + '.json'
+        })
+    $index = [PSCustomObject]@{
+        schemaVersion = Get-MetraAskJournalSchemaVersion
+        migratedFrom  = $index.migratedFrom
+        sessions      = @($sessions)
+    }
+    Write-MetraAskSessionsIndex -Index $index -MetraRoot $MetraRoot
+}
+
+function ConvertFrom-MetraLegacyAskLogItems {
+    [CmdletBinding()]
+    param([string]$MetraRoot = (Get-MetraRoot))
+    $path = Get-MetraDeskAskLogPath -MetraRoot $MetraRoot
+    if (-not (Test-Path -LiteralPath $path)) { return @() }
+    try {
+        $enc = Get-MetraUtf8NoBomEncoding
+        $raw = [System.IO.File]::ReadAllText($path, $enc) | ConvertFrom-Json
+        if ($raw -is [PSCustomObject] -and $raw.PSObject.Properties.Name -contains 'items') {
+            return @($raw.items)
+        }
+        return @($raw)
     }
     catch {
         return @()
     }
 }
 
+function Invoke-MetraAskJournalMigrateFromLegacy {
+    <#
+    .SYNOPSIS
+        Idempotent one-shot: split ask-log.json into per-session files. Keeps ask-log.json as backup.
+    #>
+    [CmdletBinding()]
+    param([string]$MetraRoot = (Get-MetraRoot))
+
+    $index = Read-MetraAskSessionsIndex -MetraRoot $MetraRoot
+    $legacyPath = Get-MetraDeskAskLogPath -MetraRoot $MetraRoot
+    $legacyStamp = $null
+    if (Test-Path -LiteralPath $legacyPath) {
+        try { $legacyStamp = (Get-Item -LiteralPath $legacyPath).LastWriteTimeUtc.ToString('o') } catch { $legacyStamp = 'present' }
+    }
+    $already = [string](Get-MetraProp -Object $index -Name 'migratedFrom' -Default '')
+    if ($already -and $legacyStamp -and $already -eq $legacyStamp -and @($index.sessions).Count -gt 0) {
+        return [PSCustomObject]@{ Action = 'skipped'; Reason = 'already-migrated' }
+    }
+    if ($already -and -not $legacyStamp -and @($index.sessions).Count -gt 0) {
+        return [PSCustomObject]@{ Action = 'skipped'; Reason = 'sessions-present' }
+    }
+
+    $legacyItems = @(ConvertFrom-MetraLegacyAskLogItems -MetraRoot $MetraRoot)
+    if ($legacyItems.Count -eq 0) {
+        if (-not $already) {
+            Write-MetraAskSessionsIndex -Index ([PSCustomObject]@{
+                    schemaVersion = Get-MetraAskJournalSchemaVersion
+                    migratedFrom  = $(if ($legacyStamp) { $legacyStamp } else { 'empty' })
+                    sessions      = @($index.sessions)
+                }) -MetraRoot $MetraRoot
+        }
+        return [PSCustomObject]@{ Action = 'noop'; Reason = 'no-legacy-items' }
+    }
+
+    $groups = @($legacyItems | Group-Object -Property {
+            $sid = [string](Get-MetraProp -Object $_ -Name 'sessionId' -Default '')
+            if ([string]::IsNullOrWhiteSpace($sid)) { [string](Get-MetraProp -Object $_ -Name 'id' -Default 'unknown') } else { $sid }
+        })
+
+    # Idempotent: if every legacy session already has a session file covering the legacy turn count, skip.
+    $covered = $true
+    foreach ($g in $groups) {
+        $sid = [string]$g.Name
+        $path = Get-MetraAskSessionFilePath -SessionId $sid -MetraRoot $MetraRoot
+        $existing = Read-MetraAskSessionFile -Path $path
+        if (@($existing.items).Count -lt @($g.Group).Count) {
+            $covered = $false
+            break
+        }
+    }
+    if ($covered -and @($index.sessions).Count -gt 0) {
+        Write-MetraAskSessionsIndex -Index ([PSCustomObject]@{
+                schemaVersion = Get-MetraAskJournalSchemaVersion
+                migratedFrom  = $(if ($legacyStamp) { $legacyStamp } else { $already })
+                sessions      = @($index.sessions)
+            }) -MetraRoot $MetraRoot
+        return [PSCustomObject]@{ Action = 'skipped'; Reason = 'legacy-sessions-covered' }
+    }
+
+    $byId = @{}
+    foreach ($row in @($index.sessions)) {
+        $sid0 = [string](Get-MetraProp -Object $row -Name 'sessionId' -Default '')
+        if ($sid0) { $byId[$sid0] = $row }
+    }
+
+    foreach ($g in $groups) {
+        $sid = [string]$g.Name
+        $ordered = @($g.Group | Sort-Object {
+                $ti = Get-MetraProp -Object $_ -Name 'turnIndex' -Default $null
+                if ($null -ne $ti) { [int]$ti } else { 0 }
+            }, { [string](Get-MetraProp -Object $_ -Name 'at' -Default '') })
+        $cap = Get-MetraAskJournalPerSessionTurnCap
+        if ($ordered.Count -gt $cap) {
+            $ordered = @($ordered | Select-Object -Last $cap)
+        }
+        $lastAt = [string](Get-MetraProp -Object ($ordered | Select-Object -Last 1) -Name 'at' -Default ((Get-Date).ToUniversalTime().ToString('o')))
+        $path = Get-MetraAskSessionFilePath -SessionId $sid -MetraRoot $MetraRoot
+        # Do not clobber a newer per-session file if migrate re-runs after live writes.
+        $existing = Read-MetraAskSessionFile -Path $path
+        if (@($existing.items).Count -gt 0) {
+            $exLast = [string]$existing.lastActivityAt
+            if ($exLast -and $lastAt -and ($exLast -gt $lastAt)) {
+                $ordered = @($existing.items)
+                $lastAt = $exLast
+            }
+            elseif (@($existing.items).Count -ge $ordered.Count) {
+                $ordered = @($existing.items)
+                if ($exLast) { $lastAt = $exLast }
+            }
+        }
+        Write-MetraAskSessionFile -Path $path -SessionId $sid -Items $ordered -LastActivityAt $lastAt
+        $byId[$sid] = [PSCustomObject]@{
+            sessionId      = $sid
+            lastActivityAt = $lastAt
+            turnCount      = $ordered.Count
+            file           = (Get-MetraAskSessionFileSafeId -SessionId $sid) + '.json'
+        }
+    }
+
+    Write-MetraAskSessionsIndex -Index ([PSCustomObject]@{
+            schemaVersion = Get-MetraAskJournalSchemaVersion
+            migratedFrom  = $(if ($legacyStamp) { $legacyStamp } else { 'migrated' })
+            sessions      = @($byId.Values)
+        }) -MetraRoot $MetraRoot
+
+    return [PSCustomObject]@{
+        Action       = 'migrated'
+        SessionCount = $byId.Count
+        TurnCount    = $legacyItems.Count
+        BackupPath   = $legacyPath
+    }
+}
+
+function Invoke-MetraAskJournalPruneBestEffort {
+    <#
+    .SYNOPSIS
+        Post-write best-effort prune of ask-sessions (age + max files). Never throws to callers.
+    #>
+    [CmdletBinding()]
+    param([string]$MetraRoot = (Get-MetraRoot))
+
+    try {
+        $maxAgeDays = Get-MetraAskJournalSessionMaxAgeDays
+        $maxFiles = Get-MetraAskJournalMaxSessionFiles
+        $cutoff = (Get-Date).ToUniversalTime().AddDays(-1 * $maxAgeDays)
+        $index = Read-MetraAskSessionsIndex -MetraRoot $MetraRoot
+        $kept = [System.Collections.Generic.List[object]]::new()
+        foreach ($row in @($index.sessions)) {
+            $sid = [string](Get-MetraProp -Object $row -Name 'sessionId' -Default '')
+            $atText = [string](Get-MetraProp -Object $row -Name 'lastActivityAt' -Default '')
+            $drop = $false
+            if ($atText) {
+                try {
+                    $at = [datetime]::Parse($atText, $null, [System.Globalization.DateTimeStyles]::RoundtripKind).ToUniversalTime()
+                    if ($at -lt $cutoff) { $drop = $true }
+                }
+                catch { }
+            }
+            if ($drop -and $sid) {
+                $path = Get-MetraAskSessionFilePath -SessionId $sid -MetraRoot $MetraRoot
+                if (Test-Path -LiteralPath $path) {
+                    Remove-Item -LiteralPath $path -Force -ErrorAction SilentlyContinue
+                }
+                continue
+            }
+            [void]$kept.Add($row)
+        }
+        $ordered = @($kept | Sort-Object `
+                @{ Expression = { [string](Get-MetraProp -Object $_ -Name 'lastActivityAt' -Default '') }; Descending = $true },
+                @{ Expression = { [string](Get-MetraProp -Object $_ -Name 'sessionId' -Default '') }; Descending = $false })
+        if ($ordered.Count -gt $maxFiles) {
+            $dropRows = @($ordered | Select-Object -Skip $maxFiles)
+            $ordered = @($ordered | Select-Object -First $maxFiles)
+            foreach ($row in $dropRows) {
+                $sid = [string](Get-MetraProp -Object $row -Name 'sessionId' -Default '')
+                if (-not $sid) { continue }
+                $path = Get-MetraAskSessionFilePath -SessionId $sid -MetraRoot $MetraRoot
+                if (Test-Path -LiteralPath $path) {
+                    Remove-Item -LiteralPath $path -Force -ErrorAction SilentlyContinue
+                }
+            }
+        }
+        Write-MetraAskSessionsIndex -Index ([PSCustomObject]@{
+                schemaVersion = Get-MetraAskJournalSchemaVersion
+                migratedFrom  = $index.migratedFrom
+                sessions      = $ordered
+            }) -MetraRoot $MetraRoot
+    }
+    catch {
+        # Best-effort: never fail Ask logging.
+    }
+}
+
+function Ensure-MetraAskJournalStore {
+    [CmdletBinding()]
+    param([string]$MetraRoot = (Get-MetraRoot))
+    [void](Get-MetraOpsAskSessionsRoot -MetraRoot $MetraRoot)
+    [void](Invoke-MetraAskJournalMigrateFromLegacy -MetraRoot $MetraRoot)
+}
+
+function Get-MetraDeskAskLog {
+    <#
+    .SYNOPSIS
+        Aggregate Session Journal turns (facade over per-session files).
+    .NOTES
+        Order contract: sessions by lastActivityAt descending (sessionId ascending on ties);
+        within each session, turns newest-first for Limit window compatibility with prior
+        ask-log.json. Use Get-MetraDeskAskSessionTurns for ascending per-session order.
+    #>
+    [CmdletBinding()]
+    param(
+        [string]$MetraRoot = (Get-MetraRoot),
+        [int]$Limit = 20
+    )
+
+    Ensure-MetraAskJournalStore -MetraRoot $MetraRoot
+    $index = Read-MetraAskSessionsIndex -MetraRoot $MetraRoot
+    $sessions = @($index.sessions | Sort-Object `
+            @{ Expression = { [string](Get-MetraProp -Object $_ -Name 'lastActivityAt' -Default '') }; Descending = $true },
+            @{ Expression = { [string](Get-MetraProp -Object $_ -Name 'sessionId' -Default '') }; Descending = $false })
+
+    $flat = [System.Collections.Generic.List[object]]::new()
+    foreach ($row in $sessions) {
+        $sid = [string](Get-MetraProp -Object $row -Name 'sessionId' -Default '')
+        if (-not $sid) { continue }
+        $path = Get-MetraAskSessionFilePath -SessionId $sid -MetraRoot $MetraRoot
+        $file = Read-MetraAskSessionFile -Path $path
+        $turnsAsc = @($file.items | Sort-Object {
+                $ti = Get-MetraProp -Object $_ -Name 'turnIndex' -Default $null
+                if ($null -ne $ti) { [int]$ti } else { 0 }
+            }, { [string](Get-MetraProp -Object $_ -Name 'at' -Default '') })
+        # Newest-first within session for aggregate Limit.
+        foreach ($t in @($turnsAsc | Sort-Object {
+                    $ti = Get-MetraProp -Object $_ -Name 'turnIndex' -Default $null
+                    if ($null -ne $ti) { [int]$ti } else { 0 }
+                } -Descending)) {
+            [void]$flat.Add($t)
+        }
+    }
+    if ($Limit -lt 1) { return @($flat) }
+    return @($flat | Select-Object -First $Limit)
+}
+
 function Add-MetraDeskAskEntry {
     <#
     .SYNOPSIS
-        Appends one Session Journal turn (canonical Ask evidence). Cap 100 recent turns.
+        Appends one Session Journal turn to the session file (cap 100 turns per session).
     .NOTES
-        Read-modify-write is guarded by a named mutex and written atomically.
+        Mutex-guarded. Prune is post-write best-effort and must not fail the append.
+        Legacy ask-log.json is not rewritten (kept as migrate backup).
     #>
     [CmdletBinding()]
     param(
@@ -1636,8 +2029,7 @@ function Add-MetraDeskAskEntry {
     )
 
     return Invoke-MetraWithNamedMutex -Name 'ask-journal' -Script {
-        $path = Get-MetraDeskAskLogPath -MetraRoot $MetraRoot
-        $existing = @(Get-MetraDeskAskLog -MetraRoot $MetraRoot -Limit 100)
+        Ensure-MetraAskJournalStore -MetraRoot $MetraRoot
         $sess = if (-not [string]::IsNullOrWhiteSpace($SessionId)) {
             $SessionId.Trim()
         }
@@ -1645,10 +2037,15 @@ function Add-MetraDeskAskEntry {
             [guid]::NewGuid().ToString('N')
         }
 
+        $path = Get-MetraAskSessionFilePath -SessionId $sess -MetraRoot $MetraRoot
+        $file = Read-MetraAskSessionFile -Path $path
+        $existing = @($file.items | Sort-Object {
+                $ti = Get-MetraProp -Object $_ -Name 'turnIndex' -Default $null
+                if ($null -ne $ti) { [int]$ti } else { 0 }
+            }, { [string](Get-MetraProp -Object $_ -Name 'at' -Default '') })
+
         $maxIndex = 0
         foreach ($row in $existing) {
-            $rowSess = [string](Get-MetraProp -Object $row -Name 'sessionId' -Default '')
-            if ($rowSess -ne $sess) { continue }
             $ti = Get-MetraProp -Object $row -Name 'turnIndex' -Default $null
             if ($null -ne $ti) {
                 $n = [int]$ti
@@ -1659,7 +2056,6 @@ function Add-MetraDeskAskEntry {
         $scrubbedPrompt = Invoke-MetraAskSecretsScrubText -Text $Prompt.Trim()
         $scrubbedMessage = Invoke-MetraAskSecretsScrubText -Text ([string]$Message)
         $cleanMessage = Truncate-MetraAskJournalMessage -Message (Remove-MetraAskUiChrome -Message ([string]$scrubbedMessage.Text))
-        # Journal image pointers: id + fileName only (never path / mime / binary / base64).
         $journalImages = @(
             foreach ($img in @($Images)) {
                 if ($null -eq $img) { continue }
@@ -1676,7 +2072,7 @@ function Add-MetraDeskAskEntry {
             id            = [guid]::NewGuid().ToString('N')
             sessionId     = $sess
             turnIndex     = $maxIndex + 1
-            at            = (Get-Date).ToString('o')
+            at            = (Get-Date).ToUniversalTime().ToString('o')
             prompt        = [string]$scrubbedPrompt.Text
             message       = $cleanMessage
             handoff       = $Handoff
@@ -1690,12 +2086,14 @@ function Add-MetraDeskAskEntry {
             attachmentIds = @($AttachmentIds | ForEach-Object { [string]$_ } | Where-Object { $_ })
             images        = $journalImages
         }
-        $items = @($entry) + @($existing) | Select-Object -First 100
-        $payload = [ordered]@{
-            schemaVersion = Get-MetraAskJournalSchemaVersion
-            items         = @($items)
+        $items = @($existing) + @($entry)
+        $cap = Get-MetraAskJournalPerSessionTurnCap
+        if ($items.Count -gt $cap) {
+            $items = @($items | Select-Object -Last $cap)
         }
-        Write-MetraAtomicUtf8Text -Path $path -Text (($payload | ConvertTo-Json -Depth 10) + "`r`n")
+        Write-MetraAskSessionFile -Path $path -SessionId $sess -Items $items -LastActivityAt $entry.at
+        Update-MetraAskSessionsIndexEntry -SessionId $sess -LastActivityAt $entry.at -TurnCount $items.Count -MetraRoot $MetraRoot
+        Invoke-MetraAskJournalPruneBestEffort -MetraRoot $MetraRoot
         return $entry
     }
 }
@@ -1707,21 +2105,18 @@ function Get-MetraDeskAskSessionSummaries {
         [int]$Limit = 12
     )
 
-    $turns = @(Get-MetraDeskAskLog -MetraRoot $MetraRoot -Limit 100)
-    $groups = $turns | Group-Object -Property {
-        $sid = [string](Get-MetraProp -Object $_ -Name 'sessionId' -Default '')
-        if ([string]::IsNullOrWhiteSpace($sid)) { [string]$_.id } else { $sid }
-    }
-    $summaries = foreach ($g in $groups) {
-        $ordered = @($g.Group | Sort-Object {
-                $ti = Get-MetraProp -Object $_ -Name 'turnIndex' -Default $null
-                if ($null -ne $ti) { [int]$ti } else { 0 }
-            }, { [string]$_.at })
+    Ensure-MetraAskJournalStore -MetraRoot $MetraRoot
+    $index = Read-MetraAskSessionsIndex -MetraRoot $MetraRoot
+    $summaries = foreach ($row in @($index.sessions)) {
+        $sid = [string](Get-MetraProp -Object $row -Name 'sessionId' -Default '')
+        if (-not $sid) { continue }
+        $ordered = @(Get-MetraDeskAskSessionTurns -SessionId $sid -MetraRoot $MetraRoot -Limit 0)
+        if ($ordered.Count -eq 0) { continue }
         $first = $ordered | Select-Object -First 1
         $last = $ordered | Select-Object -Last 1
         [PSCustomObject]@{
-            id         = [string]$g.Name
-            sessionId  = [string]$g.Name
+            id         = $sid
+            sessionId  = $sid
             turnCount  = $ordered.Count
             at         = [string](Get-MetraProp -Object $last -Name 'at' -Default '')
             prompt     = [string](Get-MetraProp -Object $first -Name 'prompt' -Default '')
@@ -1753,7 +2148,7 @@ function Truncate-MetraAskContinuitySnippet {
 function Get-MetraDeskAskSessionTurns {
     <#
     .SYNOPSIS
-        Ordered Session Journal turns for one Ask sessionId (oldest first).
+        Ordered Session Journal turns for one Ask sessionId (oldest first / chronological).
     #>
     [CmdletBinding()]
     param(
@@ -1765,13 +2160,13 @@ function Get-MetraDeskAskSessionTurns {
     $sid = $SessionId.Trim()
     if ([string]::IsNullOrWhiteSpace($sid)) { return @() }
 
-    $turns = @(Get-MetraDeskAskLog -MetraRoot $MetraRoot -Limit 100 | Where-Object {
-            [string](Get-MetraProp -Object $_ -Name 'sessionId' -Default '') -eq $sid
-        })
-    $ordered = @($turns | Sort-Object {
+    Ensure-MetraAskJournalStore -MetraRoot $MetraRoot
+    $path = Get-MetraAskSessionFilePath -SessionId $sid -MetraRoot $MetraRoot
+    $file = Read-MetraAskSessionFile -Path $path
+    $ordered = @($file.items | Sort-Object {
             $ti = Get-MetraProp -Object $_ -Name 'turnIndex' -Default $null
             if ($null -ne $ti) { [int]$ti } else { 0 }
-        }, { [string]$_.at })
+        }, { [string](Get-MetraProp -Object $_ -Name 'at' -Default '') })
     if ($Limit -gt 0 -and $ordered.Count -gt $Limit) {
         return @($ordered | Select-Object -Last $Limit)
     }
@@ -1803,7 +2198,10 @@ function Search-MetraDeskAskJournal {
         $tokens = @($q.ToLowerInvariant())
     }
 
-    $hits = foreach ($row in @(Get-MetraDeskAskLog -MetraRoot $MetraRoot -Limit 100)) {
+    Ensure-MetraAskJournalStore -MetraRoot $MetraRoot
+    # Search all retained sessions (not a global 100-turn window).
+    $all = @(Get-MetraDeskAskLog -MetraRoot $MetraRoot -Limit 0)
+    $hits = foreach ($row in $all) {
         $hay = (
             [string](Get-MetraProp -Object $row -Name 'prompt' -Default '') + ' ' +
             [string](Get-MetraProp -Object $row -Name 'message' -Default '')

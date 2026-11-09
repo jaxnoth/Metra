@@ -2358,7 +2358,7 @@ Describe 'HTML Ops desk payload' {
                     -Handoff ([PSCustomObject]@{ where = 'Metra'; kind = 'route' }) `
                     -SessionId 'sess-utf8' -Origin loopback -Client ops-web -Answered $true -MetraRoot $root
                 $entry.prompt | Should -Be $prompt
-                $path = Join-Path $root 'ops\ask-log.json'
+                $path = Get-MetraAskSessionFilePath -SessionId 'sess-utf8' -MetraRoot $root
                 $enc = Get-MetraUtf8NoBomEncoding
                 $disk = [System.IO.File]::ReadAllText($path, $enc)
                 $disk | Should -Match "aren't"
@@ -3842,6 +3842,70 @@ Hello from Ask.
         }
     }
 
+    It 'per-session journal keeps two 80-turn sessions and migrates ask-log.json idempotently' {
+        InModuleScope Metra {
+            $root = Join-Path ([IO.Path]::GetTempPath()) ("metra-ask1b-" + [guid]::NewGuid().ToString('n'))
+            New-Item -ItemType Directory -Path (Join-Path $root 'docs') -Force | Out-Null
+            try {
+                1..80 | ForEach-Object {
+                    Add-MetraDeskAskEntry -Prompt "alpha $_" -Message "a-$_" `
+                        -Handoff ([PSCustomObject]@{ where = 'Metra' }) `
+                        -SessionId 'sess-alpha' -Origin loopback -Client ops-web -Answered $true -MetraRoot $root | Out-Null
+                }
+                1..80 | ForEach-Object {
+                    Add-MetraDeskAskEntry -Prompt "beta $_" -Message "b-$_" `
+                        -Handoff ([PSCustomObject]@{ where = 'PBI' }) `
+                        -SessionId 'sess-beta' -Origin loopback -Client ops-web -Answered $true -MetraRoot $root | Out-Null
+                }
+                $alpha = @(Get-MetraDeskAskSessionTurns -SessionId 'sess-alpha' -MetraRoot $root)
+                $beta = @(Get-MetraDeskAskSessionTurns -SessionId 'sess-beta' -MetraRoot $root)
+                $alpha.Count | Should -Be 80
+                $beta.Count | Should -Be 80
+                $alpha[0].turnIndex | Should -Be 1
+                $alpha[-1].turnIndex | Should -Be 80
+                $alpha[0].prompt | Should -Match 'alpha'
+                $beta[0].prompt | Should -Match 'beta'
+
+                $hits = @(Search-MetraDeskAskJournal -Query 'alpha 40' -MetraRoot $root -Limit 10)
+                ($hits | Where-Object { $_.sessionId -eq 'sess-alpha' }).Count | Should -BeGreaterThan 0
+
+                # Facade order: sessions by activity desc; within session newest-first.
+                $log = @(Get-MetraDeskAskLog -MetraRoot $root -Limit 5)
+                $log.Count | Should -Be 5
+                $log[0].sessionId | Should -Be 'sess-beta'
+
+                # Seed legacy ask-log.json and re-migrate twice (idempotent; keeps backup).
+                $legacyPath = Get-MetraDeskAskLogPath -MetraRoot $root
+                $legacyPayload = [ordered]@{
+                    schemaVersion = 1
+                    items         = @(
+                        [PSCustomObject]@{
+                            id = 'legacy1'; sessionId = 'sess-legacy'; turnIndex = 1
+                            at = '2020-01-01T00:00:00Z'; prompt = 'legacy gateway'; message = 'ok'
+                        }
+                    )
+                }
+                Write-MetraAtomicUtf8Text -Path $legacyPath -Text (($legacyPayload | ConvertTo-Json -Depth 6) + "`r`n")
+                # Clear migratedFrom so migrate runs again against new stamp.
+                Write-MetraAskSessionsIndex -Index ([PSCustomObject]@{
+                        schemaVersion = 2
+                        migratedFrom  = $null
+                        sessions      = @((Read-MetraAskSessionsIndex -MetraRoot $root).sessions)
+                    }) -MetraRoot $root
+                $m1 = Invoke-MetraAskJournalMigrateFromLegacy -MetraRoot $root
+                $m1.Action | Should -BeIn @('migrated', 'skipped')
+                $m2 = Invoke-MetraAskJournalMigrateFromLegacy -MetraRoot $root
+                $m2.Action | Should -Be 'skipped'
+                Test-Path -LiteralPath $legacyPath | Should -BeTrue
+                $legacyTurns = @(Get-MetraDeskAskSessionTurns -SessionId 'sess-legacy' -MetraRoot $root)
+                $legacyTurns.Count | Should -BeGreaterThan 0
+            }
+            finally {
+                Remove-Item -LiteralPath $root -Recurse -Force -ErrorAction SilentlyContinue
+            }
+        }
+    }
+
     It 'creates thin capture from askTurn without duplicating full answer' {
         InModuleScope Metra {
             $root = Join-Path ([IO.Path]::GetTempPath()) ("metra-cap-" + [guid]::NewGuid().ToString('n'))
@@ -4220,7 +4284,7 @@ Describe 'Ask secrets scrub' {
                 $entry.prompt | Should -Match '\[REDACTED:github\]'
                 $entry.prompt | Should -Not -Match [regex]::Escape($gh)
                 $entry.message | Should -Match '\[REDACTED:bearer\]'
-                $disk = Get-Content -LiteralPath (Join-Path $root 'ops\ask-log.json') -Raw
+                $disk = Get-Content -LiteralPath (Get-MetraAskSessionFilePath -SessionId 'sess-secrets' -MetraRoot $root) -Raw
                 $disk | Should -Not -Match [regex]::Escape($gh)
                 $disk | Should -Not -Match [regex]::Escape($jwtHdr)
             }
@@ -5722,7 +5786,7 @@ Describe 'Ask image intake - Ladder 3' {
                 ($entry.images[0].PSObject.Properties.Name) | Should -Not -Contain 'path'
                 ($entry.images[0].PSObject.Properties.Name) | Should -Not -Contain 'mimeType'
                 ($entry.images[0].PSObject.Properties.Name) | Should -Not -Contain 'dataBase64'
-                $raw = Get-Content -LiteralPath (Get-MetraDeskAskLogPath -MetraRoot $tmp) -Raw -Encoding UTF8
+                $raw = Get-Content -LiteralPath (Get-MetraAskSessionFilePath -SessionId 'l3-journal' -MetraRoot $tmp) -Raw -Encoding UTF8
                 $raw | Should -Not -Match 'C:\\secret\\path'
                 $raw | Should -Not -Match 'dataBase64'
                 $raw | Should -Not -Match 'image/png'

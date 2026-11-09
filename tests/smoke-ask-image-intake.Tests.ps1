@@ -41,7 +41,7 @@ Describe 'Ask image intake smoke - Ladder 3' {
                     -Images $resolved.journal `
                     -MetraRoot $tmp
                 @($entry.images).Count | Should -Be 1
-                $raw = Get-Content -LiteralPath (Get-MetraDeskAskLogPath -MetraRoot $tmp) -Raw -Encoding UTF8
+                $raw = Get-Content -LiteralPath (Get-MetraAskSessionFilePath -SessionId 'l3-smoke' -MetraRoot $tmp) -Raw -Encoding UTF8
                 $raw | Should -Match 'orion-dashboard'
                 $raw | Should -Not -Match 'dataBase64'
                 $raw | Should -Not -Match 'ops-place-quarantine'

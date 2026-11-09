@@ -99,6 +99,24 @@ function Get-MetraOpsAskLogPath {
         -LegacyRelativeUnderDocs 'ops-ask-log.local.json'
 }
 
+function Get-MetraOpsAskSessionsRoot {
+    <#
+    .SYNOPSIS
+        Per-session Ask journal directory (%LOCALAPPDATA%\Metra\ops\ask-sessions).
+    #>
+    [CmdletBinding()]
+    param([string]$MetraRoot = (Get-MetraRoot))
+    $root = Join-Path (Get-MetraMachineDataRoot -MetraRoot $MetraRoot) 'ops\ask-sessions'
+    [void][System.IO.Directory]::CreateDirectory($root)
+    return $root
+}
+
+function Get-MetraOpsAskSessionsIndexPath {
+    [CmdletBinding()]
+    param([string]$MetraRoot = (Get-MetraRoot))
+    return Join-Path (Get-MetraOpsAskSessionsRoot -MetraRoot $MetraRoot) 'index.json'
+}
+
 function Get-MetraOpsCapturePath {
     [CmdletBinding()]
     param([string]$MetraRoot = (Get-MetraRoot))
