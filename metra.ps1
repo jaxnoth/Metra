@@ -37,7 +37,7 @@ param(
     [ValidateSet(
         'list', 'status', 'pull', 'fetch', 'run', 'new', 'apply', 'workspace',
         'audit', 'snapshot', 'selfdoc', 'ops', 'host', 'chats', 'roots', 'paths', 'export', 'routing',
-        'export-profile', 'import-profile', 'ctx', 'setup', 'verify', 'security-audit', 'unblock', 'tailscale', 'satellite', 'desk', 'profile', 'decisions', 'coverage', 'ask', 'capture', 'narrative', 'watch', 'inspect', 'azdo', 'atlas', 'loom', 'yarn', 'plan-board', 'porter', 'autoprogram', 'future', 'help'
+        'export-profile', 'import-profile', 'ctx', 'setup', 'verify', 'security-audit', 'unblock', 'tailscale', 'satellite', 'desk', 'profile', 'decisions', 'coverage', 'ask', 'capture', 'memory', 'narrative', 'watch', 'inspect', 'azdo', 'atlas', 'loom', 'yarn', 'plan-board', 'porter', 'autoprogram', 'future', 'help'
     )]
     [string]$Command = 'help',
 
@@ -279,6 +279,9 @@ Usage:
       Ask engine: Ollama recommended path; Cursor premium; enterprise when configured.
   .\metra.ps1 capture list|get|note|dismiss|promote|from-ask
       Capture Inbox (thin portfolio intake; promote on affirm - never auto).
+  .\metra.ps1 memory worker|queue|nudge|summary
+      Detached memory worker drains ops\memory-queue.jsonl (Ask model summaries; briefs later).
+      summary <sessionId> reads ops\ask-summary cache. Kill switch: ask.continuity.modelSummary.enabled.
   .\metra.ps1 narrative packs|start|status|moves|move|narrate|end|list|expire|forget|lifecycle|compile
       Narrative Engine (Ink packs; state-first; Ask narrates only).
   .\metra.ps1 coverage
@@ -777,6 +780,9 @@ switch ($Command) {
         else {
             $params.Limit = $Limit
         }
+        if (Get-Command Request-MetraMemoryWorkerNudge -ErrorAction SilentlyContinue) {
+            try { Request-MetraMemoryWorkerNudge | Out-Null } catch { }
+        }
         Export-MetraContext @params | Format-List
     }
 
@@ -1136,6 +1142,24 @@ switch ($Command) {
             else {
                 $result | Format-Table -AutoSize
             }
+        }
+    }
+
+    'memory' {
+        if (-not $Rest -or $Rest.Count -eq 0) {
+            throw "memory requires a subcommand. Example: .\metra.ps1 memory worker"
+        }
+        $sub = $Rest[0]
+        $subArgs = @()
+        if ($Rest.Count -gt 1) {
+            $subArgs = @($Rest[1..($Rest.Count - 1)])
+        }
+        $result = Invoke-MetraMemoryCommand -Subcommand $sub -ArgsRest $subArgs
+        if ($sub -match '^(?i)(worker|nudge|summary)$') {
+            $result | Format-List
+        }
+        else {
+            $result | Format-Table -AutoSize
         }
     }
 

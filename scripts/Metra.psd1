@@ -245,6 +245,8 @@
         'Invoke-MetraMachineRoleSetup',
         'Set-MetraConfiguredOpsBaseUrl',
         'Invoke-MetraCaptureCommand',
+        'Invoke-MetraMemoryCommand',
+        'Request-MetraMemoryWorkerNudge',
         'Invoke-MetraNarrativeCommand',
         'Invoke-MetraFutureCommand',
         'Invoke-MetraLoomCommand',

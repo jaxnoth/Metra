@@ -18,6 +18,12 @@ Entry shape:
 
 ---
 
+## 2026-11-09 - Ask model summaries are derived via detached memory worker (Bite 2)
+
+- Decision: In-session Ask model summaries live in `%LOCALAPPDATA%\Metra\ops\ask-summary\<sessionId>.json` and are **derived evidence**, not journal authority. Refresh enqueues to `ops\memory-queue.jsonl` every K=8 turns and is drained by detached `.\metra.ps1 memory worker` (Inspect pin, then ask-fallback, then extractive cited fallback). Queue identity includes type/sessionId/throughTurnIndex/sourceRevision so crash/restart may recompute but must not apply a duplicate logical update. Cache writes are **monotonic** on `lastSummarizedTurnIndex` (stale jobs must not regress). Ask never waits on the summarizer; hang/fail keeps extractive continuity. Per-item summarizer work is hard-bounded (`item_timeout` parks the item) for both injected and production summarizer paths. The worker lock is a named mutex plus lease file (pid + processName + processStartTimeUtc): abandoned mutex is reclaimed; a fingerprint mismatch clears the lease without killing; only a verified worker past max hold may be Stop-Process'd. Kill switch: `ask.continuity.modelSummary.enabled` (default on).
+- Why: Long sessions needed stronger compression than extractive bullets alone, without blocking Ask or inventing a second memory authority. A hung summarizer must not freeze the worker forever, and stale-lease reclaim must not kill an unrelated PID reuse victim.
+- See: `scripts/private/MemoryWorker.ps1`; `Get-MetraAskContinuityContext` in `scripts/private/Snapshot.ps1`; plan `metra_memory_continuity_b00667f1`
+
 ## 2026-11-09 - Ask Session Journal is per-session files (Bite 1b)
 
 - Decision: Canonical Ask Session Journal storage is `%LOCALAPPDATA%\Metra\ops\ask-sessions\<sessionId>.json` plus `index.json`. Per-session turn cap is 100. Global prune is post-write best-effort (30-day age and max 200 session files) and must not fail Ask append. `ask-log.json` remains as an idempotent migrate backup and is not deleted. `Get-MetraDeskAskLog` is a facade: sessions by `lastActivityAt` descending (`sessionId` ascending on ties); within each session newest-first for Limit windows. `Get-MetraDeskAskSessionTurns` stays chronological ascending.

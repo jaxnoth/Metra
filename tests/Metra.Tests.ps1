@@ -3943,6 +3943,393 @@ Hello from Ask.
             Resolve-MetraAskOrigin -IsLoopback $false -HasLocalSession $false | Should -Be 'remote'
         }
     }
+
+    It 'Bite 2: mocked summarizer cites turns; cache monotonic; hang keeps Ask extractive' {
+        InModuleScope Metra {
+            $root = Join-Path ([IO.Path]::GetTempPath()) ("metra-ask2-" + [guid]::NewGuid().ToString('n'))
+            New-Item -ItemType Directory -Path (Join-Path $root 'docs') -Force | Out-Null
+            try {
+                $sess = 'sess-bite2'
+                1..8 | ForEach-Object {
+                    Add-MetraDeskAskEntry -Prompt "routing turn $_" -Message "answer $_ about Metra continuity" `
+                        -Handoff ([PSCustomObject]@{ where = 'Metra' }) `
+                        -SessionId $sess -Origin loopback -Client ops-web -Answered $true -MetraRoot $root | Out-Null
+                }
+
+                $pending = @(Get-MetraMemoryQueueItems -MetraRoot $root -Status pending)
+                ($pending | Where-Object { $_.type -eq 'ask-summary' -and $_.sessionId -eq $sess -and $_.throughTurnIndex -eq 8 }).Count |
+                    Should -BeGreaterThan 0
+
+                $mock = {
+                    param($SessionId, $Turns, $PriorSummary, $ThroughTurnIndex)
+                    $lines = foreach ($t in @($Turns)) {
+                        $ti = [int](Get-MetraProp -Object $t -Name 'turnIndex' -Default 0)
+                        if ($ti -lt 1) { continue }
+                        "- Turn ${ti}: cited prompt $ti"
+                    }
+                    return ($lines -join "`n")
+                }
+
+                $sum = Invoke-MetraAskSessionSummarizer -SessionId $sess `
+                    -Turns (Get-MetraDeskAskSessionTurns -SessionId $sess -MetraRoot $root) `
+                    -ThroughTurnIndex 8 -SummarizerScript $mock -MetraRoot $root
+                $sum.Ok | Should -BeTrue
+                $sum.CitedOk | Should -BeTrue
+                (Test-MetraAskSummaryCitations -Text $sum.Text -AllowedTurnIndexes @(1..8)) | Should -BeTrue
+
+                # Nonexistent turn cites are stripped / rejected.
+                $mixed = "- Turn 1: ok`n- Turn 99: invented`n- Turn 2: ok"
+                $stripped = Select-MetraAskSummaryCitedLines -Text $mixed -AllowedTurnIndexes @(1, 2)
+                $stripped | Should -Match 'Turn 1'
+                $stripped | Should -Match 'Turn 2'
+                $stripped | Should -Not -Match 'Turn 99'
+                (Test-MetraAskSummaryCitations -Text $mixed -AllowedTurnIndexes @(1, 2)) | Should -BeFalse
+
+                $drain = Invoke-MetraMemoryWorkerDrain -MetraRoot $root -SummarizerScript $mock
+                $drain.Busy | Should -BeFalse
+                $drain.Processed | Should -BeGreaterThan 0
+                $cache = Read-MetraAskSummaryCache -SessionId $sess -MetraRoot $root
+                $cache.lastSummarizedTurnIndex | Should -Be 8
+                $cache.text | Should -Match 'Turn 1'
+
+                # Stale job must not regress the cache.
+                $stale = Write-MetraAskSummaryCache -SessionId $sess -Text "- Turn 4: stale" `
+                    -LastSummarizedTurnIndex 4 -SourceRevision 'stale' -MetraRoot $root
+                $stale.Written | Should -BeFalse
+                $stale.Reason | Should -Be 'stale_or_duplicate'
+                (Read-MetraAskSummaryCache -SessionId $sess -MetraRoot $root).lastSummarizedTurnIndex | Should -Be 8
+
+                # Duplicate delivery is a logical no-op.
+                $dupItem = New-MetraMemoryQueueItem -Type ask-summary -SessionId $sess -ThroughTurnIndex 8 -SourceRevision 'dup'
+                $dupJob = Invoke-MetraMemoryAskSummaryJob -Item $dupItem -SummarizerScript $mock -MetraRoot $root
+                $dupJob.Reason | Should -Be 'already_applied'
+                $dupJob.Written | Should -BeFalse
+
+                $ctx = Get-MetraAskContinuityContext -SessionId $sess -MetraRoot $root -KeepRecent 2 -SummarizeAfterTurns 2
+                $ctx.usedModelSummary | Should -BeTrue
+                $ctx.modelSummarizedThrough | Should -Be 8
+                $ctx.sessionSummary | Should -Match 'Turn 1'
+
+                # Hang mock is worker-side only; Ask continuity stays extractive and fast.
+                $hangSess = 'sess-hang'
+                1..5 | ForEach-Object {
+                    Add-MetraDeskAskEntry -Prompt "hang turn $_" -Message "h-$_" `
+                        -Handoff ([PSCustomObject]@{ where = 'Metra' }) `
+                        -SessionId $hangSess -Origin loopback -Client ops-web -Answered $true -MetraRoot $root | Out-Null
+                }
+                $askSw = [System.Diagnostics.Stopwatch]::StartNew()
+                $hangCtx = Get-MetraAskContinuityContext -SessionId $hangSess -MetraRoot $root -KeepRecent 2 -SummarizeAfterTurns 2
+                $askSw.Stop()
+                $askSw.ElapsedMilliseconds | Should -BeLessThan 5000
+                $hangCtx.usedSummarization | Should -BeTrue
+                $hangCtx.usedModelSummary | Should -BeFalse
+
+                # Sandbox root must not detach a live worker process.
+                $nudge = Start-MetraMemoryWorkerBestEffort -MetraRoot $root
+                $nudge.Started | Should -BeFalse
+                $nudge.Reason | Should -Be 'sandbox'
+            }
+            finally {
+                Remove-Item -LiteralPath $root -Recurse -Force -ErrorAction SilentlyContinue
+            }
+        }
+    }
+
+    It 'Bite 2: worker lock, bounded failure park, kill switch, engine paths, scrub, post-exit drain' {
+        InModuleScope Metra {
+            $root = Join-Path ([IO.Path]::GetTempPath()) ("metra-ask2b-" + [guid]::NewGuid().ToString('n'))
+            New-Item -ItemType Directory -Path (Join-Path $root 'docs') -Force | Out-Null
+            try {
+                # Kill switch: no enqueue at turn 8.
+                Mock Test-MetraAskModelSummaryEnabled { $false }
+                $ks = 'sess-kill'
+                1..8 | ForEach-Object {
+                    Add-MetraDeskAskEntry -Prompt "ks $_" -Message "m$_" `
+                        -Handoff ([PSCustomObject]@{ where = 'Metra' }) `
+                        -SessionId $ks -Origin loopback -Client ops-web -Answered $true -MetraRoot $root | Out-Null
+                }
+                @(Get-MetraMemoryQueueItems -MetraRoot $root -Status pending).Count | Should -Be 0
+                $ksCtx = Get-MetraAskContinuityContext -SessionId $ks -MetraRoot $root -KeepRecent 2 -SummarizeAfterTurns 2
+                $ksCtx.usedModelSummary | Should -BeFalse
+                $ksCtx.usedSummarization | Should -BeTrue
+
+                # Restore enable for remaining checks.
+                Mock Test-MetraAskModelSummaryEnabled { $true }
+
+                # Single-worker lock: hold mutex on a background runspace; drain must report busy.
+                $rs = [System.Management.Automation.Runspaces.RunspaceFactory]::CreateRunspace()
+                $rs.Open()
+                $psHold = [System.Management.Automation.PowerShell]::Create()
+                $psHold.Runspace = $rs
+                [void]$psHold.AddScript({
+                        $mutex = New-Object System.Threading.Mutex($false, 'Local\Metra_memory-worker')
+                        if (-not $mutex.WaitOne(5000)) { throw 'holder failed to acquire memory-worker mutex' }
+                        Start-Sleep -Seconds 2
+                        [void]$mutex.ReleaseMutex()
+                        $mutex.Dispose()
+                    })
+                $async = $psHold.BeginInvoke()
+                Start-Sleep -Milliseconds 400
+                $busy = Invoke-MetraMemoryWorkerDrain -MetraRoot $root -LockTimeoutMs 200
+                $busy.Busy | Should -BeTrue
+                $busy.Reason | Should -Be 'worker_busy'
+                [void]$psHold.EndInvoke($async)
+                $psHold.Dispose()
+                $rs.Dispose()
+
+                # Bounded failure then park (does not block forever).
+                $failSess = 'sess-fail'
+                1..8 | ForEach-Object {
+                    Add-MetraDeskAskEntry -Prompt "fail $_" -Message "f$_" `
+                        -Handoff ([PSCustomObject]@{ where = 'Metra' }) `
+                        -SessionId $failSess -Origin loopback -Client ops-web -Answered $true -MetraRoot $root | Out-Null
+                }
+                $boom = { param($SessionId, $Turns, $PriorSummary, $ThroughTurnIndex); throw 'summarizer boom' }
+                1..3 | ForEach-Object {
+                    Invoke-MetraMemoryWorkerDrain -MetraRoot $root -SummarizerScript $boom | Out-Null
+                }
+                $failed = @(Get-MetraMemoryQueueItems -MetraRoot $root -Status failed)
+                ($failed | Where-Object { $_.sessionId -eq $failSess }).Count | Should -BeGreaterThan 0
+                $stillPendingFail = @(Get-MetraMemoryQueueItems -MetraRoot $root -Status pending | Where-Object { $_.sessionId -eq $failSess })
+                $stillPendingFail.Count | Should -Be 0
+
+                # Engine path: model ok (inspect-pin mock via SummarizerScript already covered).
+                # Engine path: extractive when live engine forced to fail.
+                $turns = 1..3 | ForEach-Object {
+                    [PSCustomObject]@{ turnIndex = $_; prompt = "p$_"; message = "m$_" }
+                }
+                Mock Resolve-MetraInspectEngineSelection {
+                    [PSCustomObject]@{ Engine = 'cursor'; RequestedModel = 'gemini-3.7-flash'; ConfigurationSource = 'inspect' }
+                }
+                Mock Invoke-MetraAskEngine {
+                    [PSCustomObject]@{ ok = $false; engine = 'cursor'; model = 'gemini-3.7-flash'; message = 'nope' }
+                }
+                $exPath = Invoke-MetraAskSessionSummarizer -SessionId 's-ex' -Turns $turns -ThroughTurnIndex 3 -MetraRoot $root
+                $exPath.Path | Should -Be 'extractive'
+                $exPath.Reason | Should -Match 'extractive'
+                $exPath.CitedOk | Should -BeTrue
+
+                Mock Resolve-MetraInspectEngineSelection {
+                    [PSCustomObject]@{ Engine = 'ollama'; RequestedModel = 'llama'; ConfigurationSource = 'ask-fallback' }
+                }
+                Mock Invoke-MetraAskEngine {
+                    [PSCustomObject]@{
+                        ok     = $true
+                        engine = 'ollama'
+                        model  = 'llama'
+                        text   = "- Turn 1: from ask-fallback`n- Turn 2: ok`n- Turn 3: ok"
+                    }
+                }
+                $afPath = Invoke-MetraAskSessionSummarizer -SessionId 's-af' -Turns $turns -ThroughTurnIndex 3 -MetraRoot $root
+                $afPath.Ok | Should -BeTrue
+                $afPath.Path | Should -Be 'ask-fallback'
+
+                Mock Resolve-MetraInspectEngineSelection {
+                    [PSCustomObject]@{ Engine = 'cursor'; RequestedModel = 'gemini-3.7-flash'; ConfigurationSource = 'inspect' }
+                }
+                Mock Invoke-MetraAskEngine {
+                    [PSCustomObject]@{
+                        ok     = $true
+                        engine = 'cursor'
+                        model  = 'gemini-3.7-flash'
+                        text   = "- Turn 1: from inspect`n- Turn 2: ok`n- Turn 99: drop me`n- Turn 3: ok"
+                    }
+                }
+                $pinPath = Invoke-MetraAskSessionSummarizer -SessionId 's-pin' -Turns $turns -ThroughTurnIndex 3 -MetraRoot $root
+                $pinPath.Ok | Should -BeTrue
+                $pinPath.Path | Should -Be 'inspect-pin'
+                $pinPath.Text | Should -Not -Match 'Turn 99'
+
+                # Secret scrub on summarizer input (prompt assembly path uses scrub).
+                $secretTurns = @(
+                    [PSCustomObject]@{
+                        turnIndex = 1
+                        prompt    = 'key sk-abcdefghijklmnopqrstuvwxyz0123456789ABCD'
+                        message   = 'ok'
+                    }
+                )
+                Mock Invoke-MetraAskEngine {
+                    param($Prompt)
+                    $Prompt | Should -Not -Match 'sk-abcdefghijklmnopqrstuvwxyz0123456789ABCD'
+                    [PSCustomObject]@{
+                        ok     = $true
+                        engine = 'cursor'
+                        model  = 'x'
+                        text   = '- Turn 1: scrubbed'
+                    }
+                }
+                $scrubbed = Invoke-MetraAskSessionSummarizer -SessionId 's-scrub' -Turns $secretTurns -ThroughTurnIndex 1 -MetraRoot $root
+                $scrubbed.Ok | Should -BeTrue
+
+                # Worker completes after "Ask process" returns: enqueue, return fast, drain later.
+                $post = 'sess-post'
+                1..8 | ForEach-Object {
+                    Add-MetraDeskAskEntry -Prompt "post $_" -Message "p$_" `
+                        -Handoff ([PSCustomObject]@{ where = 'Metra' }) `
+                        -SessionId $post -Origin loopback -Client ops-web -Answered $true -MetraRoot $root | Out-Null
+                }
+                $askDone = Get-MetraAskContinuityContext -SessionId $post -MetraRoot $root -KeepRecent 2 -SummarizeAfterTurns 2
+                $askDone.usedModelSummary | Should -BeFalse
+                $good = {
+                    param($SessionId, $Turns, $PriorSummary, $ThroughTurnIndex)
+                    return ((1..8 | ForEach-Object { "- Turn ${_}: post" }) -join "`n")
+                }
+                $later = Invoke-MetraMemoryWorkerDrain -MetraRoot $root -SummarizerScript $good
+                $later.Processed | Should -BeGreaterThan 0
+                (Read-MetraAskSummaryCache -SessionId $post -MetraRoot $root).lastSummarizedTurnIndex | Should -Be 8
+
+                # Hang inside worker is bounded: item_timeout parks; next drain proceeds.
+                $hangItemSess = 'sess-item-hang'
+                1..8 | ForEach-Object {
+                    Add-MetraDeskAskEntry -Prompt "ih $_" -Message "ih$_" `
+                        -Handoff ([PSCustomObject]@{ where = 'Metra' }) `
+                        -SessionId $hangItemSess -Origin loopback -Client ops-web -Answered $true -MetraRoot $root | Out-Null
+                }
+                $hangSb = {
+                    param($SessionId, $Turns, $PriorSummary, $ThroughTurnIndex)
+                    Start-Sleep -Seconds 600
+                    return '- Turn 1: never'
+                }
+                $timedOut = Invoke-MetraMemoryWorkerDrain -MetraRoot $root -SummarizerScript $hangSb -ItemTimeoutSec 2
+                ($timedOut.Results | Where-Object { $_.reason -eq 'item_timeout' }).Count | Should -BeGreaterThan 0
+                @(Get-MetraMemoryQueueItems -MetraRoot $root -Status failed |
+                    Where-Object { $_.sessionId -eq $hangItemSess }).Count | Should -BeGreaterThan 0
+                $afterHang = Invoke-MetraMemoryWorkerDrain -MetraRoot $root -SummarizerScript $good -ItemTimeoutSec 30
+                $afterHang.Busy | Should -BeFalse
+            }
+            finally {
+                Remove-Item -LiteralPath $root -Recurse -Force -ErrorAction SilentlyContinue
+            }
+        }
+    }
+
+    It 'Bite 2: detached memory worker survives parent exit (Start-Process + file marker)' {
+        InModuleScope Metra {
+            $root = Join-Path ([IO.Path]::GetTempPath()) ("metra-ask2-detach-" + [guid]::NewGuid().ToString('n'))
+            New-Item -ItemType Directory -Path (Join-Path $root 'ops') -Force | Out-Null
+            $prevData = $env:METRA_DATA_ROOT
+            $prevMock = $env:METRA_MEMORY_WORKER_MOCK
+            $prevAuto = $env:METRA_MEMORY_WORKER_AUTOSTART
+            $marker = Join-Path $root 'ops\worker-done.marker'
+            try {
+                $env:METRA_DATA_ROOT = $root
+                $env:METRA_MEMORY_WORKER_MOCK = 'cited'
+                $env:METRA_MEMORY_WORKER_AUTOSTART = '0'
+                $live = Get-MetraRoot
+                $sess = 'sess-detach'
+                1..8 | ForEach-Object {
+                    Add-MetraDeskAskEntry -Prompt "detach $_" -Message "d$_" `
+                        -Handoff ([PSCustomObject]@{ where = 'Metra' }) `
+                        -SessionId $sess -Origin loopback -Client ops-web -Answered $true -MetraRoot $live | Out-Null
+                }
+                @(Get-MetraMemoryQueueItems -MetraRoot $live -Status pending).Count | Should -BeGreaterThan 0
+
+                # Parent only enqueues + spawns detached child; does not drain in-process.
+                $started = Start-MetraMemoryWorkerBestEffort -MetraRoot $live -Force -PassThru
+                $started.Started | Should -BeTrue
+                $started.ProcessId | Should -BeGreaterThan 0
+
+                $deadline = (Get-Date).AddSeconds(60)
+                $cache = $null
+                do {
+                    Start-Sleep -Milliseconds 400
+                    $cache = Read-MetraAskSummaryCache -SessionId $sess -MetraRoot $live
+                    if ($null -ne $cache -and [int]$cache.lastSummarizedTurnIndex -ge 8) {
+                        Set-Content -LiteralPath $marker -Value ("done pid={0} through={1}" -f $started.ProcessId, $cache.lastSummarizedTurnIndex) -Encoding utf8
+                        break
+                    }
+                } while ((Get-Date) -lt $deadline)
+
+                Test-Path -LiteralPath $marker | Should -BeTrue
+                $cache.lastSummarizedTurnIndex | Should -Be 8
+                $cache.text | Should -Match 'Turn'
+            }
+            finally {
+                if ($null -eq $prevData -or $prevData -eq '') {
+                    Remove-Item Env:\METRA_DATA_ROOT -ErrorAction SilentlyContinue
+                }
+                else { $env:METRA_DATA_ROOT = $prevData }
+                if ($null -eq $prevMock -or $prevMock -eq '') {
+                    Remove-Item Env:\METRA_MEMORY_WORKER_MOCK -ErrorAction SilentlyContinue
+                }
+                else { $env:METRA_MEMORY_WORKER_MOCK = $prevMock }
+                if ($null -eq $prevAuto -or $prevAuto -eq '') {
+                    Remove-Item Env:\METRA_MEMORY_WORKER_AUTOSTART -ErrorAction SilentlyContinue
+                }
+                else { $env:METRA_MEMORY_WORKER_AUTOSTART = $prevAuto }
+                Remove-Item -LiteralPath $root -Recurse -Force -ErrorAction SilentlyContinue
+            }
+        }
+    }
+
+    It 'Bite 2: PID-reuse lease clears without kill; production hang mock times out' {
+        InModuleScope Metra {
+            $root = Join-Path ([IO.Path]::GetTempPath()) ("metra-ask2c-" + [guid]::NewGuid().ToString('n'))
+            New-Item -ItemType Directory -Path (Join-Path $root 'ops') -Force | Out-Null
+            $prevMock = $env:METRA_MEMORY_WORKER_MOCK
+            try {
+                # Lease fingerprint mismatch: live PID with wrong processName must not be killed.
+                $leasePath = Get-MetraMemoryWorkerLeasePath -MetraRoot $root
+                $me = Get-Process -Id $PID
+                $fake = [ordered]@{
+                    schemaVersion       = 1
+                    pid                 = $PID
+                    processName         = 'chrome'
+                    processStartTimeUtc = $me.StartTime.ToUniversalTime().ToString('o')
+                    startedAtUtc        = (Get-Date).ToUniversalTime().AddSeconds(-9999).ToString('o')
+                }
+                [System.IO.File]::WriteAllText(
+                    $leasePath,
+                    (($fake | ConvertTo-Json -Compress) + "`n"),
+                    [System.Text.UTF8Encoding]::new($false)
+                )
+                $stale = Test-MetraMemoryWorkerLeaseStale -MetraRoot $root -MaxHoldSec 1
+                $stale.Stale | Should -BeTrue
+                $stale.Reason | Should -Be 'dead_pid'
+                $stale.VerifiedWorker | Should -BeFalse
+                $reclaim = Invoke-MetraMemoryWorkerReclaimStaleLock -MetraRoot $root -MaxHoldSec 1
+                $reclaim.Reclaimed | Should -BeTrue
+                $reclaim.Killed | Should -BeFalse
+                Get-Process -Id $PID -ErrorAction Stop | Should -Not -BeNullOrEmpty
+                Test-Path -LiteralPath $leasePath | Should -BeFalse
+
+                # Production path (no -SummarizerScript): METRA_MEMORY_WORKER_MOCK=hang must hit item_timeout.
+                $env:METRA_MEMORY_WORKER_MOCK = 'hang'
+                $hangSess = 'sess-prod-hang'
+                1..8 | ForEach-Object {
+                    Add-MetraDeskAskEntry -Prompt "ph $_" -Message "ph$_" `
+                        -Handoff ([PSCustomObject]@{ where = 'Metra' }) `
+                        -SessionId $hangSess -Origin loopback -Client ops-web -Answered $true -MetraRoot $root | Out-Null
+                }
+                $timedOut = Invoke-MetraMemoryWorkerDrain -MetraRoot $root -ItemTimeoutSec 2
+                $timedOut.Busy | Should -BeFalse
+                @(
+                    @($timedOut.Results) | Where-Object { $_.reason -eq 'item_timeout' }
+                ).Count | Should -BeGreaterThan 0
+                @(Get-MetraMemoryQueueItems -MetraRoot $root -Status failed |
+                    Where-Object { $_.sessionId -eq $hangSess }).Count | Should -BeGreaterThan 0
+
+                $env:METRA_MEMORY_WORKER_MOCK = 'cited'
+                $goodSess = 'sess-after-hang'
+                1..8 | ForEach-Object {
+                    Add-MetraDeskAskEntry -Prompt "ah $_" -Message "ah$_" `
+                        -Handoff ([PSCustomObject]@{ where = 'Metra' }) `
+                        -SessionId $goodSess -Origin loopback -Client ops-web -Answered $true -MetraRoot $root | Out-Null
+                }
+                $after = Invoke-MetraMemoryWorkerDrain -MetraRoot $root -ItemTimeoutSec 30
+                $after.Busy | Should -BeFalse
+                $after.Processed | Should -BeGreaterThan 0
+                (Read-MetraAskSummaryCache -SessionId $goodSess -MetraRoot $root).lastSummarizedTurnIndex | Should -Be 8
+            }
+            finally {
+                if ($null -eq $prevMock -or $prevMock -eq '') {
+                    Remove-Item Env:\METRA_MEMORY_WORKER_MOCK -ErrorAction SilentlyContinue
+                }
+                else { $env:METRA_MEMORY_WORKER_MOCK = $prevMock }
+                Remove-Item -LiteralPath $root -Recurse -Force -ErrorAction SilentlyContinue
+            }
+        }
+    }
 }
 
 Describe 'Capture Inbox v2 - Ladder 2b' {

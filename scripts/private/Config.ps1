@@ -117,6 +117,45 @@ function Get-MetraOpsAskSessionsIndexPath {
     return Join-Path (Get-MetraOpsAskSessionsRoot -MetraRoot $MetraRoot) 'index.json'
 }
 
+function Get-MetraOpsMemoryQueuePath {
+    <#
+    .SYNOPSIS
+        Detached memory-worker queue (%LOCALAPPDATA%\Metra\ops\memory-queue.jsonl).
+    #>
+    [CmdletBinding()]
+    param([string]$MetraRoot = (Get-MetraRoot))
+    $dir = Join-Path (Get-MetraMachineDataRoot -MetraRoot $MetraRoot) 'ops'
+    [void][System.IO.Directory]::CreateDirectory($dir)
+    return Join-Path $dir 'memory-queue.jsonl'
+}
+
+function Get-MetraOpsAskSummaryRoot {
+    <#
+    .SYNOPSIS
+        Ask model-summary cache directory (%LOCALAPPDATA%\Metra\ops\ask-summary).
+    #>
+    [CmdletBinding()]
+    param([string]$MetraRoot = (Get-MetraRoot))
+    $root = Join-Path (Get-MetraMachineDataRoot -MetraRoot $MetraRoot) 'ops\ask-summary'
+    [void][System.IO.Directory]::CreateDirectory($root)
+    return $root
+}
+
+function Get-MetraAskSummaryCachePath {
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory)][string]$SessionId,
+        [string]$MetraRoot = (Get-MetraRoot)
+    )
+    $sid = $SessionId.Trim()
+    if ([string]::IsNullOrWhiteSpace($sid)) {
+        throw 'SessionId is required for ask-summary cache path.'
+    }
+    # Keep filenames Windows-safe (session ids are normally hex / GUID).
+    $safe = ($sid -replace '[^A-Za-z0-9._-]', '_')
+    return Join-Path (Get-MetraOpsAskSummaryRoot -MetraRoot $MetraRoot) ($safe + '.json')
+}
+
 function Get-MetraOpsCapturePath {
     [CmdletBinding()]
     param([string]$MetraRoot = (Get-MetraRoot))

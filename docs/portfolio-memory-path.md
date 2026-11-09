@@ -3,8 +3,18 @@
 **One place to reopen when memory work feels scattered.**  
 This is the roadmap map. Authority and promotion rules stay in their homes (below). Update this file when the path changes - do not invent a second map.
 
-**Last oriented:** 2026-09-02 (Yarn Phase B Atlas intake; Phase C AutoProgram leftovers)  
+**Last oriented:** 2026-11-09 (Ask continuity Bite 2 model summary + memory worker)  
 **Stable idea:** Metra routes. Atlas stores. Notion persists. **Yarn** prepares intake. **Loom** executes governed delivery. Vectors accelerate retrieval later - they never become truth.
+
+**Continuity benchmark (correction):** the long-thread pain that drove Ask continuity work was **Latitude Voyage** (World Engine: places, characters, consequences), not SillyTavern. ST remains only a deferred AGPL-adjacent tooling idea.
+
+### Continuity layers (do not collapse)
+
+| Layer | Purpose | Authority |
+| --- | --- | --- |
+| Session Journal | Raw / retrievable conversation evidence | Evidence |
+| Ask summary cache | Compression of current-session evidence | Derived |
+| MDR project brief | Longitudinal project continuity | Derived / non-authoritative (Bite 3) |
 
 ---
 
@@ -84,6 +94,10 @@ Do these before building embeddings. They fix "I can't find what we did" without
 | Bite | Why | Status |
 | --- | --- | --- |
 | Desk Ask sidecar ops (health, dispose, opaque recovery) | Journal/Capture/Ask continuity needs a trustworthy engine, not a wedged listener | **Shipped** 2026-08-30 - Metra **0.1.15**; Decisions 2026-08-30 Ask sidecar scar |
+| Ask continuity extractive + WhyHere + sidecar journal | Long-session head/tail, Context shrink, query-sensitive WhyHere | **Shipped** 2026-11-09 - Bite 1 |
+| Per-session Ask journal store | Busy-day retention without global Limit 100 eviction | **Shipped** 2026-11-09 - Bite 1b |
+| Ask model summary + memory worker | Derived cache every K=8; detached queue; never blocks Ask | **Shipped** 2026-11-09 - Bite 2 |
+| Per-project rolling brief | Longitudinal MDR briefs + brief note | Planned - Bite 3 |
 | Commit-triggered Atlas Sessions | Durable per-commit recall; searchable via Atlas | Escalated in Future-Development; not shipped |
 | Explicit Capture → Session / Plan promote | Intake becomes portfolio memory on purpose | Habit + CLI exists; keep deliberate |
 | iOS Vision Ask contract | Relational phone turns never hit Desk AskLane | **Shipped** 2026-08-30 - [ios-vision-ask-contract.md](ios-vision-ask-contract.md) |

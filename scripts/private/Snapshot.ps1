@@ -1591,6 +1591,9 @@ function Invoke-MetraWithNamedMutex {
     <#
     .SYNOPSIS
         Serialize a short critical section with a local named mutex.
+    .NOTES
+        AbandonedMutexException (previous owner died) is treated as acquired so drains
+        can reclaim a lock left by a crashed worker.
     #>
     [CmdletBinding()]
     param(
@@ -1603,7 +1606,13 @@ function Invoke-MetraWithNamedMutex {
     $mutex = New-Object System.Threading.Mutex($false, $mutexName)
     $acquired = $false
     try {
-        $acquired = $mutex.WaitOne($TimeoutMs)
+        try {
+            $acquired = $mutex.WaitOne($TimeoutMs)
+        }
+        catch [System.Threading.AbandonedMutexException] {
+            # Previous owner exited without ReleaseMutex - we now own it.
+            $acquired = $true
+        }
         if (-not $acquired) {
             throw "Timed out waiting for mutex $Name (${TimeoutMs}ms)."
         }
@@ -1611,7 +1620,7 @@ function Invoke-MetraWithNamedMutex {
     }
     finally {
         if ($acquired) {
-            [void]$mutex.ReleaseMutex()
+            try { [void]$mutex.ReleaseMutex() } catch { }
         }
         $mutex.Dispose()
     }
@@ -2028,7 +2037,7 @@ function Add-MetraDeskAskEntry {
         [string]$MetraRoot = (Get-MetraRoot)
     )
 
-    return Invoke-MetraWithNamedMutex -Name 'ask-journal' -Script {
+    $entry = Invoke-MetraWithNamedMutex -Name 'ask-journal' -Script {
         Ensure-MetraAskJournalStore -MetraRoot $MetraRoot
         $sess = if (-not [string]::IsNullOrWhiteSpace($SessionId)) {
             $SessionId.Trim()
@@ -2068,7 +2077,7 @@ function Add-MetraDeskAskEntry {
                 }
             }
         )
-        $entry = [PSCustomObject]@{
+        $row = [PSCustomObject]@{
             id            = [guid]::NewGuid().ToString('N')
             sessionId     = $sess
             turnIndex     = $maxIndex + 1
@@ -2086,16 +2095,29 @@ function Add-MetraDeskAskEntry {
             attachmentIds = @($AttachmentIds | ForEach-Object { [string]$_ } | Where-Object { $_ })
             images        = $journalImages
         }
-        $items = @($existing) + @($entry)
+        $items = @($existing) + @($row)
         $cap = Get-MetraAskJournalPerSessionTurnCap
         if ($items.Count -gt $cap) {
             $items = @($items | Select-Object -Last $cap)
         }
-        Write-MetraAskSessionFile -Path $path -SessionId $sess -Items $items -LastActivityAt $entry.at
-        Update-MetraAskSessionsIndexEntry -SessionId $sess -LastActivityAt $entry.at -TurnCount $items.Count -MetraRoot $MetraRoot
+        Write-MetraAskSessionFile -Path $path -SessionId $sess -Items $items -LastActivityAt $row.at
+        Update-MetraAskSessionsIndexEntry -SessionId $sess -LastActivityAt $row.at -TurnCount $items.Count -MetraRoot $MetraRoot
         Invoke-MetraAskJournalPruneBestEffort -MetraRoot $MetraRoot
-        return $entry
+        return $row
     }
+
+    # Outside journal mutex: enqueue model-summary refresh + detach worker (never blocks Ask).
+    try {
+        $project = [string](Get-MetraProp -Object $Handoff -Name 'where' -Default '')
+        if (Get-Command Request-MetraAskSummaryRefreshIfDue -ErrorAction SilentlyContinue) {
+            Request-MetraAskSummaryRefreshIfDue -SessionId ([string]$entry.sessionId) `
+                -ThroughTurnIndex ([int]$entry.turnIndex) -Project $project -MetraRoot $MetraRoot -StartWorker | Out-Null
+        }
+    }
+    catch {
+        # Continuity enqueue must never fail Ask journal append.
+    }
+    return $entry
 }
 
 function Get-MetraDeskAskSessionSummaries {
@@ -2287,6 +2309,9 @@ function Get-MetraAskContinuityContext {
     <#
     .SYNOPSIS
         Build labeled Session Journal continuity for Ask (summary + recent; optional recall).
+    .NOTES
+        Prefer cached model-written summary (derived) through lastSummarizedTurnIndex, then
+        extractive bullets for the gap, then KeepRecent verbatim turns. Never blocks on the model.
     #>
     [CmdletBinding()]
     param(
@@ -2304,7 +2329,9 @@ function Get-MetraAskContinuityContext {
     $sessionSummary = $null
     $recentTurns = @()
     $usedSummarization = $false
+    $usedModelSummary = $false
     $summarizedTurnCount = 0
+    $modelSummarizedThrough = 0
     $totalTurnCount = 0
 
     if ($sid) {
@@ -2312,6 +2339,17 @@ function Get-MetraAskContinuityContext {
         $totalTurnCount = $ordered.Count
         if ($ordered.Count -gt 0) {
             $keep = [Math]::Max(1, $KeepRecent)
+            $cache = $null
+            if (Get-Command Read-MetraAskSummaryCache -ErrorAction SilentlyContinue) {
+                $cache = Read-MetraAskSummaryCache -SessionId $sid -MetraRoot $MetraRoot
+            }
+            $cacheThrough = 0
+            $cacheText = ''
+            if ($null -ne $cache -and -not [string]::IsNullOrWhiteSpace([string]$cache.text)) {
+                $cacheThrough = [int]$cache.lastSummarizedTurnIndex
+                $cacheText = [string]$cache.text
+            }
+
             $needSummary = $ordered.Count -gt $SummarizeAfterTurns
             if (-not $needSummary) {
                 $allChars = 0
@@ -2325,11 +2363,38 @@ function Get-MetraAskContinuityContext {
             }
 
             if ($needSummary -and $ordered.Count -gt $keep) {
-                $older = @($ordered | Select-Object -First ($ordered.Count - $keep))
                 $recent = @($ordered | Select-Object -Last $keep)
-                $sessionSummary = New-MetraAskSessionSummaryText -Turns $older
+                $older = @($ordered | Select-Object -First ($ordered.Count - $keep))
+                $parts = [System.Collections.Generic.List[string]]::new()
+
+                if ($cacheThrough -gt 0 -and -not [string]::IsNullOrWhiteSpace($cacheText)) {
+                    [void]$parts.Add($cacheText.Trim())
+                    $usedModelSummary = $true
+                    $modelSummarizedThrough = $cacheThrough
+                    $gap = @(
+                        $older | Where-Object {
+                            $ti = [int](Get-MetraProp -Object $_ -Name 'turnIndex' -Default 0)
+                            $ti -gt $cacheThrough
+                        }
+                    )
+                    if ($gap.Count -gt 0) {
+                        $gapText = New-MetraAskSessionSummaryText -Turns $gap
+                        if (-not [string]::IsNullOrWhiteSpace($gapText)) {
+                            [void]$parts.Add($gapText)
+                        }
+                    }
+                    $summarizedTurnCount = $older.Count
+                }
+                else {
+                    $extractive = New-MetraAskSessionSummaryText -Turns $older
+                    if (-not [string]::IsNullOrWhiteSpace($extractive)) {
+                        [void]$parts.Add($extractive)
+                    }
+                    $summarizedTurnCount = $older.Count
+                }
+
+                $sessionSummary = (($parts -join "`n").Trim())
                 $usedSummarization = -not [string]::IsNullOrWhiteSpace($sessionSummary)
-                $summarizedTurnCount = $older.Count
                 $recentTurns = @(
                     $recent | ForEach-Object {
                         [PSCustomObject]@{
@@ -2363,15 +2428,17 @@ function Get-MetraAskContinuityContext {
     }
 
     return [PSCustomObject]@{
-        sessionId           = $(if ($sid) { $sid } else { $null })
-        recallSessionId     = $(if ($recallSid) { $recallSid } else { $null })
-        sessionSummary      = $sessionSummary
-        recentTurns         = @($recentTurns)
-        recallSummary       = $recallSummary
-        usedSummarization   = [bool]$usedSummarization
-        summarizedTurnCount = [int]$summarizedTurnCount
-        recentTurnCount     = @($recentTurns).Count
-        totalTurnCount      = [int]$totalTurnCount
+        sessionId               = $(if ($sid) { $sid } else { $null })
+        recallSessionId         = $(if ($recallSid) { $recallSid } else { $null })
+        sessionSummary          = $sessionSummary
+        recentTurns             = @($recentTurns)
+        recallSummary           = $recallSummary
+        usedSummarization       = [bool]$usedSummarization
+        usedModelSummary        = [bool]$usedModelSummary
+        modelSummarizedThrough  = [int]$modelSummarizedThrough
+        summarizedTurnCount     = [int]$summarizedTurnCount
+        recentTurnCount         = @($recentTurns).Count
+        totalTurnCount          = [int]$totalTurnCount
     }
 }
 
