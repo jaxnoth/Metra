@@ -172,8 +172,9 @@ function New-MetraConversationPrompt {
     .SYNOPSIS
         Conversation Identity Stack (Ask/Vision Surface) + CE policy overlay + sanitized user prompt.
     .OUTPUTS
-        PSCustomObject with Text (engine prompt) and identity metadata (IdentityHash, PacksIncluded, ...).
-        Callers that need only the string use .Text.
+        PSCustomObject: Text = CE policy overlay + user prompt (no identity prepend).
+        IdentityPrefix + IdentityHash for Cursor once-per-agent / compat every-turn send.
+        Also IdentityBytes, PacksIncluded, TeachingActive, HumorActive, SynthesisMode.
     #>
     [CmdletBinding()]
     param(
@@ -207,9 +208,12 @@ function New-MetraConversationPrompt {
     if ([string]::IsNullOrWhiteSpace($resolvedSynthesis)) { $resolvedSynthesis = 'None' }
 
     $identity = $null
+    $identityPrefix = ''
     $lines = [System.Collections.Generic.List[string]]::new()
     # Desk CE / Ask: shared Conversation Identity loader (Surface=Ask omits vision system.md).
-    # CE policy overlay stays after identity text - same path, not same words as Vision.
+    # Identity is returned separately (IdentityPrefix + IdentityHash) - Cursor sidecar sends it
+    # once per agent (Vision pattern). Compat engines with no history still prepend every turn.
+    # CE policy overlay stays in .Text after the split - same path, not same words as Vision.
     if (Get-Command Get-MetraConversationIdentityPrompt -ErrorAction SilentlyContinue) {
         $identitySurface = if ($Surface -in @('Ask', 'Vision', 'Cursor', 'iOS', 'OpsPresence')) { $Surface } else { 'Ask' }
         $teachingWanted = $false
@@ -224,16 +228,15 @@ function New-MetraConversationPrompt {
             -IncidentActive:$IncidentActive `
             -TeachingWanted:$teachingWanted `
             -ContinuityEvidence $ContinuityEvidence
-        [void]$lines.Add([string]$identity.Text)
+        $identityPrefix = [string](Get-MetraProp -Object $identity -Name 'Text' -Default '')
     }
     elseif (Get-Command New-MetraPartnerIdentityPreamble -ErrorAction SilentlyContinue) {
-        $preamble = New-MetraPartnerIdentityPreamble `
+        $identityPrefix = New-MetraPartnerIdentityPreamble `
             -Surface $Surface `
             -Posture $resolvedPosture `
             -PortfolioShaped:$PortfolioShaped `
             -ContinuityEvidence $ContinuityEvidence `
             -IncidentActive:$IncidentActive
-        [void]$lines.Add($preamble)
     }
     [void]$lines.Add("Policy=$policyName; Objective=$objective; Intent=$intentClass; EvidenceDepth=$Depth.")
     [void]$lines.Add('Answer in plain English. Do not invent health. Do not claim Host writes completed.')
@@ -277,7 +280,9 @@ function New-MetraConversationPrompt {
 
     return [PSCustomObject]@{
         Text            = ($lines -join "`n")
+        IdentityPrefix = $identityPrefix
         IdentityHash   = $(if ($identity) { [string](Get-MetraProp -Object $identity -Name 'IdentityHash' -Default '') } else { $null })
+        IdentityBytes  = $(if ([string]::IsNullOrEmpty($identityPrefix)) { 0 } else { [System.Text.Encoding]::UTF8.GetByteCount($identityPrefix) })
         PacksIncluded  = $(if ($identity) { @(Get-MetraProp -Object $identity -Name 'PacksIncluded' -Default @()) } else { @() })
         PacksOmitted   = $(if ($identity) { @(Get-MetraProp -Object $identity -Name 'PacksOmitted' -Default @()) } else { @() })
         TeachingActive = $(if ($identity) { [bool](Get-MetraProp -Object $identity -Name 'TeachingActive' -Default $false) } else { $false })

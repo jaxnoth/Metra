@@ -437,12 +437,18 @@ function Invoke-MetraAskOpenAICompatComplete {
         $askPosture = 'Desk'
         $askPortfolio = $false
         $askCont = $null
+        $identityPrefix = ''
         if ($Context -is [hashtable] -or $Context -is [PSCustomObject]) {
             $askPosture = [string](Get-MetraProp -Object $Context -Name 'posture' -Default 'Desk')
             $askPortfolio = [bool](Get-MetraProp -Object $Context -Name 'portfolioShaped' -Default $false)
             $askCont = Get-MetraProp -Object $Context -Name 'continuityEvidence' -Default $null
+            $identityPrefix = [string](Get-MetraProp -Object $Context -Name 'identityPrefix' -Default '')
         }
-        $partnerPreamble = if (Get-Command New-MetraPartnerIdentityPreamble -ErrorAction SilentlyContinue) {
+        # Compat engines have no agent history - send full Conversation Identity every turn when present.
+        $partnerPreamble = if (-not [string]::IsNullOrWhiteSpace($identityPrefix)) {
+            $identityPrefix
+        }
+        elseif (Get-Command New-MetraPartnerIdentityPreamble -ErrorAction SilentlyContinue) {
             New-MetraPartnerIdentityPreamble -Surface Ask -Posture $askPosture -PortfolioShaped:$askPortfolio -ContinuityEvidence $askCont
         }
         else {

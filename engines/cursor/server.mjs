@@ -30,7 +30,11 @@ import {
   releaseSessionLease,
   retireSession,
 } from './session-cache.mjs'
-import { resolveProjectBriefForPrompt, shouldIncludeJournalContinuity } from './prompt-build.mjs'
+import {
+  resolveProjectBriefForPrompt,
+  shouldIncludeIdentity,
+  shouldIncludeJournalContinuity,
+} from './prompt-build.mjs'
 
 const PORT = Number(process.env.METRA_ASK_PORT || 7381)
 const ENGINE = 'cursor'
@@ -873,18 +877,29 @@ async function complete({ prompt, cwd, context, sessionId, images, model, timeou
     const ctx = ctxScrub.value || {}
     const visionDevice = Boolean(ctx.visionDeviceSession)
     const identityPrefix = ctx.identityPrefix ? String(ctx.identityPrefix) : ''
-    let wrapped
+    const identityHash = ctx.identityHash ? String(ctx.identityHash) : ''
+    const lastIdentityHash = entry?.lastIdentityHash ? String(entry.lastIdentityHash) : ''
+    // Desk Ask and Vision: send Conversation Identity once per agent, or again when the
+    // identity hash changes (persona edit / humor-teaching posture). Later turns omit it so
+    // prior agent history keeps identity without re-paying ~9.5k tokens each turn.
+    const includeIdentity = shouldIncludeIdentity({
+      newSession,
+      identityPrefix,
+      identityHash,
+      lastIdentityHash,
+    })
+    let body
     if (visionDevice) {
-      // Phone-id agent. Identity goes out only when this agent is new (sidecar restart).
-      // Later turns are the user message only so prior context stays and tokens do not reset.
-      wrapped = newSession && identityPrefix
-        ? `${identityPrefix}\n\n${promptScrub.text}`
-        : promptScrub.text
+      body = promptScrub.text
     } else {
-      wrapped = buildPrompt(promptScrub.text, ctx, {
+      body = buildPrompt(promptScrub.text, ctx, {
         includeJournalContinuity: newSession,
         hasImages: sdkImages.length > 0,
       })
+    }
+    let wrapped = includeIdentity ? `${identityPrefix}\n\n${body}` : body
+    if (includeIdentity && identityHash && entry) {
+      entry.lastIdentityHash = identityHash
     }
 
     async function sendAndWait(activeAgent) {

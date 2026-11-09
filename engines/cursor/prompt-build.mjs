@@ -18,6 +18,21 @@ export function shouldIncludeJournalContinuity(context, options = {}) {
 }
 
 /**
+ * Whether to prepend Conversation Identity to this Cursor agent send.
+ * Once per agent (newSession), or again when IdentityHash changes (persona edit / posture packs).
+ * Empty identityPrefix never includes.
+ */
+export function shouldIncludeIdentity(options = {}) {
+  const prefix = options.identityPrefix != null ? String(options.identityPrefix).trim() : ''
+  if (!prefix) return false
+  if (Boolean(options.newSession)) return true
+  const hash = options.identityHash != null ? String(options.identityHash).trim() : ''
+  if (!hash) return false
+  const last = options.lastIdentityHash != null ? String(options.lastIdentityHash).trim() : ''
+  return hash !== last
+}
+
+/**
  * Derived MDR project brief Ask slot (max 1500). Independent of journal inclusion.
  */
 export function resolveProjectBriefForPrompt(context, maxChars = 1500) {

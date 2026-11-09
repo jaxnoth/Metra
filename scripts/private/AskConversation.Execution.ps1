@@ -433,6 +433,8 @@ function Invoke-MetraAskConversationExecution {
     $lane = Resolve-MetraAskLane -Prompt $safePrompt -RouteScore $routeScore -EvidenceQuality $quality -RouteWhere $routeWhere
     $cwd = Get-MetraAskRouteCwd -Where $routeWhere -MetraRoot $MetraRoot
 
+    $identityPrefix = ''
+    $identityHash = ''
     try {
         $postureForPrompt = [string]$policy.Policy
         if ($postureForPrompt -notin @('Desk', 'Company', 'Deliver', 'DeskStrict')) {
@@ -454,6 +456,7 @@ function Invoke-MetraAskConversationExecution {
             -MetraRoot $MetraRoot `
             -SynthesisMode $synthesisMode
         $enginePrompt = [string]$builtPrompt.Text
+        $identityPrefix = [string](Get-MetraProp -Object $builtPrompt -Name 'IdentityPrefix' -Default '')
         $identityHash = [string](Get-MetraProp -Object $builtPrompt -Name 'IdentityHash' -Default '')
         $packsIncluded = @(Get-MetraProp -Object $builtPrompt -Name 'PacksIncluded' -Default @())
         $packsOmitted = @(Get-MetraProp -Object $builtPrompt -Name 'PacksOmitted' -Default @())
@@ -484,6 +487,17 @@ function Invoke-MetraAskConversationExecution {
 
     $ctxScrub = Invoke-MetraAskSecretsScrubObject -InputObject ([hashtable]$pack.context)
     $safeContext = if ($null -ne $ctxScrub.Value) { $ctxScrub.Value } else { @{} }
+    if ($safeContext -isnot [hashtable]) {
+        $safeContext = @{}
+    }
+    # Cursor sidecar: identity once per agent via these fields (not prepended into Prompt).
+    # Compat engines (no history): AskOpenAICompat prepends identityPrefix every turn.
+    if (-not [string]::IsNullOrWhiteSpace($identityPrefix)) {
+        $safeContext['identityPrefix'] = $identityPrefix
+    }
+    if (-not [string]::IsNullOrWhiteSpace($identityHash)) {
+        $safeContext['identityHash'] = $identityHash
+    }
 
     $engine = Invoke-MetraAskConversationEngine `
         -Prompt $enginePrompt `

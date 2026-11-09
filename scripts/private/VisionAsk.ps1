@@ -943,6 +943,7 @@ $userMessage
                     visionHandler       = $true
                     visionDeviceSession = $true
                     identityPrefix      = [string]$IdentityPrefix
+                    identityHash        = [string](Get-MetraProp -Object $identityDiag -Name 'identityHash' -Default '')
                 } -MetraRoot $Root
                 return [pscustomobject]@{
                     ok        = [bool](Get-MetraProp -Object $engine -Name 'ok' -Default $false)

@@ -4,7 +4,11 @@
  */
 import assert from 'node:assert/strict'
 import test from 'node:test'
-import { resolveProjectBriefForPrompt, shouldIncludeJournalContinuity } from './prompt-build.mjs'
+import {
+  resolveProjectBriefForPrompt,
+  shouldIncludeIdentity,
+  shouldIncludeJournalContinuity,
+} from './prompt-build.mjs'
 
 test('omits journal when agent has history even if hasJournalContext is true', () => {
   const ctx = {
@@ -65,4 +69,51 @@ test('project brief resolves from continuity nest', () => {
   })
   assert.match(resolved.text, /FRIDAY reboot/)
   assert.equal(resolved.staleness, 'likely_stale')
+})
+
+test('identity included on new session', () => {
+  assert.equal(
+    shouldIncludeIdentity({
+      newSession: true,
+      identityPrefix: 'You are Metra.',
+      identityHash: 'abc',
+      lastIdentityHash: 'abc',
+    }),
+    true,
+  )
+})
+
+test('reused session with same hash omits identity', () => {
+  assert.equal(
+    shouldIncludeIdentity({
+      newSession: false,
+      identityPrefix: 'You are Metra.',
+      identityHash: 'abc',
+      lastIdentityHash: 'abc',
+    }),
+    false,
+  )
+})
+
+test('hash change resends identity on reused session', () => {
+  assert.equal(
+    shouldIncludeIdentity({
+      newSession: false,
+      identityPrefix: 'You are Metra.',
+      identityHash: 'def',
+      lastIdentityHash: 'abc',
+    }),
+    true,
+  )
+})
+
+test('empty identity prefix never includes', () => {
+  assert.equal(
+    shouldIncludeIdentity({
+      newSession: true,
+      identityPrefix: '',
+      identityHash: 'abc',
+    }),
+    false,
+  )
 })

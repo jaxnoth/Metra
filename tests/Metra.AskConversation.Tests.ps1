@@ -558,10 +558,15 @@ Describe 'Ask Conversation enforce-ops' {
             $i = Resolve-MetraAskIntent -Prompt 'check in'
             $p = Resolve-MetraConversationPolicy -Intent $i
             $built = New-MetraConversationPrompt -Prompt 'hey' -Intent $i -Policy $p -Depth none -Surface Ask -MetraRoot $root
-            $built.Text | Should -Match 'persona ASK'
-            $built.Text | Should -Match 'Desk Ops chat: same Partner Identity'
-            $built.Text | Should -Not -Match 'VISION-SYSTEM-SHOULD-NOT-LOAD'
+            # Identity is a separate field (sidecar once-per-agent); CE overlay stays in .Text.
+            $built.IdentityPrefix | Should -Match 'persona ASK'
+            $built.IdentityPrefix | Should -Match 'Desk Ops chat: same Partner Identity'
+            $built.Text | Should -Not -Match 'persona ASK'
+            $built.Text | Should -Match '(?i)Policy='
+            $built.Text | Should -Match 'hey'
+            $built.IdentityPrefix | Should -Not -Match 'VISION-SYSTEM-SHOULD-NOT-LOAD'
             $built.IdentityHash | Should -Match '^[0-9a-f]{16}$'
+            $built.IdentityBytes | Should -BeGreaterThan 0
             ($built.PacksOmitted | Where-Object { $_.Id -eq 'vision' }).Reason | Should -Be 'surface_gate'
         }
     }
