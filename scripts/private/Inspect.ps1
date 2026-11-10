@@ -6669,7 +6669,7 @@ function Show-MetraInspectCli {
             return Invoke-MetraInspectPackOnly @packOnlyParams @common
         }
         'pack' {
-            return Invoke-MetraInspectPack -Mode $packMode @common
+            return Invoke-MetraInspectPack -Mode $packMode -Name $projectName @common
         }
         'plan' {
             return Invoke-MetraInspectPlan -Name $projectName -Latest:$latest -Path $planPath -Fragment $fragment @common

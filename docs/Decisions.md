@@ -18,6 +18,12 @@ Entry shape:
 
 ---
 
+## 2026-11-09 - Portfolio cleanup keeps personal registry; Smartsheet is shared-only (Bite 4)
+
+- Decision: Keep `projects.personal.json` on the personal root (do not retire). CarHunt, Travel, Gmail, BrowseKit, and RecipeSage stay registered there for routing. Live checkouts may sit under the work root (`C:\Projects`); work wins on disk and personal copies may be shadowed. Remove the duplicate Smartsheet row from `projects.local.json` so the shared `projects.json` entry is the single registry home. `CLAUDE.md` files defer to `AGENTS.md` for Metra desk entry (Claude Code notes only).
+- Why: Personal routing must travel with the personal root, while this machine's active trees often live beside work projects; a second Smartsheet local overlay only fought the shared stub.
+- See: `docs/playbooks/claude-code-memory-refile.md`; plan `metra_memory_continuity_b00667f1`
+
 ## 2026-11-09 - MDR project briefs are structured items under machine-local MDR (Bite 3)
 
 - Decision: Per-project rolling briefs live at `%LOCALAPPDATA%\Metra\MDR\briefs\<root>\<project>\` with authoritative `items.json`, render-only `brief.md`, and `.history\` snapshots (keep 10). Model updates are schema-validated JSON ops (`create`/`update`/`close`) via the Inspect pin (ask-fallback then extractive cited ops); invalid/unresolved output changes nothing. Journal turns record routed `project` (from handoff.where); brief jobs **filter turns by project** before any model/mock ops. Pinned and corrected items are immutable to model ops (flag `needsReview` only). Open-item cap is 40 with **refuse create** at the ceiling (never auto-evict). Closed items archive after 30 days. Ask and ctx each get a derived **1500-char** brief slot (staleness tag; drop order open threads > open questions > components > decision links). Triggers: idle catch-up (>=15m prior session) on Ask append / ctx, explicit `brief close`, and `brief note`. One brief apply per session/through (ledger `lastBriefed*`). `brief note` requires `-Kind`; note text is untrusted quoted data; `decision_link` requires an existing Decision Registry id. Briefs remain derived/non-authoritative and never promote into Decisions/OCC. Kill switch: `ask.brief.enabled`. Same detached memory worker queue as Bite 2 (`type=project-brief`).

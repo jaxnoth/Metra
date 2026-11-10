@@ -3,7 +3,7 @@
 **One place to reopen when memory work feels scattered.**  
 This is the roadmap map. Authority and promotion rules stay in their homes (below). Update this file when the path changes - do not invent a second map.
 
-**Last oriented:** 2026-11-09 (Ask continuity Bite 3 MDR structured briefs)  
+**Last oriented:** 2026-11-09 (Ask continuity Bite 4 portfolio cleanup; Bite 3 MDR briefs shipped)  
 **Stable idea:** Metra routes. Atlas stores. Notion persists. **Yarn** prepares intake. **Loom** executes governed delivery. Vectors accelerate retrieval later - they never become truth.
 
 **Continuity benchmark (correction):** the long-thread pain that drove Ask continuity work was **Latitude Voyage** (World Engine: places, characters, consequences), not SillyTavern. ST remains only a deferred AGPL-adjacent tooling idea.
@@ -97,7 +97,8 @@ Do these before building embeddings. They fix "I can't find what we did" without
 | Ask continuity extractive + WhyHere + sidecar journal | Long-session head/tail, Context shrink, query-sensitive WhyHere | **Shipped** 2026-11-09 - Bite 1 |
 | Per-session Ask journal store | Busy-day retention without global Limit 100 eviction | **Shipped** 2026-11-09 - Bite 1b |
 | Ask model summary + memory worker | Derived cache every K=8; detached queue; never blocks Ask | **Shipped** 2026-11-09 - Bite 2 |
-| Per-project rolling brief | Structured MDR items + live ops + Ask/ctx slot + project-filtered turns | Implementing - Bite 3 (finish) |
+| Per-project rolling brief | Structured MDR items + live ops + Ask/ctx slot + project-filtered turns | **Shipped** 2026-11-09 - Bite 3 |
+| Portfolio cleanup (personal registry + CLAUDE.md defer) | Keep `projects.personal.json`; Smartsheet shared-only; Claude memory refile notes | **Shipped** 2026-11-09 - Bite 4; [claude-code-memory-refile.md](playbooks/claude-code-memory-refile.md) |
 | Commit-triggered Atlas Sessions | Durable per-commit recall; searchable via Atlas | Escalated in Future-Development; not shipped |
 | Explicit Capture → Session / Plan promote | Intake becomes portfolio memory on purpose | Habit + CLI exists; keep deliberate |
 | iOS Vision Ask contract | Relational phone turns never hit Desk AskLane | **Shipped** 2026-08-30 - [ios-vision-ask-contract.md](ios-vision-ask-contract.md) |

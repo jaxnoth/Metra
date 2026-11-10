@@ -48,6 +48,7 @@ Triggers: Metra home, routing, ctx, registry, inspect, profile, decisions, works
 | persona chat examples, maintainer notes | [docs/playbooks/persona-voice-examples.md](docs/playbooks/persona-voice-examples.md) |
 | partner identity, Surface/Posture, portfolio-shaped, Vision self | [docs/Customizing-Metra.md](docs/Customizing-Metra.md) (Partner Identity); `scripts/private/PartnerIdentity.ps1` |
 | OCC, decisions, ask/capture, memory homes | [docs/playbooks/portfolio-memory-governance.md](docs/playbooks/portfolio-memory-governance.md) |
+| CLAUDE.md, Claude Code memory refile, personal registry cleanup | [docs/playbooks/claude-code-memory-refile.md](docs/playbooks/claude-code-memory-refile.md) |
 | projects.json, profiles, import-profile | [docs/playbooks/registry-profiles.md](docs/playbooks/registry-profiles.md) |
 | metra.ps1 commands | [docs/playbooks/cli-reference.md](docs/playbooks/cli-reference.md) |
 | inspect loop, pack, Bing lane, A2 pack | [docs/playbooks/inspect-loop.md](docs/playbooks/inspect-loop.md) |
