@@ -3364,6 +3364,174 @@ function Format-MetraInspectPackMarkdown {
     return $sb.ToString()
 }
 
+function Move-MetraInspectStagedPartial {
+    <#
+    .SYNOPSIS
+        Promote one staged .partial onto its final path (test seam for promote-failure inject).
+    #>
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory)][string]$PartialPath,
+        [Parameter(Mandatory)][string]$FinalPath
+    )
+
+    Move-Item -LiteralPath $PartialPath -Destination $FinalPath -Force
+}
+
+function Copy-MetraInspectRollbackRestore {
+    <#
+    .SYNOPSIS
+        Restore one prior-final from .rollback via Copy-Item (keeps backup until full set succeeds).
+    #>
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory)][string]$RollbackPath,
+        [Parameter(Mandatory)][string]$FinalPath
+    )
+
+    Copy-Item -LiteralPath $RollbackPath -Destination $FinalPath -Force
+}
+
+function Publish-MetraInspectStagedFileSet {
+    <#
+    .SYNOPSIS
+        Stage sibling texts as .partial, snapshot priors, promote as one generation, restore on failure.
+    .NOTES
+        Visible finals remain one prior generation when any promote step fails.
+        Rollback files are deleted only after successful restore or when promotion never started.
+        -ContainerRoot is required: every Final must stay under that root.
+    #>
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory)][string]$ContainerRoot,
+        [Parameter(Mandatory)][AllowEmptyCollection()][object[]]$Items
+    )
+
+    $rootFull = [System.IO.Path]::GetFullPath($ContainerRoot)
+    if (-not (Test-Path -LiteralPath $rootFull -PathType Container)) {
+        [void][System.IO.Directory]::CreateDirectory($rootFull)
+        $rootFull = [System.IO.Path]::GetFullPath($rootFull)
+    }
+
+    $list = @($Items | Where-Object { $_ -and -not [string]::IsNullOrWhiteSpace([string]$_.Final) })
+    if ($list.Count -eq 0) { return }
+
+    foreach ($item in $list) {
+        $finalCheck = [System.IO.Path]::GetFullPath([string]$item.Final)
+        if (-not (Test-MetraPathWithinRoot -Path $finalCheck -Root $rootFull)) {
+            throw ("Staged publish path escaped container root: {0}" -f $finalCheck)
+        }
+    }
+
+    # Plain arrays - avoid Generic.List[object] "Argument types do not match" with PSCustomObject.
+    $partials = @()
+    $rollbacks = @()
+    $promoteStarted = $false
+    $preservedRollbacks = @()
+
+    try {
+        foreach ($item in $list) {
+            $final = [System.IO.Path]::GetFullPath([string]$item.Final)
+            $parent = Split-Path -Parent $final
+            if ($parent -and -not (Test-Path -LiteralPath $parent)) {
+                [void][System.IO.Directory]::CreateDirectory($parent)
+            }
+            $partial = "$final.partial"
+            Write-MetraAtomicUtf8Text -Path $partial -Text ([string]$item.Text)
+            $partials += $partial
+        }
+
+        foreach ($item in $list) {
+            $final = [System.IO.Path]::GetFullPath([string]$item.Final)
+            $rollback = "$final.rollback"
+            $hadPrior = $false
+            if (Test-Path -LiteralPath $final -PathType Leaf) {
+                Copy-Item -LiteralPath $final -Destination $rollback -Force
+                $hadPrior = $true
+            }
+            $rollbacks += [PSCustomObject]@{
+                Final     = $final
+                Rollback  = $rollback
+                HadPrior  = $hadPrior
+                Preserve  = $false
+            }
+        }
+
+        $promoteStarted = $true
+        foreach ($item in $list) {
+            $final = [System.IO.Path]::GetFullPath([string]$item.Final)
+            $partial = "$final.partial"
+            Move-MetraInspectStagedPartial -PartialPath $partial -FinalPath $final
+            $partials = @($partials | Where-Object { $_ -ne $partial })
+        }
+
+        foreach ($rb in $rollbacks) {
+            if ($rb.Rollback -and (Test-Path -LiteralPath $rb.Rollback -PathType Leaf)) {
+                Remove-Item -LiteralPath $rb.Rollback -Force -ErrorAction SilentlyContinue
+            }
+        }
+        $rollbacks = @()
+    }
+    catch {
+        $restoreFailed = $false
+        if ($promoteStarted) {
+            foreach ($rb in $rollbacks) {
+                try {
+                    if ($rb.HadPrior -and (Test-Path -LiteralPath $rb.Rollback -PathType Leaf)) {
+                        # Copy keeps .rollback until every prior member is restored.
+                        Copy-MetraInspectRollbackRestore -RollbackPath $rb.Rollback -FinalPath $rb.Final
+                    }
+                    elseif (-not $rb.HadPrior) {
+                        if (Test-Path -LiteralPath $rb.Final -PathType Leaf) {
+                            Remove-Item -LiteralPath $rb.Final -Force -ErrorAction Stop
+                        }
+                    }
+                    else {
+                        $restoreFailed = $true
+                    }
+                }
+                catch {
+                    $restoreFailed = $true
+                }
+            }
+            if ($restoreFailed) {
+                foreach ($rb in $rollbacks) {
+                    if ($rb.HadPrior -and (Test-Path -LiteralPath $rb.Rollback -PathType Leaf)) {
+                        $rb.Preserve = $true
+                        $preservedRollbacks += [string]$rb.Rollback
+                    }
+                }
+            }
+            else {
+                foreach ($rb in $rollbacks) {
+                    if ($rb.Rollback -and (Test-Path -LiteralPath $rb.Rollback -PathType Leaf)) {
+                        Remove-Item -LiteralPath $rb.Rollback -Force -ErrorAction SilentlyContinue
+                    }
+                }
+                $rollbacks = @()
+            }
+        }
+        $extra = ''
+        if ($preservedRollbacks.Count -gt 0) {
+            $extra = (' Preserved rollback(s) for operator recovery: {0}.' -f ($preservedRollbacks -join '; '))
+        }
+        throw ("{0}{1}" -f $_.Exception.Message, $extra)
+    }
+    finally {
+        foreach ($p in $partials) {
+            if ($p -and (Test-Path -LiteralPath $p -PathType Leaf)) {
+                Remove-Item -LiteralPath $p -Force -ErrorAction SilentlyContinue
+            }
+        }
+        foreach ($rb in $rollbacks) {
+            if ($rb.Preserve) { continue }
+            if ($rb.Rollback -and (Test-Path -LiteralPath $rb.Rollback -PathType Leaf)) {
+                Remove-Item -LiteralPath $rb.Rollback -Force -ErrorAction SilentlyContinue
+            }
+        }
+    }
+}
+
 function Write-MetraInspectPackArtifact {
     [CmdletBinding(SupportsShouldProcess)]
     param(
@@ -3376,68 +3544,146 @@ function Write-MetraInspectPackArtifact {
     )
 
     if ([string]::IsNullOrWhiteSpace($SlotKey)) { $SlotKey = 'default' }
-    [void](Ensure-MetraInspectSlotDirectory -SlotKey $SlotKey)
     $packPath = Get-MetraInspectPackPath -SlotKey $SlotKey -Mode $Mode
-    $shouldMsg = if ($NoClipboard) { 'Write inspect pack' } else { 'Write inspect pack and copy to clipboard' }
+    $shouldMsg = if ($Mode -eq 'diff') {
+        if ($NoClipboard) {
+            'Write inspect pack plus handoff/review-manifest/review-state (and Share mirror when available)'
+        }
+        else {
+            'Write inspect pack plus handoff/review-manifest/review-state (and Share mirror when available) and copy pack to clipboard'
+        }
+    }
+    elseif ($NoClipboard) {
+        'Write inspect pack'
+    }
+    else {
+        'Write inspect pack and copy to clipboard'
+    }
     if (-not $PSCmdlet.ShouldProcess($packPath, $shouldMsg)) {
         return [PSCustomObject]@{
-            Path         = $packPath
-            Stale        = $Stale
-            Mode         = $Mode
-            SlotKey      = $SlotKey
-            Text         = $PackText
-            Skipped      = $true
-            Clipboard    = $false
-            SharePack    = $null
-            ShareHandoff = $null
+            Path             = $packPath
+            Stale            = $Stale
+            Mode             = $Mode
+            SlotKey          = $SlotKey
+            Text             = $PackText
+            Skipped          = $true
+            Clipboard        = $false
+            SharePack        = $null
+            ShareHandoff     = $null
+            ShareManifest    = $null
+            ShareReviewState = $null
+            LocalHandoff     = $null
+            LocalManifest    = $null
+            LocalReviewState = $null
         }
     }
 
-    Write-MetraAtomicUtf8Text -Path $packPath -Text $PackText
+    [void](Ensure-MetraInspectSlotDirectory -SlotKey $SlotKey)
 
     if ($PackText.Length -gt 500000) {
         Write-Host 'Pack is large; prefer opening the pack file in Bing instead of clipboard paste.' -ForegroundColor Yellow
     }
 
-    $clipped = $false
-    if (-not $NoClipboard) {
-        try {
-            Set-Clipboard -Value $PackText -ErrorAction Stop
-            Write-Host 'Bing comparison pack copied to clipboard.'
-            $clipped = $true
-        }
-        catch {
-            Write-Host 'Clipboard unavailable; pack written to file only.'
-        }
-    }
-    Write-Host ("Pack file: {0}" -f $packPath)
-
     $sharePack = $null
     $shareHandoff = $null
+    $shareManifest = $null
+    $shareReviewState = $null
+    $localHandoff = $null
+    $localManifest = $null
+    $localReviewState = $null
+    $clipped = $false
+
     if ($Mode -eq 'diff') {
-        $hashForShare = $ContentHash
-        if ([string]::IsNullOrWhiteSpace($hashForShare)) {
-            $hashForShare = Get-MetraInspectDiffContentHash -SlotKey $SlotKey
+        try {
+            $hashForShare = $ContentHash
+            if ([string]::IsNullOrWhiteSpace($hashForShare)) {
+                $hashForShare = Get-MetraInspectDiffContentHash -SlotKey $SlotKey
+            }
+            $contractPaths = Get-MetraInspectReviewContractPaths -SlotKey $SlotKey
+            $prior = Resolve-MetraInspectPackPriorContentHash -SlotKey $SlotKey -NewContentHash $hashForShare
+            $files = @(Get-MetraInspectPackFileListFromText -PackText $PackText)
+            $excl = Get-MetraInspectPackExclusionsFromText -PackText $PackText
+            $handoffText = Format-MetraInspectBingShareHandoff -Project $SlotKey -ContentHash $hashForShare
+            $manifestText = Format-MetraInspectReviewManifest -Product $SlotKey -ContentHash $hashForShare `
+                -PriorReviewedContentHash $prior -ChangedPaths $files `
+                -OmittedByFileCap @($excl.OmittedByFileCap) -DocsCollapsed @($excl.DocsCollapsed) `
+                -GradeBC @($excl.GradeBC)
+            $stateText = New-MetraInspectReviewStateForPack -SlotKey $SlotKey -ContentHash $hashForShare -PriorContentHash $prior
+
+            # Contracts before pack-diff; rollback restores prior generation if any promote fails.
+            Publish-MetraInspectStagedFileSet -ContainerRoot $contractPaths.SlotRoot -Items @(
+                [PSCustomObject]@{ Final = $contractPaths.HandoffPath; Text = $handoffText }
+                [PSCustomObject]@{ Final = $contractPaths.ManifestPath; Text = $manifestText }
+                [PSCustomObject]@{ Final = $contractPaths.ReviewStatePath; Text = $stateText }
+                [PSCustomObject]@{ Final = $packPath; Text = $PackText }
+            )
+
+            $localHandoff = $contractPaths.HandoffPath
+            $localManifest = $contractPaths.ManifestPath
+            $localReviewState = $contractPaths.ReviewStatePath
+            Write-Host ("Pack file: {0}" -f $packPath)
+            Write-Host ("Bing handoff: {0}" -f $localHandoff)
+            Write-Host ("Bing review manifest: {0}" -f $localManifest)
+            Write-Host ("Bing review-state: {0}" -f $localReviewState)
+
+            if (-not $NoClipboard) {
+                try {
+                    Set-Clipboard -Value $PackText -ErrorAction Stop
+                    Write-Host 'Bing comparison pack copied to clipboard.'
+                    $clipped = $true
+                }
+                catch {
+                    Write-Host 'Clipboard unavailable; pack written to file only.'
+                }
+            }
+
+            $mirror = Publish-MetraInspectBingShareMirror -Project $SlotKey -PackText $PackText -ContentHash $hashForShare `
+                -HandoffText $handoffText -ManifestText $manifestText -ReviewStateText $stateText
+            if ($mirror -and $mirror.Ok) {
+                $sharePack = [string]$mirror.PackPath
+                $shareHandoff = [string]$mirror.HandoffPath
+                $shareManifest = [string]$mirror.ManifestPath
+                $shareReviewState = [string]$mirror.ReviewStatePath
+                Write-Host ("Bing share pack: {0}" -f $sharePack)
+                Write-Host ("Bing share handoff: {0}" -f $shareHandoff)
+                Write-Host ("Bing share review-manifest: {0}" -f $shareManifest)
+                Write-Host ("Bing share review-state: {0}" -f $shareReviewState)
+            }
         }
-        $mirror = Publish-MetraInspectBingShareMirror -Project $SlotKey -PackText $PackText -ContentHash $hashForShare
-        if ($mirror -and $mirror.Ok) {
-            $sharePack = [string]$mirror.PackPath
-            $shareHandoff = [string]$mirror.HandoffPath
-            Write-Host ("Bing share pack: {0}" -f $sharePack)
-            Write-Host ("Bing share handoff: {0}" -f $shareHandoff)
+        catch {
+            throw ("IncompleteContract: diff pack was not published without a matching handoff/manifest/review-state set. {0}" -f $_.Exception.Message)
+        }
+    }
+    else {
+        Write-MetraAtomicUtf8Text -Path $packPath -Text $PackText
+        Write-Host ("Pack file: {0}" -f $packPath)
+        if (-not $NoClipboard) {
+            try {
+                Set-Clipboard -Value $PackText -ErrorAction Stop
+                Write-Host 'Bing comparison pack copied to clipboard.'
+                $clipped = $true
+            }
+            catch {
+                Write-Host 'Clipboard unavailable; pack written to file only.'
+            }
         }
     }
 
     return [PSCustomObject]@{
-        Path         = $packPath
-        Stale        = $Stale
-        Mode         = $Mode
-        SlotKey      = $SlotKey
-        Text         = $PackText
-        Skipped      = $false
-        Clipboard    = $clipped
-        SharePack    = $sharePack
-        ShareHandoff = $shareHandoff
+        Path              = $packPath
+        Stale             = $Stale
+        Mode              = $Mode
+        SlotKey           = $SlotKey
+        Text              = $PackText
+        Skipped           = $false
+        Clipboard         = $clipped
+        SharePack         = $sharePack
+        ShareHandoff      = $shareHandoff
+        ShareManifest     = $shareManifest
+        ShareReviewState  = $shareReviewState
+        LocalHandoff      = $localHandoff
+        LocalManifest     = $localManifest
+        LocalReviewState  = $localReviewState
     }
 }
 
@@ -5605,32 +5851,642 @@ function Get-MetraInspectBingShareInspectDir {
     return $dirFull
 }
 
+function Get-MetraInspectReviewContractPaths {
+    <#
+    .SYNOPSIS
+        Local slot paths for Bing reviewer-contract artifacts (handoff / manifest / review-state).
+    #>
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory)][string]$SlotKey
+    )
+
+    $slot = Resolve-MetraInspectReviewSlotRoot -SlotKey $SlotKey
+    return [PSCustomObject]@{
+        SlotRoot         = $slot.SlotRoot
+        HandoffPath      = Join-Path $slot.SlotRoot 'handoff.md'
+        ManifestPath     = Join-Path $slot.SlotRoot 'review-manifest.md'
+        ReviewStatePath  = Join-Path $slot.SlotRoot 'review-state.md'
+        PackDiffPath     = Get-MetraInspectPackPath -SlotKey $SlotKey -Mode 'diff'
+    }
+}
+
+function Get-MetraInspectPackFileListFromText {
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory)][AllowEmptyString()][string]$PackText
+    )
+
+    if ($PackText -match '(?m)^Files:\s*(.+)\s*$') {
+        $raw = $Matches[1].Trim()
+        if ([string]::IsNullOrWhiteSpace($raw) -or $raw -eq '(none)') { return @() }
+        return @(
+            $raw -split ',' |
+                ForEach-Object { $_.Trim() } |
+                Where-Object { -not [string]::IsNullOrWhiteSpace($_) }
+        )
+    }
+    return @()
+}
+
+function Get-MetraInspectPackExclusionsFromText {
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory)][AllowEmptyString()][string]$PackText
+    )
+
+    $omitted = New-Object System.Collections.Generic.List[string]
+    $gradeBC = New-Object System.Collections.Generic.List[string]
+    $docsCollapsed = New-Object System.Collections.Generic.List[string]
+
+    if ($PackText -match '(?m)^Omitted by file cap:\s*(.+)\s*$') {
+        foreach ($p in @($Matches[1] -split ',' | ForEach-Object { $_.Trim() } | Where-Object { $_ })) {
+            [void]$omitted.Add($p)
+        }
+    }
+    if ($PackText -match '(?m)^Docs collapsed \(paths only\):\s*(.+)\s*$') {
+        foreach ($p in @($Matches[1] -split ',' | ForEach-Object { $_.Trim() } | Where-Object { $_ })) {
+            [void]$docsCollapsed.Add($p)
+        }
+    }
+    foreach ($line in @($PackText -split "`r?`n")) {
+        if ($line -match '^\s*-\s*(.+):\s*Grade\s*([BC])\b') {
+            [void]$gradeBC.Add(('{0} (Grade {1})' -f $Matches[1].Trim(), $Matches[2]))
+        }
+    }
+
+    return [PSCustomObject]@{
+        OmittedByFileCap = @($omitted.ToArray())
+        DocsCollapsed    = @($docsCollapsed.ToArray())
+        GradeBC          = @($gradeBC.ToArray())
+    }
+}
+
+function Resolve-MetraInspectPackPriorContentHash {
+    <#
+    .SYNOPSIS
+        One prior hash for a pack generation (manifest + review-state must agree).
+    .NOTES
+        Prefer external-review Meta.contentHash when it differs from the new hash; else the
+        existing review-state currentContentHash; else its priorContentHash. Never returns NewContentHash.
+    #>
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory)][string]$SlotKey,
+        [string]$NewContentHash
+    )
+
+    $new = if (-not [string]::IsNullOrWhiteSpace($NewContentHash)) { $NewContentHash.Trim() } else { '' }
+
+    $rec = Get-MetraInspectExternalReviewRecord -SlotKey $SlotKey
+    if ($rec -and $rec.Meta) {
+        $h = [string](Get-MetraProp -Object $rec.Meta -Name 'contentHash' -Default '')
+        if (-not [string]::IsNullOrWhiteSpace($h) -and $h -ne $new) { return $h }
+    }
+
+    $paths = Get-MetraInspectReviewContractPaths -SlotKey $SlotKey
+    if (Test-Path -LiteralPath $paths.ReviewStatePath -PathType Leaf) {
+        $parsed = ConvertFrom-MetraInspectReviewStateMarkdown -Text ([System.IO.File]::ReadAllText($paths.ReviewStatePath, (Get-MetraUtf8NoBomEncoding)))
+        $current = [string]$parsed.CurrentContentHash
+        if ($current -eq '(none)') { $current = '' }
+        if ($current -and $current -ne $new) { return $current }
+        $prior = [string]$parsed.PriorContentHash
+        if ($prior -eq '(none)') { $prior = '' }
+        if ($prior -and $prior -ne $new) { return $prior }
+    }
+    return ''
+}
+
+function Get-MetraInspectPriorReviewedContentHash {
+    <#
+    .SYNOPSIS
+        Import-oriented prior hint (Meta.contentHash, else review-state priorContentHash only).
+    .NOTES
+        Diff pack generation must use Resolve-MetraInspectPackPriorContentHash -NewContentHash so
+        manifest and review-state share one prior (previous current when Meta is absent).
+    #>
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory)][string]$SlotKey
+    )
+
+    $rec = Get-MetraInspectExternalReviewRecord -SlotKey $SlotKey
+    if ($rec -and $rec.Meta) {
+        $h = [string](Get-MetraProp -Object $rec.Meta -Name 'contentHash' -Default '')
+        if (-not [string]::IsNullOrWhiteSpace($h)) { return $h }
+    }
+    $paths = Get-MetraInspectReviewContractPaths -SlotKey $SlotKey
+    if (Test-Path -LiteralPath $paths.ReviewStatePath -PathType Leaf) {
+        $raw = [System.IO.File]::ReadAllText($paths.ReviewStatePath, (Get-MetraUtf8NoBomEncoding))
+        if ($raw -match '(?m)^priorContentHash:\s*(.+)\s*$') {
+            $h2 = $Matches[1].Trim()
+            if ($h2 -and $h2 -ne '(none)') { return $h2 }
+        }
+    }
+    return ''
+}
+
+function ConvertFrom-MetraInspectReviewStateMarkdown {
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory)][AllowEmptyString()][string]$Text
+    )
+
+    $normalized = [regex]::Replace([string]$Text, '\r\n?', "`n")
+    $field = {
+        param([string]$Name)
+        if ($normalized -match "(?im)^\s*$Name\s*:\s*(.+?)\s*$") {
+            return $Matches[1].Trim()
+        }
+        return ''
+    }
+
+    $findings = New-Object System.Collections.Generic.List[object]
+    $lines = @($normalized -split "`n")
+    $inFindings = $false
+    $current = $null
+    foreach ($line in $lines) {
+        if ($line -match '(?i)^prior_findings:\s*$') {
+            $inFindings = $true
+            continue
+        }
+        if ($inFindings -and $line -match '^\S' -and $line -notmatch '^\s*-') {
+            if ($current) { [void]$findings.Add($current); $current = $null }
+            $inFindings = $false
+        }
+        if (-not $inFindings) { continue }
+        if ($line -match '^\s*-\s*id:\s*(.+)\s*$') {
+            if ($current) { [void]$findings.Add($current) }
+            $current = [ordered]@{
+                id        = $Matches[1].Trim()
+                severity  = ''
+                status    = 'open'
+                evidence  = ''
+                rationale = ''
+            }
+            continue
+        }
+        if ($null -eq $current) { continue }
+        if ($line -match '^\s+severity:\s*(.+)\s*$') { $current.severity = $Matches[1].Trim(); continue }
+        if ($line -match '^\s+status:\s*(.+)\s*$') { $current.status = $Matches[1].Trim(); continue }
+        if ($line -match '^\s+evidence:\s*(.+)\s*$') { $current.evidence = $Matches[1].Trim(); continue }
+        if ($line -match '^\s+rationale:\s*(.+)\s*$') { $current.rationale = $Matches[1].Trim(); continue }
+    }
+    if ($current) { [void]$findings.Add($current) }
+
+    return [PSCustomObject]@{
+        SchemaVersion      = (& $field 'schemaVersion')
+        Product            = (& $field 'product')
+        PriorContentHash   = (& $field 'priorContentHash')
+        CurrentContentHash = (& $field 'currentContentHash')
+        PriorReviewDepth   = (& $field 'priorReviewDepth')
+        Findings           = @($findings.ToArray())
+    }
+}
+
+function ConvertTo-MetraInspectContractScalar {
+    <#
+    .SYNOPSIS
+        One-line contract field value: strip CR/LF and other controls (independent of path SafeKey).
+    #>
+    [CmdletBinding()]
+    param(
+        [AllowNull()][AllowEmptyString()][string]$Value
+    )
+
+    if ($null -eq $Value) { return '' }
+    # C0 controls + DEL, plus Unicode NEL / line / paragraph separators that still break one-line fields.
+    return ([regex]::Replace([string]$Value, '[\u0000-\u001F\u007F\u0085\u2028\u2029]', '')).Trim()
+}
+
+function Format-MetraInspectReviewState {
+    <#
+    .SYNOPSIS
+        review-state.md for Bing delta reviews. Authority statuses only; never invent verified-fixed from prose.
+    #>
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory)][string]$Product,
+        [string]$PriorContentHash,
+        [string]$CurrentContentHash,
+        [string]$PriorReviewDepth = '',
+        [AllowEmptyCollection()][object[]]$Findings = @()
+    )
+
+    $productOut = ConvertTo-MetraInspectContractScalar -Value $Product
+    $priorOut = ConvertTo-MetraInspectContractScalar -Value $PriorContentHash
+    $currentOut = ConvertTo-MetraInspectContractScalar -Value $CurrentContentHash
+    $depthOut = ConvertTo-MetraInspectContractScalar -Value $PriorReviewDepth
+    $sb = New-Object System.Text.StringBuilder
+    [void]$sb.AppendLine('# Metra Inspect review-state')
+    [void]$sb.AppendLine('')
+    [void]$sb.AppendLine('schemaVersion: 1')
+    [void]$sb.AppendLine("product: $productOut")
+    [void]$sb.AppendLine(('priorContentHash: {0}' -f $(if ($priorOut) { $priorOut } else { '(none)' })))
+    [void]$sb.AppendLine(('currentContentHash: {0}' -f $(if ($currentOut) { $currentOut } else { '(none)' })))
+    [void]$sb.AppendLine(('priorReviewDepth: {0}' -f $(if ($depthOut) { $depthOut } else { '(none)' })))
+    [void]$sb.AppendLine('Authority: open and claimed-fixed may come from import; verified-fixed requires later evidence against the current contentHash or operator edit; accepted-risk and wontfix are operator-only.')
+    [void]$sb.AppendLine('priorReviewDepth is declared depth only - L1 approve never means L2/L3 package audit.')
+    [void]$sb.AppendLine('')
+    [void]$sb.AppendLine('prior_findings:')
+    $rows = @($Findings)
+    if ($rows.Count -eq 0) {
+        [void]$sb.AppendLine('  (none)')
+    }
+    else {
+        foreach ($f in $rows) {
+            $id = ConvertTo-MetraInspectContractScalar -Value ([string](Get-MetraProp -Object $f -Name 'id' -Default ''))
+            if ([string]::IsNullOrWhiteSpace($id)) { continue }
+            $sev = ConvertTo-MetraInspectContractScalar -Value ([string](Get-MetraProp -Object $f -Name 'severity' -Default 'nonblocking'))
+            $st = ConvertTo-MetraInspectContractScalar -Value ([string](Get-MetraProp -Object $f -Name 'status' -Default 'open'))
+            $ev = ConvertTo-MetraInspectContractScalar -Value ([string](Get-MetraProp -Object $f -Name 'evidence' -Default ''))
+            $rat = ConvertTo-MetraInspectContractScalar -Value ([string](Get-MetraProp -Object $f -Name 'rationale' -Default ''))
+            [void]$sb.AppendLine("  - id: $id")
+            [void]$sb.AppendLine("    severity: $sev")
+            [void]$sb.AppendLine("    status: $st")
+            [void]$sb.AppendLine(('    evidence: {0}' -f $(if ($ev) { $ev } else { '(none)' })))
+            [void]$sb.AppendLine(('    rationale: {0}' -f $(if ($rat) { $rat } else { '(none)' })))
+        }
+    }
+    return ($sb.ToString().TrimEnd() + "`n")
+}
+
+function New-MetraInspectReviewStateForPack {
+    <#
+    .SYNOPSIS
+        Seed review-state for a new pack. Same contentHash preserves dispositions; new hash reopens.
+    .NOTES
+        Pass -PriorContentHash from Resolve-MetraInspectPackPriorContentHash so manifest and state agree.
+    #>
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory)][string]$SlotKey,
+        [Parameter(Mandatory)][string]$ContentHash,
+        [string]$PriorContentHash
+    )
+
+    $paths = Get-MetraInspectReviewContractPaths -SlotKey $SlotKey
+    $priorDepth = ''
+    $carried = @()
+    $existingText = $null
+    $parsed = $null
+
+    if (Test-Path -LiteralPath $paths.ReviewStatePath -PathType Leaf) {
+        $existingText = [System.IO.File]::ReadAllText($paths.ReviewStatePath, (Get-MetraUtf8NoBomEncoding))
+        $parsed = ConvertFrom-MetraInspectReviewStateMarkdown -Text $existingText
+        $existingCurrent = [string]$parsed.CurrentContentHash
+        if ($existingCurrent -eq '(none)') { $existingCurrent = '' }
+        # Same generation: keep import dispositions (claimed-fixed, etc.) and prior/current hashes.
+        if ($existingCurrent -and [string]::Equals($existingCurrent, $ContentHash, [System.StringComparison]::OrdinalIgnoreCase)) {
+            return ($existingText.TrimEnd() + "`n")
+        }
+        $priorDepth = [string]$parsed.PriorReviewDepth
+        if ($priorDepth -eq '(none)') { $priorDepth = '' }
+        foreach ($f in @($parsed.Findings)) {
+            $st = ([string]$f.status).ToLowerInvariant()
+            if ($st -in @('accepted-risk', 'wontfix')) {
+                $carried += [ordered]@{
+                    id        = [string]$f.id
+                    severity  = [string]$f.severity
+                    status    = $st
+                    evidence  = [string]$f.evidence
+                    rationale = [string]$f.rationale
+                }
+                continue
+            }
+            # New package hash: unresolved and claimed-fixed return to open for re-check.
+            if ($st -in @('open', 'claimed-fixed', 'verified-fixed', '')) {
+                $carried += [ordered]@{
+                    id        = [string]$f.id
+                    severity  = [string]$f.severity
+                    status    = 'open'
+                    evidence  = [string]$f.evidence
+                    rationale = 'Carried forward on new pack seed; re-verify against current contentHash.'
+                }
+            }
+        }
+    }
+
+    $priorHash = ''
+    if (-not [string]::IsNullOrWhiteSpace($PriorContentHash) -and $PriorContentHash -ne $ContentHash) {
+        $priorHash = $PriorContentHash.Trim()
+    }
+    else {
+        $priorHash = Resolve-MetraInspectPackPriorContentHash -SlotKey $SlotKey -NewContentHash $ContentHash
+    }
+
+    $rec = Get-MetraInspectExternalReviewRecord -SlotKey $SlotKey
+    if ($rec -and $rec.Meta) {
+        $metaDepth = [string](Get-MetraProp -Object $rec.Meta -Name 'reviewDepth' -Default '')
+        if (-not [string]::IsNullOrWhiteSpace($metaDepth)) { $priorDepth = $metaDepth }
+    }
+
+    return Format-MetraInspectReviewState -Product $SlotKey `
+        -PriorContentHash $priorHash `
+        -CurrentContentHash $ContentHash `
+        -PriorReviewDepth $priorDepth `
+        -Findings @($carried)
+}
+
+function Update-MetraInspectReviewStateFromImport {
+    <#
+    .SYNOPSIS
+        Apply imported External Review to review-state. Never auto-sets verified-fixed.
+    #>
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory)][string]$SlotKey,
+        [Parameter(Mandatory)][string]$ContentHash,
+        [Parameter(Mandatory)][AllowEmptyString()][string]$ReviewBody,
+        [string]$ReviewDepth,
+        [string]$Verdict,
+        [string]$PriorContentHash
+    )
+
+    $paths = Get-MetraInspectReviewContractPaths -SlotKey $SlotKey
+    $existing = @()
+    $prevDepth = ''
+    if (Test-Path -LiteralPath $paths.ReviewStatePath -PathType Leaf) {
+        $parsed = ConvertFrom-MetraInspectReviewStateMarkdown -Text ([System.IO.File]::ReadAllText($paths.ReviewStatePath, (Get-MetraUtf8NoBomEncoding)))
+        $existing = @($parsed.Findings)
+        $prevDepth = [string]$parsed.PriorReviewDepth
+        if ($prevDepth -eq '(none)') { $prevDepth = '' }
+    }
+
+    $byId = @{}
+    foreach ($f in $existing) {
+        $id = [string]$f.id
+        if ([string]::IsNullOrWhiteSpace($id)) { continue }
+        $byId[$id] = [ordered]@{
+            id        = $id
+            severity  = [string]$f.severity
+            status    = ([string]$f.status).ToLowerInvariant()
+            evidence  = [string]$f.evidence
+            rationale = [string]$f.rationale
+        }
+    }
+
+    $body = [regex]::Replace([string]$ReviewBody, '\r\n?', "`n")
+    # Only mint finding rows from Blocking / Nonblocking sections (not template leftovers elsewhere).
+    $findingSections = New-Object System.Collections.Generic.List[string]
+    if ($body -match '(?is)(#{1,3}\s*Blocking findings?\s*\n)(.*?)(?=\n#{1,3}\s|\z)') {
+        [void]$findingSections.Add($Matches[2])
+    }
+    if ($body -match '(?is)(#{1,3}\s*Nonblocking findings?\s*\n)(.*?)(?=\n#{1,3}\s|\z)') {
+        [void]$findingSections.Add($Matches[2])
+    }
+    if ($body -match '(?is)(#{1,3}\s*Blocking\s*\n)(.*?)(?=\n#{1,3}\s|\z)') {
+        [void]$findingSections.Add($Matches[2])
+    }
+    $sectionText = if ($findingSections.Count -gt 0) { ($findingSections -join "`n") } else { '' }
+    if (-not [string]::IsNullOrWhiteSpace($sectionText)) {
+        $idMatches = [regex]::Matches($sectionText, '(?m)(?<![A-Za-z0-9])([BN]\d+)\b')
+        foreach ($m in $idMatches) {
+            $id = $m.Groups[1].Value
+            $sev = if ($id.StartsWith('B')) { 'blocker' } else { 'nonblocking' }
+            if (-not $byId.ContainsKey($id)) {
+                $byId[$id] = [ordered]@{
+                    id        = $id
+                    severity  = $sev
+                    status    = 'open'
+                    evidence  = ''
+                    rationale = 'Imported from External Review finding id.'
+                }
+            }
+            else {
+                $cur = $byId[$id]
+                if ($cur.status -in @('accepted-risk', 'wontfix')) { continue }
+                # Preserve operator dispositions; never promote to verified-fixed here.
+                if ($cur.status -eq 'verified-fixed') { continue }
+            }
+        }
+    }
+
+    foreach ($key in @($byId.Keys)) {
+        $row = $byId[$key]
+        if ($row.status -in @('accepted-risk', 'wontfix', 'verified-fixed')) { continue }
+        $idEsc = [regex]::Escape([string]$row.id)
+        # Affirmative fix claim only inside extracted Blocking/Nonblocking sections (no full-body fallback).
+        # Digit-safe id boundary so B1 does not match inside B10.
+        $claimFixed = $false
+        if (-not [string]::IsNullOrWhiteSpace($sectionText)) {
+            $idTok = "(?<![A-Za-z0-9])${idEsc}(?![A-Za-z0-9])"
+            $pat = "(?is)$idTok(?:\s*[:.\-]\s*|\s+)(?:was|is|has been|have been)\s+(?:fixed|resolved|addressed|corrected)\b"
+            foreach ($m in [regex]::Matches($sectionText, $pat)) {
+                $end = [Math]::Min($sectionText.Length, $m.Index + $m.Length + 48)
+                $window = $sectionText.Substring($m.Index, $end - $m.Index)
+                if ($window -match '(?i)\b(not|never|still\s+not|unfixed|unresolved|nothing|incorrectly|wrongly)\b') { continue }
+                if ($window -match '(?i)\?\s*No\b|(?<=\W)No\.(?:\s|$)') { continue }
+                $claimFixed = $true
+                break
+            }
+        }
+        if ($claimFixed) {
+            $row.status = 'claimed-fixed'
+            $row.rationale = 'Reviewer observed apparent correction; not verified-fixed.'
+            $byId[$key] = $row
+        }
+        elseif ($Verdict -in @('changes-requested', 'blocked') -and $row.status -ne 'claimed-fixed') {
+            $row.status = 'open'
+            $byId[$key] = $row
+        }
+    }
+
+    $priorHash = $PriorContentHash
+    if ([string]::IsNullOrWhiteSpace($priorHash)) {
+        $priorHash = ''
+    }
+    # Persist declared depth exactly; never infer or promote from verdict.
+    $depthOut = $ReviewDepth
+    if ([string]::IsNullOrWhiteSpace($depthOut)) {
+        $depthOut = $prevDepth
+    }
+
+    $ordered = @(
+        $byId.Values | Sort-Object { [string]$_.id }
+    )
+    return Format-MetraInspectReviewState -Product $SlotKey `
+        -PriorContentHash $priorHash `
+        -CurrentContentHash $ContentHash `
+        -PriorReviewDepth $depthOut `
+        -Findings $ordered
+}
+
+function Format-MetraInspectReviewManifest {
+    <#
+    .SYNOPSIS
+        Navigation-layer review-manifest.md for Bing selective readability (not a second lossy summary).
+    #>
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory)][string]$Product,
+        [string]$ContentHash,
+        [string]$PriorReviewedContentHash,
+        [ValidateSet('implementation', 'regression', 'final')][string]$ReviewType = 'implementation',
+        [ValidateSet('L1', 'L2', 'L3')][string]$IntendedDepth = 'L1',
+        [AllowEmptyCollection()][string[]]$ChangedPaths = @(),
+        [AllowEmptyCollection()][string[]]$OmittedByFileCap = @(),
+        [AllowEmptyCollection()][string[]]$DocsCollapsed = @(),
+        [AllowEmptyCollection()][string[]]$GradeBC = @()
+    )
+
+    $code = New-Object System.Collections.Generic.List[string]
+    $tests = New-Object System.Collections.Generic.List[string]
+    $docs = New-Object System.Collections.Generic.List[string]
+    $other = New-Object System.Collections.Generic.List[string]
+    foreach ($p in @($ChangedPaths)) {
+        $scrubbed = ConvertTo-MetraInspectContractScalar -Value $p
+        if ([string]::IsNullOrWhiteSpace($scrubbed)) { continue }
+        $cls = Get-MetraInspectFileClass -RelativePath $scrubbed
+        $norm = $scrubbed.Replace('\', '/')
+        if ($norm -match '(?i)(\.Tests\.ps1$|/tests/|^tests/)') {
+            [void]$tests.Add($norm)
+        }
+        elseif ($cls -eq 'docs' -or $norm -match '(?i)(^|/)docs/') {
+            [void]$docs.Add($norm)
+        }
+        elseif ($cls -eq 'code') {
+            [void]$code.Add($norm)
+        }
+        else {
+            [void]$other.Add($norm)
+        }
+    }
+
+    $productOut = ConvertTo-MetraInspectContractScalar -Value $Product
+    $hashOut = ConvertTo-MetraInspectContractScalar -Value $ContentHash
+    $priorOut = ConvertTo-MetraInspectContractScalar -Value $PriorReviewedContentHash
+    $sb = New-Object System.Text.StringBuilder
+    [void]$sb.AppendLine('# Metra Inspect review manifest')
+    [void]$sb.AppendLine('')
+    [void]$sb.AppendLine("Product: $productOut")
+    [void]$sb.AppendLine(('contentHash: {0}' -f $(if ($hashOut) { $hashOut } else { '(none)' })))
+    [void]$sb.AppendLine(('Prior reviewed commit / contentHash: {0}' -f $(if ($priorOut) { $priorOut } else { '(none)' })))
+    [void]$sb.AppendLine("Review type: $ReviewType")
+    [void]$sb.AppendLine('Expected verdict machine values: approve | changes-requested | blocked')
+    [void]$sb.AppendLine('Expected verdict display aliases: PASS | CONDITIONAL | BLOCK')
+    [void]$sb.AppendLine("Intended depth: $IntendedDepth")
+    [void]$sb.AppendLine('Escalation: L1 delta (changed code + affected contracts + relevant tests); L2 boundary (+ callers, interfaces, persistence, regression surface); L3 package audit (re-establish from source evidence). Escalate yourself when a finding invalidates L1 assumptions.')
+    [void]$sb.AppendLine('')
+    [void]$sb.AppendLine('## Changed')
+    [void]$sb.AppendLine(('code: {0}' -f $(if ($code.Count) { ($code -join ', ') } else { '(none)' })))
+    [void]$sb.AppendLine(('tests: {0}' -f $(if ($tests.Count) { ($tests -join ', ') } else { '(none)' })))
+    [void]$sb.AppendLine(('docs: {0}' -f $(if ($docs.Count) { ($docs -join ', ') } else { '(none)' })))
+    [void]$sb.AppendLine(('other: {0}' -f $(if ($other.Count) { ($other -join ', ') } else { '(none)' })))
+    [void]$sb.AppendLine('')
+    [void]$sb.AppendLine('## Required evidence')
+    [void]$sb.AppendLine('- implementation (pack-diff Diff bodies)')
+    [void]$sb.AppendLine('- tests (changed test files + Test catalog)')
+    [void]$sb.AppendLine('- documentation alignment when docs changed')
+    [void]$sb.AppendLine('- Evidence fidelity grades (A/B/C)')
+    [void]$sb.AppendLine('')
+    $omitScrub = @(@($OmittedByFileCap) | ForEach-Object { ConvertTo-MetraInspectContractScalar -Value $_ } | Where-Object { $_ })
+    $docsScrub = @(@($DocsCollapsed) | ForEach-Object { ConvertTo-MetraInspectContractScalar -Value $_ } | Where-Object { $_ })
+    $gradeScrub = @(@($GradeBC) | ForEach-Object { ConvertTo-MetraInspectContractScalar -Value $_ } | Where-Object { $_ })
+    [void]$sb.AppendLine('## Known exclusions')
+    [void]$sb.AppendLine(('omittedByFileCap: {0}' -f $(if ($omitScrub.Count) { ($omitScrub -join ', ') } else { '(none)' })))
+    [void]$sb.AppendLine(('docsCollapsed: {0}' -f $(if ($docsScrub.Count) { ($docsScrub -join ', ') } else { '(none)' })))
+    [void]$sb.AppendLine(('gradeBOrC: {0}' -f $(if ($gradeScrub.Count) { ($gradeScrub -join '; ') } else { '(none)' })))
+    [void]$sb.AppendLine('')
+    [void]$sb.AppendLine('## Evidence map (into pack-diff.md)')
+    [void]$sb.AppendLine('- Findings')
+    [void]$sb.AppendLine('- Evidence fidelity')
+    [void]$sb.AppendLine('- Diff (current disk scrub)')
+    [void]$sb.AppendLine('- Test catalog (Describe / It names)')
+    [void]$sb.AppendLine('')
+    [void]$sb.AppendLine('This manifest is navigation only. Full source evidence remains in pack-diff.md - pull bodies on demand rather than trusting summaries.')
+    return ($sb.ToString().TrimEnd() + "`n")
+}
+
 function Format-MetraInspectBingShareHandoff {
+    <#
+    .SYNOPSIS
+        Bing reviewer contract (open order, retrieval authority, required return shape, depth).
+    #>
     [CmdletBinding()]
     param(
         [Parameter(Mandatory)][string]$Project,
-        [string]$ContentHash
+        [string]$ContentHash,
+        [ValidateSet('L1', 'L2', 'L3')][string]$IntendedDepth = 'L1',
+        [string]$ShareRoot
     )
 
-    $hashOut = if (-not [string]::IsNullOrWhiteSpace($ContentHash)) { $ContentHash } else { '(none)' }
+    $projectOut = ConvertTo-MetraInspectContractScalar -Value $Project
+    $hashRaw = ConvertTo-MetraInspectContractScalar -Value $ContentHash
+    $hashOut = if (-not [string]::IsNullOrWhiteSpace($hashRaw)) { $hashRaw } else { '(none)' }
+    $shareOut = ConvertTo-MetraInspectContractScalar -Value $ShareRoot
+    if ([string]::IsNullOrWhiteSpace($shareOut)) {
+        try {
+            $shareOut = ConvertTo-MetraInspectContractScalar -Value (Get-MetraInspectBingShareInspectDir -Project $Project -NoCreate)
+        }
+        catch {
+            $shareOut = '(unavailable)'
+        }
+    }
+    if ([string]::IsNullOrWhiteSpace($shareOut)) { $shareOut = '(unavailable)' }
     $utc = [datetime]::UtcNow.ToString('o')
     $sb = New-Object System.Text.StringBuilder
     [void]$sb.AppendLine('# Metra Inspect Bing handoff')
     [void]$sb.AppendLine('')
-    [void]$sb.AppendLine("Project: $Project")
+    [void]$sb.AppendLine("Project: $projectOut")
     [void]$sb.AppendLine("PackedAtUtc: $utc")
     [void]$sb.AppendLine("contentHash: $hashOut")
+    [void]$sb.AppendLine("Intended depth: $IntendedDepth")
+    [void]$sb.AppendLine("ShareRoot: $shareOut")
+    [void]$sb.AppendLine('v1 pack constants: Review type defaults to implementation and Intended depth to L1 unless a later CLI threads overrides.')
     [void]$sb.AppendLine('')
-    [void]$sb.AppendLine('Open sibling pack-diff.md in Bing / Copilot (M365 OneDrive file).')
+    [void]$sb.AppendLine('## Authoritative reviewer retrieval')
+    [void]$sb.AppendLine('For Microsoft Copilot/Bing review, retrieve the four review artifacts (handoff.md, review-manifest.md, review-state.md, pack-diff.md) directly from the project Share folder / DriveItems whenever direct SharePoint or OneDrive access is available.')
+    [void]$sb.AppendLine('Do not use Microsoft 365 search-index freshness as evidence that a newer generation does not exist. Search is discovery/fallback only.')
+    [void]$sb.AppendLine('Before reviewing, confirm that handoff, manifest, state, and pack declare the same contentHash. If direct retrieval and indexed/search retrieval disagree, direct SharePoint/OneDrive folder content is authoritative and the indexed copy must not be reviewed.')
+    [void]$sb.AppendLine('Bootstrap: resolve ShareRoot (above), open that folder, read the four artifacts, verify matching contentHash, then review. Prefer caching DriveItem IDs for the folder when the surface supports it.')
+    [void]$sb.AppendLine('')
+    [void]$sb.AppendLine('Open order: handoff.md -> review-manifest.md -> review-state.md -> selective pulls from pack-diff.md.')
+    [void]$sb.AppendLine('Do not treat the manifest as the evidence. Prefer selective readability over compressed summaries.')
+    [void]$sb.AppendLine('')
     [void]$sb.AppendLine('Classify concerns as Observed, Missing visibility, or Recommendation.')
+    [void]$sb.AppendLine('A finding classified as Missing visibility must not also be reported as a defect.')
+    [void]$sb.AppendLine('No finding without pack evidence. No PASS / approve for claims that were not actually inspected.')
+    [void]$sb.AppendLine('evidenceInspected identifies evidence whose substantive contents the reviewer actually examined, not paths merely listed by the manifest or evidence map.')
     [void]$sb.AppendLine('')
-    [void]$sb.AppendLine('Preferred return: reply in chat with ## Metra External Review including verdict (approve | changes-requested | blocked) and this contentHash echoed.')
+    [void]$sb.AppendLine('Machine verdicts: approve | changes-requested | blocked')
+    [void]$sb.AppendLine('Display aliases: PASS | CONDITIONAL | BLOCK')
+    [void]$sb.AppendLine('')
+    [void]$sb.AppendLine("Preferred return: reply in chat with ## $projectOut External Review (recommendation only - does not affirm the Bing gate).")
     [void]$sb.AppendLine('Only write sibling review.md in this Share project folder when your surface can create/update markdown content. Many Copilot/SharePoint tool lanes cannot.')
-    [void]$sb.AppendLine('Do not modify pack-diff.md or handoff.md. Recommendation only - does not affirm the Bing gate.')
+    [void]$sb.AppendLine('Do not modify pack-diff.md, handoff.md, review-manifest.md, or review-state.md.')
     [void]$sb.AppendLine('')
-    [void]$sb.AppendLine("Operator next: copy the chat review, then .\metra.ps1 inspect review import -Name $Project -Clipboard")
+    [void]$sb.AppendLine('Required return template:')
+    [void]$sb.AppendLine('')
+    [void]$sb.AppendLine("## $projectOut External Review")
+    [void]$sb.AppendLine('')
+    [void]$sb.AppendLine('reviewer: Microsoft Copilot')
+    [void]$sb.AppendLine('reviewType: diff')
+    [void]$sb.AppendLine("project: $projectOut")
+    [void]$sb.AppendLine("contentHash: $hashOut")
+    [void]$sb.AppendLine('verdict: approve | changes-requested | blocked')
+    [void]$sb.AppendLine("reviewDepth: $IntendedDepth")
+    [void]$sb.AppendLine('evidenceInspected:')
+    [void]$sb.AppendLine('  - path/actually/examined.ps1')
+    [void]$sb.AppendLine('suggestedNextAction: ...')
+    [void]$sb.AppendLine('')
+    [void]$sb.AppendLine('### Blocking findings')
+    [void]$sb.AppendLine('B1 ... (cite pack evidence)')
+    [void]$sb.AppendLine('')
+    [void]$sb.AppendLine('### Nonblocking findings')
+    [void]$sb.AppendLine('N1 ...')
+    [void]$sb.AppendLine('')
+    [void]$sb.AppendLine('### Verified')
+    [void]$sb.AppendLine('V1 ...')
+    [void]$sb.AppendLine('')
+    [void]$sb.AppendLine('### Not verified')
+    [void]$sb.AppendLine('U1 ...')
+    [void]$sb.AppendLine('')
+    [void]$sb.AppendLine('Escalate to L2/L3 in reviewDepth when assumptions break. An L1 approve must not be read later as an L2/L3 package audit.')
+    [void]$sb.AppendLine('')
+    [void]$sb.AppendLine("Operator next: copy the chat review, then .\metra.ps1 inspect review import -Name $projectOut -Clipboard")
     [void]$sb.AppendLine('(or -Path review.md / Share/<Project>/review.md when a file already exists)')
-    [void]$sb.AppendLine("Then: .\metra.ps1 inspect gate affirm -Name $Project")
+    [void]$sb.AppendLine("Then: .\metra.ps1 inspect gate affirm -Name $projectOut")
     [void]$sb.AppendLine('')
     [void]$sb.AppendLine('Share copy is a mirror. Local %LOCALAPPDATA%\Metra\inspect pack and assess hashes remain authoritative.')
     return ($sb.ToString().TrimEnd() + "`n")
@@ -5639,37 +6495,69 @@ function Format-MetraInspectBingShareHandoff {
 function Publish-MetraInspectBingShareMirror {
     <#
     .SYNOPSIS
-        Soft-fail mirror of exact PackText + handoff.md into OneDrive Metra Share.
+        Soft-fail mirror of PackText + reviewer-contract siblings into OneDrive Metra Share.
+    .NOTES
+        Uses the same four-artifact staged promote + prior-final rollback as local publication.
+        Share failure stays nonfatal; mirror remains wholly prior-generation on partial failure.
     #>
     [CmdletBinding()]
     param(
         [Parameter(Mandatory)][string]$Project,
         [Parameter(Mandatory)][AllowEmptyString()][string]$PackText,
-        [string]$ContentHash
+        [string]$ContentHash,
+        [string]$HandoffText,
+        [string]$ManifestText,
+        [string]$ReviewStateText
     )
 
     try {
         $dir = Get-MetraInspectBingShareInspectDir -Project $Project
         $packPath = Join-Path $dir 'pack-diff.md'
         $handoffPath = Join-Path $dir 'handoff.md'
-        Write-MetraAtomicUtf8Text -Path $packPath -Text $PackText
-        $handoff = Format-MetraInspectBingShareHandoff -Project $Project -ContentHash $ContentHash
-        Write-MetraAtomicUtf8Text -Path $handoffPath -Text $handoff
+        $manifestPath = Join-Path $dir 'review-manifest.md'
+        $statePath = Join-Path $dir 'review-state.md'
+
+        if ([string]::IsNullOrWhiteSpace($HandoffText)) {
+            $HandoffText = Format-MetraInspectBingShareHandoff -Project $Project -ContentHash $ContentHash
+        }
+        if ([string]::IsNullOrWhiteSpace($ManifestText)) {
+            $files = @(Get-MetraInspectPackFileListFromText -PackText $PackText)
+            $excl = Get-MetraInspectPackExclusionsFromText -PackText $PackText
+            $ManifestText = Format-MetraInspectReviewManifest -Product $Project -ContentHash $ContentHash `
+                -PriorReviewedContentHash '' -ChangedPaths $files `
+                -OmittedByFileCap @($excl.OmittedByFileCap) -DocsCollapsed @($excl.DocsCollapsed) `
+                -GradeBC @($excl.GradeBC)
+        }
+        if ([string]::IsNullOrWhiteSpace($ReviewStateText)) {
+            $ReviewStateText = Format-MetraInspectReviewState -Product $Project -PriorContentHash '' `
+                -CurrentContentHash $ContentHash -Findings @()
+        }
+
+        Publish-MetraInspectStagedFileSet -ContainerRoot $dir -Items @(
+            [PSCustomObject]@{ Final = $handoffPath; Text = $HandoffText }
+            [PSCustomObject]@{ Final = $manifestPath; Text = $ManifestText }
+            [PSCustomObject]@{ Final = $statePath; Text = $ReviewStateText }
+            [PSCustomObject]@{ Final = $packPath; Text = $PackText }
+        )
         return [PSCustomObject]@{
-            Ok          = $true
-            PackPath    = $packPath
-            HandoffPath = $handoffPath
-            ContentHash = $ContentHash
+            Ok              = $true
+            PackPath        = $packPath
+            HandoffPath     = $handoffPath
+            ManifestPath    = $manifestPath
+            ReviewStatePath = $statePath
+            ContentHash     = $ContentHash
         }
     }
     catch {
         Write-Warning ("Bing share mirror skipped: {0}" -f $_.Exception.Message)
         return [PSCustomObject]@{
-            Ok          = $false
-            PackPath    = $null
-            HandoffPath = $null
-            ContentHash = $ContentHash
-            Error       = $_.Exception.Message
+            Ok              = $false
+            PackPath        = $null
+            HandoffPath     = $null
+            ManifestPath    = $null
+            ReviewStatePath = $null
+            ContentHash     = $ContentHash
+            Error           = $_.Exception.Message
         }
     }
 }
@@ -5691,15 +6579,30 @@ function Get-MetraInspectExternalReviewPaths {
 function ConvertFrom-MetraInspectExternalReviewMarkdown {
     [CmdletBinding()]
     param(
-        [Parameter(Mandatory)][AllowEmptyString()][string]$Text
+        [Parameter(Mandatory)][AllowEmptyString()][string]$Text,
+        [string]$ExpectedProject
     )
 
     # Normalize CR/LF only (CRLF then lone CR -> LF). Use regex escapes so packs cannot be
     # misread as replacing the letters r/n when PowerShell backticks render poorly in markdown.
     $normalized = [regex]::Replace([string]$Text, '\r\n?', "`n")
-    if ($normalized -notmatch '(?m)^##\s*Metra External Review\s*$') {
-        throw 'External review must include heading ## Metra External Review.'
+    # Heading is ## <Project> External Review (project under review). Bing often omits ##.
+    $headingRe = '(?m)^(?:##\s*)?(?<prod>.+?)\s+External Review\s*$'
+    $headingMatch = [regex]::Match($normalized, $headingRe)
+    if (-not $headingMatch.Success) {
+        throw 'External review must include heading ## <Project> External Review.'
     }
+    $headingProject = $headingMatch.Groups['prod'].Value.Trim()
+    if ([string]::IsNullOrWhiteSpace($headingProject)) {
+        throw 'External review heading must name the project under review (## <Project> External Review).'
+    }
+    if (-not [string]::IsNullOrWhiteSpace($ExpectedProject) -and
+        -not [string]::Equals($headingProject, $ExpectedProject.Trim(), [System.StringComparison]::OrdinalIgnoreCase)) {
+        throw ("External review heading project '{0}' does not match import target '{1}'." -f $headingProject, $ExpectedProject.Trim())
+    }
+    $canonicalProject = if (-not [string]::IsNullOrWhiteSpace($ExpectedProject)) { $ExpectedProject.Trim() } else { $headingProject }
+    $canonicalHeading = "## $canonicalProject External Review"
+    $normalized = [regex]::Replace($normalized, $headingRe, $canonicalHeading, 1)
 
     $field = {
         param([string]$Name)
@@ -5710,10 +6613,59 @@ function ConvertFrom-MetraInspectExternalReviewMarkdown {
     }
 
     $contentHash = & $field 'contentHash'
-    $verdict = (& $field 'verdict').ToLowerInvariant()
+    $verdictRaw = (& $field 'verdict').ToLowerInvariant()
+    $verdictAlias = @{
+        'pass'         = 'approve'
+        'conditional'  = 'changes-requested'
+        'block'        = 'blocked'
+    }
+    $verdict = $verdictRaw
+    if ($verdictAlias.ContainsKey($verdictRaw)) {
+        $verdict = $verdictAlias[$verdictRaw]
+    }
     $reviewer = & $field 'reviewer'
     $reviewType = & $field 'reviewType'
     $project = & $field 'project'
+    $reviewDepth = (& $field 'reviewDepth').ToUpperInvariant()
+    if ($reviewDepth -and $reviewDepth -notmatch '^L[123]$') {
+        $reviewDepth = ''
+    }
+
+    $evidenceInspected = New-Object System.Collections.Generic.List[string]
+    if ($normalized -match '(?im)^\s*evidenceInspected\s*:\s*(.*?)\s*$') {
+        $same = $Matches[1].Trim()
+        if ($same -and $same -ne '|' -and $same -ne '') {
+            foreach ($p in @($same -split ',' | ForEach-Object { $_.Trim().TrimStart('-').Trim() } | Where-Object { $_ })) {
+                [void]$evidenceInspected.Add($p)
+            }
+        }
+    }
+    $lines = @($normalized -split "`n")
+    $inEvidence = $false
+    foreach ($line in $lines) {
+        if ($line -match '(?i)^\s*evidenceInspected\s*:\s*$') {
+            $inEvidence = $true
+            continue
+        }
+        if ($inEvidence) {
+            if ([string]::IsNullOrWhiteSpace($line)) { continue }
+            if ($line -match '^\s*#+\s' -or $line -match '(?i)^\s*[A-Za-z][A-Za-z0-9]*\s*:') {
+                $inEvidence = $false
+            }
+            elseif ($line -match '^\s*-\s*(.+)\s*$') {
+                [void]$evidenceInspected.Add($Matches[1].Trim())
+                continue
+            }
+            elseif ($line -match '^\s*(\S.+)\s*$') {
+                # Plain path lines (no dash) from Bing chat paste.
+                [void]$evidenceInspected.Add($Matches[1].Trim())
+                continue
+            }
+            else {
+                $inEvidence = $false
+            }
+        }
+    }
 
     if ([string]::IsNullOrWhiteSpace($contentHash)) {
         throw 'External review missing contentHash.'
@@ -5725,12 +6677,14 @@ function ConvertFrom-MetraInspectExternalReviewMarkdown {
 
     $body = $normalized.TrimEnd() + "`n"
     return [PSCustomObject]@{
-        ContentHash = $contentHash
-        Verdict     = $verdict
-        Reviewer    = $reviewer
-        ReviewType  = $reviewType
-        Project     = $project
-        Body        = $body
+        ContentHash         = $contentHash
+        Verdict             = $verdict
+        Reviewer            = $reviewer
+        ReviewType          = $reviewType
+        Project             = $project
+        ReviewDepth         = $reviewDepth
+        EvidenceInspected   = @($evidenceInspected.ToArray() | Select-Object -Unique)
+        Body                = $body
     }
 }
 
@@ -5760,13 +6714,65 @@ function Get-MetraInspectExternalReviewRecord {
     }
 }
 
+function Test-MetraInspectExternalReviewIsContractual {
+    <#
+    .SYNOPSIS
+        True when the review uses the Bing reviewer-contract shape (depth / evidenceInspected / Verified).
+    #>
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory)]$Parsed
+    )
+
+    if (-not [string]::IsNullOrWhiteSpace([string]$Parsed.ReviewDepth)) { return $true }
+    if (@($Parsed.EvidenceInspected).Count -gt 0) { return $true }
+    if ([string]$Parsed.Body -match '(?im)^\s*evidenceInspected\s*:') { return $true }
+    if ([string]$Parsed.Body -match '(?im)^#{1,3}\s*Verified\b') { return $true }
+    return $false
+}
+
+function Test-MetraInspectVerifiedSectionHasSubstantiveEvidence {
+    <#
+    .SYNOPSIS
+        True when ### Verified contains at least one substantive line (not empty / None. / None).
+    #>
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory)][AllowEmptyString()][string]$Body
+    )
+
+    $normalized = [regex]::Replace([string]$Body, '\r\n?', "`n")
+    $lines = @($normalized -split "`n")
+    $inVerified = $false
+    foreach ($line in $lines) {
+        # Exact Verified heading only - do not treat "### Not verified" as Verified.
+        if ($line -match '(?i)^#{1,3}\s*Verified\s*$') {
+            $inVerified = $true
+            continue
+        }
+        if ($inVerified) {
+            if ($line -match '^#{1,3}\s+\S') {
+                break
+            }
+            $t = $line.Trim()
+            if ([string]::IsNullOrWhiteSpace($t)) { continue }
+            $t = $t -replace '^[-*+]\s+', ''
+            $t = $t -replace '^\d+\.\s+', ''
+            if ($t -match '^(?i)none\.?$') { continue }
+            if ($t.Length -ge 3) { return $true }
+        }
+    }
+    return $false
+}
+
 function Import-MetraInspectExternalReview {
     <#
     .SYNOPSIS
-        Import Bing Metra External Review against current assess contentHash. Never affirms the Bing gate.
+        Import Bing ## <Project> External Review against current assess contentHash. Never affirms the Bing gate.
     .NOTES
         Prefer chat paste via -Clipboard / -Text when Copilot cannot write Share review.md.
         Still lands Share review.md + local body on success when share is available.
+        Heading must name the project under review (same as -Name / slot).
     #>
     [CmdletBinding(SupportsShouldProcess)]
     param(
@@ -5800,7 +6806,7 @@ function Import-MetraInspectExternalReview {
             throw "Clipboard unavailable: $($_.Exception.Message)"
         }
         if ([string]::IsNullOrWhiteSpace($raw)) {
-            throw 'Clipboard is empty. Copy the ## Metra External Review chat block, then re-run with -Clipboard.'
+            throw ("Clipboard is empty. Copy the ## {0} External Review chat block, then re-run with -Clipboard." -f $slotKey)
         }
         $sourceLabel = '(clipboard)'
     }
@@ -5829,26 +6835,70 @@ function Import-MetraInspectExternalReview {
         $sourceLabel = $sourceFull
     }
 
-    $parsed = ConvertFrom-MetraInspectExternalReviewMarkdown -Text $raw
+    $parsed = ConvertFrom-MetraInspectExternalReviewMarkdown -Text $raw -ExpectedProject $slotKey
     if ($parsed.ContentHash -ne $currentHash) {
         throw ("External review contentHash is stale or mismatched (review={0}; assess={1})." -f $parsed.ContentHash, $currentHash)
     }
 
-    $paths = Get-MetraInspectExternalReviewPaths -SlotKey $slotKey
-    [void](Ensure-MetraInspectSlotDirectory -SlotKey $slotKey)
-    $meta = [ordered]@{
-        schemaVersion = 1
-        project       = $slotKey
-        contentHash   = $parsed.ContentHash
-        verdict       = $parsed.Verdict
-        reviewer      = $parsed.Reviewer
-        reviewType    = $parsed.ReviewType
-        importedAtUtc = [datetime]::UtcNow.ToString('o')
-        sourcePath    = $sourceLabel
-        bodyPath      = $paths.BodyPath
+    # Capture prior reviewed hash before overwriting external-review.json.
+    $priorReviewedHash = Get-MetraInspectPriorReviewedContentHash -SlotKey $slotKey
+    if ($priorReviewedHash -eq $parsed.ContentHash) {
+        # Re-import of same hash: keep whatever priorContentHash review-state already had.
+        $contractPaths = Get-MetraInspectReviewContractPaths -SlotKey $slotKey
+        if (Test-Path -LiteralPath $contractPaths.ReviewStatePath -PathType Leaf) {
+            $rs = ConvertFrom-MetraInspectReviewStateMarkdown -Text ([System.IO.File]::ReadAllText($contractPaths.ReviewStatePath, (Get-MetraUtf8NoBomEncoding)))
+            $keep = [string]$rs.PriorContentHash
+            if ($keep -and $keep -ne '(none)' -and $keep -ne $parsed.ContentHash) {
+                $priorReviewedHash = $keep
+            }
+            else {
+                $priorReviewedHash = ''
+            }
+        }
+        else {
+            $priorReviewedHash = ''
+        }
     }
 
-    if (-not $PSCmdlet.ShouldProcess($paths.MetaPath, 'Import external Bing review (does not affirm gate)')) {
+    if ($parsed.Verdict -eq 'approve') {
+        $contractual = Test-MetraInspectExternalReviewIsContractual -Parsed $parsed
+        $hasEvidence = @($parsed.EvidenceInspected).Count -gt 0
+        $hasSubstantiveVerified = Test-MetraInspectVerifiedSectionHasSubstantiveEvidence -Body $parsed.Body
+        if ($contractual) {
+            if (-not $hasEvidence -or -not $hasSubstantiveVerified) {
+                throw 'Contractual approve requires non-empty evidenceInspected and at least one substantive ### Verified item (None. / empty Verified is not enough). Use a legacy minimal review (no reviewDepth / evidenceInspected / Verified) only for soft-warn compatibility.'
+            }
+        }
+        else {
+            $hasVerifiedHeading = $parsed.Body -match '(?im)^#{1,3}\s*Verified\b'
+            if (-not $hasEvidence -or -not $hasVerifiedHeading) {
+                Write-Warning 'Legacy external review approve is missing evidenceInspected and/or Verified section; importing anyway (explicit legacy soft-warn path).'
+            }
+        }
+    }
+
+    $paths = Get-MetraInspectExternalReviewPaths -SlotKey $slotKey
+    $bodyScrub = Invoke-MetraAskSecretsScrubText -Text $parsed.Body
+    if ($bodyScrub.Refuse) {
+        throw ("External review refused by secrets scrub: {0}" -f $bodyScrub.Reason)
+    }
+    $bodyText = [string]$bodyScrub.Text
+    $meta = [ordered]@{
+        schemaVersion       = 1
+        project             = $slotKey
+        contentHash         = $parsed.ContentHash
+        verdict             = $parsed.Verdict
+        reviewer            = $parsed.Reviewer
+        reviewType          = $parsed.ReviewType
+        reviewDepth         = $parsed.ReviewDepth
+        evidenceInspected   = @($parsed.EvidenceInspected)
+        importedAtUtc       = [datetime]::UtcNow.ToString('o')
+        sourcePath          = $sourceLabel
+        bodyPath            = $paths.BodyPath
+    }
+
+    $slotRoot = (Get-MetraInspectReviewContractPaths -SlotKey $slotKey).SlotRoot
+    if (-not $PSCmdlet.ShouldProcess($slotRoot, 'Import external Bing review body + review-state under this slot (and Share review.md/review-state.md when available); does not affirm gate')) {
         return [PSCustomObject]@{
             ok          = $false
             skipped     = $true
@@ -5857,33 +6907,48 @@ function Import-MetraInspectExternalReview {
         }
     }
 
-    Write-MetraAtomicUtf8Text -Path $paths.BodyPath -Text $parsed.Body
-    Write-MetraAtomicUtf8Text -Path $paths.MetaPath -Text (($meta | ConvertTo-Json -Depth 6) + "`n")
+    [void](Ensure-MetraInspectSlotDirectory -SlotKey $slotKey)
+    $contractPaths = Get-MetraInspectReviewContractPaths -SlotKey $slotKey
+    $stateText = Update-MetraInspectReviewStateFromImport -SlotKey $slotKey -ContentHash $parsed.ContentHash `
+        -ReviewBody $bodyText -ReviewDepth $parsed.ReviewDepth -Verdict $parsed.Verdict `
+        -PriorContentHash $priorReviewedHash
+    $metaJson = (($meta | ConvertTo-Json -Depth 6) + "`n")
+    Publish-MetraInspectStagedFileSet -ContainerRoot $slotRoot -Items @(
+        [PSCustomObject]@{ Final = $paths.BodyPath; Text = $bodyText }
+        [PSCustomObject]@{ Final = $paths.MetaPath; Text = $metaJson }
+        [PSCustomObject]@{ Final = $contractPaths.ReviewStatePath; Text = $stateText }
+    )
 
     $shareReview = $null
     try {
         $shareDir = Get-MetraInspectBingShareInspectDir -Project $slotKey
         $shareReview = Join-Path $shareDir 'review.md'
-        Write-MetraAtomicUtf8Text -Path $shareReview -Text $parsed.Body
+        Publish-MetraInspectStagedFileSet -ContainerRoot $shareDir -Items @(
+            [PSCustomObject]@{ Final = $shareReview; Text = $bodyText }
+            [PSCustomObject]@{ Final = (Join-Path $shareDir 'review-state.md'); Text = $stateText }
+        )
         Write-Host ("Bing share review: {0}" -f $shareReview)
     }
     catch {
         Write-Warning ("Bing share review.md writeback skipped: {0}" -f $_.Exception.Message)
     }
 
-    Write-Host ("External review imported for {0}: verdict={1}; contentHash={2} (gate not affirmed)." -f $slotKey, $parsed.Verdict, $parsed.ContentHash)
+    Write-Host ("External review imported for {0}: verdict={1}; contentHash={2}; reviewDepth={3} (gate not affirmed)." -f $slotKey, $parsed.Verdict, $parsed.ContentHash, $(if ($parsed.ReviewDepth) { $parsed.ReviewDepth } else { '(none)' }))
 
     return [PSCustomObject]@{
-        ok            = $true
-        skipped       = $false
-        project       = $slotKey
-        contentHash   = $parsed.ContentHash
-        verdict       = $parsed.Verdict
-        reviewer      = $parsed.Reviewer
-        metaPath      = $paths.MetaPath
-        bodyPath      = $paths.BodyPath
-        shareReview   = $shareReview
-        gateAffirmed  = $false
+        ok                 = $true
+        skipped            = $false
+        project            = $slotKey
+        contentHash        = $parsed.ContentHash
+        verdict            = $parsed.Verdict
+        reviewer           = $parsed.Reviewer
+        reviewDepth        = $parsed.ReviewDepth
+        evidenceInspected  = @($parsed.EvidenceInspected)
+        metaPath           = $paths.MetaPath
+        bodyPath           = $paths.BodyPath
+        reviewStatePath    = $contractPaths.ReviewStatePath
+        shareReview        = $shareReview
+        gateAffirmed       = $false
     }
 }
 

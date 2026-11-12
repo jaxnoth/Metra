@@ -2635,12 +2635,40 @@ Describe 'Inspect Bing share mirror and external review' {
                 $slotEscaped = [regex]::Escape($slot)
                 $handoffText | Should -Match $slotEscaped
                 $handoffText | Should -Match 'contentHash: hash-exact-1'
-                $handoffText | Should -Match 'Metra External Review'
+                $handoffText | Should -Match ([regex]::Escape("## $slot External Review"))
                 $handoffText | Should -Match 'Preferred return: reply in chat'
                 $handoffText | Should -Match '-Clipboard'
-                $handoffText | Should -Match 'Do not modify pack-diff\.md or handoff\.md'
+                $handoffText | Should -Match 'Do not modify pack-diff\.md, handoff\.md, review-manifest\.md, or review-state\.md'
                 $handoffText | Should -Match 'inspect review import'
                 $handoffText | Should -Match 'inspect gate affirm'
+                $handoffText | Should -Match 'Open order: handoff\.md'
+                $handoffText | Should -Match 'evidenceInspected identifies evidence whose substantive contents'
+                $handoffText | Should -Match 'reviewDepth:'
+                $handoffText | Should -Match '(?m)^ShareRoot:\s+'
+                $handoffText | Should -Match 'Authoritative reviewer retrieval'
+                $handoffText | Should -Match 'search-index freshness'
+                $handoffText | Should -Match 'direct SharePoint/OneDrive folder content is authoritative'
+
+                $shareManifest = Join-Path $shareRoot "Share\$slot\review-manifest.md"
+                $shareState = Join-Path $shareRoot "Share\$slot\review-state.md"
+                Test-Path -LiteralPath $shareManifest | Should -BeTrue
+                Test-Path -LiteralPath $shareState | Should -BeTrue
+                $manifestText = [System.IO.File]::ReadAllText($shareManifest, (Get-MetraUtf8NoBomEncoding))
+                $manifestText | Should -Match 'contentHash: hash-exact-1'
+                $manifestText | Should -Match 'Intended depth: L1'
+                $manifestText | Should -Match 'Evidence map'
+                $localHandoff = Join-Path $stateRoot "$slot\handoff.md"
+                $localManifest = Join-Path $stateRoot "$slot\review-manifest.md"
+                $localState = Join-Path $stateRoot "$slot\review-state.md"
+                Test-Path -LiteralPath $localHandoff | Should -BeTrue
+                Test-Path -LiteralPath $localManifest | Should -BeTrue
+                Test-Path -LiteralPath $localState | Should -BeTrue
+                Test-Path -LiteralPath ([string]$diff.LocalHandoff) | Should -BeTrue
+                Test-Path -LiteralPath ([string]$diff.LocalManifest) | Should -BeTrue
+                Test-Path -LiteralPath ([string]$diff.LocalReviewState) | Should -BeTrue
+                [System.IO.Path]::GetFileName([string]$diff.LocalHandoff) | Should -Be 'handoff.md'
+                [System.IO.Path]::GetFileName([string]$diff.LocalManifest) | Should -Be 'review-manifest.md'
+                [System.IO.Path]::GetFileName([string]$diff.LocalReviewState) | Should -Be 'review-state.md'
 
                 $planSlot = "ShareP_$([guid]::NewGuid().ToString('N').Substring(0, 8))"
                 Write-MetraInspectPackArtifact -PackText '# plan only' -SlotKey $planSlot -Mode 'plan' -NoClipboard -Confirm:$false
@@ -2817,6 +2845,706 @@ Paste path works.
             $parsed.Body | Should -Match 'Keep words like review and return and rn intact'
             $parsed.Body.Contains([char]13) | Should -BeFalse
             ($parsed.Body -split "`n").Count | Should -BeGreaterThan 5
+        }
+    }
+
+    It 'reviewer fixed prose becomes claimed-fixed never verified-fixed' {
+        InModuleScope Metra {
+            $stateRoot = Join-Path $env:TEMP ("metra-rev-cf-" + [guid]::NewGuid().ToString('n'))
+            $shareRoot = Join-Path $env:TEMP ("metra-rev-cf-s-" + [guid]::NewGuid().ToString('n'))
+            New-Item -ItemType Directory -Path (Join-Path $shareRoot 'Share') -Force | Out-Null
+            Mock Get-MetraInspectStateRoot { $stateRoot }
+            Mock Get-MetraShareRoot { $shareRoot }
+            Mock Resolve-MetraInspectProjectContext {
+                [PSCustomObject]@{ Ok = $true; Project = 'Metra'; Root = (Get-MetraRoot); Error = $null }
+            }
+            Mock Get-MetraInspectDiffContentHash { 'hash-claimed-1' }
+            $slot = Join-Path $stateRoot 'Metra'
+            New-Item -ItemType Directory -Path $slot -Force | Out-Null
+            $seed = Format-MetraInspectReviewState -Product 'Metra' -PriorContentHash 'hash-old' `
+                -CurrentContentHash 'hash-claimed-1' -PriorReviewDepth 'L1' -Findings @(
+                [ordered]@{ id = 'B1'; severity = 'blocker'; status = 'open'; evidence = 'a.ps1'; rationale = 'prior' }
+            )
+            Write-MetraAtomicUtf8Text -Path (Join-Path $slot 'review-state.md') -Text $seed
+            $text = @"
+## Metra External Review
+
+reviewer: Microsoft Copilot
+reviewType: diff
+project: Metra
+contentHash: hash-claimed-1
+verdict: changes-requested
+reviewDepth: L1
+evidenceInspected:
+  - a.ps1
+
+### Blocking findings
+B1 was fixed in the latest pack.
+
+### Verified
+None.
+"@
+            try {
+                $imported = Import-MetraInspectExternalReview -Name 'Metra' -Text $text -Confirm:$false
+                $imported.ok | Should -BeTrue
+                $stateText = [System.IO.File]::ReadAllText((Join-Path $slot 'review-state.md'), (Get-MetraUtf8NoBomEncoding))
+                $stateText | Should -Match '(?m)^\s+status:\s*claimed-fixed\s*$'
+                $stateText | Should -Not -Match '(?m)^\s+status:\s*verified-fixed\s*$'
+                $stateText | Should -Match 'not verified-fixed'
+            }
+            finally {
+                Remove-Item -LiteralPath $stateRoot -Recurse -Force -ErrorAction SilentlyContinue
+                Remove-Item -LiteralPath $shareRoot -Recurse -Force -ErrorAction SilentlyContinue
+            }
+        }
+    }
+
+    It 'B10 fixed prose does not mark B1 claimed-fixed' {
+        InModuleScope Metra {
+            $stateRoot = Join-Path $env:TEMP ("metra-rev-b10-" + [guid]::NewGuid().ToString('n'))
+            $shareRoot = Join-Path $env:TEMP ("metra-rev-b10-s-" + [guid]::NewGuid().ToString('n'))
+            New-Item -ItemType Directory -Path (Join-Path $shareRoot 'Share') -Force | Out-Null
+            Mock Get-MetraInspectStateRoot { $stateRoot }
+            Mock Get-MetraShareRoot { $shareRoot }
+            Mock Resolve-MetraInspectProjectContext {
+                [PSCustomObject]@{ Ok = $true; Project = 'Metra'; Root = (Get-MetraRoot); Error = $null }
+            }
+            Mock Get-MetraInspectDiffContentHash { 'hash-b10-1' }
+            $slot = Join-Path $stateRoot 'Metra'
+            New-Item -ItemType Directory -Path $slot -Force | Out-Null
+            $seed = Format-MetraInspectReviewState -Product 'Metra' -PriorContentHash 'hash-old' `
+                -CurrentContentHash 'hash-b10-1' -PriorReviewDepth 'L1' -Findings @(
+                [ordered]@{ id = 'B1'; severity = 'blocker'; status = 'open'; evidence = 'a.ps1'; rationale = 'prior' }
+                [ordered]@{ id = 'B10'; severity = 'blocker'; status = 'open'; evidence = 'b.ps1'; rationale = 'prior' }
+            )
+            Write-MetraAtomicUtf8Text -Path (Join-Path $slot 'review-state.md') -Text $seed
+            $text = @"
+## Metra External Review
+
+contentHash: hash-b10-1
+verdict: changes-requested
+reviewDepth: L1
+
+### Blocking findings
+B10 was fixed. B1 remains open.
+
+### Verified
+None.
+"@
+            try {
+                $imported = Import-MetraInspectExternalReview -Name 'Metra' -Text $text -Confirm:$false
+                $imported.ok | Should -BeTrue
+                $parsed = ConvertFrom-MetraInspectReviewStateMarkdown -Text ([System.IO.File]::ReadAllText((Join-Path $slot 'review-state.md'), (Get-MetraUtf8NoBomEncoding)))
+                $b1 = @($parsed.Findings | Where-Object { $_.id -eq 'B1' })[0]
+                $b10 = @($parsed.Findings | Where-Object { $_.id -eq 'B10' })[0]
+                [string]$b1.status | Should -Be 'open'
+                [string]$b10.status | Should -Be 'claimed-fixed'
+            }
+            finally {
+                Remove-Item -LiteralPath $stateRoot -Recurse -Force -ErrorAction SilentlyContinue
+                Remove-Item -LiteralPath $shareRoot -Recurse -Force -ErrorAction SilentlyContinue
+            }
+        }
+    }
+
+    It 'negated fixed prose leaves finding open' {
+        InModuleScope Metra {
+            $stateRoot = Join-Path $env:TEMP ("metra-rev-nf-" + [guid]::NewGuid().ToString('n'))
+            $shareRoot = Join-Path $env:TEMP ("metra-rev-nf-s-" + [guid]::NewGuid().ToString('n'))
+            New-Item -ItemType Directory -Path (Join-Path $shareRoot 'Share') -Force | Out-Null
+            Mock Get-MetraInspectStateRoot { $stateRoot }
+            Mock Get-MetraShareRoot { $shareRoot }
+            Mock Resolve-MetraInspectProjectContext {
+                [PSCustomObject]@{ Ok = $true; Project = 'Metra'; Root = (Get-MetraRoot); Error = $null }
+            }
+            Mock Get-MetraInspectDiffContentHash { 'hash-notfixed-1' }
+            $slot = Join-Path $stateRoot 'Metra'
+            New-Item -ItemType Directory -Path $slot -Force | Out-Null
+            $seed = Format-MetraInspectReviewState -Product 'Metra' -PriorContentHash 'hash-old' `
+                -CurrentContentHash 'hash-notfixed-1' -PriorReviewDepth 'L1' -Findings @(
+                [ordered]@{ id = 'B1'; severity = 'blocker'; status = 'open'; evidence = 'a.ps1'; rationale = 'prior' }
+            )
+            Write-MetraAtomicUtf8Text -Path (Join-Path $slot 'review-state.md') -Text $seed
+            $text = @"
+## Metra External Review
+
+contentHash: hash-notfixed-1
+verdict: changes-requested
+reviewDepth: L1
+
+### Blocking findings
+B1 was not fixed yet.
+
+### Verified
+None.
+"@
+            try {
+                $imported = Import-MetraInspectExternalReview -Name 'Metra' -Text $text -Confirm:$false
+                $imported.ok | Should -BeTrue
+                $stateText = [System.IO.File]::ReadAllText((Join-Path $slot 'review-state.md'), (Get-MetraUtf8NoBomEncoding))
+                $stateText | Should -Match '(?m)^\s*-\s*id:\s*B1\s*$'
+                $stateText | Should -Match '(?m)^\s+status:\s*open\s*$'
+                $stateText | Should -Not -Match '(?m)^\s+status:\s*claimed-fixed\s*$'
+            }
+            finally {
+                Remove-Item -LiteralPath $stateRoot -Recurse -Force -ErrorAction SilentlyContinue
+                Remove-Item -LiteralPath $shareRoot -Recurse -Force -ErrorAction SilentlyContinue
+            }
+        }
+    }
+
+    It 'L1 approve does not imply L2 or L3 package audit' {
+        InModuleScope Metra {
+            $stateRoot = Join-Path $env:TEMP ("metra-rev-l1-" + [guid]::NewGuid().ToString('n'))
+            $shareRoot = Join-Path $env:TEMP ("metra-rev-l1-s-" + [guid]::NewGuid().ToString('n'))
+            New-Item -ItemType Directory -Path (Join-Path $shareRoot 'Share') -Force | Out-Null
+            Mock Get-MetraInspectStateRoot { $stateRoot }
+            Mock Get-MetraShareRoot { $shareRoot }
+            Mock Resolve-MetraInspectProjectContext {
+                [PSCustomObject]@{ Ok = $true; Project = 'Metra'; Root = (Get-MetraRoot); Error = $null }
+            }
+            Mock Get-MetraInspectDiffContentHash { 'hash-l1-1' }
+            New-Item -ItemType Directory -Path (Join-Path $stateRoot 'Metra') -Force | Out-Null
+            $text = @"
+## Metra External Review
+
+reviewer: Microsoft Copilot
+reviewType: diff
+project: Metra
+contentHash: hash-l1-1
+verdict: approve
+reviewDepth: L1
+evidenceInspected:
+  - changed-file.ps1
+suggestedNextAction: affirm gate
+
+### Verified
+V1 changed-file.ps1 delta looks correct for this L1 scope.
+
+### Not verified
+U1 callers outside delta not inspected (L1).
+"@
+            try {
+                $imported = Import-MetraInspectExternalReview -Name 'Metra' -Text $text -Confirm:$false
+                $imported.ok | Should -BeTrue
+                $imported.reviewDepth | Should -Be 'L1'
+                $imported.evidenceInspected | Should -Contain 'changed-file.ps1'
+                $meta = Get-Content -LiteralPath (Join-Path $stateRoot 'Metra\external-review.json') -Raw | ConvertFrom-Json
+                [string]$meta.reviewDepth | Should -Be 'L1'
+                @($meta.evidenceInspected) | Should -Contain 'changed-file.ps1'
+                $stateText = [System.IO.File]::ReadAllText((Join-Path $stateRoot 'Metra\review-state.md'), (Get-MetraUtf8NoBomEncoding))
+                $stateText | Should -Match '(?m)^priorReviewDepth:\s*L1\s*$'
+                $stateText | Should -Not -Match '(?m)^priorReviewDepth:\s*L2\s*$'
+                $stateText | Should -Not -Match '(?m)^priorReviewDepth:\s*L3\s*$'
+                $stateText | Should -Match 'L1 approve never means L2/L3'
+            }
+            finally {
+                Remove-Item -LiteralPath $stateRoot -Recurse -Force -ErrorAction SilentlyContinue
+                Remove-Item -LiteralPath $shareRoot -Recurse -Force -ErrorAction SilentlyContinue
+            }
+        }
+    }
+
+    It 'contractual approve refuses empty Verified None and missing evidenceInspected' {
+        InModuleScope Metra {
+            $stateRoot = Join-Path $env:TEMP ("metra-rev-b1-" + [guid]::NewGuid().ToString('n'))
+            $shareRoot = Join-Path $env:TEMP ("metra-rev-b1-s-" + [guid]::NewGuid().ToString('n'))
+            New-Item -ItemType Directory -Path (Join-Path $shareRoot 'Share') -Force | Out-Null
+            Mock Get-MetraInspectStateRoot { $stateRoot }
+            Mock Get-MetraShareRoot { $shareRoot }
+            Mock Resolve-MetraInspectProjectContext {
+                [PSCustomObject]@{ Ok = $true; Project = 'Metra'; Root = (Get-MetraRoot); Error = $null }
+            }
+            Mock Get-MetraInspectDiffContentHash { 'hash-b1-refuse' }
+            New-Item -ItemType Directory -Path (Join-Path $stateRoot 'Metra') -Force | Out-Null
+            $emptyVerified = @"
+## Metra External Review
+contentHash: hash-b1-refuse
+verdict: approve
+reviewDepth: L1
+evidenceInspected:
+  - a.ps1
+### Verified
+None.
+"@
+            $noEvidence = @"
+## Metra External Review
+contentHash: hash-b1-refuse
+verdict: approve
+reviewDepth: L1
+### Verified
+V1 looked at a.ps1.
+"@
+            try {
+                { Import-MetraInspectExternalReview -Name 'Metra' -Text $emptyVerified -Confirm:$false } |
+                    Should -Throw -ExceptionType ([System.Exception])
+                { Import-MetraInspectExternalReview -Name 'Metra' -Text $noEvidence -Confirm:$false } |
+                    Should -Throw -ExceptionType ([System.Exception])
+            }
+            finally {
+                Remove-Item -LiteralPath $stateRoot -Recurse -Force -ErrorAction SilentlyContinue
+                Remove-Item -LiteralPath $shareRoot -Recurse -Force -ErrorAction SilentlyContinue
+            }
+        }
+    }
+
+    It 'diff pack publish leaves prior pack when contract write fails after staging' {
+        InModuleScope Metra {
+            $stateRoot = Join-Path $env:TEMP ("metra-pack-b2-" + [guid]::NewGuid().ToString('n'))
+            Mock Get-MetraInspectStateRoot { $stateRoot }
+            Mock Get-MetraShareRoot { throw 'share unavailable for B2 test' }
+            Mock Get-MetraInspectDiffContentHash { 'hash-b2-pack' }
+            $slot = Join-Path $stateRoot 'Demo'
+            New-Item -ItemType Directory -Path $slot -Force | Out-Null
+            $packPath = Join-Path $slot 'pack-diff.md'
+            Write-MetraAtomicUtf8Text -Path $packPath -Text "# prior pack`ncontentHash: old`n"
+            Mock Format-MetraInspectBingShareHandoff { throw 'simulated contract failure' }
+            try {
+                { Write-MetraInspectPackArtifact -PackText "# new pack`ncontentHash: hash-b2-pack`n" -SlotKey 'Demo' -Mode diff -NoClipboard -ContentHash 'hash-b2-pack' -Confirm:$false } |
+                    Should -Throw '*IncompleteContract*'
+                (Test-Path -LiteralPath "$packPath.partial") | Should -BeFalse
+                ([System.IO.File]::ReadAllText($packPath)) | Should -Match 'prior pack'
+            }
+            finally {
+                Remove-Item -LiteralPath $stateRoot -Recurse -Force -ErrorAction SilentlyContinue
+            }
+        }
+    }
+
+    It 'restores prior local four-artifact generation when pack promote fails (B1)' {
+        InModuleScope Metra {
+            $stateRoot = Join-Path $env:TEMP ("metra-pack-b1-rb-" + [guid]::NewGuid().ToString('n'))
+            Mock Get-MetraInspectStateRoot { $stateRoot }
+            Mock Get-MetraShareRoot { throw 'share unavailable for B1 rollback test' }
+            Mock Get-MetraInspectDiffContentHash { 'hash-b1-rb' }
+            $slot = Join-Path $stateRoot 'Demo'
+            New-Item -ItemType Directory -Path $slot -Force | Out-Null
+            $packPath = Join-Path $slot 'pack-diff.md'
+            $handoffPath = Join-Path $slot 'handoff.md'
+            $manifestPath = Join-Path $slot 'review-manifest.md'
+            $statePath = Join-Path $slot 'review-state.md'
+            Write-MetraAtomicUtf8Text -Path $packPath -Text "# prior pack`ncontentHash: old-pack`n"
+            Write-MetraAtomicUtf8Text -Path $handoffPath -Text "# prior handoff`n"
+            Write-MetraAtomicUtf8Text -Path $manifestPath -Text "# prior manifest`n"
+            Write-MetraAtomicUtf8Text -Path $statePath -Text "# prior state`n"
+            Mock Move-MetraInspectStagedPartial {
+                param($PartialPath, $FinalPath)
+                if ([string]$FinalPath -like '*pack-diff.md') {
+                    throw 'injected pack promote failure'
+                }
+                Move-Item -LiteralPath $PartialPath -Destination $FinalPath -Force
+            }
+            try {
+                { Write-MetraInspectPackArtifact -PackText "# new pack`ncontentHash: hash-b1-rb`n" -SlotKey 'Demo' -Mode diff -NoClipboard -ContentHash 'hash-b1-rb' -Confirm:$false } |
+                    Should -Throw '*IncompleteContract*'
+                ([System.IO.File]::ReadAllText($packPath)) | Should -Match 'prior pack'
+                ([System.IO.File]::ReadAllText($handoffPath)) | Should -Match 'prior handoff'
+                ([System.IO.File]::ReadAllText($manifestPath)) | Should -Match 'prior manifest'
+                ([System.IO.File]::ReadAllText($statePath)) | Should -Match 'prior state'
+                (Test-Path -LiteralPath "$packPath.partial") | Should -BeFalse
+                (Test-Path -LiteralPath "$packPath.rollback") | Should -BeFalse
+            }
+            finally {
+                Remove-Item -LiteralPath $stateRoot -Recurse -Force -ErrorAction SilentlyContinue
+            }
+        }
+    }
+
+    It 'restores prior Share four-artifact generation when pack promote fails (B2)' {
+        InModuleScope Metra {
+            $stateRoot = Join-Path $env:TEMP ("metra-share-b2-rb-" + [guid]::NewGuid().ToString('n'))
+            $shareRoot = Join-Path $env:TEMP ("metra-share-b2-rb-s-" + [guid]::NewGuid().ToString('n'))
+            New-Item -ItemType Directory -Path (Join-Path $shareRoot 'Share') -Force | Out-Null
+            Mock Get-MetraInspectStateRoot { $stateRoot }
+            Mock Get-MetraShareRoot { $shareRoot }
+            Mock Get-MetraInspectDiffContentHash { 'hash-share-b2-rb' }
+            $slotName = "ShareB2Rb_$([guid]::NewGuid().ToString('N').Substring(0, 8))"
+            $shareDir = Join-Path $shareRoot "Share\$slotName"
+            New-Item -ItemType Directory -Path $shareDir -Force | Out-Null
+            Write-MetraAtomicUtf8Text -Path (Join-Path $shareDir 'pack-diff.md') -Text "# share prior pack`n"
+            Write-MetraAtomicUtf8Text -Path (Join-Path $shareDir 'handoff.md') -Text "# share prior handoff`n"
+            Write-MetraAtomicUtf8Text -Path (Join-Path $shareDir 'review-manifest.md') -Text "# share prior manifest`n"
+            Write-MetraAtomicUtf8Text -Path (Join-Path $shareDir 'review-state.md') -Text "# share prior state`n"
+            Mock Move-MetraInspectStagedPartial {
+                param($PartialPath, $FinalPath)
+                if ([string]$FinalPath -like '*\Share\*' -and [string]$FinalPath -like '*pack-diff.md') {
+                    throw 'injected share pack promote failure'
+                }
+                Move-Item -LiteralPath $PartialPath -Destination $FinalPath -Force
+            }
+            try {
+                $result = Write-MetraInspectPackArtifact -PackText "# new pack`ncontentHash: hash-share-b2-rb`n" -SlotKey $slotName -Mode diff -NoClipboard -ContentHash 'hash-share-b2-rb' -Confirm:$false
+                $result.Skipped | Should -BeFalse
+                Test-Path -LiteralPath $result.Path | Should -BeTrue
+                $result.SharePack | Should -BeNullOrEmpty
+                ([System.IO.File]::ReadAllText((Join-Path $shareDir 'pack-diff.md'))) | Should -Match 'share prior pack'
+                ([System.IO.File]::ReadAllText((Join-Path $shareDir 'handoff.md'))) | Should -Match 'share prior handoff'
+                ([System.IO.File]::ReadAllText((Join-Path $shareDir 'review-manifest.md'))) | Should -Match 'share prior manifest'
+                ([System.IO.File]::ReadAllText((Join-Path $shareDir 'review-state.md'))) | Should -Match 'share prior state'
+            }
+            finally {
+                Remove-Item -LiteralPath $stateRoot -Recurse -Force -ErrorAction SilentlyContinue
+                Remove-Item -LiteralPath $shareRoot -Recurse -Force -ErrorAction SilentlyContinue
+            }
+        }
+    }
+
+    It 'diff pack WhatIf does not create a missing slot directory (N1)' {
+        InModuleScope Metra {
+            $stateRoot = Join-Path $env:TEMP ("metra-pack-whatif-" + [guid]::NewGuid().ToString('n'))
+            Mock Get-MetraInspectStateRoot { $stateRoot }
+            Mock Get-MetraShareRoot { throw 'share unused under WhatIf' }
+            $slotName = "WhatIfSlot_$([guid]::NewGuid().ToString('N').Substring(0, 8))"
+            $slotPath = Join-Path $stateRoot $slotName
+            try {
+                Test-Path -LiteralPath $slotPath | Should -BeFalse
+                $result = Write-MetraInspectPackArtifact -PackText "# whatif pack`n" -SlotKey $slotName -Mode diff -NoClipboard -ContentHash 'hash-whatif' -WhatIf
+                $result.Skipped | Should -BeTrue
+                Test-Path -LiteralPath $slotPath | Should -BeFalse
+            }
+            finally {
+                Remove-Item -LiteralPath $stateRoot -Recurse -Force -ErrorAction SilentlyContinue
+            }
+        }
+    }
+
+    It 'new-hash pack agrees on prior between manifest and review-state without Meta' {
+        InModuleScope Metra {
+            $stateRoot = Join-Path $env:TEMP ("metra-prior-agree-" + [guid]::NewGuid().ToString('n'))
+            Mock Get-MetraInspectStateRoot { $stateRoot }
+            Mock Get-MetraShareRoot { throw 'share unused for prior-agree test' }
+            Mock Get-MetraInspectDiffContentHash { 'hash-h2' }
+            $slot = Join-Path $stateRoot 'Demo'
+            New-Item -ItemType Directory -Path $slot -Force | Out-Null
+            $seed = Format-MetraInspectReviewState -Product 'Demo' -PriorContentHash '(none)' `
+                -CurrentContentHash 'hash-h1' -PriorReviewDepth 'L1' -Findings @()
+            Write-MetraAtomicUtf8Text -Path (Join-Path $slot 'review-state.md') -Text $seed
+            try {
+                $null = Write-MetraInspectPackArtifact -PackText "# pack`ncontentHash: hash-h2`n" -SlotKey 'Demo' -Mode diff -NoClipboard -ContentHash 'hash-h2' -Confirm:$false
+                $manifest = [System.IO.File]::ReadAllText((Join-Path $slot 'review-manifest.md'))
+                $state = ConvertFrom-MetraInspectReviewStateMarkdown -Text ([System.IO.File]::ReadAllText((Join-Path $slot 'review-state.md')))
+                $manifest | Should -Match '(?m)^Prior reviewed commit / contentHash:\s*hash-h1\s*$'
+                $state.PriorContentHash | Should -Be 'hash-h1'
+                $state.CurrentContentHash | Should -Be 'hash-h2'
+            }
+            finally {
+                Remove-Item -LiteralPath $stateRoot -Recurse -Force -ErrorAction SilentlyContinue
+            }
+        }
+    }
+
+    It 'claimed-fixed requires tight affirmative prose not nothing/No/incorrectly' {
+        InModuleScope Metra {
+            $stateRoot = Join-Path $env:TEMP ("metra-claim-tight-" + [guid]::NewGuid().ToString('n'))
+            $shareRoot = Join-Path $env:TEMP ("metra-claim-tight-s-" + [guid]::NewGuid().ToString('n'))
+            New-Item -ItemType Directory -Path (Join-Path $shareRoot 'Share') -Force | Out-Null
+            Mock Get-MetraInspectStateRoot { $stateRoot }
+            Mock Get-MetraShareRoot { $shareRoot }
+            Mock Resolve-MetraInspectProjectContext {
+                [PSCustomObject]@{ Ok = $true; Project = 'Metra'; Root = (Get-MetraRoot); Error = $null }
+            }
+            Mock Get-MetraInspectDiffContentHash { 'hash-claim-tight' }
+            $slot = Join-Path $stateRoot 'Metra'
+            New-Item -ItemType Directory -Path $slot -Force | Out-Null
+            $seed = Format-MetraInspectReviewState -Product 'Metra' -PriorContentHash 'hash-old' `
+                -CurrentContentHash 'hash-claim-tight' -Findings @(
+                [ordered]@{ id = 'B1'; severity = 'blocker'; status = 'open'; evidence = ''; rationale = '' }
+                [ordered]@{ id = 'B2'; severity = 'blocker'; status = 'open'; evidence = ''; rationale = '' }
+                [ordered]@{ id = 'B3'; severity = 'blocker'; status = 'open'; evidence = ''; rationale = '' }
+                [ordered]@{ id = 'B4'; severity = 'blocker'; status = 'open'; evidence = ''; rationale = '' }
+            )
+            Write-MetraAtomicUtf8Text -Path (Join-Path $slot 'review-state.md') -Text $seed
+            $text = @"
+## Metra External Review
+contentHash: hash-claim-tight
+verdict: changes-requested
+reviewDepth: L1
+### Blocking findings
+B1: nothing was fixed
+B2 was fixed? No.
+B3 was incorrectly fixed
+B4 was fixed in this pack
+### Verified
+None.
+"@
+            try {
+                $null = Import-MetraInspectExternalReview -Name 'Metra' -Text $text -Confirm:$false
+                $parsed = ConvertFrom-MetraInspectReviewStateMarkdown -Text ([System.IO.File]::ReadAllText((Join-Path $slot 'review-state.md')))
+                (@($parsed.Findings | Where-Object { $_.id -eq 'B1' })[0].status) | Should -Be 'open'
+                (@($parsed.Findings | Where-Object { $_.id -eq 'B2' })[0].status) | Should -Be 'open'
+                (@($parsed.Findings | Where-Object { $_.id -eq 'B3' })[0].status) | Should -Be 'open'
+                (@($parsed.Findings | Where-Object { $_.id -eq 'B4' })[0].status) | Should -Be 'claimed-fixed'
+            }
+            finally {
+                Remove-Item -LiteralPath $stateRoot -Recurse -Force -ErrorAction SilentlyContinue
+                Remove-Item -LiteralPath $shareRoot -Recurse -Force -ErrorAction SilentlyContinue
+            }
+        }
+    }
+
+    It 'refuses external review import when secrets scrub Refuse fires' {
+        InModuleScope Metra {
+            $stateRoot = Join-Path $env:TEMP ("metra-scrub-refuse-" + [guid]::NewGuid().ToString('n'))
+            Mock Get-MetraInspectStateRoot { $stateRoot }
+            Mock Get-MetraShareRoot { throw 'share unused for scrub refuse' }
+            Mock Resolve-MetraInspectProjectContext {
+                [PSCustomObject]@{ Ok = $true; Project = 'Metra'; Root = (Get-MetraRoot); Error = $null }
+            }
+            Mock Get-MetraInspectDiffContentHash { 'hash-scrub-1' }
+            Mock Invoke-MetraAskSecretsScrubText {
+                [PSCustomObject]@{
+                    Text               = ''
+                    Refuse             = $true
+                    Reason             = 'pem_private_key'
+                    Notice             = 'blocked'
+                    Matched            = $true
+                    Kinds              = @('pem')
+                    RedactedCharsRatio = 1.0
+                }
+            }
+            New-Item -ItemType Directory -Path (Join-Path $stateRoot 'Metra') -Force | Out-Null
+            $text = @"
+## Metra External Review
+contentHash: hash-scrub-1
+verdict: changes-requested
+reviewDepth: L1
+### Blocking findings
+B1 open
+"@
+            try {
+                { Import-MetraInspectExternalReview -Name 'Metra' -Text $text -Confirm:$false } |
+                    Should -Throw '*refused by secrets scrub*'
+                Test-Path -LiteralPath (Join-Path $stateRoot 'Metra\external-review.body.md') | Should -BeFalse
+            }
+            finally {
+                Remove-Item -LiteralPath $stateRoot -Recurse -Force -ErrorAction SilentlyContinue
+            }
+        }
+    }
+
+    It 'preserves rollbacks and restores priors when restore Copy fails mid-set' {
+        InModuleScope Metra {
+            $stateRoot = Join-Path $env:TEMP ("metra-rb-preserve-" + [guid]::NewGuid().ToString('n'))
+            Mock Get-MetraInspectStateRoot { $stateRoot }
+            Mock Get-MetraShareRoot { throw 'share unused for rollback preserve' }
+            Mock Get-MetraInspectDiffContentHash { 'hash-rb-preserve' }
+            $slot = Join-Path $stateRoot 'Demo'
+            New-Item -ItemType Directory -Path $slot -Force | Out-Null
+            $packPath = Join-Path $slot 'pack-diff.md'
+            $handoffPath = Join-Path $slot 'handoff.md'
+            $manifestPath = Join-Path $slot 'review-manifest.md'
+            $statePath = Join-Path $slot 'review-state.md'
+            Write-MetraAtomicUtf8Text -Path $packPath -Text "# prior pack`n"
+            Write-MetraAtomicUtf8Text -Path $handoffPath -Text "# prior handoff`n"
+            Write-MetraAtomicUtf8Text -Path $manifestPath -Text "# prior manifest`n"
+            Write-MetraAtomicUtf8Text -Path $statePath -Text "# prior state`n"
+            Mock Move-MetraInspectStagedPartial {
+                param($PartialPath, $FinalPath)
+                if ([string]$FinalPath -like '*pack-diff.md') {
+                    throw 'injected pack promote failure'
+                }
+                Microsoft.PowerShell.Management\Move-Item -LiteralPath $PartialPath -Destination $FinalPath -Force
+            }
+            $script:restoreHits = 0
+            Mock Copy-MetraInspectRollbackRestore {
+                param($RollbackPath, $FinalPath)
+                $script:restoreHits++
+                if ($script:restoreHits -eq 2) {
+                    throw 'injected restore failure'
+                }
+                Microsoft.PowerShell.Management\Copy-Item -LiteralPath $RollbackPath -Destination $FinalPath -Force
+            }
+            try {
+                { Write-MetraInspectPackArtifact -PackText "# new pack`n" -SlotKey 'Demo' -Mode diff -NoClipboard -ContentHash 'hash-rb-preserve' -Confirm:$false } |
+                    Should -Throw '*Preserved rollback*'
+                (Test-Path -LiteralPath "$handoffPath.rollback") | Should -BeTrue
+                (Test-Path -LiteralPath "$manifestPath.rollback") | Should -BeTrue
+                (Test-Path -LiteralPath "$statePath.rollback") | Should -BeTrue
+                (Test-Path -LiteralPath "$packPath.rollback") | Should -BeTrue
+                # Successful Copy restores leave prior content; failed member still has recoverable .rollback.
+                ([System.IO.File]::ReadAllText("$handoffPath.rollback")) | Should -Match 'prior handoff'
+                ([System.IO.File]::ReadAllText($handoffPath)) | Should -Match 'prior handoff'
+            }
+            finally {
+                Remove-Item -LiteralPath $stateRoot -Recurse -Force -ErrorAction SilentlyContinue
+            }
+        }
+    }
+
+    It 'same-hash repack preserves claimed-fixed review-state dispositions' {
+        InModuleScope Metra {
+            $stateRoot = Join-Path $env:TEMP ("metra-same-hash-" + [guid]::NewGuid().ToString('n'))
+            Mock Get-MetraInspectStateRoot { $stateRoot }
+            Mock Get-MetraShareRoot { throw 'share unused for same-hash test' }
+            Mock Get-MetraInspectDiffContentHash { 'hash-h1' }
+            $slot = Join-Path $stateRoot 'Demo'
+            New-Item -ItemType Directory -Path $slot -Force | Out-Null
+            $seed = Format-MetraInspectReviewState -Product 'Demo' -PriorContentHash 'hash-old' `
+                -CurrentContentHash 'hash-h1' -PriorReviewDepth 'L1' -Findings @(
+                [ordered]@{ id = 'B1'; severity = 'blocker'; status = 'claimed-fixed'; evidence = 'import'; rationale = 'reviewer claimed fixed' }
+            )
+            Write-MetraAtomicUtf8Text -Path (Join-Path $slot 'review-state.md') -Text $seed
+            # Prefer imported hash equal to current so the old bug would collapse prior==current.
+            $meta = @{ schemaVersion = 1; project = 'Demo'; contentHash = 'hash-h1'; verdict = 'changes-requested'; reviewDepth = 'L1' } |
+                ConvertTo-Json -Depth 4
+            Write-MetraAtomicUtf8Text -Path (Join-Path $slot 'external-review.json') -Text ($meta + "`n")
+            try {
+                $null = Write-MetraInspectPackArtifact -PackText "# pack`ncontentHash: hash-h1`n" -SlotKey 'Demo' -Mode diff -NoClipboard -ContentHash 'hash-h1' -Confirm:$false
+                $statePath = Join-Path $slot 'review-state.md'
+                $parsed = ConvertFrom-MetraInspectReviewStateMarkdown -Text ([System.IO.File]::ReadAllText($statePath))
+                $parsed.CurrentContentHash | Should -Be 'hash-h1'
+                $parsed.PriorContentHash | Should -Be 'hash-old'
+                $b1 = @($parsed.Findings | Where-Object { $_.id -eq 'B1' }) | Select-Object -First 1
+                $b1 | Should -Not -BeNullOrEmpty
+                $b1.status | Should -Be 'claimed-fixed'
+            }
+            finally {
+                Remove-Item -LiteralPath $stateRoot -Recurse -Force -ErrorAction SilentlyContinue
+            }
+        }
+    }
+
+    It 'strips CR LF and Unicode line separators from contract Product scalars' {
+        InModuleScope Metra {
+            $text = Format-MetraInspectReviewState -Product ("Metra`r`ninjected: bad") -PriorContentHash 'a' -CurrentContentHash 'b' -Findings @()
+            $text | Should -Not -Match '(?m)^injected:'
+            $text | Should -Match '(?m)^product: Metrainjected: bad\s*$'
+            $nel = [string]([char]0x0085)
+            $ls = [string]([char]0x2028)
+            $ps = [string]([char]0x2029)
+            $uni = Format-MetraInspectReviewState -Product ("Metra${nel}x${ls}y${ps}z") -PriorContentHash 'a' -CurrentContentHash 'b' -Findings @()
+            $uni | Should -Match '(?m)^product: Metraxyz\s*$'
+            $uni | Should -Not -Match ([regex]::Escape($nel))
+        }
+    }
+
+    It 'parses display verdict aliases and evidenceInspected list' {
+        InModuleScope Metra {
+            $text = @"
+## Metra External Review
+
+contentHash: hash-alias-1
+verdict: PASS
+reviewDepth: L2
+evidenceInspected:
+  - scripts/private/Inspect.ps1
+  - tests/Metra.Inspect.Tests.ps1
+"@
+            $parsed = ConvertFrom-MetraInspectExternalReviewMarkdown -Text $text
+            $parsed.Verdict | Should -Be 'approve'
+            $parsed.ReviewDepth | Should -Be 'L2'
+            $parsed.EvidenceInspected | Should -Contain 'scripts/private/Inspect.ps1'
+            $parsed.EvidenceInspected | Should -Contain 'tests/Metra.Inspect.Tests.ps1'
+        }
+    }
+
+    It 'contractual approve without substantive Verified fails closed' {
+        InModuleScope Metra {
+            $text = @"
+## Metra External Review
+
+contentHash: hash-fail-approve-1
+verdict: approve
+reviewDepth: L1
+evidenceInspected:
+  - a.ps1
+
+### Verified
+None.
+"@
+            $parsed = ConvertFrom-MetraInspectExternalReviewMarkdown -Text $text
+            Test-MetraInspectExternalReviewIsContractual -Parsed $parsed | Should -BeTrue
+            Test-MetraInspectVerifiedSectionHasSubstantiveEvidence -Body $parsed.Body | Should -BeFalse
+        }
+    }
+
+    It 'rejects contractual approve import without substantive Verified' {
+        InModuleScope Metra {
+            $stateRoot = Join-Path $env:TEMP ("metra-rev-failap-" + [guid]::NewGuid().ToString('n'))
+            Mock Get-MetraInspectStateRoot { $stateRoot }
+            Mock Resolve-MetraInspectProjectContext {
+                [PSCustomObject]@{ Ok = $true; Project = 'Metra'; Root = (Get-MetraRoot); Error = $null }
+            }
+            Mock Get-MetraInspectDiffContentHash { 'hash-fail-approve-2' }
+            New-Item -ItemType Directory -Path (Join-Path $stateRoot 'Metra') -Force | Out-Null
+            $text = @"
+## Metra External Review
+
+contentHash: hash-fail-approve-2
+verdict: approve
+reviewDepth: L1
+evidenceInspected:
+  - a.ps1
+
+### Verified
+None.
+"@
+            try {
+                { Import-MetraInspectExternalReview -Name 'Metra' -Text $text -Confirm:$false } |
+                    Should -Throw '*Contractual approve requires*'
+            }
+            finally {
+                Remove-Item -LiteralPath $stateRoot -Recurse -Force -ErrorAction SilentlyContinue
+            }
+        }
+    }
+
+    It 'does not publish pack-diff when contract write fails (B2)' {
+        InModuleScope Metra {
+            $stateRoot = Join-Path $env:TEMP ("metra-share-b2-" + [guid]::NewGuid().ToString('n'))
+            Mock Get-MetraInspectStateRoot { $stateRoot }
+            Mock Get-MetraInspectDiffContentHash { 'hash-b2-1' }
+            Mock Get-MetraShareRoot { throw 'share unavailable' }
+            Mock Format-MetraInspectBingShareHandoff { throw 'forced contract failure' }
+            $slot = "ShareB2_$([guid]::NewGuid().ToString('N').Substring(0, 8))"
+            try {
+                { Write-MetraInspectPackArtifact -PackText "# pack`ncontentHash: hash-b2-1`n" -SlotKey $slot -Mode 'diff' -NoClipboard -ContentHash 'hash-b2-1' -Confirm:$false } |
+                    Should -Throw '*IncompleteContract*'
+                $packPath = Join-Path $stateRoot "$slot\pack-diff.md"
+                $partial = "$packPath.partial"
+                Test-Path -LiteralPath $packPath | Should -BeFalse
+                Test-Path -LiteralPath $partial | Should -BeFalse
+                Test-Path -LiteralPath (Join-Path $stateRoot "$slot\handoff.md") | Should -BeFalse
+            }
+            finally {
+                Remove-Item -LiteralPath $stateRoot -Recurse -Force -ErrorAction SilentlyContinue
+            }
+        }
+    }
+
+    It 'accepts bare Project External Review heading and plain evidence paths' {
+        InModuleScope Metra {
+            $text = @"
+TicketTracker External Review
+
+contentHash: hash-bare-1
+verdict: changes-requested
+reviewDepth: L1
+evidenceInspected:
+
+scripts/private/Inspect.ps1
+tests/Metra.Inspect.Tests.ps1
+
+suggestedNextAction: fix then repack
+"@
+            $parsed = ConvertFrom-MetraInspectExternalReviewMarkdown -Text $text -ExpectedProject 'TicketTracker'
+            $parsed.Verdict | Should -Be 'changes-requested'
+            $parsed.ReviewDepth | Should -Be 'L1'
+            $parsed.Body | Should -Match '(?m)^##\s*TicketTracker External Review\s*$'
+            $parsed.EvidenceInspected | Should -Contain 'scripts/private/Inspect.ps1'
+            $parsed.EvidenceInspected | Should -Contain 'tests/Metra.Inspect.Tests.ps1'
+        }
+    }
+
+    It 'rejects External Review heading that names a different project' {
+        InModuleScope Metra {
+            $text = @"
+## Metra External Review
+contentHash: hash-heading-mismatch
+verdict: changes-requested
+"@
+            { ConvertFrom-MetraInspectExternalReviewMarkdown -Text $text -ExpectedProject 'TicketTracker' } |
+                Should -Throw '*does not match import target*'
         }
     }
 }

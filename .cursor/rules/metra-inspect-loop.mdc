@@ -81,7 +81,7 @@ Safety net = inspect + verify + regression revert + operator judgment, not any s
 
 - After meaningful code batches: run **`inspect prepare-bing`** and auto-fix until `readyForBing=true` before claiming commit-ready.
 - Until **2026-09-04** (Cursor billing reset): one `prepare-bing` per coherent ship-sized batch, not after every file touch. After that date: restore per-batch default.
-- **Cursor Agent must not read `pack-diff.md` or `pack-plan.md` while implementing or verifying fixes.** Those are Bing-facing review artifacts. Use `%LOCALAPPDATA%\Metra\inspect\<Project>\fix-queue.json` and `latest.json`. Pack metadata (path, size) is OK for pack diagnostics; do not load pack bodies as implementation context.
+- **Cursor Agent must not read `pack-diff.md`, `pack-plan.md`, `handoff.md`, `review-manifest.md`, or `review-state.md` while implementing or verifying fixes.** Those are Bing-facing review artifacts. Use `%LOCALAPPDATA%\Metra\inspect\<Project>\fix-queue.json` and `latest.json`. Pack metadata (path, size) is OK for pack diagnostics; do not load pack bodies as implementation context.
 - Do not load `docs/Decisions.md`, `docs/*.plan.md`, or `.cursor/plans/` while implementing unless the task is policy/plan work.
 - Optional before a rename-heavy inspect: `.\metra.ps1 inspect budget -Name <Project>`.
 - Never claim "inspect clean" or "ready for Bing" without running `prepare-bing` (or completed loop + pack) via CLI.
