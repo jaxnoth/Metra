@@ -79,6 +79,7 @@ Safety net = inspect + verify + regression revert + operator judgment, not any s
 
 ## Agent rules
 
+- Inspect implement / fix-queue turns inherit **Agent garnish hard off** (humor-desk): no Curiosity or Playfulness garnish while coding; at most one Warmth Specificity heard-beat.
 - After meaningful code batches: run **`inspect prepare-bing`** and auto-fix until `readyForBing=true` before claiming commit-ready.
 - Until **2026-09-04** (Cursor billing reset): one `prepare-bing` per coherent ship-sized batch, not after every file touch. After that date: restore per-batch default.
 - **Cursor Agent must not read `pack-diff.md`, `pack-plan.md`, `handoff.md`, `review-manifest.md`, or `review-state.md` while implementing or verifying fixes.** Those are Bing-facing review artifacts. Use `%LOCALAPPDATA%\Metra\inspect\<Project>\fix-queue.json` and `latest.json`. Pack metadata (path, size) is OK for pack diagnostics; do not load pack bodies as implementation context.

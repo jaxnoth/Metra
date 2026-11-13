@@ -11,6 +11,7 @@ Describe 'Metra Profile Sync' {
         ($map -join '|') | Should -Not -Match '(?i)secret|ticket|cache|credential|\.env'
         $map | Should -Contain 'docs/operator-contract.json'
         $map | Should -Contain '.cursor/rules/metra-persona.local.mdc'
+        $map | Should -Contain 'machine-data/operator-working-notes.local.json'
     }
 
     It 'Get-MetraProfileStatus returns contentHash and profilePackVersion' {

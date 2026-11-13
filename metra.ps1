@@ -335,7 +335,7 @@ Operator profile:
   profiles/sample/           anonymized pack to import on a new machine
   export-profile             pack local config / registry / overlays / learned contract
   import-profile             restore a pack (refuse overwrite unless -Force)
-  profile                    OCC (note/promote/show) + desk familiarity (profile familiarity show|analyze-nudge)
+  profile                    OCC (note/promote/show) + working-notes (profile notes show|add|observe|moment|reset); familiarity retired
   decisions                  Decision Registry (operational why-we-chose; gitignored ledger)
 
 Examples:
@@ -362,8 +362,10 @@ Examples:
   .\metra.ps1 profile note 'Prefer terse verdicts before detail.'
   .\metra.ps1 profile promote 'Prefer terse verdicts before detail.'
   .\metra.ps1 profile show
-  .\metra.ps1 profile familiarity show
-  .\metra.ps1 profile familiarity analyze-nudge -SessionPeak Familiar -SessionFloor Warming -Direction Up -Sustained -Note 'sustained collaborative project brainstorming'
+  .\metra.ps1 profile notes show
+  .\metra.ps1 profile notes add stated 'Prefer terse verdicts before detail.'
+  .\metra.ps1 profile notes observe 'parks threads' -Evidence 'resumed after a gap'
+  .\metra.ps1 profile notes moment 'Called the dial a costume'
   .\metra.ps1 decisions search 'automation-host'
   .\metra.ps1 decisions harvest -Preview
   .\metra.ps1 ctx
@@ -977,32 +979,85 @@ switch ($Command) {
                 $issued | Select-Object Created, HasToken, Header, Path, Message | Format-List
             }
             'familiarity' {
-                if ($subArgs.Count -eq 0) {
-                    throw "profile familiarity requires show or analyze-nudge. Example: .\metra.ps1 profile familiarity show"
-                }
-                $famSub = $subArgs[0]
+                # Retired 2026-11-12 - Cold/Warming/Familiar dial replaced by working-notes.
+                $famSub = if ($subArgs.Count -gt 0) { [string]$subArgs[0] } else { 'show' }
                 $famRest = @()
                 if ($subArgs.Count -gt 1) {
                     $famRest = @($subArgs[1..($subArgs.Count - 1)])
                 }
-                $famResult = Invoke-MetraDeskFamiliarityCommand -Subcommand $famSub -ArgsRest $famRest
-                switch ($famSub.ToLowerInvariant()) {
+                Invoke-MetraDeskFamiliarityCommand -Subcommand $famSub -ArgsRest $famRest
+            }
+            'notes' {
+                if ($subArgs.Count -eq 0) {
+                    throw "profile notes requires show|add|observe|moment|reset. Example: .\metra.ps1 profile notes show"
+                }
+                $notesSub = [string]$subArgs[0]
+                $notesRest = @()
+                if ($subArgs.Count -gt 1) {
+                    $notesRest = @($subArgs[1..($subArgs.Count - 1)])
+                }
+                # Root-bound -Force/-WhatIf/-Confirm/-Note are not in ArgsRest; forward for writers.
+                if ($notesSub -ieq 'reset') {
+                    if ($Force -and ($notesRest -notcontains '-Force')) { $notesRest += '-Force' }
+                }
+                if ($notesSub -match '^(?i)(reset|add|observe|moment)$') {
+                    if ($WhatIf -and ($notesRest -notcontains '-WhatIf')) { $notesRest += '-WhatIf' }
+                    if ($Confirm -and ($notesRest -notcontains '-Confirm')) { $notesRest += '-Confirm' }
+                }
+                if ($notesSub -ieq 'observe' -and -not [string]::IsNullOrWhiteSpace($Note)) {
+                    $hasEvidence = $false
+                    foreach ($a in $notesRest) {
+                        if ($a -ieq '-Evidence' -or $a -ieq '-Note') { $hasEvidence = $true; break }
+                    }
+                    if (-not $hasEvidence) {
+                        $notesRest += @('-Evidence', [string]$Note)
+                    }
+                }
+                $notesResult = Invoke-MetraOperatorWorkingNotesCommand -Subcommand $notesSub -ArgsRest $notesRest
+                switch ($notesSub.ToLowerInvariant()) {
                     'show' {
-                        Write-Host ("Durable band: {0}" -f $famResult.DurableBand)
-                        Write-Host ("Score:        {0} (0-8)" -f $famResult.Score)
-                        Write-Host ("Last nudge:   {0}" -f $(if ($famResult.LastNudgeUtcDate) { $famResult.LastNudgeUtcDate } else { '(none)' }))
-                        Write-Host ("Qualifying evidence count: {0}" -f $famResult.QualifyingEvidenceCount)
-                        Write-Host ("Ledger:       {0}" -f $famResult.LedgerPath)
-                        Write-Host ("Exists:       {0}" -f $famResult.LedgerExists)
-                        if ($famResult.LedgerCorrupt) {
-                            Write-Host 'Corrupt:      True (fail-closed to Warming; file not overwritten)'
+                        Write-Host ("Ledger:     {0}" -f $notesResult.LedgerPath)
+                        Write-Host ("Exists:     {0}" -f $notesResult.LedgerExists)
+                        if ($notesResult.LedgerCorrupt) {
+                            Write-Host 'Corrupt:    True (run: profile notes reset -Force)'
                         }
-                        if ($famResult.WarmingDefaultActive) {
-                            Write-Host 'Default:      Warming active (missing or corrupt ledger)'
+                        if (($notesResult.PSObject.Properties.Name -contains 'DroppedRowCount') -and ([int]$notesResult.DroppedRowCount -gt 0)) {
+                            Write-Host ("Dropped:    {0} blank/unusable row(s) - writes refused until fixed or reset" -f $notesResult.DroppedRowCount)
+                        }
+                        Write-Host ("Stated:     {0}" -f $notesResult.StatedCount)
+                        Write-Host ("Observed:   {0} active / {1} total (decay {2}d)" -f $notesResult.ObservedActive, $notesResult.ObservedTotal, $notesResult.DecayDays)
+                        Write-Host ("Moments:    {0}" -f $notesResult.MomentsCount)
+                        Write-Host ("Prompt cap: {0} bytes" -f $notesResult.ContextCapBytes)
+                        if ($notesResult.PSObject.Properties.Name -contains 'MaxRowsPerList') {
+                            Write-Host ("Row cap:    {0} per list" -f $notesResult.MaxRowsPerList)
+                        }
+                        if ($notesResult.StatedCount -gt 0) {
+                            Write-Host ''
+                            Write-Host 'Stated:'
+                            foreach ($row in @($notesResult.Stated)) {
+                                $shown = Get-MetraOperatorWorkingNotesScrubbedText -Raw ([string]$row.text)
+                                Write-Host ("  - {0}" -f $shown)
+                            }
+                        }
+                        if ($notesResult.ObservedActive -gt 0) {
+                            Write-Host ''
+                            Write-Host 'Observed (active):'
+                            foreach ($row in @($notesResult.ObservedActiveRows)) {
+                                $pat = Get-MetraOperatorWorkingNotesScrubbedText -Raw ([string]$row.pattern)
+                                Write-Host ("  - {0} (n={1})" -f $pat, $row.instanceCount)
+                            }
+                        }
+                        if ($notesResult.MomentsCount -gt 0) {
+                            Write-Host ''
+                            Write-Host 'Moments:'
+                            foreach ($row in @($notesResult.Moments)) {
+                                $shown = Get-MetraOperatorWorkingNotesScrubbedText -Raw ([string]$row.text)
+                                Write-Host ("  - {0}" -f $shown)
+                            }
                         }
                     }
                     default {
-                        $famResult | Format-List
+                        $notesResult | Format-List
                     }
                 }
             }

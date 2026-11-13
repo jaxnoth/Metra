@@ -494,6 +494,18 @@ Describe 'Profile satellite check-in roster' {
             $n.state | Should -Be 'Behind'
         }
     }
+
+    It 'null publisher hash marks PublisherUnexportable without binding throw' {
+        InModuleScope Metra {
+            $path = Join-Path $TestDrive 'profile-satellites-unexportable.local.json'
+            $null = Save-MetraProfileSatelliteCheckIn -MachineName 'Laptop-A' -LastAppliedHash 'sha256:old' -Path $path
+            { Get-MetraProfileSatelliteRoster -PublisherHash $null -Path $path } | Should -Not -Throw
+            $roster = Get-MetraProfileSatelliteRoster -PublisherHash $null -Path $path
+            $roster.PublisherUnexportable | Should -BeTrue
+            $a = @($roster.Satellites) | Where-Object { $_.machineName -eq 'Laptop-A' } | Select-Object -First 1
+            $a.state | Should -Be 'PublisherUnexportable'
+        }
+    }
 }
 
 Describe 'Export-MetraContext' {

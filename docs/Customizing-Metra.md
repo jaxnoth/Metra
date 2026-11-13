@@ -170,12 +170,14 @@ Opt-in tone dials under `profiles/addons/`. They raise chat color without changi
 
 Guardrails: add-ons may alter tone only - not routing, project selection, root isolation, evidence hierarchy, professional artifacts, or incident defaults. Catalog and suggested later dials: [profiles/addons/README.md](../profiles/addons/README.md). Single-file paths: copy `metra-humor.local.example.mdc` or `metra-teaching-gentle.local.example.mdc` to the matching `.local.mdc` name.
 
-### Vision Conversation Identity Stack
+### Conversation Identity Stack (single rule-file authority)
 
-Vision (phone companion on the real Vision Ask contract) loads the same conversational identity Cursor uses, via a **frozen allowlisted manifest** (`Get-MetraConversationIdentityManifest` / `Get-MetraConversationIdentityPrompt`):
+CE / Ask / Vision / Cursor conversational identity loads via a **frozen allowlisted manifest** (`Get-MetraConversationIdentityManifest` / `Get-MetraConversationIdentityPrompt` in `scripts/private/ConversationIdentity.ps1`):
 
-partner → persona → overlay → OCC → humor → teaching → vision brief → narrative face
+partner → persona → overlay → OCC → workingNotes (runtime) → humor → teaching → vision brief → narrative face
 
+- **Sole rule-file set:** manifest `RelativePath` entries are the only conversational identity **rule** files. Do not invent a parallel parity-audit playbook. Cursor Agent continues via `alwaysApply` of those same rule files. Project Voice mirror (`docs/Cursor-Project-Metra-Voice.md`) must stay aligned with base persona + humor-desk paths named in the manifest.
+- **Working notes** are machine-data + profile-packaged data (`machine-data/operator-working-notes.local.json`), loaded as runtime pack `workingNotes` - not part of the redistributable rule pack and not a new allowlisted `.mdc`.
 - **Allowlist only:** unknown `metra-*.local.mdc` files are never loaded. New add-ons require a manifest edit.
 - **Loader sole authority** for `TeachingActive` / `HumorActive`. VisionAsk does not re-decide packs.
 - **Surface:** `-Surface Vision` includes the vision brief; `-Surface Ask` (Desk CE via `New-MetraConversationPrompt`) omits it (`surface_gate`) then appends CE policy overlay - same loader, not same words.
@@ -185,26 +187,36 @@ partner → persona → overlay → OCC → humor → teaching → vision brief 
 
 HQ must have add-on `.local.mdc` files present for packs to activate (export-profile already copies humor/teaching when present).
 
-### Desk familiarity (humor-desk companion)
+### Persona golden fixtures
 
-Numeric **working-together register** for humor-desk (session vs durable). Not OCC, not Decision Registry, not Notion.
+Manual acceptance scorecard for conversational identity: [docs/playbooks/persona-golden-fixtures.md](playbooks/persona-golden-fixtures.md). Walk after Cursor Agent model or Ask/Inspect engine pin changes. Do not claim persona outcome KPIs without re-running that set. Linked from humor-desk README.
 
-**Warmth vs Familiarity:** Familiarity is **intensity** (Cold / Warming / Familiar). Warmth is **quality of attention** when interpersonal energy is allowed (Timing / Specificity / Restraint; seam / spark / resume vocabulary). Cold can still be timely and specific; Familiar does not authorize poor restraint. Executable Warmth, Curiosity, and Playfulness kernels: humor-desk add-on (Curiosity = engine; Playfulness = spice; combined garnish budget). **Honesty / Steadiness / Conviction** live in base `metra-persona.mdc` (spine / floor / backbone) - always on, not humor-desk. iOS Company silence (spark-or-quiet) lives in `plans/ios-conversation-policy.plan.md` - Cursor Agent must not invent proactive sparks.
+### Operator working notes (replaces desk familiarity dial)
+
+Operator-owned **Stated / Observed / Moments** ledger for presence, pace, and callbacks. Not OCC, not Decision Registry, not Notion. The Cold / Warming / Familiar numeric desk dial (`profile familiarity`) is **retired**.
+
+**Warmth vs working notes:** Warmth is **quality of attention** (Timing / Specificity / Restraint). Working notes are durable operator facts and dated observations that may silently tune pace, depth, verdict format, and Moments-backed callbacks. They must **never** lower Honesty or Conviction. Executable Warmth / Curiosity / Playfulness: humor-desk. Honesty / Steadiness / Conviction: base `metra-persona.mdc`. iOS Company silence (spark-or-quiet): `plans/ios-conversation-policy.plan.md`.
 
 | Store | Path | Role |
 |-------|------|------|
-| Durable ledger | `%LOCALAPPDATA%\Metra\desk-familiarity.local.json` (gitignored) | Slow score 0-8 / Cold-Warming-Familiar; chat-analysis nudges |
-| Example | `docs/desk-familiarity.local.example.json` | Tracked defaults |
-| Prose prefs | OCC / `profile note` | Soft collaboration guidelines |
+| Machine ledger | `%LOCALAPPDATA%\Metra\operator-working-notes.local.json` | Stated / Observed / Moments |
+| Pack leaf | `machine-data/operator-working-notes.local.json` | Included by `export-profile` / `import-profile` |
+| Example | `docs/examples/operator-working-notes.local.example.json` | Tracked shape |
+| Soft collaboration prose | OCC / `profile note` | Soft guidelines (capped) |
+
+**Observed decay:** default **30 days** without a confirming instance. A new observation of the same pattern **resets the decay clock** and increments `instanceCount`. Loader skips expired Observed rows. Prompt injection is hard-capped at **2048 UTF-8 bytes** (`Format-MetraOperatorWorkingNotesForPrompt`); under the cap, active Observed then Moments are preferred over long Stated lists. Do not announce notes unprompted; if asked, say they come from the working-notes file. Entries are secrets-scrubbed on write and again on prompt format.
 
 ```powershell
-.\metra.ps1 profile familiarity show
-.\metra.ps1 profile familiarity analyze-nudge -SessionPeak Familiar -SessionFloor Warming -Direction Up -Sustained -Note "sustained collaborative project brainstorming"
+.\metra.ps1 profile notes show
+.\metra.ps1 profile notes add stated 'Prefer terse verdicts before detail.'
+.\metra.ps1 profile notes observe 'parks threads' -Evidence 'resumed after a gap'
+.\metra.ps1 profile notes moment 'Called the dial a costume'
+.\metra.ps1 profile notes reset -Force   # corrupt/empty recovery (backs up first)
 ```
 
-Agent performs bounded chat analysis and passes structured fields; CLI is mechanical (+/-1 nudge, UTC day rate limit, two-band outlier evidence-only, ticket-only excluded). Missing/corrupt ledger -> effective Warming without silent overwrite of a corrupt file. See humor-desk pack README.
+Hand-edit the JSON is still valid; the CLI is the preferred write path so Observed decay actually runs. CE / Ask / Cursor load notes via Conversation Identity runtime pack `workingNotes` (not a redistributable rule file).
 
-**v1 scale is intentionally fixed:** bands are exactly Cold / Warming / Familiar with score 0-8 (default 3 = Warming). Not schema-extensible in this slice - do not stretch the model to add bands without a deliberate redesign.
+**Retired familiarity leftover:** `profile familiarity` and `Get-MetraDeskFamiliarityLedgerPath` are gone. Old `%LOCALAPPDATA%\Metra\desk-familiarity.local.json` (or legacy `docs/desk-familiarity.local.json`) files are unused - safe to delete by hand; Metra does not auto-delete them.
 
 ## What belongs where
 

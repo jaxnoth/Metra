@@ -1,0 +1,29 @@
+{
+  "version": 1,
+  "updatedUtc": "2026-11-12T00:00:00.0000000Z",
+  "stated": [
+    {
+      "id": "a1b2c3d4e5f6478890a1b2c3d4e5f647",
+      "text": "Prefer terse verdicts before detail.",
+      "source": "operator",
+      "notedUtc": "2026-11-01T12:00:00.0000000Z"
+    }
+  ],
+  "observed": [
+    {
+      "id": "b2c3d4e5f6478890a1b2c3d4e5f64789",
+      "pattern": "Parks a thread mid-design and returns later",
+      "evidence": "Multiple plan threads resumed after a gap",
+      "instanceCount": 2,
+      "firstObservedUtc": "2026-10-20T15:00:00.0000000Z",
+      "lastObservedUtc": "2026-11-10T18:00:00.0000000Z"
+    }
+  ],
+  "moments": [
+    {
+      "id": "c3d4e5f6478890a1b2c3d4e5f647890a",
+      "text": "Called the Familiarity dial a costume that never earned its keep",
+      "notedUtc": "2026-11-12T12:00:00.0000000Z"
+    }
+  ]
+}

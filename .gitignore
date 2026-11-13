@@ -61,11 +61,13 @@ docs/profile-sync.local.json
 docs/client-auth.local.json
 docs/ticket-watch.local.json
 docs/desk-familiarity.local.json
+docs/operator-working-notes.local.json
 docs/tailscale-campus.local.json
 docs/*.local.log
 !docs/examples/client-auth.example.json
 !docs/examples/ticket-watch.local.example.json
 !docs/examples/desk-familiarity.local.example.json
+!docs/examples/operator-working-notes.local.example.json
 !docs/examples/azdo.local.example.json
 !docs/examples/notion.local.example.json
 !docs/examples/operator-contract.example.json

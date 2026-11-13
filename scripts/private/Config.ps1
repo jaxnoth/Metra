@@ -286,14 +286,6 @@ function Get-MetraProfileSyncLocalPath {
         -LegacyRelativeUnderDocs 'profile-sync.local.json'
 }
 
-function Get-MetraDeskFamiliarityLedgerPath {
-    [CmdletBinding()]
-    param([string]$MetraRoot = (Get-MetraRoot))
-    return Resolve-MetraMachineLedgerPath -MetraRoot $MetraRoot `
-        -RelativeUnderMachineData 'desk-familiarity.local.json' `
-        -LegacyRelativeUnderDocs 'desk-familiarity.local.json'
-}
-
 function Get-MetraCanvasSnapshotPath {
     <#
     .SYNOPSIS

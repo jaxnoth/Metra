@@ -37,6 +37,7 @@ function Get-MetraConversationIdentityManifest {
         [pscustomobject]@{ Id = 'persona'; Kind = 'file'; RelativePath = '.cursor/rules/metra-persona.mdc'; BudgetTier = 1; AllowlistedAddon = $false }
         [pscustomobject]@{ Id = 'overlay'; Kind = 'file'; RelativePath = '.cursor/rules/metra-persona.local.mdc'; BudgetTier = 2; AllowlistedAddon = $false }
         [pscustomobject]@{ Id = 'occ'; Kind = 'file'; RelativePath = '.cursor/rules/metra-learned.local.mdc'; BudgetTier = 2; AllowlistedAddon = $false }
+        [pscustomobject]@{ Id = 'workingNotes'; Kind = 'runtime'; RelativePath = $null; BudgetTier = 2; AllowlistedAddon = $false }
         [pscustomobject]@{ Id = 'humor'; Kind = 'add-on'; RelativePath = '.cursor/rules/metra-humor.local.mdc'; BudgetTier = 3; AllowlistedAddon = $true }
         [pscustomobject]@{ Id = 'teaching'; Kind = 'add-on'; RelativePath = '.cursor/rules/metra-teaching-gentle.local.mdc'; BudgetTier = 3; AllowlistedAddon = $true }
         [pscustomobject]@{ Id = 'vision'; Kind = 'file'; RelativePath = 'engines/vision-ask/system.md'; BudgetTier = 0; AllowlistedAddon = $false }
@@ -267,6 +268,18 @@ function Get-MetraConversationIdentityPrompt {
             }
             'narrative' {
                 $body = Get-MetraConversationIdentityNarrativeFace
+            }
+            'workingNotes' {
+                if (-not (Get-Command Format-MetraOperatorWorkingNotesForPrompt -ErrorAction SilentlyContinue)) {
+                    $omitReason = 'missing_command'
+                }
+                else {
+                    $body = Format-MetraOperatorWorkingNotesForPrompt -MetraRoot $MetraRoot
+                    if ([string]::IsNullOrWhiteSpace($body)) {
+                        $omitReason = 'empty_notes'
+                        $body = $null
+                    }
+                }
             }
             'humor' {
                 if (-not $src.Exists) {

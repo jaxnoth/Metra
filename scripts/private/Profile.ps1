@@ -90,6 +90,9 @@ function Get-MetraProfileFileMap {
     <#
     .SYNOPSIS
         Relative paths that make up an operator profile pack (same layout as profiles/sample).
+    .NOTES
+        Paths under machine-data/ resolve from Get-MetraMachineDataRoot on export/import/status,
+        and stage inside the pack under the same relative path.
     #>
     return @(
         'metra.config.json',
@@ -99,8 +102,57 @@ function Get-MetraProfileFileMap {
         '.cursor/rules/metra-teaching-gentle.local.mdc',
         '.cursor/rules/metra-learned.local.mdc',
         'docs/operator-contract.json',
-        'docs/decision-registry.json'
+        'docs/decision-registry.json',
+        'machine-data/operator-working-notes.local.json'
     )
+}
+
+function Test-MetraProfileMachineDataRelative {
+    [CmdletBinding()]
+    param([Parameter(Mandatory)][AllowEmptyString()][string]$RelativePath)
+    $norm = ($RelativePath -replace '\\', '/').TrimStart('/')
+    return $norm.StartsWith('machine-data/', [StringComparison]::OrdinalIgnoreCase)
+}
+
+function Resolve-MetraProfileMappedLivePath {
+    <#
+    .SYNOPSIS
+        Resolve a profile map relative path to the live file (checkout or machine-data).
+    #>
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory)][string]$RelativePath,
+        [string]$MetraRoot = (Get-MetraRoot)
+    )
+
+    $relNorm = ($RelativePath -replace '\\', '/').TrimStart('/')
+    if ([string]::IsNullOrWhiteSpace($relNorm) -or $relNorm.Contains('..') -or [System.IO.Path]::IsPathRooted($relNorm)) {
+        throw "Invalid profile map relative path: $RelativePath"
+    }
+    foreach ($segment in @($relNorm -split '/')) {
+        if ([string]::IsNullOrWhiteSpace($segment) -or $segment -eq '.' -or $segment -eq '..' -or [System.IO.Path]::IsPathRooted($segment)) {
+            throw "Invalid profile map path segment in: $RelativePath"
+        }
+    }
+
+    if (Test-MetraProfileMachineDataRelative -RelativePath $relNorm) {
+        $leaf = $relNorm.Substring('machine-data/'.Length)
+        if ([string]::IsNullOrWhiteSpace($leaf)) {
+            throw "Invalid machine-data profile map entry: $RelativePath"
+        }
+        $machineRoot = Get-MetraMachineDataRoot -MetraRoot $MetraRoot
+        $full = [System.IO.Path]::GetFullPath((Join-Path $machineRoot ($leaf -replace '/', [IO.Path]::DirectorySeparatorChar)))
+        if (-not (Test-MetraPathWithinRoot -Path $full -Root $machineRoot)) {
+            throw "Resolved machine-data path escapes machine root: $full"
+        }
+        return $full
+    }
+
+    $checkoutFull = [System.IO.Path]::GetFullPath((Join-Path $MetraRoot ($relNorm -replace '/', [IO.Path]::DirectorySeparatorChar)))
+    if (-not (Test-MetraPathWithinRoot -Path $checkoutFull -Root $MetraRoot)) {
+        throw "Resolved profile path escapes MetraRoot: $checkoutFull"
+    }
+    return $checkoutFull
 }
 
 function Resolve-MetraProfileSourceDir {
@@ -275,18 +327,47 @@ function Get-MetraProfileStatus {
     )
 
     $fileMap = @(Get-MetraProfileFileMap)
+    $notesPackRel = (Get-MetraOperatorWorkingNotesPackRelativePath) -replace '\\', '/'
+    $notesPackError = $null
+    # Migrate docs→machine working-notes before map Test-Path so status matches the live ledger.
+    $null = Get-MetraOperatorWorkingNotesPath -MetraRoot $MetraRoot
     $entries = New-Object System.Collections.Generic.List[object]
     foreach ($rel in $fileMap) {
         $relNorm = ($rel -replace '\\', '/')
-        $full = Join-Path $MetraRoot ($relNorm -replace '/', [IO.Path]::DirectorySeparatorChar)
+        $full = Resolve-MetraProfileMappedLivePath -RelativePath $relNorm -MetraRoot $MetraRoot
         if (-not (Test-Path -LiteralPath $full)) { continue }
         $info = Get-Item -LiteralPath $full
-        $hex = Get-MetraProfileFileSha256Hex -Path $info.FullName
+        $hex = $null
+        $sizeBytes = [long]$info.Length
+        if ($relNorm -ieq $notesPackRel) {
+            # Same fail-closed gate as Export: refuse blank rows / Protect Refuse; never hash raw live bytes.
+            try {
+                $parsed = [System.IO.File]::ReadAllText($full, [System.Text.UTF8Encoding]::new($false)) | ConvertFrom-Json -ErrorAction Stop
+                $pack = ConvertFrom-MetraOperatorWorkingNotesRawForPack -Raw $parsed -RefuseDroppedRows
+                $packBytes = [System.Text.Encoding]::UTF8.GetBytes([string]$pack.Text)
+                $shaFile = [System.Security.Cryptography.SHA256]::Create()
+                try {
+                    $hex = ($shaFile.ComputeHash($packBytes) | ForEach-Object { $_.ToString('x2') }) -join ''
+                }
+                finally {
+                    $shaFile.Dispose()
+                }
+                $sizeBytes = [long]$packBytes.Length
+            }
+            catch {
+                $notesPackError = $_.Exception.Message
+                Write-Warning ("Get-MetraProfileStatus: working-notes omitted from contentHash (unexportable): {0}" -f $notesPackError)
+                continue
+            }
+        }
+        else {
+            $hex = Get-MetraProfileFileSha256Hex -Path $info.FullName
+        }
         [void]$entries.Add([PSCustomObject]@{
                 logicalName  = (Get-MetraProfileLogicalName -RelativePath $relNorm)
                 relativePath = $relNorm
                 writeUtc     = $info.LastWriteTimeUtc.ToString('o')
-                sizeBytes    = [long]$info.Length
+                sizeBytes    = $sizeBytes
                 hash         = "sha256:$hex"
             })
     }
@@ -307,13 +388,17 @@ function Get-MetraProfileStatus {
         $maxWrite = ($stable | Sort-Object writeUtc -Descending | Select-Object -First 1).writeUtc
     }
 
+    $ok = [string]::IsNullOrWhiteSpace($notesPackError)
+    # When notes cannot be packed, do not advertise a publishable contentHash.
+    $hashOut = if ($ok) { "sha256:$digest" } else { $null }
     return [PSCustomObject]@{
-        ok                 = $true
+        ok                 = $ok
         profilePackVersion = 1
-        contentHash        = "sha256:$digest"
+        contentHash        = $hashOut
         maxWriteUtc        = $maxWrite
         fileCount          = $stable.Count
         files              = $stable
+        notesPackError     = $notesPackError
     }
 }
 
@@ -674,14 +759,20 @@ function Get-MetraProfileSatelliteRoster {
     <#
     .SYNOPSIS
         Derives Current/Behind/Stale for checked-in satellites vs publisher fingerprint.
+    .NOTES
+        Null/blank PublisherHash means the publisher pack is unexportable - do not treat as Behind.
+        States: Current, Behind, Stale, PublisherUnexportable.
     #>
     [CmdletBinding()]
     param(
-        [Parameter(Mandatory)][string]$PublisherHash,
+        [AllowNull()]
+        [AllowEmptyString()]
+        [string]$PublisherHash,
         [int]$StaleAfterDays = 14,
         [string]$Path = (Get-MetraProfileSatelliteRegistryPath)
     )
 
+    $publisherMissing = [string]::IsNullOrWhiteSpace($PublisherHash)
     $reg = Get-MetraProfileSatelliteRegistry -Path $Path
     $cutoff = [DateTime]::UtcNow.AddDays(-1 * [Math]::Abs($StaleAfterDays))
     $rows = New-Object System.Collections.Generic.List[object]
@@ -702,7 +793,10 @@ function Get-MetraProfileSatelliteRoster {
                 $stale = $true
             }
         }
-        $freshness = if ($stale) {
+        $freshness = if ($publisherMissing) {
+            'PublisherUnexportable'
+        }
+        elseif ($stale) {
             'Stale'
         }
         elseif ($applied -eq $PublisherHash) {
@@ -723,8 +817,9 @@ function Get-MetraProfileSatelliteRoster {
     }
 
     return [PSCustomObject]@{
-        Path       = $Path
-        Satellites = @($rows | Sort-Object machineName)
+        Path                 = $Path
+        PublisherUnexportable = [bool]$publisherMissing
+        Satellites           = @($rows | Sort-Object machineName)
     }
 }
 

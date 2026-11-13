@@ -260,7 +260,7 @@ Calm, direct, competent, slightly personal. Role = intent. Wayfinding motif - no
 
 Dry desk humor may appear on chat and light temporary operator UIs (installer Welcome at most one beat). Never a joke quota. Coworker-at-the-next-desk, not salesy or cute.
 
-**Off:** tickets, commits, ADRs, redistribution (professional sink); refuse dialogs; incident / outage tone. Settings stay factual.
+**Off:** tickets, commits, ADRs, redistribution (professional sink); refuse dialogs; during active incident garnish is off in chat (thin Warmth / Steadiness still allowed - see humor-desk). Settings stay factual.
 
 Humor **dials and palette** live in [`.cursor/rules/metra-persona.mdc`](../.cursor/rules/metra-persona.mdc) and optional humor-desk add-on - do not duplicate that table here. Brand owns the **boundary**; persona owns the **dial**.
 

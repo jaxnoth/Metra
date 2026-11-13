@@ -18,6 +18,39 @@ Entry shape:
 
 ---
 
+## 2026-11-12 - Ani originating briefs stay local; working-notes write path
+
+- Decision: Full Ani emotion brief archive is **operator-private** at `docs/Ani-Emotion-Briefs-Originating.local.md` (covered by `docs/*.local.md` gitignore). Tracked `docs/Ani-Emotion-Briefs-Originating.md` is a public index/stub only - no first name, Notion URLs, or local screenshot paths. Presentation links point at the index and name the local archive.
+- Decision: Working-notes have a live write CLI: `profile notes show|add|observe|moment`. Writes and prompt formatting run Ask secrets scrub. Prompt contract: do not announce notes unprompted; if asked, cite the working-notes file. Retired `Get-MetraDeskFamiliarityLedgerPath`; leftover `desk-familiarity.local.json` files are unused and operator-deletable.
+- Why: Bing L1 review (changes-requested): a personal provenance doc must not ship to the public Metra remote; an unread write path would repeat the Familiarity mistake in reverse.
+- See: [docs/Ani-Emotion-Briefs-Originating.md](Ani-Emotion-Briefs-Originating.md); `scripts/private/OperatorWorkingNotes.ps1`; `.\metra.ps1 profile notes`
+
+## 2026-11-12 - Persona golden fixtures are the originating measurement
+
+- Decision: Portfolio persona outcome claims (presence, incident coworker presence, garnish budget, Conviction fire/non-fire, working-notes silence) must be gated by walking [docs/playbooks/persona-golden-fixtures.md](playbooks/persona-golden-fixtures.md). Do not claim persona KPI wins without re-running that set after a Cursor Agent model or Metra Ask/Inspect engine pin change. The scorecard must not ratchet Metra toward flat FAQ coldness or toward garnish quotas: before/after incident rows require at least one both-beats proof; `incident-garnish-optional` forbids treating AND-capable as mandatory.
+- Why: Emotion-kernel work without an acceptance boundary drifts into either sterile FAQ Metra or costume performance. Fixtures are the originating measurement; automation does not auto-judge them in v1.
+- See: [docs/playbooks/persona-golden-fixtures.md](playbooks/persona-golden-fixtures.md); [docs/playbooks/persona-voice-examples.md](playbooks/persona-voice-examples.md); `.cursor/rules/metra-persona.mdc`; `profiles/addons/humor-desk/`
+
+## 2026-11-12 - Incident phase garnish and Agent hard off
+
+- Decision: Humor-desk / base Humor Policy use **before / during / after** incident phases from turn-local operator words (ambiguous → during). Before/after may use **AND-capable** Curiosity+Playfulness when earned; **clown ceiling** forbids quota-filling (`incident-garnish-optional`). During: Steadiness + Honesty + thin Warmth on; garnish off (`incident-coworker-presence`). Durable sink absolute. Cursor Agent implement / inspect fix / tool-heavy turns: Curiosity and Playfulness hard off (inspect-loop inherits). No new Playful flavors. Phase is not sticky durable persona state.
+- Why: Blanket "incident = mute all emotion" produced FAQ coldness; unlimited garnish produced costume Metra. Phase split plus AND-capable-with-ceiling is the middle.
+- See: `profiles/addons/humor-desk/`; `.cursor/rules/metra-persona.mdc` (Humor Policy); `.cursor/rules/metra-inspect-loop.mdc`; [docs/playbooks/persona-golden-fixtures.md](playbooks/persona-golden-fixtures.md)
+
+## 2026-11-12 - Conviction fire / non-fire (not every-idea dig)
+
+- Decision: Base persona Conviction lists explicit **fire** conditions (unverified factual claim as settled; irreversible or Live/destructive choice; scope/authority jump) and **non-fire** (exploratory brainstorm; equally valid style/wording). Asking for pushback or a disagreement inventory is the work - not a non-fire. Ban the fixed template dig on every idea turn. Fixtures: `conviction-unverified`, `conviction-wording`, `conviction-no-reflex`, `notes-pushback-anyway`.
+- Why: Conviction was drifting into personality theater (dig every idea) or staying silent when judgment was needed. Fire/non-fire makes it judgment, not garnish.
+- See: `.cursor/rules/metra-persona.mdc` (Conviction); [docs/playbooks/persona-golden-fixtures.md](playbooks/persona-golden-fixtures.md)
+
+## 2026-11-12 - Operator working notes replace desk familiarity dial
+
+- Decision: Retire the Cold / Warming / Familiar numeric desk familiarity dial and `profile familiarity` CLI. Replace with an operator-owned working-notes ledger at `%LOCALAPPDATA%\Metra\operator-working-notes.local.json` (Stated / Observed / Moments). Package via `Get-MetraProfileFileMap` leaf `machine-data/operator-working-notes.local.json` on `export-profile` / `import-profile`. Not station zips, public remotes, or coworker redistribution content.
+- Decision: Observed entries decay after **30 days** without a confirming instance; a new same-pattern observation **resets the decay clock** and increments `instanceCount`. Loader skips expired Observed. Prompt context is hard-capped at **2048 UTF-8 bytes**. Notes may tune pace, depth, verdict format, and callbacks; they must never lower Honesty / Conviction. Use is silent (no "I've learned that you..." narration). Conversation Identity loads notes as runtime pack `workingNotes` (not a redistributable rule RelativePath).
+- Decision: This **supersedes** the 2026-09-04 Familiarity-as-intensity dial for humor-desk intensity. Warmth remains quality of attention. Soft collaboration prose stays OCC.
+- Why: The numeric dial was written but unread in practice - a costume intensity register. A readable ledger with a live load path and bounded decay is the growth mechanism for presence without attachment theater.
+- See: `scripts/private/OperatorWorkingNotes.ps1`; `scripts/private/ConversationIdentity.ps1`; `scripts/private/DeskFamiliarity.ps1` (retired stub); [docs/Customizing-Metra.md](Customizing-Metra.md); [docs/examples/operator-working-notes.local.example.json](examples/operator-working-notes.local.example.json); golden fixtures `presence-notes-silent`, `notes-*`
+
 ## 2026-11-11 - Inspect Bing reviewer contract (manifest / review-state / depth)
 
 - Decision: Diff Bing packs emit a reviewer-contract set beside `pack-diff.md`: `handoff.md` (contract + required return template), `review-manifest.md` (navigation only), and `review-state.md` (prior finding dispositions). Local slot and Share\<Project>\ mirrors stay siblings (no nested `inspect\`). Optimize for selective readability - navigation plus full evidence on demand - not for lossy pack compression.
@@ -1498,7 +1531,8 @@ Three product scars locked with the Vision Ask contract bite. Server proof: `scr
   | Kind of durable fact | Home | Not |
   |---|---|---|
   | Soft collaboration rhythm across the portfolio | OCC / `profile` | Project playbooks |
-  | Desk familiarity numeric register (humor-desk) | `docs/desk-familiarity.local.json` via `profile familiarity` | OCC, Decision Registry, Notion |
+  | Desk familiarity numeric register (humor-desk) | **Retired 2026-11-12** - use operator working-notes (`%LOCALAPPDATA%\Metra\operator-working-notes.local.json`) | OCC, Decision Registry, Notion |
+  | Operator working notes (Stated/Observed/Moments) | `%LOCALAPPDATA%\Metra\operator-working-notes.local.json` (pack `machine-data/...`) | OCC, Decision Registry, Notion, station zips |
   | Portfolio-wide product / routing / persona policy | `docs/Decisions.md` or base `metra-persona.mdc` | OCC |
   | Project-local how-to / triage / runbook | That project's `AGENTS.md` (or README) | OCC, Decision Registry |
   | Recurring ticket pattern with reusable write-up | TicketTracker `solutions/` (+ index) | OCC |

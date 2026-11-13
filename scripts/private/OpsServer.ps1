@@ -861,8 +861,10 @@ function Invoke-MetraOpsApi {
                 $status = Get-MetraProfileStatus -MetraRoot $MetraRoot
                 $status | Add-Member -NotePropertyName hasSyncToken -NotePropertyValue ([bool](Test-MetraProfileSyncTokenConfigured)) -Force
                 if (Test-MetraOpsRequestHasLocalAuthority -Request $Request) {
-                    $roster = Get-MetraProfileSatelliteRoster -PublisherHash ([string]$status.contentHash)
+                    # Pass contentHash as-is (may be $null when notes are unexportable) - never force [string]$null.
+                    $roster = Get-MetraProfileSatelliteRoster -PublisherHash $status.contentHash
                     $status | Add-Member -NotePropertyName satellites -NotePropertyValue @($roster.Satellites) -Force
+                    $status | Add-Member -NotePropertyName publisherUnexportable -NotePropertyValue ([bool]$roster.PublisherUnexportable) -Force
                     $devices = @(Get-MetraClientDeviceList)
                     $pendingBag = Get-MetraClientPairPending
                     $status | Add-Member -NotePropertyName devices -NotePropertyValue $devices -Force
@@ -885,7 +887,8 @@ function Invoke-MetraOpsApi {
                     -ReasonCode 'profileSatellitesLocalOnly')) { return }
             try {
                 $status = Get-MetraProfileStatus -MetraRoot $MetraRoot
-                $roster = Get-MetraProfileSatelliteRoster -PublisherHash ([string]$status.contentHash)
+                # Pass contentHash as-is (may be $null when notes are unexportable) - never force [string]$null.
+                $roster = Get-MetraProfileSatelliteRoster -PublisherHash $status.contentHash
                 Write-MetraOpsJsonResponse -Response $Response -Object $roster -Depth 8
             }
             catch {
@@ -1071,13 +1074,30 @@ function Invoke-MetraOpsApi {
             $zipPath = $null
             try {
                 $status = Get-MetraProfileStatus -MetraRoot $MetraRoot
+                # Null/blank contentHash means unexportable notes - refuse publish; never use shared 'empty' cache key.
+                if (-not [bool]$status.ok -or [string]::IsNullOrWhiteSpace([string]$status.contentHash)) {
+                    Write-MetraOpsJsonResponse -Response $Response -StatusCode 409 -Object ([PSCustomObject]@{
+                            error                 = 'Profile pack is not exportable (working-notes or status gate).'
+                            reasonCode            = 'profilePackUnexportable'
+                            ok                    = $false
+                            notesPackError        = [string](Get-MetraProp -Object $status -Name 'notesPackError' -Default '')
+                            publisherUnexportable = $true
+                        })
+                    return
+                }
                 $cacheDir = Join-Path $env:LOCALAPPDATA 'Metra\profile-export-cache'
                 if (-not (Test-Path -LiteralPath $cacheDir)) {
                     # Directory.CreateDirectory is literal-path safe; New-Item -LiteralPath is not on all hosts.
                     [void][System.IO.Directory]::CreateDirectory($cacheDir)
                 }
                 $hashKey = ($status.contentHash -replace '[^a-fA-F0-9]', '')
-                if ([string]::IsNullOrWhiteSpace($hashKey)) { $hashKey = 'empty' }
+                if ([string]::IsNullOrWhiteSpace($hashKey)) {
+                    Write-MetraOpsJsonResponse -Response $Response -StatusCode 409 -Object ([PSCustomObject]@{
+                            error      = 'Profile pack contentHash missing after ok=true status.'
+                            reasonCode = 'profilePackHashMissing'
+                        })
+                    return
+                }
                 $cached = Join-Path $cacheDir ("metra-profile-$hashKey.zip")
                 # Older builds wrote "$cached.tmp", which Export-MetraProfile treats as a folder
                 # (path must end in .zip). Drop leftover folders/files and any directory named *.zip.

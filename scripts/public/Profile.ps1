@@ -36,15 +36,17 @@ function Export-MetraProfile {
 
     $metraRoot = Get-MetraRoot
     $fileMap = @(Get-MetraProfileFileMap)
+    # Migrate docs→machine working-notes before map Test-Path so export sees a docs-only ledger.
+    $null = Get-MetraOperatorWorkingNotesPath -MetraRoot $metraRoot
     $present = New-Object System.Collections.Generic.List[string]
     foreach ($rel in $fileMap) {
-        $src = Join-Path $metraRoot ($rel -replace '/', [IO.Path]::DirectorySeparatorChar)
+        $src = Resolve-MetraProfileMappedLivePath -RelativePath $rel -MetraRoot $metraRoot
         if (Test-Path -LiteralPath $src) {
             [void]$present.Add($rel)
         }
     }
     if ($present.Count -eq 0) {
-        throw 'Nothing to export: no metra.config.json, projects.local.json, persona/learned local rules, or operator-contract.json found.'
+        throw 'Nothing to export: no metra.config.json, projects.local.json, persona/learned local rules, operator-contract.json, or machine-data working notes found.'
     }
 
     $expanded = [System.Environment]::ExpandEnvironmentVariables($Path)
@@ -59,14 +61,73 @@ function Export-MetraProfile {
     }
     $asZip = $destFull.EndsWith('.zip', [StringComparison]::OrdinalIgnoreCase)
 
-    if (-not $PSCmdlet.ShouldProcess($destFull, 'Export Metra profile pack')) {
-        return [PSCustomObject]@{
-            Path     = $destFull
-            Files    = @($present.ToArray())
-            IsZip    = $asZip
-            Manifest = $null
-            WhatIf   = $true
+    # Fail-closed notes preflight before WhatIf so preview matches a real export gate.
+    $notesPackRel = (Get-MetraOperatorWorkingNotesPackRelativePath) -replace '\\', '/'
+    $preflightPack = $null
+    foreach ($rel in $present) {
+        $relNorm = ($rel -replace '\\', '/')
+        if ($relNorm -ieq $notesPackRel) {
+            $src = Resolve-MetraProfileMappedLivePath -RelativePath $rel -MetraRoot $metraRoot
+            $raw = [System.IO.File]::ReadAllText($src, [System.Text.UTF8Encoding]::new($false))
+            try {
+                $parsed = $raw | ConvertFrom-Json -ErrorAction Stop
+            }
+            catch {
+                throw ("Export working-notes JSON invalid: {0}" -f $_.Exception.Message)
+            }
+            $preflightPack = ConvertFrom-MetraOperatorWorkingNotesRawForPack -Raw $parsed -RefuseDroppedRows
+            break
         }
+    }
+
+    # Destination -Force gates before WhatIf so preview matches a real export refuse.
+    $requiresForce = $false
+    if ($asZip) {
+        if ((Test-Path -LiteralPath $destFull) -and -not $Force) {
+            $requiresForce = $true
+        }
+    }
+    else {
+        if (Test-Path -LiteralPath $destFull) {
+            $existing = @(Get-ChildItem -LiteralPath $destFull -Force -ErrorAction SilentlyContinue)
+            if ($existing.Count -gt 0 -and -not $Force) {
+                $requiresForce = $true
+            }
+        }
+    }
+
+    if (-not $PSCmdlet.ShouldProcess($destFull, 'Export Metra profile pack')) {
+        $whatIfBound = [bool]$WhatIfPreference
+        if ($PSBoundParameters.ContainsKey('WhatIf')) {
+            $whatIfBound = [bool]$PSBoundParameters['WhatIf']
+        }
+        return [PSCustomObject]@{
+            Path          = $destFull
+            Files         = @($present.ToArray())
+            IsZip         = $asZip
+            Manifest      = $null
+            WhatIf        = $whatIfBound
+            Declined      = -not $whatIfBound
+            RequiresForce = $requiresForce
+            # Reaching this return means notes preflight passed or notes were absent.
+            NotesIncluded = ($null -ne $preflightPack)
+            Message       = if ($requiresForce -and $whatIfBound) {
+                'WhatIf: destination exists; a real export needs -Force.'
+            }
+            elseif ($requiresForce) {
+                'Declined: destination exists; a real export needs -Force.'
+            }
+            else {
+                $null
+            }
+        }
+    }
+
+    if ($requiresForce) {
+        if ($asZip) {
+            throw "Destination zip already exists. Use -Force to replace it: $destFull"
+        }
+        throw "Destination folder is not empty. Use -Force to replace profile export contents: $destFull"
     }
 
     if ($asZip) {
@@ -74,16 +135,10 @@ function Export-MetraProfile {
         if ($zipDir -and -not (Test-Path -LiteralPath $zipDir)) {
             [void][System.IO.Directory]::CreateDirectory($zipDir)
         }
-        if ((Test-Path -LiteralPath $destFull) -and -not $Force) {
-            throw "Destination zip already exists. Use -Force to replace it: $destFull"
-        }
     }
     else {
         if (Test-Path -LiteralPath $destFull) {
             $existing = @(Get-ChildItem -LiteralPath $destFull -Force -ErrorAction SilentlyContinue)
-            if ($existing.Count -gt 0 -and -not $Force) {
-                throw "Destination folder is not empty. Use -Force to replace profile export contents: $destFull"
-            }
             if ($Force -and $existing.Count -gt 0) {
                 Remove-Item -LiteralPath $destFull -Recurse -Force
             }
@@ -99,31 +154,46 @@ function Export-MetraProfile {
     [void][System.IO.Directory]::CreateDirectory($staging)
 
     foreach ($rel in $present) {
-        $src = Join-Path $metraRoot ($rel -replace '/', [IO.Path]::DirectorySeparatorChar)
+        $src = Resolve-MetraProfileMappedLivePath -RelativePath $rel -MetraRoot $metraRoot
         $dst = Join-Path $staging ($rel -replace '/', [IO.Path]::DirectorySeparatorChar)
         $dstDir = Split-Path -Parent $dst
         if (-not (Test-Path -LiteralPath $dstDir)) {
             [void][System.IO.Directory]::CreateDirectory($dstDir)
         }
-        Copy-Item -LiteralPath $src -Destination $dst -Force
+        $relNorm = ($rel -replace '\\', '/')
+        if ($relNorm -ieq $notesPackRel) {
+            Write-MetraProfileAtomicText -Path $dst -Text ([string]$preflightPack.Text)
+        }
+        else {
+            Copy-Item -LiteralPath $src -Destination $dst -Force
+        }
     }
 
-    $status = Get-MetraProfileStatus -MetraRoot $metraRoot
-    $presentSet = @{}
+    # Hash staged pack files so scrubbed working-notes match manifest (not live ledger).
+    $fileDetails = New-Object System.Collections.Generic.List[object]
     foreach ($rel in $present) {
-        $presentSet[($rel -replace '\\', '/')] = $true
+        $relNorm = ($rel -replace '\\', '/')
+        $staged = Join-Path $staging ($relNorm -replace '/', [IO.Path]::DirectorySeparatorChar)
+        if (-not (Test-Path -LiteralPath $staged)) { continue }
+        $hex = Get-MetraProfileFileSha256Hex -Path $staged
+        [void]$fileDetails.Add([ordered]@{
+                logicalName  = (Get-MetraProfileLogicalName -RelativePath $relNorm)
+                relativePath = $relNorm
+                hash         = "sha256:$hex"
+            })
     }
-    $fileDetails = @(
-        $status.files |
-            Where-Object { $presentSet.ContainsKey(($_.relativePath -replace '\\', '/')) } |
-            ForEach-Object {
-                [ordered]@{
-                    logicalName  = $_.logicalName
-                    relativePath = $_.relativePath
-                    hash         = $_.hash
-                }
-            }
-    )
+    $stableDetails = @($fileDetails | Sort-Object { $_.relativePath })
+    $hashInput = ($stableDetails | ForEach-Object { "$($_.relativePath)|$($_.hash)" }) -join "`n"
+    $hashBytes = [System.Text.Encoding]::UTF8.GetBytes($hashInput)
+    $sha = [System.Security.Cryptography.SHA256]::Create()
+    try {
+        $digest = ($sha.ComputeHash($hashBytes) | ForEach-Object { $_.ToString('x2') }) -join ''
+    }
+    finally {
+        $sha.Dispose()
+    }
+    $contentHash = "sha256:$digest"
+    $fileDetails = $stableDetails
 
     $manifest = [ordered]@{
         version            = 1
@@ -132,12 +202,13 @@ function Export-MetraProfile {
         description        = 'Operator profile exported from local Metra checkout customizations.'
         exportedUtc        = [DateTime]::UtcNow.ToString('o')
         createdUtc         = [DateTime]::UtcNow.ToString('o')
-        contentHash        = $status.contentHash
+        contentHash        = $contentHash
         source             = [System.Environment]::MachineName
-        files              = $fileDetails
+        files              = @($fileDetails)
         notes              = @(
             'Personal-root registryFile (e.g. projects.personal.json beside personal projects) is not included; copy it with that root separately.',
             'Optional metra-humor.local.mdc / metra-teaching-gentle.local.mdc are included when present (Persona Add-ons).',
+            'machine-data/operator-working-notes.local.json is scrubbed into the pack when present (operator-private; not station/product content).',
             'Do not pack secrets, ticket caches, or canvas snapshots.',
             'Metra Profile Sync v1: HQ-published, satellite-pulled.',
             'Machine-local roots/projectsRoot/workspace.outputs are preserved on satellite import when HQ paths are foreign; see satellite connect.'
@@ -229,10 +300,12 @@ function Import-MetraProfile {
 
         [switch]$MergeMachineLocal,
 
-        [switch]$Quiet
+        [switch]$Quiet,
+
+        [string]$MetraRoot = (Get-MetraRoot)
     )
 
-    $metraRoot = Get-MetraRoot
+    $metraRoot = if ([string]::IsNullOrWhiteSpace($MetraRoot)) { Get-MetraRoot } else { $MetraRoot }
     $configPath = Join-Path $metraRoot 'metra.config.json'
     $localConfigBefore = $null
     if ($MergeMachineLocal -and (Test-Path -LiteralPath $configPath)) {
@@ -288,8 +361,16 @@ function Import-MetraProfile {
                 $src = Join-Path $srcDir 'meta.config.json'
             }
             if (-not (Test-Path -LiteralPath $src)) { continue }
-            $dst = Join-Path $metraRoot ($destRel -replace '/', [IO.Path]::DirectorySeparatorChar)
+            $dst = Resolve-MetraProfileMappedLivePath -RelativePath $destRel -MetraRoot $metraRoot
             $exists = Test-Path -LiteralPath $dst
+            # Working-notes: machine-data Dest may be empty while a legacy docs ledger still exists.
+            # Do not call Get-MetraOperatorWorkingNotesPath here (that migrates). Treat either path as Exists.
+            if ($destRel -replace '\\', '/' -ieq ((Get-MetraOperatorWorkingNotesPackRelativePath) -replace '\\', '/')) {
+                $legacyNotesPath = Join-Path $metraRoot (Join-Path 'docs' 'operator-working-notes.local.json')
+                if (Test-Path -LiteralPath $legacyNotesPath) {
+                    $exists = $true
+                }
+            }
             [void]$plan.Add([PSCustomObject]@{
                     Relative = $destRel
                     Source   = $src
@@ -304,6 +385,23 @@ function Import-MetraProfile {
 
         if ($manifest) {
             Assert-MetraProfilePlanHashes -Manifest $manifest -Plan $plan.ToArray()
+        }
+
+        # Preflight working-notes Protect before any sibling overwrite (refuse blank-row heal).
+        $notesPackRel = (Get-MetraOperatorWorkingNotesPackRelativePath) -replace '\\', '/'
+        foreach ($row in $plan) {
+            $relNorm = ([string]$row.Relative -replace '\\', '/')
+            if ($relNorm -ieq $notesPackRel) {
+                $raw = [System.IO.File]::ReadAllText([string]$row.Source, [System.Text.UTF8Encoding]::new($false))
+                try {
+                    $parsed = $raw | ConvertFrom-Json -ErrorAction Stop
+                }
+                catch {
+                    throw ("Import working-notes JSON invalid: {0}" -f $_.Exception.Message)
+                }
+                $null = ConvertFrom-MetraOperatorWorkingNotesRawForPack -Raw $parsed -RefuseDroppedRows
+                break
+            }
         }
 
         if ($Preview) {
@@ -342,7 +440,36 @@ function Import-MetraProfile {
             if (-not (Test-Path -LiteralPath $dstDir)) {
                 [void][System.IO.Directory]::CreateDirectory($dstDir)
             }
-            Copy-Item -LiteralPath $row.Source -Destination $row.Dest -Force
+            $relNorm = ([string]$row.Relative -replace '\\', '/')
+            if ($relNorm -ieq $notesPackRel) {
+                $raw = [System.IO.File]::ReadAllText([string]$row.Source, [System.Text.UTF8Encoding]::new($false))
+                try {
+                    $parsed = $raw | ConvertFrom-Json -ErrorAction Stop
+                }
+                catch {
+                    throw ("Import working-notes JSON invalid: {0}" -f $_.Exception.Message)
+                }
+                $pack = ConvertFrom-MetraOperatorWorkingNotesRawForPack -Raw $parsed -RefuseDroppedRows
+                # Backup real live ledger before Save (machine-data preferred; legacy docs if only that exists).
+                # Avoid Get-MetraOperatorWorkingNotesPath before backup - it migrates legacy into machine-data.
+                $machineNotesPath = [string]$row.Dest
+                $legacyNotesPath = Join-Path $metraRoot (Join-Path 'docs' 'operator-working-notes.local.json')
+                $liveNotesPath = $null
+                if (Test-Path -LiteralPath $machineNotesPath) {
+                    $liveNotesPath = $machineNotesPath
+                }
+                elseif (Test-Path -LiteralPath $legacyNotesPath) {
+                    $liveNotesPath = $legacyNotesPath
+                }
+                if ($liveNotesPath) {
+                    $notesBak = "$liveNotesPath.bak-$(Get-Date -Format 'yyyyMMddHHmmss')"
+                    Copy-Item -LiteralPath $liveNotesPath -Destination $notesBak -Force
+                }
+                $null = Save-MetraOperatorWorkingNotes -Notes $pack.Notes -MetraRoot $metraRoot -Force
+            }
+            else {
+                Copy-Item -LiteralPath $row.Source -Destination $row.Dest -Force
+            }
             [void]$copied.Add($row.Relative)
             if (-not $Quiet) {
                 Write-Host ("Imported {0}" -f $row.Relative)
@@ -365,12 +492,17 @@ function Import-MetraProfile {
         }
 
         if ($copied.Count -eq 0) {
+            $whatIfBound = [bool]$WhatIfPreference
+            if ($PSBoundParameters.ContainsKey('WhatIf')) {
+                $whatIfBound = [bool]$PSBoundParameters['WhatIf']
+            }
             return [PSCustomObject]@{
-                Preview = $false
-                Files   = @()
-                Source  = $resolved.Source
-                Dest    = $metraRoot
-                WhatIf  = $true
+                Preview  = $false
+                Files    = @()
+                Source   = $resolved.Source
+                Dest     = $metraRoot
+                WhatIf   = $whatIfBound
+                Declined = -not $whatIfBound
             }
         }
 

@@ -79,6 +79,11 @@
         'Invoke-MetraSetup'
         'Invoke-MetraOperatorContractCommand',
         'Invoke-MetraDeskFamiliarityCommand',
+        'Invoke-MetraOperatorWorkingNotesCommand',
+        'Read-MetraOperatorWorkingNotes',
+        'Format-MetraOperatorWorkingNotesForPrompt',
+        'Get-MetraOperatorWorkingNotesScrubbedText',
+        'Reset-MetraOperatorWorkingNotes',
         'Invoke-MetraDecisionRegistryCommand',
         'Show-MetraRoutingCli',
         'Show-MetraRoutingEventsCli',

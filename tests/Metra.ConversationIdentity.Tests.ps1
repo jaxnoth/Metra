@@ -10,7 +10,7 @@ Describe 'Conversation Identity Stack' {
     It 'manifest order is frozen and allowlist-only' {
         InModuleScope Metra {
             $ids = @(Get-MetraConversationIdentityManifest | ForEach-Object { $_.Id })
-            $ids | Should -Be @('partner', 'persona', 'overlay', 'occ', 'humor', 'teaching', 'vision', 'narrative')
+            $ids | Should -Be @('partner', 'persona', 'overlay', 'occ', 'workingNotes', 'humor', 'teaching', 'vision', 'narrative')
             $addons = @(Get-MetraConversationIdentityManifest | Where-Object { $_.AllowlistedAddon })
             $addons.Id | Should -Be @('humor', 'teaching')
         }
@@ -280,6 +280,33 @@ humor pack MARKER
             $captured.Session | Should -Be 'vision:phone-stub-1'
             $out.diagnostics.humorActive | Should -BeTrue
             $out.presentation.mood | Should -Be 'company'
+        }
+    }
+}
+
+Describe 'Conversation Identity rule-file parity' {
+    It 'Project Voice and humor-desk install paths match manifest RelativePaths' {
+        InModuleScope Metra {
+            $root = Get-MetraRoot
+            $manifest = @(Get-MetraConversationIdentityManifest)
+            $persona = $manifest | Where-Object { $_.Id -eq 'persona' } | Select-Object -First 1
+            $humor = $manifest | Where-Object { $_.Id -eq 'humor' } | Select-Object -First 1
+            $persona.RelativePath | Should -Be '.cursor/rules/metra-persona.mdc'
+            $humor.RelativePath | Should -Be '.cursor/rules/metra-humor.local.mdc'
+
+            $voicePath = Join-Path $root 'docs\Cursor-Project-Metra-Voice.md'
+            Test-Path -LiteralPath $voicePath | Should -BeTrue
+            $voice = Get-Content -LiteralPath $voicePath -Raw -Encoding UTF8
+            $voice | Should -Match 'metra-persona\.mdc'
+            $voice | Should -Match 'humor-desk'
+            $voice | Should -Match 'metra-humor\.local\.mdc'
+
+            $packHumor = Join-Path $root 'profiles\addons\humor-desk\.cursor\rules\metra-humor.local.mdc'
+            Test-Path -LiteralPath $packHumor | Should -BeTrue
+            # workingNotes is runtime data - not a redistributable RelativePath rule file
+            $wn = $manifest | Where-Object { $_.Id -eq 'workingNotes' } | Select-Object -First 1
+            $wn.Kind | Should -Be 'runtime'
+            $wn.RelativePath | Should -BeNullOrEmpty
         }
     }
 }
