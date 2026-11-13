@@ -1,4 +1,4 @@
-# Metra Inspect Phase 1 - local plan/diff advisory via Ask engine (recommend-only).
+﻿# Metra Inspect Phase 1 - local plan/diff advisory via Ask engine (recommend-only).
 
 function Get-MetraInspectStateRoot {
     <#
@@ -3599,6 +3599,9 @@ function Write-MetraInspectPackArtifact {
             if ([string]::IsNullOrWhiteSpace($hashForShare)) {
                 $hashForShare = Get-MetraInspectDiffContentHash -SlotKey $SlotKey
             }
+            if ([string]::IsNullOrWhiteSpace($hashForShare)) {
+                throw 'Cannot publish Bing contract pack: contentHash / hashForShare is empty.'
+            }
             $contractPaths = Get-MetraInspectReviewContractPaths -SlotKey $SlotKey
             $prior = Resolve-MetraInspectPackPriorContentHash -SlotKey $SlotKey -NewContentHash $hashForShare
             $files = @(Get-MetraInspectPackFileListFromText -PackText $PackText)
@@ -3651,7 +3654,17 @@ function Write-MetraInspectPackArtifact {
             }
         }
         catch {
-            throw ("IncompleteContract: diff pack was not published without a matching handoff/manifest/review-state set. {0}" -f $_.Exception.Message)
+            $publishDetail = $_.Exception.Message
+            if ([string]::IsNullOrWhiteSpace($publishDetail)) {
+                $publishDetail = [string]$_
+            }
+            if ([string]::IsNullOrWhiteSpace($publishDetail) -and $null -ne $_.Exception.InnerException) {
+                $publishDetail = [string]$_.Exception.InnerException.Message
+            }
+            if ([string]::IsNullOrWhiteSpace($publishDetail)) {
+                $publishDetail = 'unknown publish failure'
+            }
+            throw ("IncompleteContract: diff pack was not published without a matching handoff/manifest/review-state set. {0}" -f $publishDetail)
         }
     }
     else {
@@ -6240,9 +6253,14 @@ function Update-MetraInspectReviewStateFromImport {
     }
     $sectionText = if ($findingSections.Count -gt 0) { ($findingSections -join "`n") } else { '' }
     if (-not [string]::IsNullOrWhiteSpace($sectionText)) {
-        $idMatches = [regex]::Matches($sectionText, '(?m)(?<![A-Za-z0-9])([BN]\d+)\b')
+        # Mint ids only from finding line starts (not mid-prose "see B1" tokens).
+        # Allow indent, markdown bullets/headers, and one layer of **emphasis** around the id.
+        $idMatches = [regex]::Matches(
+            $sectionText,
+            '(?m)^[ \t]*(?:#{1,6}[ \t]*|[-*][ \t]*)?(?:\*{1,2})?(?<id>[BN]\d+)(?:\*{1,2})?(?=\b)'
+        )
         foreach ($m in $idMatches) {
-            $id = $m.Groups[1].Value
+            $id = $m.Groups['id'].Value
             $sev = if ($id.StartsWith('B')) { 'blocker' } else { 'nonblocking' }
             if (-not $byId.ContainsKey($id)) {
                 $byId[$id] = [ordered]@{
@@ -6587,7 +6605,18 @@ function ConvertFrom-MetraInspectExternalReviewMarkdown {
     # misread as replacing the letters r/n when PowerShell backticks render poorly in markdown.
     $normalized = [regex]::Replace([string]$Text, '\r\n?', "`n")
     # Heading is ## <Project> External Review (project under review). Bing often omits ##.
-    $headingRe = '(?m)^(?:##\s*)?(?<prod>.+?)\s+External Review\s*$'
+    # Project token is tight (no lead-in junk). Strip one layer of */**/_ around the project name first.
+    $normalized = [regex]::Replace(
+        $normalized,
+        '(?m)^(?<pre>(?:##\s*)?)\*{1,2}(?<prod>[A-Za-z][A-Za-z0-9._-]{0,63})\*{1,2}(?<post>\s+External Review\s*)$',
+        '${pre}${prod}${post}'
+    )
+    $normalized = [regex]::Replace(
+        $normalized,
+        '(?m)^(?<pre>(?:##\s*)?)_(?<prod>[A-Za-z][A-Za-z0-9._-]{0,63})_(?<post>\s+External Review\s*)$',
+        '${pre}${prod}${post}'
+    )
+    $headingRe = '(?m)^(?:##\s*)?(?<prod>[A-Za-z][A-Za-z0-9._-]{0,63})\s+External Review\s*$'
     $headingMatch = [regex]::Match($normalized, $headingRe)
     if (-not $headingMatch.Success) {
         throw 'External review must include heading ## <Project> External Review.'
@@ -6649,7 +6678,12 @@ function ConvertFrom-MetraInspectExternalReviewMarkdown {
         }
         if ($inEvidence) {
             if ([string]::IsNullOrWhiteSpace($line)) { continue }
-            if ($line -match '^\s*#+\s' -or $line -match '(?i)^\s*[A-Za-z][A-Za-z0-9]*\s*:') {
+            # Field terminators look like key: value. Do not treat Windows drive paths (C:\...) as fields.
+            $isFieldTerminator = ($line -match '^\s*#+\s') -or (
+                $line -match '(?i)^\s*[A-Za-z][A-Za-z0-9]*\s*:' -and
+                $line -notmatch '(?i)^\s*[A-Za-z]:[\\/]'
+            )
+            if ($isFieldTerminator) {
                 $inEvidence = $false
             }
             elseif ($line -match '^\s*-\s*(.+)\s*$') {

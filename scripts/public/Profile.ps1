@@ -36,10 +36,18 @@ function Export-MetraProfile {
 
     $metraRoot = Get-MetraRoot
     $fileMap = @(Get-MetraProfileFileMap)
-    # Migrate docs→machine working-notes before map Test-Path so export sees a docs-only ledger.
-    $null = Get-MetraOperatorWorkingNotesPath -MetraRoot $metraRoot
+    $notesPackRelEarly = (Get-MetraOperatorWorkingNotesPackRelativePath) -replace '\\', '/'
+    # Read-only probe only before ShouldProcess (no docs→machine migrate / CreateDirectory).
+    $notesExistingPath = Resolve-MetraOperatorWorkingNotesExistingPath -MetraRoot $metraRoot
     $present = New-Object System.Collections.Generic.List[string]
     foreach ($rel in $fileMap) {
+        $relNorm = ($rel -replace '\\', '/')
+        if ($relNorm -ieq $notesPackRelEarly) {
+            if ($notesExistingPath) {
+                [void]$present.Add($rel)
+            }
+            continue
+        }
         $src = Resolve-MetraProfileMappedLivePath -RelativePath $rel -MetraRoot $metraRoot
         if (Test-Path -LiteralPath $src) {
             [void]$present.Add($rel)
@@ -61,23 +69,18 @@ function Export-MetraProfile {
     }
     $asZip = $destFull.EndsWith('.zip', [StringComparison]::OrdinalIgnoreCase)
 
-    # Fail-closed notes preflight before WhatIf so preview matches a real export gate.
-    $notesPackRel = (Get-MetraOperatorWorkingNotesPackRelativePath) -replace '\\', '/'
+    # Fail-closed notes preflight before WhatIf so preview matches a real export gate (read-only path).
+    $notesPackRel = $notesPackRelEarly
     $preflightPack = $null
-    foreach ($rel in $present) {
-        $relNorm = ($rel -replace '\\', '/')
-        if ($relNorm -ieq $notesPackRel) {
-            $src = Resolve-MetraProfileMappedLivePath -RelativePath $rel -MetraRoot $metraRoot
-            $raw = [System.IO.File]::ReadAllText($src, [System.Text.UTF8Encoding]::new($false))
-            try {
-                $parsed = $raw | ConvertFrom-Json -ErrorAction Stop
-            }
-            catch {
-                throw ("Export working-notes JSON invalid: {0}" -f $_.Exception.Message)
-            }
-            $preflightPack = ConvertFrom-MetraOperatorWorkingNotesRawForPack -Raw $parsed -RefuseDroppedRows
-            break
+    if ($notesExistingPath) {
+        $raw = [System.IO.File]::ReadAllText($notesExistingPath, [System.Text.UTF8Encoding]::new($false))
+        try {
+            $parsed = $raw | ConvertFrom-Json -ErrorAction Stop
         }
+        catch {
+            throw ("Export working-notes JSON invalid: {0}" -f $_.Exception.Message)
+        }
+        $preflightPack = ConvertFrom-MetraOperatorWorkingNotesRawForPack -Raw $parsed -RefuseDroppedRows
     }
 
     # Destination -Force gates before WhatIf so preview matches a real export refuse.
@@ -128,6 +131,11 @@ function Export-MetraProfile {
             throw "Destination zip already exists. Use -Force to replace it: $destFull"
         }
         throw "Destination folder is not empty. Use -Force to replace profile export contents: $destFull"
+    }
+
+    # Real write path only: migrate docs→machine so live layout matches pack leaf after export.
+    if ($notesExistingPath) {
+        $null = Get-MetraOperatorWorkingNotesPath -MetraRoot $metraRoot
     }
 
     if ($asZip) {
@@ -452,6 +460,7 @@ function Import-MetraProfile {
                 $pack = ConvertFrom-MetraOperatorWorkingNotesRawForPack -Raw $parsed -RefuseDroppedRows
                 # Backup real live ledger before Save (machine-data preferred; legacy docs if only that exists).
                 # Avoid Get-MetraOperatorWorkingNotesPath before backup - it migrates legacy into machine-data.
+                # Backups stay under machine data - never docs\ (public checkout / auto-push risk).
                 $machineNotesPath = [string]$row.Dest
                 $legacyNotesPath = Join-Path $metraRoot (Join-Path 'docs' 'operator-working-notes.local.json')
                 $liveNotesPath = $null
@@ -461,11 +470,19 @@ function Import-MetraProfile {
                 elseif (Test-Path -LiteralPath $legacyNotesPath) {
                     $liveNotesPath = $legacyNotesPath
                 }
+                $notesBakRoot = Join-Path (Get-MetraMachineDataRoot -MetraRoot $metraRoot) 'backups'
+                [void][System.IO.Directory]::CreateDirectory($notesBakRoot)
+                $notesBakStamp = Get-Date -Format 'yyyyMMddHHmmss'
                 if ($liveNotesPath) {
-                    $notesBak = "$liveNotesPath.bak-$(Get-Date -Format 'yyyyMMddHHmmss')"
+                    $notesBak = Join-Path $notesBakRoot ("operator-working-notes.local.json.bak-{0}" -f $notesBakStamp)
                     Copy-Item -LiteralPath $liveNotesPath -Destination $notesBak -Force
                 }
                 $null = Save-MetraOperatorWorkingNotes -Notes $pack.Notes -MetraRoot $metraRoot -Force
+                # Quarantine leftover docs ledger so a later missing machine-data file cannot resurrect it.
+                if (Test-Path -LiteralPath $legacyNotesPath) {
+                    $legacyBak = Join-Path $notesBakRoot ("operator-working-notes.local.json.legacy.bak-{0}" -f $notesBakStamp)
+                    Move-Item -LiteralPath $legacyNotesPath -Destination $legacyBak -Force
+                }
             }
             else {
                 Copy-Item -LiteralPath $row.Source -Destination $row.Dest -Force

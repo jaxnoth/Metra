@@ -602,9 +602,12 @@ Describe 'Operator working notes' {
             (Get-Content -LiteralPath $legacy -Raw) | Should -Match 'legacy live'
 
             $null = Import-MetraProfile -Path $packDir -MetraRoot $root -Force -Quiet
-            $baks = @(Get-ChildItem -LiteralPath (Split-Path -Parent $legacy) -Filter 'operator-working-notes.local.json.bak-*' -File)
+            $docsLeftover = @(Get-ChildItem -LiteralPath (Join-Path $root 'docs') -Filter 'operator-working-notes.local.json*' -File -ErrorAction SilentlyContinue)
+            $docsLeftover.Count | Should -Be 0
+            $bakRoot = Join-Path (Get-MetraMachineDataRoot -MetraRoot $root) 'backups'
+            $baks = @(Get-ChildItem -LiteralPath $bakRoot -Filter 'operator-working-notes.local.json*.bak-*' -File)
             $baks.Count | Should -BeGreaterOrEqual 1
-            (Get-Content -LiteralPath $baks[0].FullName -Raw) | Should -Match 'legacy live'
+            ($baks | ForEach-Object { Get-Content -LiteralPath $_.FullName -Raw }) -join "`n" | Should -Match 'legacy live'
             $after = Read-MetraOperatorWorkingNotes -MetraRoot $root
             $after.stated[0].text | Should -Be 'from pack'
         }
@@ -645,12 +648,102 @@ Describe 'Operator working notes' {
             ($packPayload | ConvertTo-Json -Depth 6) | Set-Content -LiteralPath $packNotes -Encoding utf8
 
             $null = Import-MetraProfile -Path $packDir -MetraRoot $root -Force -Quiet
-            $baks = @(Get-ChildItem -LiteralPath $dir -Filter 'operator-working-notes.local.json.bak-*' -File)
+            $bakRoot = Join-Path (Get-MetraMachineDataRoot -MetraRoot $root) 'backups'
+            $baks = @(Get-ChildItem -LiteralPath $bakRoot -Filter 'operator-working-notes.local.json.bak-*' -File)
             $baks.Count | Should -BeGreaterOrEqual 1
             (Get-Content -LiteralPath $baks[0].FullName -Raw) | Should -Match 'machine live'
             $after = Read-MetraOperatorWorkingNotes -MetraRoot $root
             $after.stated[0].text | Should -Be 'pack overwrite'
         }
+    }
+
+    It 'gitignore covers docs working-notes bak spill (defense in depth)' {
+        $gi = Get-Content -LiteralPath (Join-Path (Split-Path $PSScriptRoot -Parent) '.gitignore') -Raw
+        $gi | Should -Match '(?m)^docs/operator-working-notes\.local\.json\.bak-\*\s*$'
+    }
+
+    It 'export WhatIf does not migrate a docs-only working-notes ledger' {
+        InModuleScope Metra {
+            $root = Join-Path $TestDrive 'wn-export-whatif'
+            New-Item -ItemType Directory -Path (Join-Path $root 'docs') -Force | Out-Null
+            $legacy = Join-Path $root 'docs\operator-working-notes.local.json'
+            $asOf = [DateTime]::UtcNow.ToString('o')
+            $payload = [ordered]@{
+                version    = 1
+                updatedUtc = $asOf
+                stated     = @(
+                    @{ id = ([guid]::NewGuid().ToString('N')); text = 'legacy only'; source = 'operator'; notedUtc = $asOf }
+                )
+                observed   = @()
+                moments    = @()
+            }
+            ($payload | ConvertTo-Json -Depth 6) | Set-Content -LiteralPath $legacy -Encoding utf8
+            # Seed a mapped non-notes file so export has something besides notes.
+            '{"schemaVersion":1,"guidelines":[]}' | Set-Content -LiteralPath (Join-Path $root 'docs\operator-contract.json') -Encoding utf8
+
+            $dest = Join-Path $TestDrive 'wn-export-whatif-out.zip'
+            Mock Get-MetraRoot { $root }
+            $result = Export-MetraProfile -Path $dest -WhatIf
+            $result.WhatIf | Should -BeTrue
+            Test-Path -LiteralPath $legacy | Should -BeTrue
+            $machine = Resolve-MetraProfileMappedLivePath -RelativePath 'machine-data/operator-working-notes.local.json' -MetraRoot $root
+            Test-Path -LiteralPath $machine | Should -BeFalse
+            (Get-Content -LiteralPath $legacy -Raw) | Should -Match 'legacy only'
+        }
+    }
+
+    It 'profile status hashes a docs-only working-notes ledger without migrating' {
+        InModuleScope Metra {
+            $root = Join-Path $TestDrive 'wn-status-legacy'
+            New-Item -ItemType Directory -Path (Join-Path $root 'docs') -Force | Out-Null
+            $legacy = Join-Path $root 'docs\operator-working-notes.local.json'
+            $asOf = [DateTime]::UtcNow.ToString('o')
+            $payload = [ordered]@{
+                version    = 1
+                updatedUtc = $asOf
+                stated     = @(
+                    @{ id = ([guid]::NewGuid().ToString('N')); text = 'status legacy'; source = 'operator'; notedUtc = $asOf }
+                )
+                observed   = @()
+                moments    = @()
+            }
+            ($payload | ConvertTo-Json -Depth 6) | Set-Content -LiteralPath $legacy -Encoding utf8
+            '{"schemaVersion":1,"guidelines":[]}' | Set-Content -LiteralPath (Join-Path $root 'docs\operator-contract.json') -Encoding utf8
+
+            $status = Get-MetraProfileStatus -MetraRoot $root
+            $status.ok | Should -BeTrue
+            $status.contentHash | Should -Match '^sha256:'
+            Test-Path -LiteralPath $legacy | Should -BeTrue
+            $machine = Resolve-MetraProfileMappedLivePath -RelativePath 'machine-data/operator-working-notes.local.json' -MetraRoot $root
+            Test-Path -LiteralPath $machine | Should -BeFalse
+        }
+    }
+}
+
+Describe 'Profile Ops notesPackError sanitization' {
+    It 'export 409 keeps notesPackError local-only and status sanitizes for non-local' {
+        $ops = Get-Content -LiteralPath (Join-Path (Split-Path $PSScriptRoot -Parent) 'scripts\private\OpsServer.ps1') -Raw
+        $ops | Should -Match 'notesPackReasonCode'
+        $ops | Should -Match 'Profile pack is not exportable \(working-notes or status gate\)\.'
+        $ops | Should -Match 'Profile export 409 notesPackError \(server log only\)'
+        $ops | Should -Match 'Profile status notesPackError \(server log only\)'
+        $ops | Should -Match "payload\['notesPackError'\]"
+        # 409 detail gate is local-authority only (device/bearer get reasonCode without raw error).
+        $idx = $ops.IndexOf("`$path -eq '/api/profile/export'")
+        $idx | Should -BeGreaterThan 0
+        $exportSlice = $ops.Substring($idx, [Math]::Min(4500, $ops.Length - $idx))
+        $exportSlice | Should -Match 'Test-MetraOpsRequestHasLocalAuthority'
+        $exportSlice | Should -Match 'profilePackUnexportable'
+    }
+
+    It 'profile status/export 500 sanitize exception detail for non-local callers' {
+        $ops = Get-Content -LiteralPath (Join-Path (Split-Path $PSScriptRoot -Parent) 'scripts\private\OpsServer.ps1') -Raw
+        $ops | Should -Match 'Profile status 500 \(server log only\)'
+        $ops | Should -Match 'Profile export 500 \(server log only\)'
+        $ops | Should -Match "error\s*=\s*'Profile status failed\.'"
+        $ops | Should -Match "error\s*=\s*'Profile export failed\.'"
+        $ops | Should -Match "reasonCode\s*=\s*'profileStatusFailed'"
+        $ops | Should -Match "reasonCode\s*=\s*'profileExportFailed'"
     }
 }
 

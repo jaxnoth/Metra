@@ -1087,6 +1087,7 @@ Describe 'Inspect pack-only' {
                 @([PSCustomObject]@{ path = 'a.ps1'; content = 'scrubbed'; class = 'code' })
             }
             Mock Invoke-MetraInspectEngine { throw 'engine should not run for pack-only' }
+            Mock Get-MetraInspectDiffContentHash { 'hash-pack-only-fixture-1' }
             Mock Set-Clipboard { }
 
             try {
@@ -3547,6 +3548,132 @@ verdict: changes-requested
                 Should -Throw '*does not match import target*'
         }
     }
+
+    It 'refuses empty hashForShare when publishing Bing contract pack' {
+        InModuleScope Metra {
+            $stateRoot = Join-Path $env:TEMP ("metra-empty-hash-" + [guid]::NewGuid().ToString('n'))
+            Mock Get-MetraInspectStateRoot { $stateRoot }
+            Mock Get-MetraInspectDiffContentHash { '' }
+            Mock Get-MetraShareRoot { Join-Path $env:TEMP 'metra-empty-hash-share-unused' }
+            $slot = "EmptyHash_$([guid]::NewGuid().ToString('N').Substring(0, 8))"
+            try {
+                { Write-MetraInspectPackArtifact -PackText "# pack`n" -SlotKey $slot -Mode 'diff' -NoClipboard -ContentHash '' -Confirm:$false } |
+                    Should -Throw '*empty*'
+            }
+            finally {
+                Remove-Item -LiteralPath $stateRoot -Recurse -Force -ErrorAction SilentlyContinue
+            }
+        }
+    }
+
+    It 'IncompleteContract publish catch preserves a non-empty detail message' {
+        InModuleScope Metra {
+            $stateRoot = Join-Path $env:TEMP ("metra-pub-detail-" + [guid]::NewGuid().ToString('n'))
+            Mock Get-MetraInspectStateRoot { $stateRoot }
+            Mock Get-MetraInspectDiffContentHash { 'hash-pub-detail-1' }
+            Mock Get-MetraShareRoot { throw 'share unavailable' }
+            Mock Format-MetraInspectBingShareHandoff { throw [System.Exception]::new('') }
+            $slot = "PubDetail_$([guid]::NewGuid().ToString('N').Substring(0, 8))"
+            try {
+                { Write-MetraInspectPackArtifact -PackText "# pack`ncontentHash: hash-pub-detail-1`n" -SlotKey $slot -Mode 'diff' -NoClipboard -ContentHash 'hash-pub-detail-1' -Confirm:$false } |
+                    Should -Throw '*IncompleteContract*unknown publish failure*'
+            }
+            finally {
+                Remove-Item -LiteralPath $stateRoot -Recurse -Force -ErrorAction SilentlyContinue
+            }
+        }
+    }
+
+    It 'rejects External Review headings with lead-in junk in the project token' {
+        InModuleScope Metra {
+            $text = @"
+## >>> Metra External Review
+contentHash: hash-lead-in
+verdict: changes-requested
+"@
+            { ConvertFrom-MetraInspectExternalReviewMarkdown -Text $text -ExpectedProject 'Metra' } |
+                Should -Throw '*External Review*'
+        }
+    }
+
+    It 'keeps dashless Windows drive-letter paths in evidenceInspected' {
+        InModuleScope Metra {
+            $text = @"
+## Metra External Review
+contentHash: hash-drive-1
+verdict: changes-requested
+reviewDepth: L1
+evidenceInspected:
+C:\Projects\_meta\scripts\private\Inspect.ps1
+suggestedNextAction: continue
+"@
+            $parsed = ConvertFrom-MetraInspectExternalReviewMarkdown -Text $text -ExpectedProject 'Metra'
+            $parsed.EvidenceInspected | Should -Contain 'C:\Projects\_meta\scripts\private\Inspect.ps1'
+        }
+    }
+
+    It 'mints review-state ids from finding headers not mid-prose BN tokens' {
+        InModuleScope Metra {
+            $stateRoot = Join-Path $env:TEMP ("metra-mint-id-" + [guid]::NewGuid().ToString('n'))
+            $shareRoot = Join-Path $env:TEMP ("metra-mint-id-s-" + [guid]::NewGuid().ToString('n'))
+            New-Item -ItemType Directory -Path (Join-Path $shareRoot 'Share') -Force | Out-Null
+            Mock Get-MetraInspectStateRoot { $stateRoot }
+            Mock Get-MetraShareRoot { $shareRoot }
+            Mock Resolve-MetraInspectProjectContext {
+                [PSCustomObject]@{ Ok = $true; Project = 'Metra'; Root = (Get-MetraRoot); Error = $null }
+            }
+            Mock Get-MetraInspectDiffContentHash { 'hash-mint-1' }
+            $slot = Join-Path $stateRoot 'Metra'
+            New-Item -ItemType Directory -Path $slot -Force | Out-Null
+            $seed = Format-MetraInspectReviewState -Product 'Metra' -PriorContentHash '' `
+                -CurrentContentHash 'hash-mint-1' -PriorReviewDepth 'L1' -Findings @()
+            Write-MetraAtomicUtf8Text -Path (Join-Path $slot 'review-state.md') -Text $seed
+            $text = @"
+## Metra External Review
+contentHash: hash-mint-1
+verdict: changes-requested
+reviewDepth: L1
+evidenceInspected:
+  - a.ps1
+
+### Nonblocking findings
+N8 (Observed): real finding header.
+B4 Observed: space style.
+N2 Medium: severity style.
+**B5** bold style.
+B6 [Observed] bracket style.
+  B7 (indented).
+See also B99 in the narrative which must not mint.
+
+### Verified
+None.
+"@
+            try {
+                $null = Import-MetraInspectExternalReview -Name 'Metra' -Text $text -Confirm:$false
+                $stateText = [System.IO.File]::ReadAllText((Join-Path $slot 'review-state.md'), (Get-MetraUtf8NoBomEncoding))
+                foreach ($id in @('N8', 'B4', 'N2', 'B5', 'B6', 'B7')) {
+                    $stateText | Should -Match ("(?m)^\s+-\s+id:\s*{0}\s*$" -f $id)
+                }
+                $stateText | Should -Not -Match '(?m)id:\s*B99\b'
+            }
+            finally {
+                Remove-Item -LiteralPath $stateRoot -Recurse -Force -ErrorAction SilentlyContinue
+                Remove-Item -LiteralPath $shareRoot -Recurse -Force -ErrorAction SilentlyContinue
+            }
+        }
+    }
+
+    It 'accepts External Review headings with one layer of markdown emphasis on the project name' {
+        InModuleScope Metra {
+            $text = @"
+## **Metra** External Review
+contentHash: hash-emphasis-1
+verdict: changes-requested
+"@
+            $parsed = ConvertFrom-MetraInspectExternalReviewMarkdown -Text $text -ExpectedProject 'Metra'
+            $parsed.Body | Should -Match '(?m)^##\s*Metra External Review\s*$'
+        }
+    }
 }
 
 Describe 'Inspect hooks install' {
@@ -3827,13 +3954,18 @@ Describe 'Inspect token economy rules docs' {
     }
 
     It 'OCC does not own the permanent pack-body rule' {
-        $occPath = Join-Path $script:RepoRoot '.cursor\rules\metra-learned.local.mdc'
-        if (-not (Test-Path -LiteralPath $occPath)) {
-            Set-ItResult -Inconclusive -Because 'local OCC overlay not present'
-            return
+        # Permanent pack-body rule lives in the committed inspect-loop rule (asserted above).
+        # OCC overlays/examples must not restate it; do not bind to private overlay date text.
+        $occExample = Join-Path $script:RepoRoot '.cursor\rules\metra-learned.local.example.mdc'
+        if (Test-Path -LiteralPath $occExample) {
+            (Get-Content -LiteralPath $occExample -Raw) | Should -Not -Match 'must not read.*pack-diff'
         }
-        $text = Get-Content -LiteralPath $occPath -Raw
-        $text | Should -Not -Match 'must not read.*pack-diff'
-        $text | Should -Match '2026-09-04'
+        $occPath = Join-Path $script:RepoRoot '.cursor\rules\metra-learned.local.mdc'
+        if (Test-Path -LiteralPath $occPath) {
+            (Get-Content -LiteralPath $occPath -Raw) | Should -Not -Match 'must not read.*pack-diff'
+        }
+        else {
+            Set-ItResult -Inconclusive -Because 'local OCC overlay not present; example checked when available'
+        }
     }
 }

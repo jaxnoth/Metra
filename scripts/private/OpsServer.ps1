@@ -860,7 +860,8 @@ function Invoke-MetraOpsApi {
             try {
                 $status = Get-MetraProfileStatus -MetraRoot $MetraRoot
                 $status | Add-Member -NotePropertyName hasSyncToken -NotePropertyValue ([bool](Test-MetraProfileSyncTokenConfigured)) -Force
-                if (Test-MetraOpsRequestHasLocalAuthority -Request $Request) {
+                $isLocalAuth = Test-MetraOpsRequestHasLocalAuthority -Request $Request
+                if ($isLocalAuth) {
                     # Pass contentHash as-is (may be $null when notes are unexportable) - never force [string]$null.
                     $roster = Get-MetraProfileSatelliteRoster -PublisherHash $status.contentHash
                     $status | Add-Member -NotePropertyName satellites -NotePropertyValue @($roster.Satellites) -Force
@@ -871,12 +872,33 @@ function Invoke-MetraOpsApi {
                     $status | Add-Member -NotePropertyName pairPending -NotePropertyValue @($pendingBag.Requests) -Force
                     $status | Add-Member -NotePropertyName clientAuthConfigured -NotePropertyValue ([bool](Test-MetraClientAuthAllowlistConfigured -MetraRoot $MetraRoot)) -Force
                 }
+                else {
+                    # Device/bearer: keep ok/hash; replace raw notesPackError with a fixed reasonCode message.
+                    $detail = [string](Get-MetraProp -Object $status -Name 'notesPackError' -Default '')
+                    if (-not [string]::IsNullOrWhiteSpace($detail)) {
+                        Write-Warning ("Profile status notesPackError (server log only): {0}" -f $detail)
+                        $status | Add-Member -NotePropertyName notesPackError -NotePropertyValue $null -Force
+                        $status | Add-Member -NotePropertyName notesPackReasonCode -NotePropertyValue 'profilePackUnexportable' -Force
+                        $status | Add-Member -NotePropertyName notesPackMessage -NotePropertyValue 'Profile pack is not exportable (working-notes or status gate).' -Force
+                    }
+                }
                 Write-MetraOpsJsonResponse -Response $Response -Object $status -Depth 8
             }
             catch {
-                Write-MetraOpsJsonResponse -Response $Response -StatusCode 500 -Object ([PSCustomObject]@{
-                        error = $_.Exception.Message
-                    })
+                $detail = $_.Exception.Message
+                if (Test-MetraOpsRequestHasLocalAuthority -Request $Request) {
+                    Write-MetraOpsJsonResponse -Response $Response -StatusCode 500 -Object ([PSCustomObject]@{
+                            error      = $detail
+                            reasonCode = 'profileStatusFailed'
+                        })
+                }
+                else {
+                    Write-Warning ("Profile status 500 (server log only): {0}" -f $detail)
+                    Write-MetraOpsJsonResponse -Response $Response -StatusCode 500 -Object ([PSCustomObject]@{
+                            error      = 'Profile status failed.'
+                            reasonCode = 'profileStatusFailed'
+                        })
+                }
             }
             return
         }
@@ -1076,13 +1098,22 @@ function Invoke-MetraOpsApi {
                 $status = Get-MetraProfileStatus -MetraRoot $MetraRoot
                 # Null/blank contentHash means unexportable notes - refuse publish; never use shared 'empty' cache key.
                 if (-not [bool]$status.ok -or [string]::IsNullOrWhiteSpace([string]$status.contentHash)) {
-                    Write-MetraOpsJsonResponse -Response $Response -StatusCode 409 -Object ([PSCustomObject]@{
-                            error                 = 'Profile pack is not exportable (working-notes or status gate).'
-                            reasonCode            = 'profilePackUnexportable'
-                            ok                    = $false
-                            notesPackError        = [string](Get-MetraProp -Object $status -Name 'notesPackError' -Default '')
-                            publisherUnexportable = $true
-                        })
+                    $detail = [string](Get-MetraProp -Object $status -Name 'notesPackError' -Default '')
+                    $payload = [ordered]@{
+                        error                 = 'Profile pack is not exportable (working-notes or status gate).'
+                        reasonCode            = 'profilePackUnexportable'
+                        ok                    = $false
+                        publisherUnexportable = $true
+                    }
+                    if (Test-MetraOpsRequestHasLocalAuthority -Request $Request) {
+                        $payload['notesPackError'] = $detail
+                    }
+                    else {
+                        if (-not [string]::IsNullOrWhiteSpace($detail)) {
+                            Write-Warning ("Profile export 409 notesPackError (server log only): {0}" -f $detail)
+                        }
+                    }
+                    Write-MetraOpsJsonResponse -Response $Response -StatusCode 409 -Object ([PSCustomObject]$payload)
                     return
                 }
                 $cacheDir = Join-Path $env:LOCALAPPDATA 'Metra\profile-export-cache'
@@ -1127,9 +1158,20 @@ function Invoke-MetraOpsApi {
                 Write-MetraOpsFileResponse -Response $Response -FilePath $zipPath -ContentType 'application/zip' -DownloadFileName 'metra-profile.zip'
             }
             catch {
-                Write-MetraOpsJsonResponse -Response $Response -StatusCode 500 -Object ([PSCustomObject]@{
-                        error = $_.Exception.Message
-                    })
+                $detail = $_.Exception.Message
+                if (Test-MetraOpsRequestHasLocalAuthority -Request $Request) {
+                    Write-MetraOpsJsonResponse -Response $Response -StatusCode 500 -Object ([PSCustomObject]@{
+                            error      = $detail
+                            reasonCode = 'profileExportFailed'
+                        })
+                }
+                else {
+                    Write-Warning ("Profile export 500 (server log only): {0}" -f $detail)
+                    Write-MetraOpsJsonResponse -Response $Response -StatusCode 500 -Object ([PSCustomObject]@{
+                            error      = 'Profile export failed.'
+                            reasonCode = 'profileExportFailed'
+                        })
+                }
             }
             return
         }

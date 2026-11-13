@@ -329,18 +329,17 @@ function Get-MetraProfileStatus {
     $fileMap = @(Get-MetraProfileFileMap)
     $notesPackRel = (Get-MetraOperatorWorkingNotesPackRelativePath) -replace '\\', '/'
     $notesPackError = $null
-    # Migrate docs→machine working-notes before map Test-Path so status matches the live ledger.
-    $null = Get-MetraOperatorWorkingNotesPath -MetraRoot $MetraRoot
+    # Read-only dual-path probe (no docs→machine migrate on status).
+    $notesExistingPath = Resolve-MetraOperatorWorkingNotesExistingPath -MetraRoot $MetraRoot
     $entries = New-Object System.Collections.Generic.List[object]
     foreach ($rel in $fileMap) {
         $relNorm = ($rel -replace '\\', '/')
-        $full = Resolve-MetraProfileMappedLivePath -RelativePath $relNorm -MetraRoot $MetraRoot
-        if (-not (Test-Path -LiteralPath $full)) { continue }
-        $info = Get-Item -LiteralPath $full
-        $hex = $null
-        $sizeBytes = [long]$info.Length
         if ($relNorm -ieq $notesPackRel) {
-            # Same fail-closed gate as Export: refuse blank rows / Protect Refuse; never hash raw live bytes.
+            if (-not $notesExistingPath) { continue }
+            $full = $notesExistingPath
+            $info = Get-Item -LiteralPath $full
+            $hex = $null
+            $sizeBytes = [long]$info.Length
             try {
                 $parsed = [System.IO.File]::ReadAllText($full, [System.Text.UTF8Encoding]::new($false)) | ConvertFrom-Json -ErrorAction Stop
                 $pack = ConvertFrom-MetraOperatorWorkingNotesRawForPack -Raw $parsed -RefuseDroppedRows
@@ -359,15 +358,24 @@ function Get-MetraProfileStatus {
                 Write-Warning ("Get-MetraProfileStatus: working-notes omitted from contentHash (unexportable): {0}" -f $notesPackError)
                 continue
             }
+            [void]$entries.Add([PSCustomObject]@{
+                    logicalName  = (Get-MetraProfileLogicalName -RelativePath $relNorm)
+                    relativePath = $relNorm
+                    writeUtc     = $info.LastWriteTimeUtc.ToString('o')
+                    sizeBytes    = $sizeBytes
+                    hash         = "sha256:$hex"
+                })
+            continue
         }
-        else {
-            $hex = Get-MetraProfileFileSha256Hex -Path $info.FullName
-        }
+        $full = Resolve-MetraProfileMappedLivePath -RelativePath $relNorm -MetraRoot $MetraRoot
+        if (-not (Test-Path -LiteralPath $full)) { continue }
+        $info = Get-Item -LiteralPath $full
+        $hex = Get-MetraProfileFileSha256Hex -Path $info.FullName
         [void]$entries.Add([PSCustomObject]@{
                 logicalName  = (Get-MetraProfileLogicalName -RelativePath $relNorm)
                 relativePath = $relNorm
                 writeUtc     = $info.LastWriteTimeUtc.ToString('o')
-                sizeBytes    = $sizeBytes
+                sizeBytes    = [long]$info.Length
                 hash         = "sha256:$hex"
             })
     }

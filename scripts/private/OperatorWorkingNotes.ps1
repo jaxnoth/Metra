@@ -1,4 +1,4 @@
-# Operator working-notes ledger (Stated / Observed / Moments).
+﻿# Operator working-notes ledger (Stated / Observed / Moments).
 # Machine-local under Get-MetraMachineDataRoot; packageable via profile machine-data/ map.
 # Notes may tune pace, depth, verdict format, and callbacks - never lower Honesty / Conviction.
 
@@ -16,6 +16,9 @@ function Get-MetraOperatorWorkingNotesPath {
     <#
     .SYNOPSIS
         Absolute path to the operator working-notes ledger under machine data.
+    .NOTES
+        Migrates a legacy docs\ copy into machine data when present. Prefer
+        Resolve-MetraOperatorWorkingNotesExistingPath for read-only probes.
     #>
     [CmdletBinding()]
     param([string]$MetraRoot = (Get-MetraRoot))
@@ -23,6 +26,31 @@ function Get-MetraOperatorWorkingNotesPath {
     return Resolve-MetraMachineLedgerPath -MetraRoot $MetraRoot `
         -RelativeUnderMachineData $script:MetraWorkingNotesRelativePath `
         -LegacyRelativeUnderDocs $script:MetraWorkingNotesRelativePath
+}
+
+function Resolve-MetraOperatorWorkingNotesExistingPath {
+    <#
+    .SYNOPSIS
+        Read-only probe for a live working-notes ledger (machine-data preferred, else docs legacy).
+    .NOTES
+        No docs→machine migrate and no notes-file / notes-parent CreateDirectory.
+        Get-MetraMachineDataRoot (via the machine-path resolve) may still ensure the
+        machine/sandbox root exists. Returns $null when neither notes path exists.
+    #>
+    [CmdletBinding()]
+    param([string]$MetraRoot = (Get-MetraRoot))
+
+    $machine = Resolve-MetraProfileMappedLivePath `
+        -RelativePath $script:MetraWorkingNotesPackRelativePath `
+        -MetraRoot $MetraRoot
+    if (Test-Path -LiteralPath $machine) {
+        return $machine
+    }
+    $legacy = Join-Path $MetraRoot (Join-Path 'docs' $script:MetraWorkingNotesRelativePath)
+    if (Test-Path -LiteralPath $legacy) {
+        return $legacy
+    }
+    return $null
 }
 
 function Get-MetraOperatorWorkingNotesPackRelativePath {

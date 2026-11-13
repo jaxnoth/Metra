@@ -62,6 +62,7 @@ docs/client-auth.local.json
 docs/ticket-watch.local.json
 docs/desk-familiarity.local.json
 docs/operator-working-notes.local.json
+docs/operator-working-notes.local.json.bak-*
 docs/tailscale-campus.local.json
 docs/*.local.log
 !docs/examples/client-auth.example.json
