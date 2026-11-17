@@ -2141,7 +2141,7 @@ Ask model not available for this API key:
 $detail
 
 Pin a supported model: .\metra.ps1 ask engine set cursor -Model default
-(or gemini-3.7-flash, composer-2.5). Team keys usually support auto-smart; when auto-smart is missing, Metra falls back to a concrete catalog id. gemini-3.7-flash is valid on personal keys when listed for the key.
+(or gemini-3.8-flash, composer-2.5). Team keys usually support auto-smart; when auto-smart is missing, Metra falls back to a concrete catalog id. gemini-3.8-flash is valid on personal keys when listed for the key.
 "@.Trim()
     }
 
@@ -2156,7 +2156,7 @@ $detail
 
 Re-set the User key and recycle Ask: .\metra.ps1 ask key set <key>
 Then: .\metra.ps1 ask engine restart -Confirm:`$false
-Inspect may keep pinning gemini-3.7-flash on personal keys.
+Inspect may keep pinning gemini-3.8-flash on personal keys.
 "@.Trim()
     }
 

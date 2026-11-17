@@ -4,8 +4,8 @@
  */
 
 const ROUTER_FALLBACK_BY_TIER = {
-  cost: ['default', 'gemini-3.7-flash', 'composer-2.5'],
-  balanced: ['default', 'composer-2.5', 'gemini-3.7-flash'],
+  cost: ['default', 'gemini-3.8-flash', 'composer-2.5'],
+  balanced: ['default', 'composer-2.5', 'gemini-3.8-flash'],
   intelligence: ['default', 'composer-2.5', 'claude-sonnet-5'],
 }
 
@@ -98,7 +98,7 @@ export function pickRouterFallback(availableIds, optimizeFor = 'cost') {
  * Remap unavailable selections when the API key's catalog cannot use them.
  * - auto-smart (Cursor Router) is team/router keys only on many accounts
  * - concrete pins missing from Cursor.models.list() are remapped here
- * - Auth / session failures are NOT model policy (gemini-3.7-flash is valid on personal);
+ * - Auth / session failures are NOT model policy (gemini-3.8-flash is valid on personal);
  *   only "cannot use this model" triggers create/run fallback in server.mjs
  * @param {{ id: string, label?: string, params?: { id: string, value: string }[] }} selection
  * @param {string[] | null | undefined} availableIds
@@ -178,7 +178,7 @@ export function pickFallbackExcluding(availableIds, excludeId, optimizeFor = 'co
 /**
  * True when an SDK/create/run error should trigger one model fallback retry.
  * Usage/billing limits and auth/session errors are not model-policy failures -
- * do not relabel a pin (e.g. gemini-3.7-flash) as unavailable for those.
+ * do not relabel a pin (e.g. gemini-3.8-flash) as unavailable for those.
  * @param {string} detail
  */
 export function isRetryableModelFailure(detail) {

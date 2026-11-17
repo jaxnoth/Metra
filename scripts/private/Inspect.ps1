@@ -980,6 +980,19 @@ function Get-MetraInspectPayloadBand {
     return 'PRUNE'
 }
 
+function Get-MetraInspectAssessTimeoutSec {
+    <#
+    .SYNOPSIS
+        Client TimeoutSec for Inspect assess by payload band (GREEN 300s; WARN/PRUNE 900s).
+    #>
+    [CmdletBinding()]
+    param([Parameter(Mandatory)][int]$EstimatedPromptChars)
+
+    $band = Get-MetraInspectPayloadBand -EstimatedTotalChars $EstimatedPromptChars
+    if ($band -eq 'GREEN') { return 300 }
+    return 900
+}
+
 function Test-MetraInspectPathInKeepSet {
     [CmdletBinding()]
     param(
@@ -2340,11 +2353,14 @@ If no issues: {"findings":[]}. No markdown. No prose outside JSON.
     $engineProvenance = $null
 
     for ($attempt = 0; $attempt -lt 2; $attempt++) {
-        # Hard ceiling 300s (was 900). Wedged gemini Agent.wait() previously sat silent 5-10+ minutes
-        # with /health still green; Ops Ask budget is 180s - Inspect gets one longer pass, then
-        # timeout is recycle-eligible (sidecar-only) for a single retry.
+        # Band-dependent client budget (Decision 2026-11-17): GREEN 300s; WARN/PRUNE 900s.
+        # History: flat 900s masked wedged Agent.wait() while /health stayed green (2026-11-06
+        # moved Inspect to 300s); large PRUNE-band CDM assesses later needed a longer pass.
+        # Soft-retry / Run.cancel() still apply; timeout remains recycle-eligible (sidecar-only)
+        # for a single retry. Ops Ask default budget stays 180s.
+        $timeoutSec = Get-MetraInspectAssessTimeoutSec -EstimatedPromptChars $currentPrompt.Length
         $engineResult = Invoke-MetraAskEngine -Prompt $currentPrompt -Cwd $Cwd -MetraRoot $MetraRoot `
-            -Context @{ purpose = 'metra-inspect' } -TimeoutSec 300 `
+            -Context @{ purpose = 'metra-inspect' } -TimeoutSec $timeoutSec `
             -Engine $selection.Engine -Model $selection.RequestedModel
         if (-not $engineResult.ok -and $attempt -eq 0) {
             # Prefer soft retry when sidecar already Run.cancel()'d a wedged wait.
@@ -6416,6 +6432,176 @@ function Format-MetraInspectReviewManifest {
     return ($sb.ToString().TrimEnd() + "`n")
 }
 
+function Get-MetraInspectBingReviewArtifactNames {
+    <#
+    .SYNOPSIS
+        Canonical four-artifact set for Bing/Copilot Share review.
+    #>
+    [CmdletBinding()]
+    param()
+
+    return @('handoff.md', 'review-manifest.md', 'review-state.md', 'pack-diff.md')
+}
+
+function Test-MetraInspectBingReviewerRetrievalGate {
+    <#
+    .SYNOPSIS
+        Pure gate: authoritative current generation + readable exact artifacts + matching contentHash.
+    .NOTES
+        Transport-agnostic. Models currentGenerationResolved vs contentReadable separately.
+        ReasonCode values: folder-not-found | artifact-missing | generation-mismatch |
+        stale-index-only | content-reader-unavailable | (empty when Allowed).
+        Metadata-only observations never satisfy contentReadable / evidenceInspected.
+    #>
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory)][string]$ExpectedProduct,
+        [Parameter(Mandatory)][string]$ExpectedContentHash,
+        [Parameter(Mandatory)]$Observation
+    )
+
+    $productExpected = ConvertTo-MetraInspectContractScalar -Value $ExpectedProduct
+    $hashExpected = ConvertTo-MetraInspectContractScalar -Value $ExpectedContentHash
+    $required = @(Get-MetraInspectBingReviewArtifactNames)
+
+    $folderFound = [bool](Get-MetraProp -Object $Observation -Name 'FolderFound' -Default $false)
+    $obsProduct = ConvertTo-MetraInspectContractScalar -Value ([string](Get-MetraProp -Object $Observation -Name 'Product' -Default ''))
+    $genHash = ConvertTo-MetraInspectContractScalar -Value ([string](Get-MetraProp -Object $Observation -Name 'GenerationContentHash' -Default ''))
+    $contentReaderAvailable = [bool](Get-MetraProp -Object $Observation -Name 'ContentReaderAvailable' -Default $false)
+    $metadataOnly = [bool](Get-MetraProp -Object $Observation -Name 'MetadataOnly' -Default $false)
+
+    $resolvedNames = @()
+    $rawNames = Get-MetraProp -Object $Observation -Name 'ResolvedArtifactNames' -Default @()
+    if ($null -ne $rawNames) {
+        $resolvedNames = @($rawNames | ForEach-Object { ConvertTo-MetraInspectContractScalar -Value ([string]$_) } | Where-Object { $_ })
+    }
+
+    $readableRows = @()
+    $rawReadable = Get-MetraProp -Object $Observation -Name 'ReadableArtifacts' -Default @()
+    if ($null -ne $rawReadable) {
+        foreach ($row in @($rawReadable)) {
+            if ($null -eq $row) { continue }
+            $readableRows += [PSCustomObject]@{
+                Name        = ConvertTo-MetraInspectContractScalar -Value ([string](Get-MetraProp -Object $row -Name 'Name' -Default ''))
+                ContentHash = ConvertTo-MetraInspectContractScalar -Value ([string](Get-MetraProp -Object $row -Name 'ContentHash' -Default ''))
+                Product     = ConvertTo-MetraInspectContractScalar -Value ([string](Get-MetraProp -Object $row -Name 'Product' -Default ''))
+                Source      = ConvertTo-MetraInspectContractScalar -Value ([string](Get-MetraProp -Object $row -Name 'Source' -Default ''))
+            }
+        }
+    }
+
+    $mk = {
+        param(
+            [bool]$Allowed,
+            [string]$ReasonCode,
+            [bool]$CurrentGenerationResolved,
+            [bool]$ContentReadable,
+            [string]$Detail = ''
+        )
+        return [PSCustomObject]@{
+            Allowed                    = [bool]$Allowed
+            ReasonCode                 = [string]$ReasonCode
+            CurrentGenerationResolved  = [bool]$CurrentGenerationResolved
+            ContentReadable            = [bool]$ContentReadable
+            Detail                     = [string]$Detail
+            EvidenceInspectedEligible  = [bool]($Allowed -and $ContentReadable -and -not $metadataOnly)
+        }
+    }
+
+    if (-not $folderFound) {
+        return & $mk $false 'folder-not-found' $false $false 'Share product folder not found.'
+    }
+    if ([string]::IsNullOrWhiteSpace($obsProduct) -or
+        -not [string]::Equals($obsProduct, $productExpected, [System.StringComparison]::OrdinalIgnoreCase)) {
+        return & $mk $false 'folder-not-found' $false $false 'Resolved Share folder product does not match ExpectedProduct.'
+    }
+
+    $missing = @($required | Where-Object { $resolvedNames -notcontains $_ })
+    if ($missing.Count -gt 0) {
+        return & $mk $false 'artifact-missing' $false $false ("Missing artifacts: {0}" -f ($missing -join ', '))
+    }
+
+    if ([string]::IsNullOrWhiteSpace($hashExpected)) {
+        return & $mk $false 'generation-mismatch' $false $false 'ExpectedContentHash is empty.'
+    }
+
+    $generationResolved = (-not [string]::IsNullOrWhiteSpace($genHash))
+    if ($generationResolved -and -not [string]::Equals($genHash, $hashExpected, [System.StringComparison]::Ordinal)) {
+        return & $mk $false 'generation-mismatch' $false $false 'Share generation contentHash differs from ExpectedContentHash.'
+    }
+
+    # Readable bodies (never treat metadata-only as readable content).
+    $readableByName = @{}
+    $indexedMismatch = $false
+    $anyIndexed = $false
+    foreach ($row in $readableRows) {
+        if ([string]::IsNullOrWhiteSpace($row.Name)) { continue }
+        if (-not [string]::IsNullOrWhiteSpace($row.Product) -and
+            -not [string]::Equals($row.Product, $productExpected, [System.StringComparison]::OrdinalIgnoreCase)) {
+            return & $mk $false 'folder-not-found' $generationResolved $false 'Readable artifact belongs to another product Share folder.'
+        }
+        $src = $row.Source.ToLowerInvariant()
+        if ($src -eq 'indexed' -or $src -eq 'search') {
+            $anyIndexed = $true
+        }
+        if (-not [string]::IsNullOrWhiteSpace($row.ContentHash) -and
+            -not [string]::Equals($row.ContentHash, $hashExpected, [System.StringComparison]::Ordinal)) {
+            if ($src -eq 'indexed' -or $src -eq 'search') {
+                $indexedMismatch = $true
+            }
+            else {
+                return & $mk $false 'generation-mismatch' $generationResolved $false ("Readable {0} contentHash does not match expected generation." -f $row.Name)
+            }
+        }
+        $readableByName[$row.Name] = $row
+    }
+
+    if ($indexedMismatch) {
+        return & $mk $false 'stale-index-only' $generationResolved $false 'Readable indexed/search bodies do not match the current Share generation; do not review them.'
+    }
+
+    if ($metadataOnly) {
+        if ($generationResolved) {
+            return & $mk $false 'content-reader-unavailable' $true $false 'DriveItem/metadata resolved current generation but no file contents were read; metadata alone is not evidenceInspected.'
+        }
+        return & $mk $false 'content-reader-unavailable' $false $false 'Metadata-only retrieval; no substantive contents read.'
+    }
+
+    $allReadableMatching = $true
+    foreach ($name in $required) {
+        if (-not $readableByName.ContainsKey($name)) {
+            $allReadableMatching = $false
+            break
+        }
+        $r = $readableByName[$name]
+        if ([string]::IsNullOrWhiteSpace($r.ContentHash) -or
+            -not [string]::Equals($r.ContentHash, $hashExpected, [System.StringComparison]::Ordinal)) {
+            $allReadableMatching = $false
+            break
+        }
+    }
+
+    if (-not $generationResolved) {
+        if ($anyIndexed -and -not $allReadableMatching) {
+            return & $mk $false 'stale-index-only' $false $false 'Only indexed/search content is available and it is not verified against a current Share generation.'
+        }
+        if ($allReadableMatching -and $contentReaderAvailable) {
+            # Readable match without an explicit Share generation stamp is still unsafe.
+            return & $mk $false 'stale-index-only' $false $false 'Readable bodies exist but current Share generation was not resolved.'
+        }
+        return & $mk $false 'content-reader-unavailable' $false $false 'Current Share generation was not resolved.'
+    }
+
+    if (-not $allReadableMatching) {
+        if (-not $contentReaderAvailable) {
+            return & $mk $false 'content-reader-unavailable' $true $false 'Current generation resolved; content reader unavailable and no verified readable fallback.'
+        }
+        return & $mk $false 'content-reader-unavailable' $true $false 'Current generation resolved; not all four artifacts have readable matching contentHash bodies.'
+    }
+
+    return & $mk $true '' $true $true 'Review allowed: current generation resolved and four matching artifacts readable.'
+}
+
 function Format-MetraInspectBingShareHandoff {
     <#
     .SYNOPSIS
@@ -6443,6 +6629,7 @@ function Format-MetraInspectBingShareHandoff {
     }
     if ([string]::IsNullOrWhiteSpace($shareOut)) { $shareOut = '(unavailable)' }
     $utc = [datetime]::UtcNow.ToString('o')
+    $sharePathLogical = "Documents/Metra/Share/$projectOut/"
     $sb = New-Object System.Text.StringBuilder
     [void]$sb.AppendLine('# Metra Inspect Bing handoff')
     [void]$sb.AppendLine('')
@@ -6454,18 +6641,50 @@ function Format-MetraInspectBingShareHandoff {
     [void]$sb.AppendLine('v1 pack constants: Review type defaults to implementation and Intended depth to L1 unless a later CLI threads overrides.')
     [void]$sb.AppendLine('')
     [void]$sb.AppendLine('## Authoritative reviewer retrieval')
-    [void]$sb.AppendLine('For Microsoft Copilot/Bing review, retrieve the four review artifacts (handoff.md, review-manifest.md, review-state.md, pack-diff.md) directly from the project Share folder / DriveItems whenever direct SharePoint or OneDrive access is available.')
-    [void]$sb.AppendLine('Do not use Microsoft 365 search-index freshness as evidence that a newer generation does not exist. Search is discovery/fallback only.')
-    [void]$sb.AppendLine('Before reviewing, confirm that handoff, manifest, state, and pack declare the same contentHash. If direct retrieval and indexed/search retrieval disagree, direct SharePoint/OneDrive folder content is authoritative and the indexed copy must not be reviewed.')
-    [void]$sb.AppendLine('Bootstrap: resolve ShareRoot (above), open that folder, read the four artifacts, verify matching contentHash, then review. Prefer caching DriveItem IDs for the folder when the surface supports it.')
+    [void]$sb.AppendLine("Authoritative Microsoft Copilot/Bing review copy: $sharePathLogical (ShareRoot above when resolved).")
+    [void]$sb.AppendLine('Invariant: authoritative current generation + readable exact artifacts + matching contentHash = review allowed. MCP, office365_open, attachments, and indexed search are transports only - not architectural dependencies.')
     [void]$sb.AppendLine('')
-    [void]$sb.AppendLine('Open order: handoff.md -> review-manifest.md -> review-state.md -> selective pulls from pack-diff.md.')
+    [void]$sb.AppendLine('Separate capabilities (both required before review):')
+    [void]$sb.AppendLine('- currentGenerationResolved: prefer direct SharePoint/OneDrive product-folder / DriveItem resolution for identity and freshness.')
+    [void]$sb.AppendLine('- contentReadable: substantive Markdown bodies of the four artifacts are actually openable.')
+    [void]$sb.AppendLine('Direct DriveItem metadata alone is NOT currentGenerationResolved+contentReadable success and is NOT evidenceInspected.')
+    [void]$sb.AppendLine('Do not use Microsoft 365 search-index freshness as evidence that a newer generation does not exist.')
+    [void]$sb.AppendLine('Never treat an older indexed result as current merely because it is readable. Never mix artifacts from different generations or projects. Never review metadata as though it were file contents.')
+    [void]$sb.AppendLine('')
+    [void]$sb.AppendLine('Retrieval sequence:')
+    [void]$sb.AppendLine('1. Establish the current generation from the direct SharePoint/OneDrive product folder when available.')
+    [void]$sb.AppendLine('2. Obtain readable contents for the four artifacts. If the direct SharePoint tool cannot return contents, use a readable grounded/attached File representation of those exact current artifacts when available (for example a Copilot File lane that office365_open can read).')
+    [void]$sb.AppendLine('3. Verify opened bodies declare the same contentHash as the current Share generation (Expected contentHash below). office365_open / readable content is acceptable only after identity/generation is tied back to the current Share folder.')
+    [void]$sb.AppendLine('4. Indexed search may be used for discovery or to obtain a readable entity only when its identity/contentHash is verified against the current generation. Never silently substitute stale indexed content.')
+    [void]$sb.AppendLine('5. If the current files cannot be made readable, stop with retrieval-blocked and one ReasonCode: folder-not-found | artifact-missing | generation-mismatch | stale-index-only | content-reader-unavailable.')
+    [void]$sb.AppendLine('')
+    $artifactNames = @(Get-MetraInspectBingReviewArtifactNames)
+    [void]$sb.AppendLine('## Retrieval contract checklist')
+    [void]$sb.AppendLine("Product: $projectOut")
+    [void]$sb.AppendLine("Share path: $sharePathLogical")
+    [void]$sb.AppendLine('Expected artifacts:')
+    foreach ($artifactName in $artifactNames) {
+        [void]$sb.AppendLine("  $artifactName")
+    }
+    [void]$sb.AppendLine("Expected contentHash: $hashOut")
+    [void]$sb.AppendLine('')
+    [void]$sb.AppendLine('Before review:')
+    [void]$sb.AppendLine('  [ ] current Share generation resolved')
+    [void]$sb.AppendLine('  [ ] handoff readable')
+    [void]$sb.AppendLine('  [ ] manifest readable')
+    [void]$sb.AppendLine('  [ ] state readable')
+    [void]$sb.AppendLine('  [ ] pack readable')
+    [void]$sb.AppendLine('  [ ] all contentHashes equal expected contentHash')
+    [void]$sb.AppendLine('If any check fails, do not review.')
+    [void]$sb.AppendLine('')
+    [void]$sb.AppendLine(('Open order: {0} -> selective pulls from pack-diff.md.' -f ($artifactNames[0..2] -join ' -> ')))
     [void]$sb.AppendLine('Do not treat the manifest as the evidence. Prefer selective readability over compressed summaries.')
+    [void]$sb.AppendLine('review.md, if present, is the last imported review and is never evidence for this generation.')
     [void]$sb.AppendLine('')
     [void]$sb.AppendLine('Classify concerns as Observed, Missing visibility, or Recommendation.')
     [void]$sb.AppendLine('A finding classified as Missing visibility must not also be reported as a defect.')
     [void]$sb.AppendLine('No finding without pack evidence. No PASS / approve for claims that were not actually inspected.')
-    [void]$sb.AppendLine('evidenceInspected identifies evidence whose substantive contents the reviewer actually examined, not paths merely listed by the manifest or evidence map.')
+    [void]$sb.AppendLine('evidenceInspected identifies evidence whose substantive contents the reviewer actually examined, not paths merely listed by the manifest or evidence map, and not DriveItem/metadata/search hits without opened bodies.')
     [void]$sb.AppendLine('')
     [void]$sb.AppendLine('Machine verdicts: approve | changes-requested | blocked')
     [void]$sb.AppendLine('Display aliases: PASS | CONDITIONAL | BLOCK')
@@ -6510,6 +6729,52 @@ function Format-MetraInspectBingShareHandoff {
     return ($sb.ToString().TrimEnd() + "`n")
 }
 
+function Clear-MetraInspectBingShareStaleReview {
+    <#
+    .SYNOPSIS
+        On new diff generation publish, retire Share review.md when its contentHash differs.
+    .NOTES
+        Renames to review.prior.md (overwrites prior). Matching hash leaves review.md in place.
+        review.md is never evidence for the current four-artifact generation.
+    #>
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory)][string]$ShareDir,
+        [string]$ContentHash
+    )
+
+    $reviewPath = Join-Path $ShareDir 'review.md'
+    if (-not (Test-Path -LiteralPath $reviewPath)) {
+        return [PSCustomObject]@{ Action = 'absent'; Path = $reviewPath; PriorPath = $null }
+    }
+
+    $hashExpected = ConvertTo-MetraInspectContractScalar -Value $ContentHash
+    $reviewText = [System.IO.File]::ReadAllText($reviewPath, (Get-MetraUtf8NoBomEncoding))
+    $reviewHash = ''
+    if ($reviewText -match '(?im)^\s*contentHash\s*:\s*(\S+)\s*$') {
+        $reviewHash = ConvertTo-MetraInspectContractScalar -Value $Matches[1]
+    }
+
+    $sameGeneration = (-not [string]::IsNullOrWhiteSpace($hashExpected)) -and
+        (-not [string]::IsNullOrWhiteSpace($reviewHash)) -and
+        [string]::Equals($reviewHash, $hashExpected, [System.StringComparison]::Ordinal)
+    if ($sameGeneration) {
+        return [PSCustomObject]@{ Action = 'kept'; Path = $reviewPath; PriorPath = $null; ContentHash = $reviewHash }
+    }
+
+    $priorPath = Join-Path $ShareDir 'review.prior.md'
+    if (Test-Path -LiteralPath $priorPath) {
+        Remove-Item -LiteralPath $priorPath -Force -ErrorAction Stop
+    }
+    Move-Item -LiteralPath $reviewPath -Destination $priorPath -Force -ErrorAction Stop
+    return [PSCustomObject]@{
+        Action      = 'retired'
+        Path        = $reviewPath
+        PriorPath   = $priorPath
+        ContentHash = $reviewHash
+    }
+}
+
 function Publish-MetraInspectBingShareMirror {
     <#
     .SYNOPSIS
@@ -6517,6 +6782,7 @@ function Publish-MetraInspectBingShareMirror {
     .NOTES
         Uses the same four-artifact staged promote + prior-final rollback as local publication.
         Share failure stays nonfatal; mirror remains wholly prior-generation on partial failure.
+        Retires Share review.md to review.prior.md when its contentHash differs from this generation.
     #>
     [CmdletBinding()]
     param(
@@ -6550,6 +6816,8 @@ function Publish-MetraInspectBingShareMirror {
             $ReviewStateText = Format-MetraInspectReviewState -Product $Project -PriorContentHash '' `
                 -CurrentContentHash $ContentHash -Findings @()
         }
+
+        $null = Clear-MetraInspectBingShareStaleReview -ShareDir $dir -ContentHash $ContentHash
 
         Publish-MetraInspectStagedFileSet -ContainerRoot $dir -Items @(
             [PSCustomObject]@{ Final = $handoffPath; Text = $HandoffText }

@@ -64,7 +64,7 @@ Inspect findings are strongest when implementation and review use **different mo
 **Preferred**
 
 - Cursor Agent → Cursor-hosted model
-- Metra Inspect → dedicated `inspect.*` pin when set (fallback `ask.engine`); preferred independent reviewer on constrained hosts: Cursor `gemini-3.7-flash` (`.\metra.ps1 ask engine show` shows Ask vs Inspect)
+- Metra Inspect → dedicated `inspect.*` pin when set (fallback `ask.engine`); preferred independent reviewer on constrained hosts: Cursor `gemini-3.8-flash` (`.\metra.ps1 ask engine show` shows Ask vs Inspect)
 
 **Acceptable during quota constraints**
 

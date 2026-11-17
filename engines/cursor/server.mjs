@@ -908,7 +908,8 @@ async function complete({ prompt, cwd, context, sessionId, images, model, timeou
           ? await activeAgent.send({ text: wrapped, images: sdkImages })
           : await activeAgent.send(wrapped)
       // Hard ceiling: hung Agent.wait() previously left /v1/complete open forever while
-      // /health stayed green (Inspect 900s client budget masked the wedge).
+      // /health stayed green (a flat Inspect 900s client budget masked the wedge; Inspect
+      // is now band-dependent GREEN 300s / WARN+PRUNE 900s - see Decisions 2026-11-17).
       const waitPromise = activeRun.wait()
       try {
         const activeResult = await withTimeout(

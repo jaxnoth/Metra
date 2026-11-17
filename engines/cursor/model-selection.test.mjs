@@ -62,19 +62,19 @@ test('adaptSelectionForAvailableModels keeps listed concrete pin', () => {
 })
 
 test('pickRouterFallback prefers gemini for cost tier when default missing', () => {
-  const id = pickRouterFallback(['gemini-3.7-flash', 'composer-2.5'], 'cost')
-  assert.equal(id, 'gemini-3.7-flash')
+  const id = pickRouterFallback(['gemini-3.8-flash', 'composer-2.5'], 'cost')
+  assert.equal(id, 'gemini-3.8-flash')
 })
 
 test('pickRouterFallback uses composer for balanced tier', () => {
-  const id = pickRouterFallback(['gemini-3.7-flash', 'composer-2.5'], 'balanced')
+  const id = pickRouterFallback(['gemini-3.8-flash', 'composer-2.5'], 'balanced')
   assert.equal(id, 'composer-2.5')
 })
 
 test('pickFallbackExcluding skips failed model', () => {
   const id = pickFallbackExcluding(
-    ['gemini-3.7-flash', 'composer-2.5', 'default'],
-    'gemini-3.7-flash',
+    ['gemini-3.8-flash', 'composer-2.5', 'default'],
+    'gemini-3.8-flash',
     'cost',
   )
   assert.equal(id, 'default')

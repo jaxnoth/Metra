@@ -5,6 +5,33 @@ BeforeAll {
     $metraRoot = (Resolve-Path (Join-Path $PSScriptRoot '..')).Path
     $script:RepoRoot = $metraRoot
     Import-Module (Join-Path $metraRoot 'scripts\Metra.psd1') -Force
+
+    # Share isolation: pack/import paths mirror into Get-MetraShareRoot. Tests that do not mock it
+    # themselves must never reach the operator's live OneDrive Share (Copilot reviews that copy).
+    # Capture the real Share\Metra artifact stamps first so the final Describe can prove no write.
+    $script:RealShareMetraStamps = @{}
+    try {
+        $realShareRoot = InModuleScope Metra { Get-MetraShareRoot }
+        $realShareMetra = Join-Path $realShareRoot 'Share\Metra'
+        if (Test-Path -LiteralPath $realShareMetra) {
+            foreach ($f in Get-ChildItem -LiteralPath $realShareMetra -File) {
+                $script:RealShareMetraStamps[$f.FullName] = $f.LastWriteTimeUtc
+            }
+        }
+    }
+    catch {
+        $script:RealShareMetraStamps = @{}
+    }
+    $env:METRA_TEST_SHARE_ROOT = Join-Path ([System.IO.Path]::GetTempPath()) ('metra-inspect-test-share-' + [guid]::NewGuid().ToString('N'))
+    New-Item -ItemType Directory -Path $env:METRA_TEST_SHARE_ROOT -Force | Out-Null
+    Mock Get-MetraShareRoot -ModuleName Metra { $env:METRA_TEST_SHARE_ROOT }
+}
+
+AfterAll {
+    if ($env:METRA_TEST_SHARE_ROOT -and (Test-Path -LiteralPath $env:METRA_TEST_SHARE_ROOT)) {
+        Remove-Item -LiteralPath $env:METRA_TEST_SHARE_ROOT -Recurse -Force -ErrorAction SilentlyContinue
+    }
+    Remove-Item Env:\METRA_TEST_SHARE_ROOT -ErrorAction SilentlyContinue
 }
 
 Describe 'Inspect file classification' {
@@ -2609,6 +2636,206 @@ Describe 'Inspect Bing gate affirm policy' {
     }
 }
 
+Describe 'Inspect Bing reviewer retrieval gate' {
+    It 'allows review when direct current files are readable with matching contentHash' {
+        $four = @('handoff.md', 'review-manifest.md', 'review-state.md', 'pack-diff.md')
+        $readable = @(
+            foreach ($n in $four) {
+                [PSCustomObject]@{ Name = $n; ContentHash = 'hash-current-1'; Product = 'ColleagueDataMover'; Source = 'direct' }
+            }
+        )
+        InModuleScope Metra -Parameters @{ Four = $four; Readable = $readable } {
+            $obs = [PSCustomObject]@{
+                FolderFound            = $true
+                Product                = 'ColleagueDataMover'
+                ResolvedArtifactNames  = $Four
+                GenerationContentHash  = 'hash-current-1'
+                ContentReaderAvailable = $true
+                MetadataOnly           = $false
+                ReadableArtifacts      = $Readable
+            }
+            $gate = Test-MetraInspectBingReviewerRetrievalGate -ExpectedProduct 'ColleagueDataMover' -ExpectedContentHash 'hash-current-1' -Observation $obs
+            $gate.Allowed | Should -BeTrue
+            $gate.ReasonCode | Should -BeNullOrEmpty
+            $gate.CurrentGenerationResolved | Should -BeTrue
+            $gate.ContentReadable | Should -BeTrue
+            $gate.EvidenceInspectedEligible | Should -BeTrue
+        }
+    }
+
+    It 'requires fallback when generation is resolved but content reader is unavailable' {
+        $four = @('handoff.md', 'review-manifest.md', 'review-state.md', 'pack-diff.md')
+        InModuleScope Metra -Parameters @{ Four = $four } {
+            $obs = [PSCustomObject]@{
+                FolderFound            = $true
+                Product                = 'ColleagueDataMover'
+                ResolvedArtifactNames  = $Four
+                GenerationContentHash  = 'hash-current-1'
+                ContentReaderAvailable = $false
+                MetadataOnly           = $false
+                ReadableArtifacts      = @()
+            }
+            $gate = Test-MetraInspectBingReviewerRetrievalGate -ExpectedProduct 'ColleagueDataMover' -ExpectedContentHash 'hash-current-1' -Observation $obs
+            $gate.Allowed | Should -BeFalse
+            $gate.ReasonCode | Should -Be 'content-reader-unavailable'
+            $gate.CurrentGenerationResolved | Should -BeTrue
+            $gate.ContentReadable | Should -BeFalse
+            $gate.Detail | Should -Match 'fallback|content reader unavailable'
+        }
+    }
+
+    It 'blocks stale indexed readable bodies that disagree with current DriveItem generation' {
+        $four = @('handoff.md', 'review-manifest.md', 'review-state.md', 'pack-diff.md')
+        $readable = @(
+            foreach ($n in $four) {
+                [PSCustomObject]@{ Name = $n; ContentHash = 'hash-old-9'; Product = 'ColleagueDataMover'; Source = 'indexed' }
+            }
+        )
+        InModuleScope Metra -Parameters @{ Four = $four; Readable = $readable } {
+            $obs = [PSCustomObject]@{
+                FolderFound            = $true
+                Product                = 'ColleagueDataMover'
+                ResolvedArtifactNames  = $Four
+                GenerationContentHash  = 'hash-current-1'
+                ContentReaderAvailable = $true
+                MetadataOnly           = $false
+                ReadableArtifacts      = $Readable
+            }
+            $gate = Test-MetraInspectBingReviewerRetrievalGate -ExpectedProduct 'ColleagueDataMover' -ExpectedContentHash 'hash-current-1' -Observation $obs
+            $gate.Allowed | Should -BeFalse
+            $gate.ReasonCode | Should -Be 'stale-index-only'
+            $gate.CurrentGenerationResolved | Should -BeTrue
+            $gate.ContentReadable | Should -BeFalse
+        }
+    }
+
+    It 'blocks when the four readable artifacts do not share contentHash' {
+        $four = @('handoff.md', 'review-manifest.md', 'review-state.md', 'pack-diff.md')
+        $mixed = @(
+            [PSCustomObject]@{ Name = 'handoff.md'; ContentHash = 'hash-a'; Product = 'ColleagueDataMover'; Source = 'direct' }
+            [PSCustomObject]@{ Name = 'review-manifest.md'; ContentHash = 'hash-a'; Product = 'ColleagueDataMover'; Source = 'direct' }
+            [PSCustomObject]@{ Name = 'review-state.md'; ContentHash = 'hash-b'; Product = 'ColleagueDataMover'; Source = 'direct' }
+            [PSCustomObject]@{ Name = 'pack-diff.md'; ContentHash = 'hash-a'; Product = 'ColleagueDataMover'; Source = 'direct' }
+        )
+        InModuleScope Metra -Parameters @{ Four = $four; Mixed = $mixed } {
+            $obs = [PSCustomObject]@{
+                FolderFound            = $true
+                Product                = 'ColleagueDataMover'
+                ResolvedArtifactNames  = $Four
+                GenerationContentHash  = 'hash-a'
+                ContentReaderAvailable = $true
+                MetadataOnly           = $false
+                ReadableArtifacts      = $Mixed
+            }
+            $gate = Test-MetraInspectBingReviewerRetrievalGate -ExpectedProduct 'ColleagueDataMover' -ExpectedContentHash 'hash-a' -Observation $obs
+            $gate.Allowed | Should -BeFalse
+            $gate.ReasonCode | Should -Be 'generation-mismatch'
+            $gate.Detail | Should -Match 'review-state\.md'
+        }
+    }
+
+    It 'allows review when readable fallback matches current contentHash' {
+        $four = @('handoff.md', 'review-manifest.md', 'review-state.md', 'pack-diff.md')
+        $readable = @(
+            foreach ($n in $four) {
+                [PSCustomObject]@{ Name = $n; ContentHash = 'hash-current-1'; Product = 'ColleagueDataMover'; Source = 'grounded' }
+            }
+        )
+        InModuleScope Metra -Parameters @{ Four = $four; Readable = $readable } {
+            $obs = [PSCustomObject]@{
+                FolderFound            = $true
+                Product                = 'ColleagueDataMover'
+                ResolvedArtifactNames  = $Four
+                GenerationContentHash  = 'hash-current-1'
+                ContentReaderAvailable = $true
+                MetadataOnly           = $false
+                ReadableArtifacts      = $Readable
+            }
+            $gate = Test-MetraInspectBingReviewerRetrievalGate -ExpectedProduct 'ColleagueDataMover' -ExpectedContentHash 'hash-current-1' -Observation $obs
+            $gate.Allowed | Should -BeTrue
+            $gate.ReasonCode | Should -BeNullOrEmpty
+            $gate.CurrentGenerationResolved | Should -BeTrue
+            $gate.ContentReadable | Should -BeTrue
+        }
+    }
+
+    It 'rejects same-named files from another product Share folder' {
+        $four = @('handoff.md', 'review-manifest.md', 'review-state.md', 'pack-diff.md')
+        $readable = @(
+            foreach ($n in $four) {
+                [PSCustomObject]@{ Name = $n; ContentHash = 'hash-current-1'; Product = 'OtherProduct'; Source = 'direct' }
+            }
+        )
+        InModuleScope Metra -Parameters @{ Four = $four; Readable = $readable } {
+            $obs = [PSCustomObject]@{
+                FolderFound            = $true
+                Product                = 'OtherProduct'
+                ResolvedArtifactNames  = $Four
+                GenerationContentHash  = 'hash-current-1'
+                ContentReaderAvailable = $true
+                MetadataOnly           = $false
+                ReadableArtifacts      = $Readable
+            }
+            $gate = Test-MetraInspectBingReviewerRetrievalGate -ExpectedProduct 'ColleagueDataMover' -ExpectedContentHash 'hash-current-1' -Observation $obs
+            $gate.Allowed | Should -BeFalse
+            $gate.ReasonCode | Should -Be 'folder-not-found'
+            $gate.CurrentGenerationResolved | Should -BeFalse
+        }
+    }
+
+    It 'treats metadata-only retrieval as not evidenceInspected and blocks review' {
+        $four = @('handoff.md', 'review-manifest.md', 'review-state.md', 'pack-diff.md')
+        InModuleScope Metra -Parameters @{ Four = $four } {
+            $obs = [PSCustomObject]@{
+                FolderFound            = $true
+                Product                = 'ColleagueDataMover'
+                ResolvedArtifactNames  = $Four
+                GenerationContentHash  = 'hash-current-1'
+                ContentReaderAvailable = $false
+                MetadataOnly           = $true
+                ReadableArtifacts      = @()
+            }
+            $gate = Test-MetraInspectBingReviewerRetrievalGate -ExpectedProduct 'ColleagueDataMover' -ExpectedContentHash 'hash-current-1' -Observation $obs
+            $gate.Allowed | Should -BeFalse
+            $gate.ReasonCode | Should -Be 'content-reader-unavailable'
+            $gate.CurrentGenerationResolved | Should -BeTrue
+            $gate.ContentReadable | Should -BeFalse
+            $gate.EvidenceInspectedEligible | Should -BeFalse
+            $gate.Detail | Should -Match 'evidenceInspected'
+        }
+    }
+
+    It 'surfaces ReasonCode for the retrieval stage that failed' {
+        InModuleScope Metra {
+            $missing = [PSCustomObject]@{
+                FolderFound            = $true
+                Product                = 'ColleagueDataMover'
+                ResolvedArtifactNames  = @('handoff.md', 'review-manifest.md')
+                GenerationContentHash  = 'hash-current-1'
+                ContentReaderAvailable = $true
+                MetadataOnly           = $false
+                ReadableArtifacts      = @()
+            }
+            $gateMissing = Test-MetraInspectBingReviewerRetrievalGate -ExpectedProduct 'ColleagueDataMover' -ExpectedContentHash 'hash-current-1' -Observation $missing
+            $gateMissing.Allowed | Should -BeFalse
+            $gateMissing.ReasonCode | Should -Be 'artifact-missing'
+            $gateMissing.Detail | Should -Match 'pack-diff\.md'
+
+            $noFolder = [PSCustomObject]@{
+                FolderFound            = $false
+                Product                = ''
+                ResolvedArtifactNames  = @()
+                GenerationContentHash  = ''
+                ContentReaderAvailable = $false
+                MetadataOnly           = $false
+                ReadableArtifacts      = @()
+            }
+            $gateFolder = Test-MetraInspectBingReviewerRetrievalGate -ExpectedProduct 'ColleagueDataMover' -ExpectedContentHash 'hash-current-1' -Observation $noFolder
+            $gateFolder.ReasonCode | Should -Be 'folder-not-found'
+        }
+    }
+}
+
 Describe 'Inspect Bing share mirror and external review' {
     It 'mirrors exact PackText on diff write and skips plan/agents' {
         InModuleScope Metra {
@@ -2647,8 +2874,25 @@ Describe 'Inspect Bing share mirror and external review' {
                 $handoffText | Should -Match 'reviewDepth:'
                 $handoffText | Should -Match '(?m)^ShareRoot:\s+'
                 $handoffText | Should -Match 'Authoritative reviewer retrieval'
+                $handoffText | Should -Match 'currentGenerationResolved'
+                $handoffText | Should -Match 'contentReadable'
                 $handoffText | Should -Match 'search-index freshness'
-                $handoffText | Should -Match 'direct SharePoint/OneDrive folder content is authoritative'
+                $handoffText | Should -Match 'Retrieval contract checklist'
+                $handoffText | Should -Match ([regex]::Escape("Documents/Metra/Share/$slot/"))
+                $handoffText | Should -Match 'Expected contentHash: hash-exact-1'
+                $handoffText | Should -Match 'stale-index-only'
+                $handoffText | Should -Match 'content-reader-unavailable'
+                $handoffText | Should -Match 'Direct DriveItem metadata alone is NOT'
+                $handoffText | Should -Match 'Never silently substitute stale indexed content'
+                $handoffText | Should -Match 'review\.md, if present, is the last imported review'
+                $handoffText | Should -Match '\[ \] current Share generation resolved'
+                $handoffText | Should -Match '\[ \] all contentHashes equal expected contentHash'
+                $names = @(Get-MetraInspectBingReviewArtifactNames)
+                $names.Count | Should -Be 4
+                $names[0] | Should -Be 'handoff.md'
+                foreach ($n in $names) {
+                    $handoffText | Should -Match ([regex]::Escape($n))
+                }
 
                 $shareManifest = Join-Path $shareRoot "Share\$slot\review-manifest.md"
                 $shareState = Join-Path $shareRoot "Share\$slot\review-state.md"
@@ -2701,6 +2945,68 @@ Describe 'Inspect Bing share mirror and external review' {
             }
             finally {
                 Remove-Item -LiteralPath $stateRoot -Recurse -Force -ErrorAction SilentlyContinue
+            }
+        }
+    }
+
+    It 'retires Share review.md to review.prior.md when contentHash differs from new generation' {
+        InModuleScope Metra {
+            $stateRoot = Join-Path $env:TEMP ("metra-share-rev-" + [guid]::NewGuid().ToString('n'))
+            $shareRoot = Join-Path $env:TEMP ("metra-share-rev-s-" + [guid]::NewGuid().ToString('n'))
+            New-Item -ItemType Directory -Path (Join-Path $shareRoot 'Share') -Force | Out-Null
+            Mock Get-MetraInspectStateRoot { $stateRoot }
+            Mock Get-MetraShareRoot { $shareRoot }
+            Mock Get-MetraInspectDiffContentHash { 'hash-new-gen-1' }
+            $slot = "ShareRev_$([guid]::NewGuid().ToString('N').Substring(0, 8))"
+            $shareDir = Join-Path $shareRoot "Share\$slot"
+            New-Item -ItemType Directory -Path $shareDir -Force | Out-Null
+            $oldReview = @"
+## $slot External Review
+contentHash: hash-old-gen-9
+verdict: approve
+"@
+            Write-MetraAtomicUtf8Text -Path (Join-Path $shareDir 'review.md') -Text $oldReview
+            try {
+                $null = Write-MetraInspectPackArtifact -PackText "# pack`ncontentHash: hash-new-gen-1`n" -SlotKey $slot -Mode 'diff' -NoClipboard -ContentHash 'hash-new-gen-1' -Confirm:$false
+                Test-Path -LiteralPath (Join-Path $shareDir 'review.md') | Should -BeFalse
+                $prior = Join-Path $shareDir 'review.prior.md'
+                Test-Path -LiteralPath $prior | Should -BeTrue
+                ([System.IO.File]::ReadAllText($prior)) | Should -Match 'hash-old-gen-9'
+                Test-Path -LiteralPath (Join-Path $shareDir 'pack-diff.md') | Should -BeTrue
+            }
+            finally {
+                Remove-Item -LiteralPath $stateRoot -Recurse -Force -ErrorAction SilentlyContinue
+                Remove-Item -LiteralPath $shareRoot -Recurse -Force -ErrorAction SilentlyContinue
+            }
+        }
+    }
+
+    It 'keeps Share review.md when contentHash already matches the new generation' {
+        InModuleScope Metra {
+            $stateRoot = Join-Path $env:TEMP ("metra-share-revk-" + [guid]::NewGuid().ToString('n'))
+            $shareRoot = Join-Path $env:TEMP ("metra-share-revk-s-" + [guid]::NewGuid().ToString('n'))
+            New-Item -ItemType Directory -Path (Join-Path $shareRoot 'Share') -Force | Out-Null
+            Mock Get-MetraInspectStateRoot { $stateRoot }
+            Mock Get-MetraShareRoot { $shareRoot }
+            Mock Get-MetraInspectDiffContentHash { 'hash-same-gen-1' }
+            $slot = "ShareRevK_$([guid]::NewGuid().ToString('N').Substring(0, 8))"
+            $shareDir = Join-Path $shareRoot "Share\$slot"
+            New-Item -ItemType Directory -Path $shareDir -Force | Out-Null
+            $sameReview = @"
+## $slot External Review
+contentHash: hash-same-gen-1
+verdict: changes-requested
+"@
+            Write-MetraAtomicUtf8Text -Path (Join-Path $shareDir 'review.md') -Text $sameReview
+            try {
+                $null = Write-MetraInspectPackArtifact -PackText "# pack`ncontentHash: hash-same-gen-1`n" -SlotKey $slot -Mode 'diff' -NoClipboard -ContentHash 'hash-same-gen-1' -Confirm:$false
+                Test-Path -LiteralPath (Join-Path $shareDir 'review.md') | Should -BeTrue
+                Test-Path -LiteralPath (Join-Path $shareDir 'review.prior.md') | Should -BeFalse
+                ([System.IO.File]::ReadAllText((Join-Path $shareDir 'review.md'))) | Should -Match 'hash-same-gen-1'
+            }
+            finally {
+                Remove-Item -LiteralPath $stateRoot -Recurse -Force -ErrorAction SilentlyContinue
+                Remove-Item -LiteralPath $shareRoot -Recurse -Force -ErrorAction SilentlyContinue
             }
         }
     }
@@ -3718,6 +4024,15 @@ Describe 'Inspect payload band' {
             Get-MetraInspectPayloadBand -EstimatedTotalChars 60001 | Should -Be 'PRUNE'
         }
     }
+
+    It 'maps assess TimeoutSec by payload band (GREEN 300; WARN/PRUNE 900)' {
+        InModuleScope Metra {
+            Get-MetraInspectAssessTimeoutSec -EstimatedPromptChars 1000 | Should -Be 300
+            Get-MetraInspectAssessTimeoutSec -EstimatedPromptChars 29999 | Should -Be 300
+            Get-MetraInspectAssessTimeoutSec -EstimatedPromptChars 30000 | Should -Be 900
+            Get-MetraInspectAssessTimeoutSec -EstimatedPromptChars 60001 | Should -Be 900
+        }
+    }
 }
 
 Describe 'Inspect rename collapse' {
@@ -3966,6 +4281,25 @@ Describe 'Inspect token economy rules docs' {
         }
         else {
             Set-ItResult -Inconclusive -Because 'local OCC overlay not present; example checked when available'
+        }
+    }
+}
+
+Describe 'Inspect test Share isolation' {
+    It 'routes unmocked Get-MetraShareRoot to the per-run temp Share root' {
+        InModuleScope Metra {
+            Get-MetraShareRoot | Should -Be $env:METRA_TEST_SHARE_ROOT
+        }
+    }
+
+    # Keep this Describe last: it proves no earlier test wrote to the operator's live Share\Metra.
+    It 'leaves the real Share\Metra artifacts untouched' {
+        if ($script:RealShareMetraStamps.Count -eq 0) {
+            Set-ItResult -Skipped -Because 'real Share\Metra folder not present on this machine'
+            return
+        }
+        foreach ($path in @($script:RealShareMetraStamps.Keys)) {
+            (Get-Item -LiteralPath $path).LastWriteTimeUtc | Should -Be $script:RealShareMetraStamps[$path] -Because "$path must not be written by tests"
         }
     }
 }
