@@ -984,9 +984,16 @@ function Get-MetraInspectAssessTimeoutSec {
     <#
     .SYNOPSIS
         Client TimeoutSec for Inspect assess by payload band (GREEN 300s; WARN/PRUNE 900s).
+        Optional override: METRA_INSPECT_ASSESS_TIMEOUT_SEC (30-900).
     #>
     [CmdletBinding()]
     param([Parameter(Mandatory)][int]$EstimatedPromptChars)
+
+    $overrideRaw = [string]$env:METRA_INSPECT_ASSESS_TIMEOUT_SEC
+    if ($overrideRaw -match '^\d+$') {
+        $override = [int]$overrideRaw
+        return [Math]::Min(900, [Math]::Max(30, $override))
+    }
 
     $band = Get-MetraInspectPayloadBand -EstimatedTotalChars $EstimatedPromptChars
     if ($band -eq 'GREEN') { return 300 }
@@ -2564,9 +2571,23 @@ function Invoke-MetraInspectDiff {
 
     $parsed = [PSCustomObject]@{ Ok = $true; Findings = @($engine.Findings) }
 
-    $inputHash = Get-MetraInspectInputHash -Parts @(
+    # Hash the same live reduced scrub pack uses (Get-MetraInspectReviewWorkingTreeInputHash).
+    # Pre-engine scrub can drift while Ask runs (long WARN/PRUNE budgets); packing against
+    # the pre-Ask hash then false-alarms "inputHash differs" and blocks Bing L1 (CDM E4a).
+    $promptInputHash = Get-MetraInspectInputHash -Parts @(
         $scrubbedFiles | ForEach-Object { [PSCustomObject]@{ path = $_.path; content = $_.content } }
     )
+    $baseForHash = $(if ($diff.Base) { [string]$diff.Base } elseif ($Base) { $Base } else { '' })
+    $inputHash = Get-MetraInspectReviewWorkingTreeInputHash -Root $ctx.Root -Base $baseForHash
+    if ($inputHash -ne $promptInputHash) {
+        Write-Host 'WARNING: Working tree inputHash changed during Ask assess; report hash uses post-Ask disk (pack-aligned). Findings were produced from the pre-Ask scrub.' -ForegroundColor Yellow
+    }
+
+    # Refresh reduce/scrub metadata from post-Ask disk using the same reduce as the pack hash
+    # path (no KeepPaths). Verify KeepPaths only narrows the Ask prompt, not the stored hash.
+    $diffAfter = Get-MetraInspectGitDiffFiles -Root $ctx.Root -Base $Base
+    $reducedAfter = Reduce-MetraInspectDiffFiles -Files @($diffAfter.Files)
+    $scrubbedAfter = @(ConvertTo-MetraInspectScrubbedDiffParts -Files $reducedAfter.Files)
 
     $stateRoot = Get-MetraInspectStateRoot
     $safeSlot = (($ctx.Project -replace '[^\w\.-]', '_').Trim('_'))
@@ -2580,18 +2601,18 @@ function Invoke-MetraInspectDiff {
         inspectedAtUtc      = [datetime]::UtcNow.ToString('o')
         project             = $ctx.Project
         root                = $ctx.Root
-        gitHead             = [string]$diff.GitHead
-        fileCount           = [int]$reduced.FileCount
-        reducedFileCount    = [int]$reduced.ReducedFileCount
-        skippedFileCount    = [int]$reduced.SkippedFileCount
-        truncated           = [bool]$reduced.Truncated
+        gitHead             = [string]$diffAfter.GitHead
+        fileCount           = [int]$reducedAfter.FileCount
+        reducedFileCount    = [int]$reducedAfter.ReducedFileCount
+        skippedFileCount    = [int]$reducedAfter.SkippedFileCount
+        truncated           = [bool]$reducedAfter.Truncated
         inputHash           = $inputHash
         contextLimited      = $false
-        base                = $(if ($diff.Base) { [string]$diff.Base } elseif ($Base) { $Base } else { '' })
-        baseMode            = [string](Get-MetraProp -Object $diff -Name 'BaseMode' -Default 'working-tree')
-        untrackedFileCount  = [int](Get-MetraProp -Object $diff -Name 'UntrackedCount' -Default 0)
-        workingTreeDirty    = [bool](Get-MetraProp -Object $diff -Name 'WorkingTreeDirty' -Default $false)
-        assessedFiles       = @($scrubbedFiles | ForEach-Object { $_.path })
+        base                = $baseForHash
+        baseMode            = [string](Get-MetraProp -Object $diffAfter -Name 'BaseMode' -Default 'working-tree')
+        untrackedFileCount  = [int](Get-MetraProp -Object $diffAfter -Name 'UntrackedCount' -Default 0)
+        workingTreeDirty    = [bool](Get-MetraProp -Object $diffAfter -Name 'WorkingTreeDirty' -Default $false)
+        assessedFiles       = @($scrubbedAfter | ForEach-Object { $_.path })
         reportPath          = $reportPath
     }
 
