@@ -292,7 +292,7 @@ Usage:
   .\metra.ps1 inspect loop [-Name Metra] [-Base <rev>] [-Reset] [-RunAll] [-MaxLoops <n>] [-WhatIf]
   .\metra.ps1 inspect prepare-bing [-Name Metra] [-Reset] [-Base <rev>]
   .\metra.ps1 bite start -Name Metra -Bite <id> [-Repos ...]
-  .\metra.ps1 bite commit -Name Metra -m "wip message"
+  .\metra.ps1 bite commit -Name Metra -Message "wip message"
   .\metra.ps1 bite pack -Name Metra
   .\metra.ps1 bite ship -Name Metra
   .\metra.ps1 bite status -Name Metra
