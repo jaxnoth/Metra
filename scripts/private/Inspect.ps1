@@ -7587,9 +7587,8 @@ function Invoke-MetraInspectAutoPack {
         if (-not [string]::IsNullOrWhiteSpace($Name)) {
             $packParams.Name = $Name.Trim()
         }
-        if (-not [string]::IsNullOrWhiteSpace($Base)) {
-            $packParams.Base = $Base
-        }
+        # Invoke-MetraInspectPack reads Base from the assess report provenance; do not pass -Base.
+        $null = $Base
         $pack = Invoke-MetraInspectPack @packParams
         $resolvedSlot = [string](Get-MetraProp -Object $pack -Name 'SlotKey' -Default $fallbackSlot)
         if ([string]::IsNullOrWhiteSpace($resolvedSlot)) { $resolvedSlot = $fallbackSlot }

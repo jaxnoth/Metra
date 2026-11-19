@@ -51,7 +51,7 @@ Describe 'Loom ship-cycle state and adversarial lock' {
         }
     }
 
-    It 'allows bypass only with matching lock pid and token' {
+    It 'allows bypass only with matching lock token (pid may differ for git hooks)' {
         InModuleScope Loom {
             $proj = 'ShipLock-' + [guid]::NewGuid().ToString('n').Substring(0, 8)
             $tuple = [PSCustomObject]@{

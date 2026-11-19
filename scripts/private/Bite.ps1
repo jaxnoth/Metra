@@ -24,6 +24,10 @@ function ConvertFrom-MetraBiteArgs {
 
     for ($i = 0; $i -lt @($ArgsRest).Count; $i++) {
         $tok = [string]$ArgsRest[$i]
+        $needsValue = $tok -match '^(?i)-Name$|^(?i)-Bite$|^(?i)-m$|^(?i)-Message$|^(?i)-ProjectRoot$|^(?i)-Summary$|^(?i)-TargetBranch$|^(?i)-ContentHash$|^(?i)-Verdict$'
+        if ($needsValue -and (($i + 1) -ge @($ArgsRest).Count)) {
+            throw ("bite flag {0} requires a value." -f $tok)
+        }
         switch -Regex ($tok) {
             '^(?i)-Name$' {
                 $i++; $map.Name = [string]$ArgsRest[$i]

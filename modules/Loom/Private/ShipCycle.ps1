@@ -166,7 +166,10 @@ function Resolve-LoomShipRepoRoots {
             [void]$list.Add([PSCustomObject]@{ Key = 'root'; Path = $ProjectRoot; Order = 100 })
             continue
         }
-        $path = Join-Path $ProjectRoot $key
+        $path = [System.IO.Path]::GetFullPath((Join-Path $ProjectRoot $key))
+        if (-not (Test-LoomPathWithinRoot -Path $path -Root $ProjectRoot)) {
+            throw ("bite repo path escaped project root: {0}" -f $path)
+        }
         if (-not (Test-Path -LiteralPath $path)) {
             throw "bite repo path missing: $path"
         }
@@ -175,7 +178,7 @@ function Resolve-LoomShipRepoRoots {
             'chef' { 20 }
             default { 50 }
         }
-        [void]$list.Add([PSCustomObject]@{ Key = $key; Path = [System.IO.Path]::GetFullPath($path); Order = $order })
+        [void]$list.Add([PSCustomObject]@{ Key = $key; Path = $path; Order = $order })
     }
     return @($list | Sort-Object Order, Key)
 }
@@ -308,7 +311,8 @@ function Test-LoomShipHookBypassAllowed {
     catch {
         return $false
     }
-    if ([int](Get-LoomProp -Object $lock -Name 'pid' -Default 0) -ne $PID) { return $false }
+    # Token + unexpired lock authorize; do not require lock.pid -eq $PID. Git pre-push
+    # hooks run in a child process and would fail a strict PID match.
     $token = [string](Get-LoomProp -Object $lock -Name 'token' -Default '')
     if ([string]::IsNullOrWhiteSpace($token) -or $token -ne [string]$env:METRA_LOOM_SHIP_TOKEN) { return $false }
     $expiresRaw = [string](Get-LoomProp -Object $lock -Name 'expiresAtUtc' -Default '')
@@ -554,11 +558,25 @@ function Invoke-LoomShipPack {
             [void]$rest.Add('-Base')
             [void]$rest.Add($baseSha)
         }
-        $prepare = Show-MetraInspectCli -Rest @($rest.ToArray()) -Name $Name
+        $cliParams = @{
+            Rest = @($rest.ToArray())
+            Name = $Name
+        }
+        if (-not [string]::IsNullOrWhiteSpace($baseSha)) { $cliParams.Base = $baseSha }
+        $prepare = Show-MetraInspectCli @cliParams
         $readyForBing = [bool](Get-LoomProp -Object $prepare -Name 'readyForBing' -Default $false)
         $packPath = [string](Get-LoomProp -Object $prepare -Name 'packPath' -Default '')
+        $skippedNoDiff = [bool](Get-LoomProp -Object $prepare -Name 'skipped' -Default $false) -and
+            ([string](Get-LoomProp -Object $prepare -Name 'reason' -Default '') -eq 'no-diff')
+        if ($skippedNoDiff) {
+            $rangeCheck = Invoke-LoomGit -ProjectRoot $root -GitArgs @('diff', '--name-only', "$baseSha...$headSha")
+            if ($rangeCheck.ExitCode -ne 0) { throw (Get-LoomGitErrorDetail $rangeCheck) }
+            if (-not [string]::IsNullOrWhiteSpace([string]$rangeCheck.Stdout)) {
+                throw ("bite pack: Inspect reported no-diff but {0}...{1} has changes. Re-run pack with Inspect loaded." -f $baseSha.Substring(0, [Math]::Min(8, $baseSha.Length)), $headSha.Substring(0, [Math]::Min(8, $headSha.Length)))
+            }
+        }
         $contentHash = Get-LoomShipInspectSlotContentHash -Project $Name
-        if ([string]::IsNullOrWhiteSpace($contentHash) -and (Get-Command Get-MetraInspectDiffContentHash -ErrorAction SilentlyContinue)) {
+        if (-not $skippedNoDiff -and [string]::IsNullOrWhiteSpace($contentHash) -and (Get-Command Get-MetraInspectDiffContentHash -ErrorAction SilentlyContinue)) {
             try {
                 $contentHash = Get-MetraInspectDiffContentHash -SlotKey $Name
             }
@@ -566,12 +584,17 @@ function Invoke-LoomShipPack {
                 $contentHash = $null
             }
         }
+        # Never bind a stale slot hash when prepare skipped.
+        if ($skippedNoDiff) { $contentHash = $null }
     }
     elseif ($SkipInspectEngine -or -not $inspectCli) {
         if (-not $SkipInspectEngine -and -not $inspectCli) {
             Write-Warning 'bite pack: Show-MetraInspectCli not loaded; using offline Base...HEAD content hash (not a Bing pack).'
         }
-        # Deterministic fallback for tests / offline: hash of Base...HEAD patch.
+    }
+
+    if ([string]::IsNullOrWhiteSpace($contentHash)) {
+        # Deterministic fallback / offline: hash of Base...HEAD patch.
         $diff = Invoke-LoomGit -ProjectRoot $root -GitArgs @('diff', '--binary', "$baseSha...$headSha")
         if ($diff.ExitCode -ne 0) { throw (Get-LoomGitErrorDetail $diff) }
         $sha = [System.Security.Cryptography.SHA256]::Create()
@@ -582,8 +605,10 @@ function Invoke-LoomShipPack {
         finally {
             $sha.Dispose()
         }
-        $readyForBing = [bool]$SkipInspectEngine
-        $packPath = '(offline-range-hash)'
+        if ([string]::IsNullOrWhiteSpace($packPath)) {
+            $packPath = '(offline-range-hash)'
+            if (-not $prepare) { $readyForBing = [bool]$SkipInspectEngine }
+        }
     }
 
     if ([string]::IsNullOrWhiteSpace($contentHash)) {
