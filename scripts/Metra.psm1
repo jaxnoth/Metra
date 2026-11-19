@@ -271,6 +271,7 @@ $script:MetraCompatibilityFunctions = @(
     'Invoke-MetraNarrativeCommand',
     'Invoke-MetraFutureCommand',
     'Invoke-MetraLoomCommand',
+    'Invoke-MetraBiteCommand',
     'Invoke-MetraLoomImplementer',
     'Invoke-MetraYarnCommand',
     'Invoke-MetraAzdoCommand',

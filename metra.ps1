@@ -37,7 +37,7 @@ param(
     [ValidateSet(
         'list', 'status', 'pull', 'fetch', 'run', 'new', 'apply', 'workspace',
         'audit', 'snapshot', 'selfdoc', 'ops', 'host', 'chats', 'roots', 'paths', 'export', 'routing',
-        'export-profile', 'import-profile', 'ctx', 'setup', 'verify', 'security-audit', 'unblock', 'tailscale', 'satellite', 'desk', 'profile', 'decisions', 'coverage', 'ask', 'capture', 'memory', 'brief', 'narrative', 'watch', 'inspect', 'azdo', 'atlas', 'loom', 'yarn', 'plan-board', 'porter', 'autoprogram', 'future', 'help'
+        'export-profile', 'import-profile', 'ctx', 'setup', 'verify', 'security-audit', 'unblock', 'tailscale', 'satellite', 'desk', 'profile', 'decisions', 'coverage', 'ask', 'capture', 'memory', 'brief', 'narrative', 'watch', 'inspect', 'azdo', 'atlas', 'loom', 'bite', 'yarn', 'plan-board', 'porter', 'autoprogram', 'future', 'help'
     )]
     [string]$Command = 'help',
 
@@ -290,7 +290,12 @@ Usage:
       Knowledge coverage visibility (AGENTS / serves / decisions / uncovered) - counts and gap lists, not a score.
   .\metra.ps1 inspect [-Name Metra] [-Base <rev>] [-WhatIf]
   .\metra.ps1 inspect loop [-Name Metra] [-Base <rev>] [-Reset] [-RunAll] [-MaxLoops <n>] [-WhatIf]
-  .\metra.ps1 inspect prepare-bing [-Name Metra] [-Reset]
+  .\metra.ps1 inspect prepare-bing [-Name Metra] [-Reset] [-Base <rev>]
+  .\metra.ps1 bite start -Name Metra -Bite <id> [-Repos ...]
+  .\metra.ps1 bite commit -Name Metra -m "wip message"
+  .\metra.ps1 bite pack -Name Metra
+  .\metra.ps1 bite ship -Name Metra
+  .\metra.ps1 bite status -Name Metra
   .\metra.ps1 inspect pre-commit [-Name Metra]
   .\metra.ps1 inspect gate affirm|status [-Name Metra]
   .\metra.ps1 inspect review import|status [-Name Metra] [-Clipboard] [-Text <markdown>] [-Path <review.md>]
@@ -1393,6 +1398,20 @@ switch ($Command) {
         else {
             $result | Format-List
         }
+    }
+
+    'bite' {
+        if (-not $Rest -or $Rest.Count -eq 0) {
+            throw "bite requires a subcommand. Example: .\metra.ps1 bite status -Name Metra"
+        }
+        $sub = $Rest[0]
+        $subArgs = @()
+        if ($Rest.Count -gt 1) {
+            $subArgs = @($Rest[1..($Rest.Count - 1)])
+        }
+        $result = Invoke-MetraBiteCommand -Subcommand $sub -ArgsRest $subArgs -Name $Name
+        if ($null -eq $result) { return }
+        $result | Format-List
     }
 
     'yarn' {

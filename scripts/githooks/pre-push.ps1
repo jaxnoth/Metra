@@ -94,6 +94,12 @@ try {
     # Prior git probes in this hook (e.g. config --get-all metra.root) may leave
     # $LASTEXITCODE=1. In-process & of metra.ps1 does not always reset it on success.
     $LASTEXITCODE = 0
+    $projLeaf = Split-Path -Leaf $repoRoot
+    & $metra inspect pre-push -Name $projLeaf
+    if (-not $? -or $LASTEXITCODE -ne 0) {
+        Write-Error 'pre-push blocked: protected-branch / ship-lock guard failed.'
+        exit 1
+    }
     # -Force maps to FailOnFindings in metra.ps1 security-audit
     & $metra security-audit -Force -Path $repoRoot
     if (-not $? -or $LASTEXITCODE -ne 0) {

@@ -18,6 +18,14 @@ Entry shape:
 
 ---
 
+## 2026-11-18 - Loom ship-cycle owns protected landing; desk bite façade
+
+- Decision: Meaningful code lands on protected branches only through **Loom ship-cycle** (`Invoke-LoomShip`). Desk agents use `.\metra.ps1 bite start|commit|pack|ship|status` as a thin façade over the same helpers and **bypass Yarn scheduler** (Pulse/Daily), not governance. Yarn/Surveyor Approve remains required for unattended Loom queue ingest only - not for desk bite.
+- Decision: Work branches (`bite/*`, `loom/*`, `autoprogram/*`) use fast safety pre-commit only (no Bing gate). Protected branches (registry `protectedBranches`) refuse direct commits/pushes unless a short-lived ship lock written by `Invoke-LoomShip` is valid for this PID/token. `METRA_LOOM_SHIP=1` alone is **not** authorization.
+- Decision: `bite pack` / prepare-bing `-Base` binds review to the immutable tuple `(targetBranch, workBranch, baseSha, headSha, contentHash)`. Ship auto-affirms only when imported machine `verdict` is `approve`, hashes/SHAs match, contract shape holds, and `ownerAffirmPaths` (if any) were not touched. Reviewer prose never ships. Pulse may call ship pack for Base-bound prep but must not ship.
+- Why: Per-commit Bing affirm forced large commits; working-tree packs went stale mid-review. One Loom-owned path keeps desk and queue consistent.
+- See: `modules/Loom/Private/ShipCycle.ps1`; `scripts/private/Bite.ps1`; [docs/playbooks/inspect-loop.md](playbooks/inspect-loop.md); [plans/branch-dev-cycle.plan.md](../plans/branch-dev-cycle.plan.md). Supersedes "Bing affirm is the operator manual gate before every commit" and "Never auto-affirm" for the ship-cycle path only.
+
 ## 2026-11-12 - Ani originating briefs stay local; working-notes write path
 
 - Decision: Full Ani emotion brief archive is **operator-private** at `docs/Ani-Emotion-Briefs-Originating.local.md` (covered by `docs/*.local.md` gitignore). Tracked `docs/Ani-Emotion-Briefs-Originating.md` is a public index/stub only - no first name, Notion URLs, or local screenshot paths. Presentation links point at the index and name the local archive.

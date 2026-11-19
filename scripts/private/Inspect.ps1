@@ -7574,6 +7574,7 @@ function Invoke-MetraInspectAutoPack {
     [CmdletBinding()]
     param(
         [string]$Name,
+        [string]$Base,
         [switch]$NoClipboard
     )
     $fallbackSlot = if ([string]::IsNullOrWhiteSpace($Name)) { 'default' } else { $Name.Trim() }
@@ -7585,6 +7586,9 @@ function Invoke-MetraInspectAutoPack {
         }
         if (-not [string]::IsNullOrWhiteSpace($Name)) {
             $packParams.Name = $Name.Trim()
+        }
+        if (-not [string]::IsNullOrWhiteSpace($Base)) {
+            $packParams.Base = $Base
         }
         $pack = Invoke-MetraInspectPack @packParams
         $resolvedSlot = [string](Get-MetraProp -Object $pack -Name 'SlotKey' -Default $fallbackSlot)
@@ -7615,6 +7619,7 @@ function Invoke-MetraInspectPrepareForBing {
     [CmdletBinding()]
     param(
         [string]$Name,
+        [string]$Base,
         [switch]$Reset
     )
 
@@ -7624,15 +7629,16 @@ function Invoke-MetraInspectPrepareForBing {
     if ([string]::IsNullOrWhiteSpace($slotKey)) { $slotKey = 'default' }
 
     $fixQueuePath = Join-Path (Resolve-MetraInspectReviewSlotRoot -SlotKey $slotKey).SlotRoot 'fix-queue.json'
+    $baseForLive = $Base
 
     if (-not $Reset) {
         $existing = Get-MetraInspectReviewLoopState -SlotKey $slotKey
         if ($null -ne $existing -and $existing.active -eq $false -and -not [string]::IsNullOrWhiteSpace([string]$existing.TerminationReason)) {
-            $live = Get-MetraInspectCurrentDiffInput -ProjectContext $ctx
+            $live = Get-MetraInspectCurrentDiffInput -ProjectContext $ctx -Base $baseForLive
             $assess = Get-MetraInspectSlotDiffAssess -SlotKey $slotKey
             if ($null -ne $assess -and $live.inputHash -eq $assess.inputHash) {
                 Write-Host 'Prepare-for-Bing: reusing completed loop session - refreshing pack...' -ForegroundColor Cyan
-                $packResult = Invoke-MetraInspectAutoPack -Name $slotKey -NoClipboard
+                $packResult = Invoke-MetraInspectAutoPack -Name $slotKey -Base $baseForLive -NoClipboard
                 return [PSCustomObject]@{
                     readyForBing      = $true
                     project           = $slotKey
@@ -7645,6 +7651,7 @@ function Invoke-MetraInspectPrepareForBing {
                     packPath          = [string]$packResult.packPath
                     packBuilt         = [bool]$packResult.ok
                     reusedSession     = $true
+                    base              = $baseForLive
                 }
             }
             Write-Host 'Prepare-for-Bing: working tree changed since completed session - re-assessing...' -ForegroundColor Yellow
@@ -7659,6 +7666,7 @@ function Invoke-MetraInspectPrepareForBing {
             MaxLoops = 5
         }
         if ($Reset) { $loopParams.Reset = $true }
+        if (-not [string]::IsNullOrWhiteSpace($Base)) { $loopParams.Base = $Base }
         $state = Invoke-MetraInspectReviewLoop @loopParams
     }
     catch {
@@ -7683,7 +7691,7 @@ function Invoke-MetraInspectPrepareForBing {
     $goalMet = ($critical -eq 0 -and $high -eq 0 -and $medium -le 2)
 
     Write-Host 'Prepare-for-Bing: auto-building Bing pack...' -ForegroundColor Cyan
-    $packResult = Invoke-MetraInspectAutoPack -Name $slotKey -NoClipboard
+    $packResult = Invoke-MetraInspectAutoPack -Name $slotKey -Base $baseForLive -NoClipboard
     $packPath = [string]$packResult.packPath
 
     if ($active -and $phase -eq 'AwaitingFix') {
@@ -7699,6 +7707,7 @@ function Invoke-MetraInspectPrepareForBing {
             packPath           = $packPath
             packBuilt          = [bool]$packResult.ok
             grade              = [string](Get-MetraProp -Object $state -Name 'FinalGrade' -Default '')
+            base               = $baseForLive
         }
     }
 
@@ -7718,6 +7727,7 @@ function Invoke-MetraInspectPrepareForBing {
             packPath           = $packPath
             packBuilt          = [bool]$packResult.ok
             fixQueuePath       = $fixQueuePath
+            base               = $baseForLive
         }
     }
 
@@ -7727,6 +7737,7 @@ function Invoke-MetraInspectPrepareForBing {
         phase        = [string]$phase
         critical     = $critical
         high         = $high
+        base         = $baseForLive
         medium       = $medium
         low          = $low
         fixQueuePath = $fixQueuePath
@@ -7735,10 +7746,80 @@ function Invoke-MetraInspectPrepareForBing {
     }
 }
 
+function Test-MetraInspectFastSafetyStaged {
+    [CmdletBinding()]
+    param([Parameter(Mandatory)][string]$Root)
+
+    $names = @(& git -C $Root diff --cached --name-only 2>$null)
+    $blocked = @(
+        'generated/restricted/',
+        '.authoring/',
+        '.runtime.properties'
+    )
+    $hits = New-Object System.Collections.Generic.List[string]
+    foreach ($n in @($names)) {
+        $rel = ([string]$n -replace '\\', '/')
+        if ([string]::IsNullOrWhiteSpace($rel)) { continue }
+        foreach ($b in $blocked) {
+            if ($rel -like ("*{0}*" -f $b.TrimEnd('/')) -or $rel -like ("*{0}" -f $b)) {
+                [void]$hits.Add($rel)
+            }
+        }
+        if ($rel -match '(?i)\.runtime\.properties$') { [void]$hits.Add($rel) }
+        $full = Join-Path $Root $rel
+        if (Test-Path -LiteralPath $full -PathType Leaf) {
+            $len = (Get-Item -LiteralPath $full).Length
+            if ($len -gt 5MB) { [void]$hits.Add(("{0} (oversized {1} bytes)" -f $rel, $len)) }
+        }
+    }
+    return @($hits | Select-Object -Unique)
+}
+
+function Invoke-MetraInspectPrePushHook {
+    <#
+    .SYNOPSIS
+        Git pre-push: refuse protected branch unless valid ship lock is present.
+    #>
+    [CmdletBinding()]
+    param([string]$Name)
+
+    if ($env:METRA_SKIP_SECURITY_PUSH -eq '1' -or $env:METRA_SKIP_INSPECT_HOOK -eq '1') {
+        return [PSCustomObject]@{ ok = $true; skipped = $true; reason = 'env-skip' }
+    }
+
+    $ctx = Resolve-MetraInspectProjectContext -Name $Name -Mode diff
+    if (-not $ctx.Ok) { throw $ctx.Error }
+    $slotKey = [string]$ctx.Project
+    $root = [string]$ctx.Root
+    $branch = [string](@(& git -C $root rev-parse --abbrev-ref HEAD 2>$null) | Select-Object -First 1).Trim()
+
+    $policyProtected = @()
+    if (Get-Command Get-LoomShipProjectPolicy -ErrorAction SilentlyContinue) {
+        try { $policyProtected = @((Get-LoomShipProjectPolicy -RegistryName $slotKey).protectedBranches) } catch { }
+    }
+    $isProtected = $false
+    foreach ($p in @($policyProtected)) {
+        if ([string]::Equals($branch, [string]$p, [StringComparison]::OrdinalIgnoreCase)) { $isProtected = $true; break }
+    }
+    if (-not $isProtected) {
+        return [PSCustomObject]@{ ok = $true; reason = 'not-protected'; branch = $branch }
+    }
+
+    $bypass = $false
+    if (Get-Command Test-LoomShipHookBypassAllowed -ErrorAction SilentlyContinue) {
+        $bypass = Test-LoomShipHookBypassAllowed -Project $slotKey -RepoRoot $root
+    }
+    if (-not $bypass) {
+        throw 'Pre-push blocked: protected branch requires Invoke-LoomShip lock (bare METRA_LOOM_SHIP=1 is not authorization).'
+    }
+    Write-Host 'Pre-push: protected branch ship lock OK.' -ForegroundColor Green
+    return [PSCustomObject]@{ ok = $true; reason = 'ship-lock'; branch = $branch }
+}
+
 function Invoke-MetraInspectPreCommitHook {
     <#
     .SYNOPSIS
-        Git pre-commit: require Bing affirm for the assessed report; live tree drift warns only.
+        Git pre-commit: branch-class aware (work safety / protected refuse / legacy Bing).
     #>
     [CmdletBinding()]
     param(
@@ -7754,7 +7835,62 @@ function Invoke-MetraInspectPreCommitHook {
     if (-not $ctx.Ok) { throw $ctx.Error }
     $slotKey = [string]$ctx.Project
     if ([string]::IsNullOrWhiteSpace($slotKey)) { $slotKey = 'default' }
+    $root = [string]$ctx.Root
 
+    $branch = [string](@(& git -C $root rev-parse --abbrev-ref HEAD 2>$null) | Select-Object -First 1).Trim()
+    $policyProtected = @()
+    if (Get-Command Get-LoomShipProjectPolicy -ErrorAction SilentlyContinue) {
+        try { $policyProtected = @((Get-LoomShipProjectPolicy -RegistryName $slotKey).protectedBranches) } catch { $policyProtected = @() }
+    }
+    elseif (Get-Command Get-MetraProjectRegistry -ErrorAction SilentlyContinue) {
+        try {
+            $reg = Get-MetraProjectRegistry
+            $entry = @($reg.projects | Where-Object { $_.name -eq $slotKey } | Select-Object -First 1)
+            if ($entry) { $policyProtected = @($entry.protectedBranches) }
+        }
+        catch { }
+    }
+
+    $isWork = $false
+    if (Get-Command Test-LoomWorkBranchName -ErrorAction SilentlyContinue) {
+        $isWork = Test-LoomWorkBranchName -Branch $branch
+    }
+    else {
+        $b = $branch.Replace('\', '/')
+        $isWork = ($b -like 'bite/*' -or $b -like 'loom/*' -or $b -like 'autoprogram/*')
+    }
+
+    $isProtected = $false
+    foreach ($p in @($policyProtected)) {
+        if ([string]::Equals($branch, [string]$p, [StringComparison]::OrdinalIgnoreCase)) { $isProtected = $true; break }
+    }
+
+    if ($isWork) {
+        $hits = @(Test-MetraInspectFastSafetyStaged -Root $root)
+        if ($hits.Count -gt 0) {
+            Write-Host 'COMMIT BLOCKED - work-branch fast safety failed:' -ForegroundColor Red
+            $hits | ForEach-Object { Write-Host ("  - {0}" -f $_) }
+            throw 'Pre-commit blocked: work-branch-safety.'
+        }
+        Write-Host 'Pre-commit: work branch - fast safety OK (no Bing gate).' -ForegroundColor Green
+        return [PSCustomObject]@{ ok = $true; reason = 'work-branch-safety'; branch = $branch }
+    }
+
+    if ($isProtected) {
+        $bypass = $false
+        if (Get-Command Test-LoomShipHookBypassAllowed -ErrorAction SilentlyContinue) {
+            $bypass = Test-LoomShipHookBypassAllowed -Project $slotKey -RepoRoot $root
+        }
+        if (-not $bypass) {
+            Write-Host 'COMMIT BLOCKED - protected branch refuses direct commits.' -ForegroundColor Red
+            Write-Host '  Use bite ship / Loom ship-cycle (Invoke-LoomShip). Bare METRA_LOOM_SHIP=1 is not enough.' -ForegroundColor DarkYellow
+            throw 'Pre-commit blocked: protected-branch.'
+        }
+        Write-Host 'Pre-commit: protected branch ship lock OK.' -ForegroundColor Green
+        return [PSCustomObject]@{ ok = $true; reason = 'ship-lock'; branch = $branch }
+    }
+
+    # Legacy path: projects without protectedBranches keep Bing affirm gate.
     $live = Get-MetraInspectCurrentDiffInput -ProjectContext $ctx
     if ($live.empty) {
         Write-Host 'Pre-commit: no inspectable diff - OK.'
@@ -7858,6 +7994,10 @@ function Show-MetraInspectCli {
         $mode = 'pre-commit'
         $i = 1
     }
+    elseif ($argsRest.Count -gt 0 -and $argsRest[0] -ieq 'pre-push') {
+        $mode = 'pre-push'
+        $i = 1
+    }
     elseif ($argsRest.Count -gt 0 -and $argsRest[0] -ieq 'review') {
         $mode = 'review'
         $i = 1
@@ -7936,6 +8076,11 @@ function Show-MetraInspectCli {
         if ($mode -eq 'prepare-bing' -and $tok -ieq '-Reset') {
             $reset = $true
             $i++
+            continue
+        }
+        if ($mode -eq 'prepare-bing' -and $tok -ieq '-Base' -and ($i + 1) -lt $argsRest.Count) {
+            $baseRev = [string]$argsRest[$i + 1]
+            $i += 2
             continue
         }
         if ($mode -eq 'loop' -and $tok -ieq '-Reset') {
@@ -8096,13 +8241,21 @@ function Show-MetraInspectCli {
             return Invoke-MetraInspectReviewLoopRecordFix @recParams @common
         }
         'prepare-bing' {
-            return Invoke-MetraInspectPrepareForBing -Name $projectName -Reset:$reset
+            $prepParams = @{
+                Name  = $projectName
+                Reset = $reset
+            }
+            if (-not [string]::IsNullOrWhiteSpace($baseRev)) { $prepParams.Base = $baseRev }
+            return Invoke-MetraInspectPrepareForBing @prepParams
         }
         'budget' {
             return Invoke-MetraInspectBudget -Name $projectName -Base $baseRev @common
         }
         'pre-commit' {
             return Invoke-MetraInspectPreCommitHook -Name $projectName
+        }
+        'pre-push' {
+            return Invoke-MetraInspectPrePushHook -Name $projectName
         }
         'review' {
             if ($reviewSub -eq 'import') {

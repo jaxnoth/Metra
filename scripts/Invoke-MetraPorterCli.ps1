@@ -258,7 +258,21 @@ function Invoke-PorterInspectPrep {
     Import-Module $psd1 -Force
     $result = $null
     try {
-        $result = Show-MetraInspectCli -Rest @('prepare-bing') -Name 'Metra'
+        # Queue Pulse hop: when Loom ship-cycle state exists on a work branch, pack Base...HEAD.
+        $shipState = $null
+        if (Get-Command Get-LoomShipState -ErrorAction SilentlyContinue) {
+            try { $shipState = Get-LoomShipState -Project 'Metra' } catch { $shipState = $null }
+        }
+        if ($shipState -and -not [string]::IsNullOrWhiteSpace([string]$shipState.baseSha)) {
+            $result = Invoke-LoomShipPack -Name 'Metra' -Reset
+            if ($null -eq $result) { $result = [pscustomobject]@{ readyForBing = $false } }
+            elseif (-not ($result.PSObject.Properties['readyForBing'])) {
+                $result | Add-Member -NotePropertyName readyForBing -NotePropertyValue ([bool]$result.ok) -Force
+            }
+        }
+        else {
+            $result = Show-MetraInspectCli -Rest @('prepare-bing') -Name 'Metra'
+        }
     }
     catch {
         $err = [string]$_.Exception.Message

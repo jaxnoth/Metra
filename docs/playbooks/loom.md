@@ -168,8 +168,13 @@ When upgrading from AutoProgram storage layout:
 | When | Prefix |
 |------|--------|
 | New enqueue | `loom/{project}/{date}/{id}` |
+| Desk bite (scheduler bypass) | `bite/{project}/{bite-id}` via `.\metra.ps1 bite *` |
 | Existing in-flight items | `autoprogram/...` preserved in JSON |
-| Runner checkout | Accepts both `loom/` and `autoprogram/` |
+| Runner checkout | Accepts `bite/`, `loom/`, and `autoprogram/` |
+
+## Ship cycle (shared with desk bite)
+
+Loom owns `modules/Loom/Private/ShipCycle.ps1`. Desk `metra bite` and queue `daily approve -Merge` call the same helpers. Protected landing requires `Invoke-LoomShip` after a Base-bound pack and machine `verdict: approve`. See [inspect-loop.md](inspect-loop.md) and Decisions 2026-11-18.
 
 ## Deprecated CLI
 
