@@ -263,6 +263,7 @@ function Invoke-PorterInspectPrep {
         if (Get-Command Get-LoomShipState -ErrorAction SilentlyContinue) {
             try { $shipState = Get-LoomShipState -Project 'Metra' } catch { $shipState = $null }
         }
+        $useShipPack = $false
         if ($shipState -and -not [string]::IsNullOrWhiteSpace([string]$shipState.baseSha)) {
             $workBranch = [string]$shipState.workBranch
             $curBranch = ''
@@ -270,9 +271,14 @@ function Invoke-PorterInspectPrep {
                 $curBranch = ((& git -C $Root rev-parse --abbrev-ref HEAD 2>$null) | Out-String).Trim()
             }
             catch { $curBranch = '' }
-            if (-not [string]::IsNullOrWhiteSpace($workBranch) -and $curBranch -ne $workBranch) {
-                throw ("Porter prep: ship state expects branch {0}; current is {1}." -f $workBranch, $curBranch)
+            if ([string]::IsNullOrWhiteSpace($workBranch) -or $curBranch -eq $workBranch) {
+                $useShipPack = $true
             }
+            else {
+                Write-Warning ("Porter prep: ship state expects {0}; current is {1} - falling back to prepare-bing." -f $workBranch, $curBranch)
+            }
+        }
+        if ($useShipPack) {
             $result = Invoke-LoomShipPack -Name 'Metra' -ProjectRoot $Root -Reset
             if ($null -eq $result) { $result = [pscustomobject]@{ readyForBing = $false } }
             elseif (-not ($result.PSObject.Properties['readyForBing'])) {
