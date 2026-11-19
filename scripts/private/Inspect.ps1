@@ -7803,8 +7803,11 @@ function Invoke-MetraInspectPrePushHook {
     $policyResolved = $false
     if (Get-Command Get-LoomShipProjectPolicy -ErrorAction SilentlyContinue) {
         try {
-            $policyProtected = @((Get-LoomShipProjectPolicy -RegistryName $slotKey).protectedBranches)
-            $policyResolved = $true
+            $policy = Get-LoomShipProjectPolicy -RegistryName $slotKey
+            if ($null -ne $policy) {
+                $policyProtected = @($policy.protectedBranches)
+                $policyResolved = $true
+            }
         }
         catch { $policyProtected = @() }
     }
@@ -8111,7 +8114,7 @@ function Show-MetraInspectCli {
             continue
         }
         if ($mode -eq 'prepare-bing' -and $tok -ieq '-Base' -and ($i + 1) -lt $argsRest.Count) {
-            $baseRev = [string]$argsRest[$i + 1]
+            $baseFromRest = [string]$argsRest[$i + 1]
             $i += 2
             continue
         }

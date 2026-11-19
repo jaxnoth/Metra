@@ -86,21 +86,18 @@ foreach ($line in $pushLines) {
     }
 }
 
-if (-not (Test-MetraPublicGitRemoteUrl -Url $effectiveRemote)) {
-    # Private remotes (e.g. Azure DevOps) are not blocked here; still run audit when this checkout is Metra itself.
-    $isMetraRoot = Test-Path -LiteralPath (Join-Path $repoRoot 'metra.ps1')
-    if (-not $isMetraRoot) {
-        exit 0
-    }
-}
-
 $metra = Resolve-MetraPrePushScript -RepoRoot $repoRoot
 if (-not $metra) {
     Write-Error 'pre-push: metra.ps1 not found. Set METRA_ROOT or run inspect hooks install.'
     exit 1
 }
 
-Write-Host ("pre-push: security-audit (public/Metra push gate) remote={0}" -f $(if ($remoteUrl) { $remoteUrl } else { $remoteName }))
+$isPublicRemote = Test-MetraPublicGitRemoteUrl -Url $effectiveRemote
+$isMetraRoot = Test-Path -LiteralPath (Join-Path $repoRoot 'metra.ps1')
+# Protected-branch ship-lock runs for every remote. Public security-audit stays public/Metra-only.
+$runSecurityAudit = $isPublicRemote -or $isMetraRoot
+
+Write-Host ("pre-push: protected-branch check remote={0}" -f $(if ($remoteUrl) { $remoteUrl } else { $remoteName }))
 Push-Location $repoRoot
 try {
     # Prior git probes in this hook (e.g. config --get-all metra.root) may leave
@@ -118,6 +115,10 @@ try {
         Write-Error 'pre-push blocked: protected-branch / ship-lock guard failed.'
         exit 1
     }
+    if (-not $runSecurityAudit) {
+        exit 0
+    }
+    Write-Host ("pre-push: security-audit (public/Metra push gate) remote={0}" -f $(if ($remoteUrl) { $remoteUrl } else { $remoteName }))
     # -Force maps to FailOnFindings in metra.ps1 security-audit
     & $metra security-audit -Force -Path $repoRoot
     if (-not $? -or $LASTEXITCODE -ne 0) {

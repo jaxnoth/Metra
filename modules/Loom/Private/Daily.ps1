@@ -1201,7 +1201,15 @@ function Invoke-MetraLoomDailyApprove {
                     $projectRoot = [System.IO.Path]::GetFullPath([string]$act.item.project.root)
                     $branch = [string](Get-LoomProp -Object $act.item.execution -Name 'branch' -Default '')
                     $completed = [string](Get-LoomProp -Object $act.item.execution -Name 'completedCommit' -Default '')
-                    $mergeResult = Invoke-LoomDailyMerge -ProjectRoot $projectRoot -Branch $branch -CompletedCommit $completed
+                    $registryName = $null
+                    if (Get-Command Get-MetraLoomQueueItemProjectKey -ErrorAction SilentlyContinue) {
+                        try { $registryName = Get-MetraLoomQueueItemProjectKey -Item $act.item } catch { $registryName = $null }
+                    }
+                    if ([string]::IsNullOrWhiteSpace($registryName)) {
+                        $registryName = [string](Get-LoomProp -Object $act.item.project -Name 'name' -Default '')
+                    }
+                    if ([string]::IsNullOrWhiteSpace($registryName)) { $registryName = 'Metra' }
+                    $mergeResult = Invoke-LoomDailyMerge -ProjectRoot $projectRoot -Branch $branch -CompletedCommit $completed -RegistryName $registryName
                     if ($rec) {
                         $rec.merge = [PSCustomObject]@{
                             requested   = $true

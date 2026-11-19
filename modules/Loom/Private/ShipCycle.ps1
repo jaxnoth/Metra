@@ -96,14 +96,15 @@ function Get-LoomShipProjectPolicy {
         protectedBranches = @()
         ownerAffirmPaths  = @()
         biteRepos         = @('root')
+        resolved          = $true
     }
     $cmd = Get-Command Get-MetraProjectRegistry -ErrorAction SilentlyContinue
-    if (-not $cmd) { return $empty }
+    if (-not $cmd) { return $null }
     try {
         $registry = & $cmd
     }
     catch {
-        return $empty
+        return $null
     }
     $entry = $null
     foreach ($project in @($(Get-LoomProp -Object $registry -Name 'projects' -Default @()))) {
@@ -134,6 +135,7 @@ function Get-LoomShipProjectPolicy {
         protectedBranches = @($protected)
         ownerAffirmPaths  = @($ownerPaths)
         biteRepos         = @($repos)
+        resolved          = $true
     }
 }
 
@@ -371,6 +373,9 @@ function Start-LoomShipBranch {
 
     $root = Resolve-LoomShipProjectRoot -Name $Name -ProjectRoot $ProjectRoot
     $policy = Get-LoomShipProjectPolicy -RegistryName $Name
+    if ($null -eq $policy) {
+        $policy = [PSCustomObject]@{ protectedBranches = @(); ownerAffirmPaths = @(); biteRepos = @('root'); resolved = $false }
+    }
     if (-not $Repos -or @($Repos).Count -eq 0) { $Repos = @($policy.biteRepos) }
     $target = $TargetBranch
     if ([string]::IsNullOrWhiteSpace($target)) {
@@ -769,6 +774,10 @@ function Test-LoomShipReady {
     }
 
     $policy = Get-LoomShipProjectPolicy -RegistryName $Name
+    if ($null -eq $policy) {
+        [void]$reasons.Add('policy-unresolved')
+        $policy = [PSCustomObject]@{ protectedBranches = @(); ownerAffirmPaths = @(); biteRepos = @('root'); resolved = $false }
+    }
     if (-not (Test-LoomShipProtectedBranch -Branch $target -ProtectedBranches $policy.protectedBranches)) {
         # Target not in protected list is allowed for tests; warn via reason only when list non-empty and mismatch.
         if (@($policy.protectedBranches).Count -gt 0) {

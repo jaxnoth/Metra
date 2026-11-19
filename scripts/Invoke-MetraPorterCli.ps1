@@ -273,7 +273,7 @@ function Invoke-PorterInspectPrep {
             if (-not [string]::IsNullOrWhiteSpace($workBranch) -and $curBranch -ne $workBranch) {
                 throw ("Porter prep: ship state expects branch {0}; current is {1}." -f $workBranch, $curBranch)
             }
-            $result = Invoke-LoomShipPack -Name 'Metra' -Reset
+            $result = Invoke-LoomShipPack -Name 'Metra' -ProjectRoot $Root -Reset
             if ($null -eq $result) { $result = [pscustomobject]@{ readyForBing = $false } }
             elseif (-not ($result.PSObject.Properties['readyForBing'])) {
                 $result | Add-Member -NotePropertyName readyForBing -NotePropertyValue ([bool]$result.ok) -Force
