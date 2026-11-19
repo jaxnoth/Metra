@@ -7749,22 +7749,15 @@ function Test-MetraInspectFastSafetyStaged {
     [CmdletBinding()]
     param([Parameter(Mandatory)][string]$Root)
 
-    $names = @(& git -C $Root diff --cached --name-only 2>$null)
-    $blocked = @(
-        'generated/restricted/',
-        '.authoring/',
-        '.runtime.properties'
-    )
+    # Exclude deletions: removing a restricted path is not a safety violation.
+    $names = @(& git -C $Root diff --cached --diff-filter=d --name-only 2>$null)
     $hits = New-Object System.Collections.Generic.List[string]
     foreach ($n in @($names)) {
         $rel = ([string]$n -replace '\\', '/')
         if ([string]::IsNullOrWhiteSpace($rel)) { continue }
-        foreach ($b in $blocked) {
-            if ($rel -like ("*{0}*" -f $b.TrimEnd('/')) -or $rel -like ("*{0}" -f $b)) {
-                [void]$hits.Add($rel)
-            }
-        }
-        if ($rel -match '(?i)\.runtime\.properties$') { [void]$hits.Add($rel) }
+        if ($rel -match '(?i)(^|/)generated/restricted(/|$)') { [void]$hits.Add($rel) }
+        if ($rel -match '(?i)(^|/)\.authoring(/|$)') { [void]$hits.Add($rel) }
+        if ($rel -match '(?i)(^|/)\.runtime\.properties$') { [void]$hits.Add($rel) }
         $full = Join-Path $Root $rel
         if (Test-Path -LiteralPath $full -PathType Leaf) {
             $len = (Get-Item -LiteralPath $full).Length
@@ -7777,10 +7770,13 @@ function Test-MetraInspectFastSafetyStaged {
 function Invoke-MetraInspectPrePushHook {
     <#
     .SYNOPSIS
-        Git pre-push: refuse protected branch unless valid ship lock is present.
+        Git pre-push: refuse protected destination refs unless valid ship lock is present.
     #>
     [CmdletBinding()]
-    param([string]$Name)
+    param(
+        [string]$Name,
+        [string[]]$RemoteBranch
+    )
 
     if ($env:METRA_SKIP_SECURITY_PUSH -eq '1' -or $env:METRA_SKIP_INSPECT_HOOK -eq '1') {
         return [PSCustomObject]@{ ok = $true; skipped = $true; reason = 'env-skip' }
@@ -7790,18 +7786,54 @@ function Invoke-MetraInspectPrePushHook {
     if (-not $ctx.Ok) { throw $ctx.Error }
     $slotKey = [string]$ctx.Project
     $root = [string]$ctx.Root
-    $branch = [string](@(& git -C $root rev-parse --abbrev-ref HEAD 2>$null) | Select-Object -First 1).Trim()
+
+    $targets = New-Object System.Collections.Generic.List[string]
+    foreach ($rb in @($RemoteBranch)) {
+        $t = [string]$rb
+        if ([string]::IsNullOrWhiteSpace($t)) { continue }
+        $t = $t.Trim() -replace '^refs/heads/', ''
+        if (-not [string]::IsNullOrWhiteSpace($t)) { [void]$targets.Add($t) }
+    }
+    if ($targets.Count -eq 0) {
+        $headBranch = [string](@(& git -C $root rev-parse --abbrev-ref HEAD 2>$null) | Select-Object -First 1).Trim()
+        if (-not [string]::IsNullOrWhiteSpace($headBranch)) { [void]$targets.Add($headBranch) }
+    }
 
     $policyProtected = @()
+    $policyResolved = $false
     if (Get-Command Get-LoomShipProjectPolicy -ErrorAction SilentlyContinue) {
-        try { $policyProtected = @((Get-LoomShipProjectPolicy -RegistryName $slotKey).protectedBranches) } catch { }
+        try {
+            $policyProtected = @((Get-LoomShipProjectPolicy -RegistryName $slotKey).protectedBranches)
+            $policyResolved = $true
+        }
+        catch { $policyProtected = @() }
     }
-    $isProtected = $false
-    foreach ($p in @($policyProtected)) {
-        if ([string]::Equals($branch, [string]$p, [StringComparison]::OrdinalIgnoreCase)) { $isProtected = $true; break }
+    if (-not $policyResolved -and (Get-Command Get-MetraProjectRegistry -ErrorAction SilentlyContinue)) {
+        try {
+            $reg = Get-MetraProjectRegistry
+            $entry = @($reg.projects | Where-Object { $_.name -eq $slotKey } | Select-Object -First 1)
+            if ($entry) {
+                $policyProtected = @($entry.protectedBranches)
+                $policyResolved = $true
+            }
+        }
+        catch { }
     }
-    if (-not $isProtected) {
-        return [PSCustomObject]@{ ok = $true; reason = 'not-protected'; branch = $branch }
+    if (-not $policyResolved) {
+        throw 'Pre-push blocked: protected-branch policy could not be resolved (Loom/registry unavailable). Fail closed.'
+    }
+
+    $protectedHits = New-Object System.Collections.Generic.List[string]
+    foreach ($branch in @($targets)) {
+        foreach ($p in @($policyProtected)) {
+            if ([string]::Equals($branch, [string]$p, [StringComparison]::OrdinalIgnoreCase)) {
+                [void]$protectedHits.Add($branch)
+                break
+            }
+        }
+    }
+    if ($protectedHits.Count -eq 0) {
+        return [PSCustomObject]@{ ok = $true; reason = 'not-protected'; branch = ($targets -join ',') }
     }
 
     $bypass = $false
@@ -7809,10 +7841,10 @@ function Invoke-MetraInspectPrePushHook {
         $bypass = Test-LoomShipHookBypassAllowed -Project $slotKey -RepoRoot $root
     }
     if (-not $bypass) {
-        throw 'Pre-push blocked: protected branch requires Invoke-LoomShip lock (bare METRA_LOOM_SHIP=1 is not authorization).'
+        throw ('Pre-push blocked: protected branch ({0}) requires Invoke-LoomShip lock (bare METRA_LOOM_SHIP=1 is not authorization).' -f ($protectedHits -join ','))
     }
-    Write-Host 'Pre-push: protected branch ship lock OK.' -ForegroundColor Green
-    return [PSCustomObject]@{ ok = $true; reason = 'ship-lock'; branch = $branch }
+    Write-Host ('Pre-push: protected branch ship lock OK ({0}).' -f ($protectedHits -join ',')) -ForegroundColor Green
+    return [PSCustomObject]@{ ok = $true; reason = 'ship-lock'; branch = ($protectedHits -join ',') }
 }
 
 function Invoke-MetraInspectPreCommitHook {
@@ -7979,6 +8011,7 @@ function Show-MetraInspectCli {
     $reviewSub = $null
     $reviewClipboard = $false
     $reviewText = $null
+    $remoteBranches = [System.Collections.Generic.List[string]]::new()
 
     $i = 0
     if ($argsRest.Count -gt 0 -and $argsRest[0] -ieq 'budget') {
@@ -8079,6 +8112,11 @@ function Show-MetraInspectCli {
         }
         if ($mode -eq 'prepare-bing' -and $tok -ieq '-Base' -and ($i + 1) -lt $argsRest.Count) {
             $baseRev = [string]$argsRest[$i + 1]
+            $i += 2
+            continue
+        }
+        if ($mode -eq 'pre-push' -and $tok -ieq '-RemoteBranch' -and ($i + 1) -lt $argsRest.Count) {
+            [void]$remoteBranches.Add([string]$argsRest[$i + 1])
             $i += 2
             continue
         }
@@ -8254,7 +8292,9 @@ function Show-MetraInspectCli {
             return Invoke-MetraInspectPreCommitHook -Name $projectName
         }
         'pre-push' {
-            return Invoke-MetraInspectPrePushHook -Name $projectName
+            $prePushParams = @{ Name = $projectName }
+            if ($remoteBranches.Count -gt 0) { $prePushParams.RemoteBranch = @($remoteBranches.ToArray()) }
+            return Invoke-MetraInspectPrePushHook @prePushParams
         }
         'review' {
             if ($reviewSub -eq 'import') {

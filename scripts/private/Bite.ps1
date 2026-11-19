@@ -19,6 +19,7 @@ function ConvertFrom-MetraBiteArgs {
         SkipFullTests  = $false
         NoPush         = $false
         NoDeleteBranch = $false
+        OwnerAffirm    = $false
         WhatIf         = $false
     }
 
@@ -67,6 +68,7 @@ function ConvertFrom-MetraBiteArgs {
             '^(?i)-SkipFullTests$' { $map.SkipFullTests = $true }
             '^(?i)-NoPush$' { $map.NoPush = $true }
             '^(?i)-NoDeleteBranch$' { $map.NoDeleteBranch = $true }
+            '^(?i)-OwnerAffirm$' { $map.OwnerAffirm = $true }
             '^(?i)-WhatIf$' { $map.WhatIf = $true }
             default { }
         }
@@ -100,6 +102,9 @@ function Invoke-MetraBiteCommand {
 
     switch ($Subcommand.ToLowerInvariant()) {
         'start' {
+            if ($parsed.WhatIf) {
+                throw 'bite start does not support -WhatIf (mutating). Omit -WhatIf to run.'
+            }
             if ([string]::IsNullOrWhiteSpace([string]$parsed.Bite)) {
                 throw 'bite start requires -Bite <id>.'
             }
@@ -114,8 +119,11 @@ function Invoke-MetraBiteCommand {
             return Start-LoomShipBranch @p
         }
         'commit' {
+            if ($parsed.WhatIf) {
+                throw 'bite commit does not support -WhatIf (mutating). Omit -WhatIf to run.'
+            }
             if ([string]::IsNullOrWhiteSpace([string]$parsed.Message)) {
-                throw 'bite commit requires -m "<message>".'
+                throw 'bite commit requires -Message "<message>".'
             }
             $p = @{
                 Name    = $project
@@ -127,6 +135,9 @@ function Invoke-MetraBiteCommand {
             return Invoke-LoomShipCommit @p
         }
         'pack' {
+            if ($parsed.WhatIf) {
+                throw 'bite pack does not support -WhatIf (mutating). Omit -WhatIf to run.'
+            }
             $p = @{ Name = $project }
             if (-not [string]::IsNullOrWhiteSpace([string]$parsed.ProjectRoot)) { $p.ProjectRoot = [string]$parsed.ProjectRoot }
             if ($parsed.Reset) { $p.Reset = $true }
@@ -140,6 +151,7 @@ function Invoke-MetraBiteCommand {
             if ($parsed.SkipFullTests) { $p.SkipFullTests = $true }
             if ($parsed.NoPush) { $p.NoPush = $true }
             if ($parsed.NoDeleteBranch) { $p.NoDeleteBranch = $true }
+            if ($parsed.OwnerAffirm) { $p.OwnerAffirm = $true }
             if ($parsed.WhatIf) { $p.WhatIf = $true }
             return Invoke-LoomShip @p
         }

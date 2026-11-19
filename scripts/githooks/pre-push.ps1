@@ -71,8 +71,20 @@ if ([string]::IsNullOrWhiteSpace($remoteUrl) -and -not [string]::IsNullOrWhiteSp
 # git push <url> may pass the URL as $1 only; treat name as URL when url arg is blank.
 $effectiveRemote = if (-not [string]::IsNullOrWhiteSpace($remoteUrl)) { $remoteUrl } else { $remoteName }
 
-# Drain stdin (required contract for pre-push) even when we skip.
-$null = @($input)
+# Read stdin ref tuples (<local-ref> <local-sha> <remote-ref> <remote-sha>) before skip/exit.
+$pushLines = @($input)
+$remoteBranches = New-Object System.Collections.Generic.List[string]
+foreach ($line in $pushLines) {
+    $parts = @(([string]$line).Trim() -split '\s+')
+    if ($parts.Count -lt 3) { continue }
+    $remoteRef = [string]$parts[2]
+    if ($remoteRef -match '^refs/heads/(.+)$') {
+        [void]$remoteBranches.Add($Matches[1])
+    }
+    elseif ($remoteRef -and $remoteRef -ne '(delete)') {
+        [void]$remoteBranches.Add(($remoteRef -replace '^refs/heads/', ''))
+    }
+}
 
 if (-not (Test-MetraPublicGitRemoteUrl -Url $effectiveRemote)) {
     # Private remotes (e.g. Azure DevOps) are not blocked here; still run audit when this checkout is Metra itself.
@@ -95,7 +107,13 @@ try {
     # $LASTEXITCODE=1. In-process & of metra.ps1 does not always reset it on success.
     $LASTEXITCODE = 0
     $projLeaf = Split-Path -Leaf $repoRoot
-    & $metra inspect pre-push -Name $projLeaf
+    $prePushArgs = @('inspect', 'pre-push', '-Name', $projLeaf)
+    foreach ($rb in @($remoteBranches | Select-Object -Unique)) {
+        if (-not [string]::IsNullOrWhiteSpace([string]$rb)) {
+            $prePushArgs += @('-RemoteBranch', [string]$rb)
+        }
+    }
+    & $metra @prePushArgs
     if (-not $? -or $LASTEXITCODE -ne 0) {
         Write-Error 'pre-push blocked: protected-branch / ship-lock guard failed.'
         exit 1

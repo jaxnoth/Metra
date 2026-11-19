@@ -4,10 +4,15 @@
 function Get-LoomShipStateRoot {
     [CmdletBinding()]
     param([Parameter(Mandatory)][string]$Project)
-    $safe = ($Project -replace '[^\w\.-]', '_').Trim()
-    if ([string]::IsNullOrWhiteSpace($safe)) { $safe = 'default' }
+    $safe = ($Project -replace '[^\w\.-]', '_').Trim('.').Trim()
+    if ([string]::IsNullOrWhiteSpace($safe) -or $safe -eq '.' -or $safe -eq '..') { $safe = 'default' }
     $root = Join-Path ([Environment]::GetFolderPath('LocalApplicationData')) 'Metra\loom\ship'
-    return Join-Path $root $safe
+    $path = Join-Path $root $safe
+    $full = [System.IO.Path]::GetFullPath($path)
+    if (-not (Test-LoomPathWithinRoot -Path $full -Root $root)) {
+        throw ("Ship state path escaped root for project '{0}'." -f $Project)
+    }
+    return $full
 }
 
 function Get-LoomShipStatePath {
@@ -502,16 +507,34 @@ function Invoke-LoomShipCommit {
 
 function Get-LoomShipInspectSlotContentHash {
     [CmdletBinding()]
-    param([Parameter(Mandatory)][string]$Project)
+    param(
+        [Parameter(Mandatory)][string]$Project,
+        [string]$BaseSha = '',
+        [string]$HeadSha = ''
+    )
 
     $safe = ($Project -replace '[^\w\.-]', '_').Trim()
     if ([string]::IsNullOrWhiteSpace($safe)) { $safe = 'default' }
-    $latest = Join-Path ([Environment]::GetFolderPath('LocalApplicationData')) ("Metra\inspect\{0}\latest.json" -f $safe)
-    if (-not (Test-Path -LiteralPath $latest -PathType Leaf)) { return '' }
+    $slotRoot = Join-Path ([Environment]::GetFolderPath('LocalApplicationData')) 'Metra\inspect'
+    $latest = Join-Path $slotRoot ("{0}\latest.json" -f $safe)
+    $latestFull = [System.IO.Path]::GetFullPath($latest)
+    if (-not (Test-LoomPathWithinRoot -Path $latestFull -Root $slotRoot)) { return '' }
+    if (-not (Test-Path -LiteralPath $latestFull -PathType Leaf)) { return '' }
     try {
-        $report = Get-Content -LiteralPath $latest -Raw -Encoding UTF8 | ConvertFrom-Json
-        $hash = [string](Get-LoomProp -Object (Get-LoomProp -Object $report -Name 'provenance' -Default $null) -Name 'inputHash' -Default '')
+        $report = Get-Content -LiteralPath $latestFull -Raw -Encoding UTF8 | ConvertFrom-Json
+        $prov = Get-LoomProp -Object $report -Name 'provenance' -Default $null
+        $hash = [string](Get-LoomProp -Object $prov -Name 'inputHash' -Default '')
         if ([string]::IsNullOrWhiteSpace($hash) -or $hash -eq 'empty') { return '' }
+        $reportBase = [string](Get-LoomProp -Object $prov -Name 'base' -Default '')
+        $reportHead = [string](Get-LoomProp -Object $prov -Name 'gitHead' -Default '')
+        if (-not [string]::IsNullOrWhiteSpace($BaseSha) -and -not [string]::IsNullOrWhiteSpace($reportBase) -and
+            -not [string]::Equals($BaseSha, $reportBase, [StringComparison]::OrdinalIgnoreCase)) {
+            return ''
+        }
+        if (-not [string]::IsNullOrWhiteSpace($HeadSha) -and -not [string]::IsNullOrWhiteSpace($reportHead) -and
+            -not [string]::Equals($HeadSha, $reportHead, [StringComparison]::OrdinalIgnoreCase)) {
+            return ''
+        }
         return $hash
     }
     catch {
@@ -575,7 +598,7 @@ function Invoke-LoomShipPack {
                 throw ("bite pack: Inspect reported no-diff but {0}...{1} has changes. Re-run pack with Inspect loaded." -f $baseSha.Substring(0, [Math]::Min(8, $baseSha.Length)), $headSha.Substring(0, [Math]::Min(8, $headSha.Length)))
             }
         }
-        $contentHash = Get-LoomShipInspectSlotContentHash -Project $Name
+        $contentHash = Get-LoomShipInspectSlotContentHash -Project $Name -BaseSha $baseSha -HeadSha $headSha
         if (-not $skippedNoDiff -and [string]::IsNullOrWhiteSpace($contentHash) -and (Get-Command Get-MetraInspectDiffContentHash -ErrorAction SilentlyContinue)) {
             try {
                 $contentHash = Get-MetraInspectDiffContentHash -SlotKey $Name
@@ -694,7 +717,8 @@ function Test-LoomShipReady {
     param(
         [Parameter(Mandatory)][string]$Name,
         [string]$ProjectRoot,
-        [switch]$SkipFullTests
+        [switch]$SkipFullTests,
+        [switch]$OwnerAffirm
     )
 
     $root = Resolve-LoomShipProjectRoot -Name $Name -ProjectRoot $ProjectRoot
@@ -753,7 +777,7 @@ function Test-LoomShipReady {
     }
 
     $hits = @(Get-LoomShipOwnerAffirmHits -ProjectRoot $root -BaseSha $baseSha -HeadSha $headSha -OwnerAffirmPaths $policy.ownerAffirmPaths)
-    if ($hits.Count -gt 0) {
+    if ($hits.Count -gt 0 -and -not $OwnerAffirm) {
         [void]$reasons.Add('owner-affirm-required')
     }
 
@@ -785,11 +809,12 @@ function Invoke-LoomShip {
         [switch]$SkipFullTests,
         [switch]$NoPush,
         [switch]$NoDeleteBranch,
+        [switch]$OwnerAffirm,
         [switch]$WhatIf
     )
 
     $root = Resolve-LoomShipProjectRoot -Name $Name -ProjectRoot $ProjectRoot
-    $ready = Test-LoomShipReady -Name $Name -ProjectRoot $root -SkipFullTests:$SkipFullTests
+    $ready = Test-LoomShipReady -Name $Name -ProjectRoot $root -SkipFullTests:$SkipFullTests -OwnerAffirm:$OwnerAffirm
     if (-not $ready.ok) {
         return [PSCustomObject]@{
             ok      = $false
@@ -831,18 +856,27 @@ function Invoke-LoomShip {
 
     $tuple = $ready.reviewedTuple
     $lock = $null
+    $keepLock = $false
     try {
         $lock = New-LoomShipLock -Project $Name -ReviewedTuple $tuple
-        $policy = Get-LoomShipProjectPolicy -RegistryName $Name
         $repos = @(Resolve-LoomShipRepoRoots -ProjectRoot $root -Repos @($state.repos))
+        # -NoPush keeps the work branch and ship lock so a later push can still use the hook bypass.
+        $deleteWork = (-not $NoDeleteBranch) -and (-not $NoPush)
 
-        $mergeShas = New-Object System.Collections.Generic.List[object]
+        # Phase 1: validate all repos before mutating any.
         foreach ($repo in $repos) {
-            $pre = Test-LoomGitMergePreconditions -ProjectRoot $repo.Path -Branch $work -CompletedCommit $headSha -TargetBranch $target
-            # For nested repos, completed commit may differ; require branch exists and clean.
             if (-not (Test-LoomGitWorkingTreeClean -ProjectRoot $repo.Path)) {
                 throw ("Dirty worktree in {0}" -f $repo.Key)
             }
+            $verify = Invoke-LoomGit -ProjectRoot $repo.Path -GitArgs @('rev-parse', '--verify', $work)
+            if ($verify.ExitCode -ne 0) {
+                throw ("Work branch {0} missing in {1}" -f $work, $repo.Key)
+            }
+        }
+
+        # Phase 2: merge all repos (abort each failed merge; leave earlier merges for operator repair).
+        $mergeShas = New-Object System.Collections.Generic.List[object]
+        foreach ($repo in $repos) {
             $co = Invoke-LoomGit -ProjectRoot $repo.Path -GitArgs @('checkout', $target)
             if ($co.ExitCode -ne 0) { throw ("checkout {0} failed in {1}: {2}" -f $target, $repo.Key, (Get-LoomGitErrorDetail $co)) }
 
@@ -852,19 +886,28 @@ function Invoke-LoomShip {
                 throw ("merge --no-ff failed in {0}: {1}" -f $repo.Key, (Get-LoomGitErrorDetail $merge))
             }
             $mergeSha = Get-LoomGitHeadCommit -ProjectRoot $repo.Path
-            [void]$mergeShas.Add([PSCustomObject]@{ repo = $repo.Key; mergeSha = $mergeSha })
+            [void]$mergeShas.Add([PSCustomObject]@{ repo = $repo.Key; path = $repo.Path; mergeSha = $mergeSha })
+        }
 
-            if (-not $NoPush) {
-                $push = Invoke-LoomGit -ProjectRoot $repo.Path -GitArgs @('push', 'origin', $target)
+        # Phase 3: push all repos (only after every merge succeeded).
+        if (-not $NoPush) {
+            foreach ($m in $mergeShas) {
+                $push = Invoke-LoomGit -ProjectRoot $m.path -GitArgs @('push', 'origin', $target)
                 if ($push.ExitCode -ne 0) {
-                    throw ("push {0} failed in {1}: {2}" -f $target, $repo.Key, (Get-LoomGitErrorDetail $push))
+                    throw ("push {0} failed in {1}: {2}" -f $target, $m.repo, (Get-LoomGitErrorDetail $push))
                 }
             }
+        }
+        else {
+            $keepLock = $true
+        }
 
-            if (-not $NoDeleteBranch) {
-                Invoke-LoomGit -ProjectRoot $repo.Path -GitArgs @('branch', '-d', $work) | Out-Null
+        # Phase 4: delete work branches only after successful pushes (or local-only when delete allowed).
+        if ($deleteWork) {
+            foreach ($m in $mergeShas) {
+                Invoke-LoomGit -ProjectRoot $m.path -GitArgs @('branch', '-d', $work) | Out-Null
                 if (-not $NoPush) {
-                    Invoke-LoomGit -ProjectRoot $repo.Path -GitArgs @('push', 'origin', '--delete', $work) | Out-Null
+                    Invoke-LoomGit -ProjectRoot $m.path -GitArgs @('push', 'origin', '--delete', $work) | Out-Null
                 }
             }
         }
@@ -878,11 +921,15 @@ function Invoke-LoomShip {
             message    = $msg
             merges     = $mergeArr
             tuple      = $tuple
+            noPush     = [bool]$NoPush
+            lockKept   = [bool]$keepLock
             lockToken  = [string](Get-LoomProp -Object $lock -Name 'token' -Default '')
         }
     }
     finally {
-        Clear-LoomShipLock -Project $Name
+        if (-not $keepLock) {
+            Clear-LoomShipLock -Project $Name
+        }
     }
 }
 
