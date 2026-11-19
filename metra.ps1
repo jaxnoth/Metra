@@ -1416,6 +1416,11 @@ switch ($Command) {
         $result = Invoke-MetraBiteCommand -Subcommand $sub -ArgsRest $subArgs -Name $Name
         if ($null -eq $result) { return }
         $result | Format-List
+        if ($result -is [System.Management.Automation.PSObject] -and
+            ($result.PSObject.Properties.Name -contains 'ok') -and
+            -not [bool]$result.ok) {
+            exit 1
+        }
     }
 
     'yarn' {

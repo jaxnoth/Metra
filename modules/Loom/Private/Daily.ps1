@@ -996,7 +996,18 @@ function Invoke-LoomDailyMerge {
     # Prefer full ship-cycle when desk/queue left ready ship state for this branch.
     $shipState = $null
     try { $shipState = Get-LoomShipState -Project $RegistryName } catch { $shipState = $null }
-    if ($shipState -and [string]$shipState.workBranch -eq $Branch -and [string]$shipState.reviewVerdict -eq 'approve') {
+    if ($shipState -and [string]$shipState.workBranch -eq $Branch) {
+        $verdict = [string]$shipState.reviewVerdict
+        if ($verdict -ne 'approve') {
+            return [PSCustomObject]@{
+                attempted    = $true
+                succeeded    = $false
+                mergeCommit  = $null
+                error        = 'review-verdict-not-approved'
+                detail       = ("ship state reviewVerdict={0}" -f $(if ($verdict) { $verdict } else { 'missing' }))
+                viaShipCycle = $true
+            }
+        }
         $ship = Invoke-LoomShip -Name $RegistryName -ProjectRoot $ProjectRoot -NoPush:(-not $Push) -SkipFullTests
         return [PSCustomObject]@{
             attempted   = $true

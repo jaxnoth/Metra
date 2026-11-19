@@ -947,6 +947,13 @@ function Invoke-LoomShip {
 
         $mergeArr = @()
         foreach ($m in $mergeShas) { $mergeArr += $m }
+        # Successful ship: drop ship state so Porter/pack do not reuse a stale work-branch pointer.
+        if (-not $keepLock) {
+            $statePath = Get-LoomShipStatePath -Project $Name
+            if (Test-Path -LiteralPath $statePath) {
+                Remove-Item -LiteralPath $statePath -Force -ErrorAction SilentlyContinue
+            }
+        }
         return [PSCustomObject]@{
             ok         = $true
             shipped    = $true
