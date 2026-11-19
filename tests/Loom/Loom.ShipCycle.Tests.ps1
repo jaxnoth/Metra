@@ -3,6 +3,10 @@ BeforeAll {
     $script:RepoRoot = (Resolve-Path (Join-Path $PSScriptRoot '..\..')).Path
     Get-Module Loom -ErrorAction SilentlyContinue | Remove-Module -Force -ErrorAction SilentlyContinue
     Import-Module (Join-Path $script:RepoRoot 'modules\Loom\Loom.psd1') -Force
+    $metraPsd1 = Join-Path $script:RepoRoot 'scripts\Metra.psd1'
+    if (Test-Path -LiteralPath $metraPsd1) {
+        Import-Module $metraPsd1 -Force -ErrorAction SilentlyContinue
+    }
 }
 
 Describe 'Loom ship-cycle work branch prefix' {

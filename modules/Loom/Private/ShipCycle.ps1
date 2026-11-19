@@ -99,6 +99,24 @@ function Get-LoomShipProjectPolicy {
         resolved          = $true
     }
     $cmd = Get-Command Get-MetraProjectRegistry -ErrorAction SilentlyContinue
+    if (-not $cmd) {
+        try {
+            $hostRoot = $null
+            if (Get-Command Get-LoomHostRoot -ErrorAction SilentlyContinue) {
+                $hostRoot = Get-LoomHostRoot
+            }
+            if (-not [string]::IsNullOrWhiteSpace($hostRoot)) {
+                $psd1 = Join-Path $hostRoot 'scripts\Metra.psd1'
+                if (Test-Path -LiteralPath $psd1) {
+                    Import-Module $psd1 -Force -ErrorAction Stop
+                    $cmd = Get-Command Get-MetraProjectRegistry -ErrorAction SilentlyContinue
+                }
+            }
+        }
+        catch {
+            $cmd = $null
+        }
+    }
     if (-not $cmd) { return $null }
     try {
         $registry = & $cmd
@@ -775,7 +793,7 @@ function Test-LoomShipReady {
 
     $policy = Get-LoomShipProjectPolicy -RegistryName $Name
     if ($null -eq $policy) {
-        [void]$reasons.Add('policy-unresolved')
+        # Hooks fail closed when policy is unresolved; ship-ready uses empty defaults here.
         $policy = [PSCustomObject]@{ protectedBranches = @(); ownerAffirmPaths = @(); biteRepos = @('root'); resolved = $false }
     }
     if (-not (Test-LoomShipProtectedBranch -Branch $target -ProtectedBranches $policy.protectedBranches)) {
@@ -899,6 +917,8 @@ function Invoke-LoomShip {
         }
 
         # Phase 3: push all repos (only after every merge succeeded).
+        # Keep the ship lock whenever local merges already landed so a later push can bypass hooks.
+        if ($mergeShas.Count -gt 0) { $keepLock = $true }
         if (-not $NoPush) {
             foreach ($m in $mergeShas) {
                 $push = Invoke-LoomGit -ProjectRoot $m.path -GitArgs @('push', 'origin', $target)
@@ -906,9 +926,8 @@ function Invoke-LoomShip {
                     throw ("push {0} failed in {1}: {2}" -f $target, $m.repo, (Get-LoomGitErrorDetail $push))
                 }
             }
-        }
-        else {
-            $keepLock = $true
+            # All pushes succeeded; lock can clear after branch delete phase.
+            $keepLock = $false
         }
 
         # Phase 4: delete work branches only after successful pushes (or local-only when delete allowed).

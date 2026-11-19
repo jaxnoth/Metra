@@ -7873,16 +7873,30 @@ function Invoke-MetraInspectPreCommitHook {
 
     $branch = [string](@(& git -C $root rev-parse --abbrev-ref HEAD 2>$null) | Select-Object -First 1).Trim()
     $policyProtected = @()
+    $policyResolved = $false
     if (Get-Command Get-LoomShipProjectPolicy -ErrorAction SilentlyContinue) {
-        try { $policyProtected = @((Get-LoomShipProjectPolicy -RegistryName $slotKey).protectedBranches) } catch { $policyProtected = @() }
+        try {
+            $policy = Get-LoomShipProjectPolicy -RegistryName $slotKey
+            if ($null -ne $policy) {
+                $policyProtected = @($policy.protectedBranches)
+                $policyResolved = $true
+            }
+        }
+        catch { $policyProtected = @() }
     }
-    elseif (Get-Command Get-MetraProjectRegistry -ErrorAction SilentlyContinue) {
+    if (-not $policyResolved -and (Get-Command Get-MetraProjectRegistry -ErrorAction SilentlyContinue)) {
         try {
             $reg = Get-MetraProjectRegistry
             $entry = @($reg.projects | Where-Object { $_.name -eq $slotKey } | Select-Object -First 1)
-            if ($entry) { $policyProtected = @($entry.protectedBranches) }
+            if ($entry) {
+                $policyProtected = @($entry.protectedBranches)
+                $policyResolved = $true
+            }
         }
         catch { }
+    }
+    if (-not $policyResolved) {
+        throw 'Pre-commit blocked: protected-branch policy could not be resolved (Loom/registry unavailable). Fail closed.'
     }
 
     $isWork = $false
