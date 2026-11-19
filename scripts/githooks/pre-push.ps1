@@ -108,12 +108,10 @@ try {
     $LASTEXITCODE = 0
     $projLeaf = Split-Path -Leaf $repoRoot
     # Prefer registry name when folder leaf is a Metra checkout alias (_meta / Metra / _metra).
+    # Never adopt METRA_LOOM_SHIP_PROJECT for sibling repos - that would check the wrong lock/policy.
     $projName = $projLeaf
     if ($projLeaf -match '^(?i)(_meta|_metra|metra)$' -or $isMetraRoot) {
         $projName = 'Metra'
-    }
-    elseif ($env:METRA_LOOM_SHIP_PROJECT) {
-        $projName = [string]$env:METRA_LOOM_SHIP_PROJECT
     }
     $prePushArgs = @('inspect', 'pre-push', '-Name', $projName)
     foreach ($rb in @($remoteBranches | Select-Object -Unique)) {

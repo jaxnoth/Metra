@@ -622,15 +622,7 @@ function Invoke-LoomShipPack {
             }
         }
         $contentHash = Get-LoomShipInspectSlotContentHash -Project $Name -BaseSha $baseSha -HeadSha $headSha
-        if (-not $skippedNoDiff -and [string]::IsNullOrWhiteSpace($contentHash) -and (Get-Command Get-MetraInspectDiffContentHash -ErrorAction SilentlyContinue)) {
-            try {
-                $contentHash = Get-MetraInspectDiffContentHash -SlotKey $Name
-            }
-            catch {
-                $contentHash = $null
-            }
-        }
-        # Never bind a stale slot hash when prepare skipped.
+        # Never bind a stale slot hash when prepare skipped or SHA mismatch rejected the slot.
         if ($skippedNoDiff) { $contentHash = $null }
     }
     elseif ($SkipInspectEngine -or -not $inspectCli) {
@@ -807,7 +799,9 @@ function Test-LoomShipReady {
     try {
         $reposForAffirm = @(Resolve-LoomShipRepoRoots -ProjectRoot $root -Repos @($(Get-LoomProp -Object $state -Name 'repos' -Default @('root'))))
         foreach ($repoAffirm in $reposForAffirm) {
-            foreach ($h in @(Get-LoomShipOwnerAffirmHits -ProjectRoot $repoAffirm.Path -BaseSha $baseSha -HeadSha $headSha -OwnerAffirmPaths $policy.ownerAffirmPaths)) {
+            $repoHead = Get-LoomGitRevParse -ProjectRoot $repoAffirm.Path -Rev 'HEAD'
+            $repoBase = Get-LoomShipMergeBaseSha -ProjectRoot $repoAffirm.Path -TargetBranch $target -WorkBranch $work
+            foreach ($h in @(Get-LoomShipOwnerAffirmHits -ProjectRoot $repoAffirm.Path -BaseSha $repoBase -HeadSha $repoHead -OwnerAffirmPaths $policy.ownerAffirmPaths)) {
                 [void]$hits.Add(('{0}:{1}' -f $repoAffirm.Key, $h))
             }
         }
@@ -962,7 +956,6 @@ function Invoke-LoomShip {
             tuple      = $tuple
             noPush     = [bool]$NoPush
             lockKept   = [bool]$keepLock
-            lockToken  = [string](Get-LoomProp -Object $lock -Name 'token' -Default '')
         }
     }
     finally {
