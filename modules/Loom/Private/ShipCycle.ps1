@@ -496,6 +496,25 @@ function Invoke-LoomShipCommit {
     }
 }
 
+function Get-LoomShipInspectSlotContentHash {
+    [CmdletBinding()]
+    param([Parameter(Mandatory)][string]$Project)
+
+    $safe = ($Project -replace '[^\w\.-]', '_').Trim()
+    if ([string]::IsNullOrWhiteSpace($safe)) { $safe = 'default' }
+    $latest = Join-Path ([Environment]::GetFolderPath('LocalApplicationData')) ("Metra\inspect\{0}\latest.json" -f $safe)
+    if (-not (Test-Path -LiteralPath $latest -PathType Leaf)) { return '' }
+    try {
+        $report = Get-Content -LiteralPath $latest -Raw -Encoding UTF8 | ConvertFrom-Json
+        $hash = [string](Get-LoomProp -Object (Get-LoomProp -Object $report -Name 'provenance' -Default $null) -Name 'inputHash' -Default '')
+        if ([string]::IsNullOrWhiteSpace($hash) -or $hash -eq 'empty') { return '' }
+        return $hash
+    }
+    catch {
+        return ''
+    }
+}
+
 function Invoke-LoomShipPack {
     [CmdletBinding()]
     param(
@@ -525,29 +544,34 @@ function Invoke-LoomShipPack {
     $readyForBing = $false
     $prepare = $null
 
-    if (-not $SkipInspectEngine -and (Get-Command Invoke-MetraInspectPrepareForBing -ErrorAction SilentlyContinue)) {
-        $prepParams = @{
-            Name = $Name
-            Base = $baseSha
+    # Prefer exported Metra Inspect CLI (Invoke-MetraInspectPrepareForBing is private to Metra).
+    $inspectCli = Get-Command Show-MetraInspectCli -ErrorAction SilentlyContinue
+    if (-not $SkipInspectEngine -and $inspectCli) {
+        $rest = [System.Collections.Generic.List[string]]::new()
+        [void]$rest.Add('prepare-bing')
+        if ($Reset) { [void]$rest.Add('-Reset') }
+        if (-not [string]::IsNullOrWhiteSpace($baseSha)) {
+            [void]$rest.Add('-Base')
+            [void]$rest.Add($baseSha)
         }
-        if ($Reset) { $prepParams.Reset = $true }
-        $prepare = Invoke-MetraInspectPrepareForBing @prepParams
+        $prepare = Show-MetraInspectCli -Rest @($rest.ToArray()) -Name $Name
         $readyForBing = [bool](Get-LoomProp -Object $prepare -Name 'readyForBing' -Default $false)
         $packPath = [string](Get-LoomProp -Object $prepare -Name 'packPath' -Default '')
-        if (Get-Command Get-MetraInspectDiffContentHash -ErrorAction SilentlyContinue) {
+        $contentHash = Get-LoomShipInspectSlotContentHash -Project $Name
+        if ([string]::IsNullOrWhiteSpace($contentHash) -and (Get-Command Get-MetraInspectDiffContentHash -ErrorAction SilentlyContinue)) {
             try {
-                $contentHash = Get-MetraInspectDiffContentHash -Name $Name
+                $contentHash = Get-MetraInspectDiffContentHash -SlotKey $Name
             }
             catch {
                 $contentHash = $null
             }
         }
-        if ([string]::IsNullOrWhiteSpace($contentHash) -and (Get-Command Get-MetraInspectReviewWorkingTreeInputHash -ErrorAction SilentlyContinue)) {
-            $contentHash = Get-MetraInspectReviewWorkingTreeInputHash -Root $root -Base $baseSha
-        }
     }
-    else {
-        # Deterministic fallback for tests / offline: hash of Base...HEAD name-status + patch.
+    elseif ($SkipInspectEngine -or -not $inspectCli) {
+        if (-not $SkipInspectEngine -and -not $inspectCli) {
+            Write-Warning 'bite pack: Show-MetraInspectCli not loaded; using offline Base...HEAD content hash (not a Bing pack).'
+        }
+        # Deterministic fallback for tests / offline: hash of Base...HEAD patch.
         $diff = Invoke-LoomGit -ProjectRoot $root -GitArgs @('diff', '--binary', "$baseSha...$headSha")
         if ($diff.ExitCode -ne 0) { throw (Get-LoomGitErrorDetail $diff) }
         $sha = [System.Security.Cryptography.SHA256]::Create()
@@ -558,7 +582,7 @@ function Invoke-LoomShipPack {
         finally {
             $sha.Dispose()
         }
-        $readyForBing = $true
+        $readyForBing = [bool]$SkipInspectEngine
         $packPath = '(offline-range-hash)'
     }
 
