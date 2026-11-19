@@ -153,6 +153,7 @@ function Invoke-MetraBiteCommand {
             if ($parsed.NoDeleteBranch) { $p.NoDeleteBranch = $true }
             if ($parsed.OwnerAffirm) { $p.OwnerAffirm = $true }
             if ($parsed.WhatIf) { $p.WhatIf = $true }
+            # WhatIf maps to SupportsShouldProcess on Invoke-LoomShip.
             return Invoke-LoomShip @p
         }
         'status' {

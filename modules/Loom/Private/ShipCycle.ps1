@@ -314,7 +314,9 @@ function Test-LoomShipHookBypassAllowed {
     [CmdletBinding()]
     param(
         [string]$Project,
-        [string]$RepoRoot
+        [string]$RepoRoot,
+        [string]$TargetBranch,
+        [string]$HeadSha
     )
 
     if ($env:METRA_LOOM_SHIP -ne '1') { return $false }
@@ -348,6 +350,18 @@ function Test-LoomShipHookBypassAllowed {
     }
     catch {
         return $false
+    }
+    $lockTarget = [string](Get-LoomProp -Object $lock -Name 'targetBranch' -Default '')
+    if (-not [string]::IsNullOrWhiteSpace($TargetBranch) -and -not [string]::IsNullOrWhiteSpace($lockTarget)) {
+        if (-not [string]::Equals($TargetBranch.Trim(), $lockTarget.Trim(), [StringComparison]::OrdinalIgnoreCase)) {
+            return $false
+        }
+    }
+    $lockHead = [string](Get-LoomProp -Object $lock -Name 'headSha' -Default '')
+    if (-not [string]::IsNullOrWhiteSpace($HeadSha) -and -not [string]::IsNullOrWhiteSpace($lockHead)) {
+        if (-not [string]::Equals($HeadSha.Trim(), $lockHead.Trim(), [StringComparison]::OrdinalIgnoreCase)) {
+            return $false
+        }
     }
     return $true
 }
@@ -839,7 +853,7 @@ function Test-LoomShipReady {
 }
 
 function Invoke-LoomShip {
-    [CmdletBinding()]
+    [CmdletBinding(SupportsShouldProcess)]
     param(
         [Parameter(Mandatory)][string]$Name,
         [string]$ProjectRoot,
@@ -847,8 +861,7 @@ function Invoke-LoomShip {
         [switch]$SkipFullTests,
         [switch]$NoPush,
         [switch]$NoDeleteBranch,
-        [switch]$OwnerAffirm,
-        [switch]$WhatIf
+        [switch]$OwnerAffirm
     )
 
     $root = Resolve-LoomShipProjectRoot -Name $Name -ProjectRoot $ProjectRoot
@@ -873,7 +886,7 @@ function Invoke-LoomShip {
     $sum = if ([string]::IsNullOrWhiteSpace($Summary)) { 'ship' } else { $Summary.Trim() }
     $msg = ('{0}: {1} (reviewed {2}, Bing approve {3})' -f $biteId, $sum, $short, $hash8)
 
-    if ($WhatIf) {
+    if (-not $PSCmdlet.ShouldProcess($Name, ("ship {0} -> {1}" -f $work, $target))) {
         return [PSCustomObject]@{
             ok      = $true
             whatIf  = $true
