@@ -803,7 +803,18 @@ function Test-LoomShipReady {
         }
     }
 
-    $hits = @(Get-LoomShipOwnerAffirmHits -ProjectRoot $root -BaseSha $baseSha -HeadSha $headSha -OwnerAffirmPaths $policy.ownerAffirmPaths)
+    $hits = New-Object System.Collections.Generic.List[string]
+    try {
+        $reposForAffirm = @(Resolve-LoomShipRepoRoots -ProjectRoot $root -Repos @($(Get-LoomProp -Object $state -Name 'repos' -Default @('root'))))
+        foreach ($repoAffirm in $reposForAffirm) {
+            foreach ($h in @(Get-LoomShipOwnerAffirmHits -ProjectRoot $repoAffirm.Path -BaseSha $baseSha -HeadSha $headSha -OwnerAffirmPaths $policy.ownerAffirmPaths)) {
+                [void]$hits.Add(('{0}:{1}' -f $repoAffirm.Key, $h))
+            }
+        }
+    }
+    catch {
+        [void]$reasons.Add(('owner-affirm-check-failed:' + $_.Exception.Message))
+    }
     if ($hits.Count -gt 0 -and -not $OwnerAffirm) {
         [void]$reasons.Add('owner-affirm-required')
     }
@@ -914,11 +925,11 @@ function Invoke-LoomShip {
             }
             $mergeSha = Get-LoomGitHeadCommit -ProjectRoot $repo.Path
             [void]$mergeShas.Add([PSCustomObject]@{ repo = $repo.Key; path = $repo.Path; mergeSha = $mergeSha })
+            # Keep lock as soon as any local merge lands (retry push / partial multi-repo).
+            $keepLock = $true
         }
 
         # Phase 3: push all repos (only after every merge succeeded).
-        # Keep the ship lock whenever local merges already landed so a later push can bypass hooks.
-        if ($mergeShas.Count -gt 0) { $keepLock = $true }
         if (-not $NoPush) {
             foreach ($m in $mergeShas) {
                 $push = Invoke-LoomGit -ProjectRoot $m.path -GitArgs @('push', 'origin', $target)

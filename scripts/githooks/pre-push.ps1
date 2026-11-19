@@ -5,10 +5,13 @@
 
 $ErrorActionPreference = 'Stop'
 
-if ($env:METRA_SKIP_SECURITY_PUSH -eq '1' -or $env:METRA_SKIP_INSPECT_HOOK -eq '1') {
-    Write-Host 'pre-push: skipped (METRA_SKIP_SECURITY_PUSH or METRA_SKIP_INSPECT_HOOK=1)'
+# METRA_SKIP_INSPECT_HOOK skips all hook work. METRA_SKIP_SECURITY_PUSH only skips
+# security-audit; protected-branch ship-lock still runs.
+if ($env:METRA_SKIP_INSPECT_HOOK -eq '1') {
+    Write-Host 'pre-push: skipped (METRA_SKIP_INSPECT_HOOK=1)'
     exit 0
 }
+$skipSecurityAuditOnly = ($env:METRA_SKIP_SECURITY_PUSH -eq '1')
 
 function Resolve-MetraPrePushScript {
     param([Parameter(Mandatory)][string]$RepoRoot)
@@ -104,7 +107,15 @@ try {
     # $LASTEXITCODE=1. In-process & of metra.ps1 does not always reset it on success.
     $LASTEXITCODE = 0
     $projLeaf = Split-Path -Leaf $repoRoot
-    $prePushArgs = @('inspect', 'pre-push', '-Name', $projLeaf)
+    # Prefer registry name when folder leaf is a Metra checkout alias (_meta / Metra / _metra).
+    $projName = $projLeaf
+    if ($projLeaf -match '^(?i)(_meta|_metra|metra)$' -or $isMetraRoot) {
+        $projName = 'Metra'
+    }
+    elseif ($env:METRA_LOOM_SHIP_PROJECT) {
+        $projName = [string]$env:METRA_LOOM_SHIP_PROJECT
+    }
+    $prePushArgs = @('inspect', 'pre-push', '-Name', $projName)
     foreach ($rb in @($remoteBranches | Select-Object -Unique)) {
         if (-not [string]::IsNullOrWhiteSpace([string]$rb)) {
             $prePushArgs += @('-RemoteBranch', [string]$rb)
@@ -115,7 +126,10 @@ try {
         Write-Error 'pre-push blocked: protected-branch / ship-lock guard failed.'
         exit 1
     }
-    if (-not $runSecurityAudit) {
+    if (-not $runSecurityAudit -or $skipSecurityAuditOnly) {
+        if ($skipSecurityAuditOnly) {
+            Write-Host 'pre-push: security-audit skipped (METRA_SKIP_SECURITY_PUSH=1); ship-lock already checked.'
+        }
         exit 0
     }
     Write-Host ("pre-push: security-audit (public/Metra push gate) remote={0}" -f $(if ($remoteUrl) { $remoteUrl } else { $remoteName }))

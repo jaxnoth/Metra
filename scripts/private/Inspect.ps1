@@ -7778,7 +7778,8 @@ function Invoke-MetraInspectPrePushHook {
         [string[]]$RemoteBranch
     )
 
-    if ($env:METRA_SKIP_SECURITY_PUSH -eq '1' -or $env:METRA_SKIP_INSPECT_HOOK -eq '1') {
+    # METRA_SKIP_SECURITY_PUSH does not bypass ship-lock; only METRA_SKIP_INSPECT_HOOK does.
+    if ($env:METRA_SKIP_INSPECT_HOOK -eq '1') {
         return [PSCustomObject]@{ ok = $true; skipped = $true; reason = 'env-skip' }
     }
 
