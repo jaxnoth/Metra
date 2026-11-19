@@ -589,6 +589,12 @@ function Invoke-LoomShipPack {
     $baseSha = Get-LoomShipMergeBaseSha -ProjectRoot $root -TargetBranch $target -WorkBranch $work
     $headSha = Get-LoomGitRevParse -ProjectRoot $root -Rev 'HEAD'
 
+    $repoKeys = @($(Get-LoomProp -Object $state -Name 'repos' -Default @('root')))
+    $nonRoot = @($repoKeys | Where-Object { $_ -and $_ -ne 'root' })
+    if ($nonRoot.Count -gt 0) {
+        throw ("bite pack: multi-repo content hash not implemented yet (repos: {0}). Pack/ship root-only bites first." -f ($nonRoot -join ','))
+    }
+
     $contentHash = $null
     $packPath = $null
     $readyForBing = $false

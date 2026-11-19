@@ -1019,25 +1019,42 @@ function Invoke-LoomDailyMerge {
         }
     }
 
+    # Protected targets require a reviewed ship-cycle tuple. Do not mint a synthetic lock.
+    $policy = $null
+    if (Get-Command Get-LoomShipProjectPolicy -ErrorAction SilentlyContinue) {
+        try { $policy = Get-LoomShipProjectPolicy -RegistryName $RegistryName } catch { $policy = $null }
+    }
+    if ($null -eq $policy) {
+        return [PSCustomObject]@{
+            attempted    = $true
+            succeeded    = $false
+            mergeCommit  = $null
+            error        = 'policy-unresolved'
+            detail       = 'Cannot resolve protectedBranches; refuse merge without ship-cycle.'
+            viaShipCycle = $false
+        }
+    }
+    $protected = @($policy.protectedBranches)
+    $targetIsProtected = $false
+    foreach ($p in $protected) {
+        if ([string]::Equals([string]$p, $TargetBranch, [StringComparison]::OrdinalIgnoreCase)) {
+            $targetIsProtected = $true
+            break
+        }
+    }
+    if ($targetIsProtected) {
+        return [PSCustomObject]@{
+            attempted    = $true
+            succeeded    = $false
+            mergeCommit  = $null
+            error        = 'ship-state-required'
+            detail       = 'Protected target merge requires approved ship-cycle state via bite pack/ship.'
+            viaShipCycle = $false
+        }
+    }
+
     $originalBranch = (Invoke-LoomGit -ProjectRoot $ProjectRoot -GitArgs @('rev-parse', '--abbrev-ref', 'HEAD')).Stdout.Trim()
-    $baseSha = $null
     try {
-        $baseSha = Get-LoomShipMergeBaseSha -ProjectRoot $ProjectRoot -TargetBranch $TargetBranch -WorkBranch $Branch
-    }
-    catch {
-        $baseSha = $CompletedCommit
-    }
-    $tuple = [PSCustomObject]@{
-        targetBranch = $TargetBranch
-        workBranch   = $Branch
-        baseSha      = $baseSha
-        headSha      = $CompletedCommit
-        contentHash  = ('queue:' + $CompletedCommit)
-    }
-
-    try {
-        $null = New-LoomShipLock -Project $RegistryName -ReviewedTuple $tuple
-
         $checkout = Invoke-LoomGit -ProjectRoot $ProjectRoot -GitArgs @('checkout', $TargetBranch)
         if ($checkout.ExitCode -ne 0) {
             return [PSCustomObject]@{
@@ -1082,11 +1099,13 @@ function Invoke-LoomDailyMerge {
             mergeCommit = $sha
             error       = $null
             detail      = $merge.Stdout
-            viaShipLock = $true
+            viaShipLock = $false
         }
     }
     finally {
-        Clear-LoomShipLock -Project $RegistryName
+        if (-not [string]::IsNullOrWhiteSpace($originalBranch)) {
+            Invoke-LoomGit -ProjectRoot $ProjectRoot -GitArgs @('checkout', $originalBranch) | Out-Null
+        }
     }
 }
 
