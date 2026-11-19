@@ -271,7 +271,7 @@ function Invoke-PorterInspectPrep {
                 $curBranch = ((& git -C $Root rev-parse --abbrev-ref HEAD 2>$null) | Out-String).Trim()
             }
             catch { $curBranch = '' }
-            if ([string]::IsNullOrWhiteSpace($workBranch) -or $curBranch -eq $workBranch) {
+            if (-not [string]::IsNullOrWhiteSpace($workBranch) -and $curBranch -eq $workBranch) {
                 $useShipPack = $true
             }
             else {

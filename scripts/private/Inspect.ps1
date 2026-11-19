@@ -7842,9 +7842,13 @@ function Invoke-MetraInspectPrePushHook {
 
     $bypass = $false
     if (Get-Command Test-LoomShipHookBypassAllowed -ErrorAction SilentlyContinue) {
-        $bypassParams = @{ Project = $slotKey; RepoRoot = $root }
-        if ($protectedHits.Count -eq 1) { $bypassParams.TargetBranch = [string]$protectedHits[0] }
-        $bypass = Test-LoomShipHookBypassAllowed @bypassParams
+        $bypass = $true
+        foreach ($hit in @($protectedHits)) {
+            if (-not (Test-LoomShipHookBypassAllowed -Project $slotKey -RepoRoot $root -TargetBranch ([string]$hit))) {
+                $bypass = $false
+                break
+            }
+        }
     }
     if (-not $bypass) {
         throw ('Pre-push blocked: protected branch ({0}) requires Invoke-LoomShip lock (bare METRA_LOOM_SHIP=1 is not authorization).' -f ($protectedHits -join ','))
@@ -7928,17 +7932,10 @@ function Invoke-MetraInspectPreCommitHook {
     }
 
     if ($isProtected) {
-        $bypass = $false
-        if (Get-Command Test-LoomShipHookBypassAllowed -ErrorAction SilentlyContinue) {
-            $bypass = Test-LoomShipHookBypassAllowed -Project $slotKey -RepoRoot $root -TargetBranch $branch
-        }
-        if (-not $bypass) {
-            Write-Host 'COMMIT BLOCKED - protected branch refuses direct commits.' -ForegroundColor Red
-            Write-Host '  Use bite ship / Loom ship-cycle (Invoke-LoomShip). Bare METRA_LOOM_SHIP=1 is not enough.' -ForegroundColor DarkYellow
-            throw 'Pre-commit blocked: protected-branch.'
-        }
-        Write-Host 'Pre-commit: protected branch ship lock OK.' -ForegroundColor Green
-        return [PSCustomObject]@{ ok = $true; reason = 'ship-lock'; branch = $branch }
+        # Ship lands via merge --no-ff (no pre-commit). Direct commits on protected are never allowed.
+        Write-Host 'COMMIT BLOCKED - protected branch refuses direct commits.' -ForegroundColor Red
+        Write-Host '  Use bite ship / Loom ship-cycle (Invoke-LoomShip). Bare METRA_LOOM_SHIP=1 is not enough.' -ForegroundColor DarkYellow
+        throw 'Pre-commit blocked: protected-branch.'
     }
 
     # Legacy path: projects without protectedBranches keep Bing affirm gate.
