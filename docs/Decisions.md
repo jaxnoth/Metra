@@ -27,6 +27,14 @@ Entry shape:
 - Why: CDM-shaped multi-git projects need one desk/Loom ship cycle without blind nested diffs or silent partial remotes. Bing L1 (2026-11-19) required B1 full per-repo diffs and B2 partial-push recovery before implementation.
 - See: `modules/Loom/Private/ShipCycle.ps1`; [docs/playbooks/loom.md](playbooks/loom.md); Decisions 2026-11-18. CDM registry not flipped in this bite.
 
+## 2026-11-20 - Multi-repo bite scars (CDM shared remotes + nested hook name)
+
+- Decision: Nested bite repos (e.g. CDM `chef/`) must resolve Metra `-Name` via `git config metra.project`, then Metra checkout aliases (`_meta` / `_metra` / `Metra`), then folder leaf. `inspect hooks install -Name <Project>` installs hooks on every `biteRepos` worktree and sets `metra.project` there. Null config must not call `.Trim()` on null (StrictMode / PS 5.1).
+- Decision: When a bite has more than one repo, each repo gets a unique work/remote branch `bite/<slug>/<biteId>/<repoKey>` (root included). Root-only bites keep legacy `bite/<slug>/<biteId>`. Ship state stores per-repo `workBranch`; `state.workBranch` remains the root slice. Shared remotes (CDM root + chef → one Azure DevOps tip namespace) must not collide on a single `bite/<slug>/<id>` ref.
+- Scar: ship-model-agents (2026-11-20) - chef pre-push resolved `-Name` as folder leaf `chef` → Unknown project; then root and chef pushed the same remote branch name so the second push was non-fast-forward. `partialShip` recovery remained correct; these fixes close the two failure modes.
+- Why: CDM-shaped shared remotes and nested git worktrees are the motivating multi-repo consumer; folder-leaf naming and one shared work-branch tip are not safe there.
+- See: `scripts/githooks/HookProjectName.ps1`; `scripts/githooks/pre-push.ps1`; `modules/Loom/Private/ShipCycle.ps1`; Decisions 2026-11-19.
+
 ## 2026-11-20 - ColleagueDataMover registry flipped to multi-repo bite
 
 - Decision: ColleagueDataMover local registry now sets `protectedBranches` (`main`, `master`, `chef/master`), `biteRepos` (`root`, `chef`), and `biteRepoTargets` (`root`→`main`, `chef`→`chef/master`). Meaningful root + Kitchen work uses `bite start|commit|pack|ship`. Cookbook stays out of default `biteRepos` unless a bite needs it. Metra hooks installed on portfolio root and nested `chef/` git.

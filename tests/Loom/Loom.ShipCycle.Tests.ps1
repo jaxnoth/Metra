@@ -288,6 +288,12 @@ Describe 'Loom ship-cycle temp repo start/pack/ship happy path' {
                 $start.ok | Should -BeTrue
                 @($start.repos) | Should -Contain 'chef'
                 @($start.repos) | Should -Contain 'root'
+                $start.workBranch | Should -Be 'bite/tworepoship/multi/root'
+                $chefWb = @($start.repoStates | Where-Object { $_.key -eq 'chef' })[0].workBranch
+                $rootWb = @($start.repoStates | Where-Object { $_.key -eq 'root' })[0].workBranch
+                $chefWb | Should -Be 'bite/tworepoship/multi/chef'
+                $rootWb | Should -Be 'bite/tworepoship/multi/root'
+                $chefWb | Should -Not -Be $rootWb
 
                 Set-Content -LiteralPath (Join-Path $tmp 'f.txt') -Value 'root-two' -Encoding UTF8
                 Set-Content -LiteralPath (Join-Path $chef 'f.txt') -Value 'chef-two' -Encoding UTF8
@@ -324,6 +330,62 @@ Describe 'Loom ship-cycle temp repo start/pack/ship happy path' {
                 Clear-LoomShipLock -Project $proj -ErrorAction SilentlyContinue
                 Remove-Item -LiteralPath (Get-LoomShipStateRoot -Project $proj) -Recurse -Force -ErrorAction SilentlyContinue
                 Remove-Item -LiteralPath (Join-Path $env:LOCALAPPDATA ("Metra\inspect\{0}" -f $proj)) -Recurse -Force -ErrorAction SilentlyContinue
+                Remove-Item -LiteralPath $tmp -Recurse -Force -ErrorAction SilentlyContinue
+            }
+        }
+    }
+
+    It 'pushes distinct remote refs when two worktrees share one bare remote' {
+        InModuleScope Loom {
+            Mock -ModuleName Metra Get-MetraShareRoot { $script:ShipCycleShareRoot }
+            $tmp = Join-Path ([IO.Path]::GetTempPath()) ('ship-share-' + [guid]::NewGuid().ToString('n'))
+            $bare = Join-Path $tmp 'bare.git'
+            $root = Join-Path $tmp 'root'
+            $chef = Join-Path $root 'chef'
+            $proj = 'SharedRemoteShip'
+            try {
+                New-Item -ItemType Directory -Path $tmp -Force | Out-Null
+                & git init --bare $bare | Out-Null
+                & git clone $bare $root | Out-Null
+                & git -C $root checkout -b main 2>$null | Out-Null
+                & git -C $root config user.email 'ship@test.local'
+                & git -C $root config user.name 'Ship Test'
+                Set-Content -LiteralPath (Join-Path $root '.gitignore') -Value "chef/`n" -Encoding UTF8
+                Set-Content -LiteralPath (Join-Path $root 'r.txt') -Value 'root-a' -Encoding UTF8
+                & git -C $root add .gitignore r.txt
+                & git -C $root commit -m 'root-init' | Out-Null
+                & git -C $root push -u origin main | Out-Null
+
+                New-Item -ItemType Directory -Path $chef -Force | Out-Null
+                & git -C $chef init -b master | Out-Null
+                & git -C $chef config user.email 'ship@test.local'
+                & git -C $chef config user.name 'Ship Test'
+                & git -C $chef remote add origin $bare
+                Set-Content -LiteralPath (Join-Path $chef 'c.txt') -Value 'chef-a' -Encoding UTF8
+                & git -C $chef add c.txt
+                & git -C $chef commit -m 'chef-init' | Out-Null
+                & git -C $chef push -u origin master | Out-Null
+
+                Mock Get-LoomShipProjectPolicy {
+                    [PSCustomObject]@{
+                        protectedBranches = @('main', 'master')
+                        ownerAffirmPaths  = @()
+                        biteRepos         = @('root', 'chef')
+                        biteRepoTargets   = @{ root = 'main'; chef = 'master' }
+                        resolved          = $true
+                    }
+                }
+
+                $start = Start-LoomShipBranch -Name $proj -Bite 'e4b' -ProjectRoot $root -Repos @('root', 'chef')
+                $start.ok | Should -BeTrue
+                $remoteRefs = @(& git -C $bare show-ref --heads)
+                ($remoteRefs -join "`n") | Should -Match 'refs/heads/bite/sharedremoteship/e4b/root'
+                ($remoteRefs -join "`n") | Should -Match 'refs/heads/bite/sharedremoteship/e4b/chef'
+                ($remoteRefs -join "`n") | Should -Not -Match 'refs/heads/bite/sharedremoteship/e4b$'
+            }
+            finally {
+                Clear-LoomShipLock -Project $proj -ErrorAction SilentlyContinue
+                Remove-Item -LiteralPath (Get-LoomShipStateRoot -Project $proj) -Recurse -Force -ErrorAction SilentlyContinue
                 Remove-Item -LiteralPath $tmp -Recurse -Force -ErrorAction SilentlyContinue
             }
         }

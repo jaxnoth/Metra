@@ -59,7 +59,13 @@ if (-not $metra) {
 
 Push-Location $repoRoot
 try {
-    & $metra inspect pre-commit
+    # Prefer metra.project for nested bite repos (CDM chef/); same order as pre-push.
+    . (Join-Path $PSScriptRoot 'HookProjectName.ps1')
+    $isMetraRoot = Test-Path -LiteralPath (Join-Path $repoRoot 'metra.ps1')
+    $cfgProject = Get-MetraHookConfiguredProject -RepoRoot $repoRoot
+    $projName = Resolve-MetraHookProjectName -RepoRoot $repoRoot -ConfiguredProject $cfgProject `
+        -FolderLeaf (Split-Path -Leaf $repoRoot) -IsMetraRoot:$isMetraRoot
+    & $metra inspect pre-commit -Name $projName
     if (-not $?) {
         exit 1
     }

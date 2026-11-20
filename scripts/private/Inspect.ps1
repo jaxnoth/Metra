@@ -5802,11 +5802,13 @@ function Install-MetraGitHooks {
     <#
     .SYNOPSIS
         Point this repo at Metra git hooks (auto inspect loop + Bing gate).
+        Sets metra.root and, when -ProjectName is supplied, metra.project (nested bite repos).
     #>
     [CmdletBinding(SupportsShouldProcess)]
     param(
         [string]$RepoRoot,
-        [string]$MetraRoot
+        [string]$MetraRoot,
+        [string]$ProjectName
     )
 
     if ([string]::IsNullOrWhiteSpace($MetraRoot)) {
@@ -5858,13 +5860,15 @@ function Install-MetraGitHooks {
         throw "Missing pre-push shim: $prePush"
     }
     $hooksPathValue = ($hooksPathValue -replace '\\', '/')
-    if (-not $PSCmdlet.ShouldProcess($RepoRoot, "Set core.hooksPath=$hooksPathValue and metra.root=$MetraRoot")) {
+    $projLabel = if ([string]::IsNullOrWhiteSpace($ProjectName)) { '(none)' } else { $ProjectName }
+    if (-not $PSCmdlet.ShouldProcess($RepoRoot, ("Set core.hooksPath={0}; metra.root={1}; metra.project={2}" -f $hooksPathValue, $MetraRoot, $projLabel))) {
         return [PSCustomObject]@{
-            ok        = $false
-            skipped   = $true
-            repoRoot  = $RepoRoot
-            hooksPath = $hooksPathValue
-            metraRoot = $MetraRoot
+            ok          = $false
+            skipped     = $true
+            repoRoot    = $RepoRoot
+            hooksPath   = $hooksPathValue
+            metraRoot   = $MetraRoot
+            projectName = $ProjectName
         }
     }
     Push-Location $RepoRoot
@@ -5877,17 +5881,89 @@ function Install-MetraGitHooks {
         if ($LASTEXITCODE -ne 0) {
             throw 'git config metra.root failed.'
         }
+        if (-not [string]::IsNullOrWhiteSpace($ProjectName)) {
+            & git config metra.project $ProjectName
+            if ($LASTEXITCODE -ne 0) {
+                throw 'git config metra.project failed.'
+            }
+        }
     }
     finally {
         Pop-Location
     }
     return [PSCustomObject]@{
-        ok        = $true
-        repoRoot  = $RepoRoot
-        hooksPath = $hooksPathValue
-        metraRoot = $MetraRoot
-        preCommit = $preCommit
-        prePush   = $prePush
+        ok          = $true
+        repoRoot    = $RepoRoot
+        hooksPath   = $hooksPathValue
+        metraRoot   = $MetraRoot
+        projectName = $ProjectName
+        preCommit   = $preCommit
+        prePush     = $prePush
+    }
+}
+
+function Install-MetraGitHooksForBiteRepos {
+    <#
+    .SYNOPSIS
+        Install Metra hooks on portfolio root and nested biteRepos git worktrees.
+        Always sets metra.project to the registry project name (CDM chef scar).
+    #>
+    [CmdletBinding(SupportsShouldProcess)]
+    param(
+        [Parameter(Mandatory)][string]$ProjectName,
+        [Parameter(Mandatory)][string]$ProjectRoot,
+        [string]$MetraRoot
+    )
+
+    if ([string]::IsNullOrWhiteSpace($MetraRoot)) {
+        $MetraRoot = Get-MetraRoot
+    }
+    $repos = @('root')
+    if (Get-Command Get-LoomShipProjectPolicy -ErrorAction SilentlyContinue) {
+        try {
+            $policy = Get-LoomShipProjectPolicy -RegistryName $ProjectName
+            if ($null -ne $policy -and @($policy.biteRepos).Count -gt 0) {
+                $repos = @($policy.biteRepos)
+            }
+        }
+        catch { }
+    }
+    $results = New-Object System.Collections.Generic.List[object]
+    $resolved = @()
+    if (Get-Command Resolve-LoomShipRepoRoots -ErrorAction SilentlyContinue) {
+        $resolved = @(Resolve-LoomShipRepoRoots -ProjectRoot $ProjectRoot -Repos $repos)
+    }
+    else {
+        $resolved = @([PSCustomObject]@{ Key = 'root'; Path = $ProjectRoot })
+        foreach ($key in $repos) {
+            if ($key -eq 'root') { continue }
+            $nested = Join-Path $ProjectRoot $key
+            if (Test-Path -LiteralPath (Join-Path $nested '.git')) {
+                $resolved += [PSCustomObject]@{ Key = $key; Path = $nested }
+            }
+        }
+    }
+    foreach ($repo in $resolved) {
+        $installParams = @{
+            RepoRoot    = [string]$repo.Path
+            MetraRoot   = $MetraRoot
+            ProjectName = $ProjectName
+        }
+        if ($PSBoundParameters.ContainsKey('WhatIf')) { $installParams.WhatIf = $WhatIf }
+        $one = Install-MetraGitHooks @installParams
+        $results.Add([PSCustomObject]@{
+                key         = [string]$repo.Key
+                ok          = [bool]$one.ok
+                skipped     = [bool](Get-MetraProp -Object $one -Name 'skipped' -Default $false)
+                repoRoot    = [string]$one.repoRoot
+                projectName = [string](Get-MetraProp -Object $one -Name 'projectName' -Default $ProjectName)
+                hooksPath   = [string](Get-MetraProp -Object $one -Name 'hooksPath' -Default '')
+            }) | Out-Null
+    }
+    return [PSCustomObject]@{
+        ok          = -not (@($results | Where-Object { -not $_.ok -and -not $_.skipped }).Count -gt 0)
+        projectName = $ProjectName
+        installs    = @($results)
     }
 }
 
@@ -8371,8 +8447,14 @@ function Show-MetraInspectCli {
             if (-not [string]::IsNullOrWhiteSpace($projectName)) {
                 $hookCtx = Resolve-MetraInspectProjectContext -Name $projectName -Mode diff
                 if (-not $hookCtx.Ok) { throw $hookCtx.Error }
-                $hookParams.RepoRoot = [string]$hookCtx.Root
-                $hookParams.MetraRoot = Get-MetraRoot
+                # Named install: portfolio root + nested biteRepos; always set metra.project.
+                $nestedParams = @{
+                    ProjectName = [string]$hookCtx.Project
+                    ProjectRoot = [string]$hookCtx.Root
+                    MetraRoot   = Get-MetraRoot
+                }
+                if ($common.ContainsKey('WhatIf')) { $nestedParams.WhatIf = $common.WhatIf }
+                return Install-MetraGitHooksForBiteRepos @nestedParams
             }
             return Install-MetraGitHooks @hookParams
         }

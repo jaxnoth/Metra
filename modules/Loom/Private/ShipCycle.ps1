@@ -341,6 +341,7 @@ function New-LoomShipRepoStateObject {
         [Parameter(Mandatory)][string]$Key,
         [Parameter(Mandatory)][string]$RelativePath,
         [Parameter(Mandatory)][string]$TargetBranch,
+        [string]$WorkBranch = '',
         [string]$TargetTipSha = '',
         [string]$BaseSha = '',
         [string]$HeadSha = '',
@@ -352,6 +353,7 @@ function New-LoomShipRepoStateObject {
         key            = $Key
         relativePath   = $RelativePath
         targetBranch   = $TargetBranch
+        workBranch     = $WorkBranch
         targetTipSha   = $TargetTipSha
         baseSha        = $BaseSha
         headSha        = $HeadSha
@@ -359,6 +361,51 @@ function New-LoomShipRepoStateObject {
         mergeCommitSha = $MergeCommitSha
         pushStatus     = $PushStatus
     }
+}
+
+function Get-LoomShipWorkBranchName {
+    <#
+    .SYNOPSIS
+        Work / remote backup branch for a bite repo key.
+        Multi-repo (shared remotes like CDM root+chef): bite/<slug>/<id>/<repoKey>.
+        Root-only: bite/<slug>/<id> (legacy compatibility).
+    #>
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory)][string]$ProjectSlug,
+        [Parameter(Mandatory)][string]$BiteId,
+        [Parameter(Mandatory)][string]$RepoKey,
+        [bool]$MultiRepo = $false
+    )
+    $slug = $ProjectSlug.Trim().Trim('-')
+    $id = $BiteId.Trim().Trim('-')
+    $key = ($RepoKey.Trim() -replace '[^\w\.-]+', '-').Trim('-').ToLowerInvariant()
+    if ([string]::IsNullOrWhiteSpace($key)) { $key = 'root' }
+    if ($MultiRepo) {
+        return ('bite/{0}/{1}/{2}' -f $slug, $id, $key).Replace('\', '/')
+    }
+    return ('bite/{0}/{1}' -f $slug, $id).Replace('\', '/')
+}
+
+function Get-LoomShipRepoWorkBranch {
+    <#
+    .SYNOPSIS
+        Resolve the work branch for one repo from ship state (per-repo, else legacy state.workBranch).
+    #>
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory)]$State,
+        [Parameter(Mandatory)][string]$RepoKey
+    )
+    $legacy = [string](Get-LoomProp -Object $State -Name 'workBranch' -Default '')
+    foreach ($rs in @($(Get-LoomProp -Object $State -Name 'repoStates' -Default @()))) {
+        $key = [string](Get-LoomProp -Object $rs -Name 'key' -Default '')
+        if (-not [string]::Equals($key, $RepoKey, [StringComparison]::OrdinalIgnoreCase)) { continue }
+        $wb = [string](Get-LoomProp -Object $rs -Name 'workBranch' -Default '')
+        if (-not [string]::IsNullOrWhiteSpace($wb)) { return $wb }
+        break
+    }
+    return $legacy
 }
 
 function Get-LoomShipRangeHash {
@@ -425,6 +472,7 @@ function Format-LoomShipRepoReviewSection {
     [void]$sb.AppendLine('')
     [void]$sb.AppendLine(('## Repository: {0}' -f $key))
     [void]$sb.AppendLine(('Target: {0}' -f [string](Get-LoomProp -Object $RepoState -Name 'targetBranch' -Default '')))
+    [void]$sb.AppendLine(('WorkBranch: {0}' -f [string](Get-LoomProp -Object $RepoState -Name 'workBranch' -Default '')))
     [void]$sb.AppendLine(('RelativePath: {0}' -f [string](Get-LoomProp -Object $RepoState -Name 'relativePath' -Default '')))
     [void]$sb.AppendLine(('Base: {0}' -f $base))
     [void]$sb.AppendLine(('Head: {0}' -f $head))
@@ -471,7 +519,8 @@ function Get-LoomShipRepoStatesFromDisk {
         [Parameter(Mandatory)][string[]]$Repos,
         [Parameter(Mandatory)]$Policy,
         [string]$OverrideRootTarget,
-        [string]$WorkBranch
+        [string]$WorkBranch,
+        [hashtable]$WorkBranchByKey = @{}
     )
     $resolved = @(Resolve-LoomShipRepoRoots -ProjectRoot $ProjectRoot -Repos $Repos)
     $states = @()
@@ -481,10 +530,18 @@ function Get-LoomShipRepoStatesFromDisk {
         if (-not (Test-LoomGitWorkingTreeClean -ProjectRoot $meta.Path)) {
             throw ("Dirty worktree blocks ship snapshot ({0}): {1}" -f $meta.Key, $meta.Path)
         }
-        if (-not [string]::IsNullOrWhiteSpace($WorkBranch)) {
+        $expectedWork = ''
+        if ($WorkBranchByKey -and $WorkBranchByKey.ContainsKey($meta.Key) -and
+            -not [string]::IsNullOrWhiteSpace([string]$WorkBranchByKey[$meta.Key])) {
+            $expectedWork = [string]$WorkBranchByKey[$meta.Key]
+        }
+        elseif (-not [string]::IsNullOrWhiteSpace($WorkBranch)) {
+            $expectedWork = $WorkBranch
+        }
+        if (-not [string]::IsNullOrWhiteSpace($expectedWork)) {
             $cur = Get-LoomGitCurrentBranchName -ProjectRoot $meta.Path
-            if ($cur -ne $WorkBranch) {
-                throw ("Wrong branch in {0}: current={1}; expected={2}" -f $meta.Key, $cur, $WorkBranch)
+            if ($cur -ne $expectedWork) {
+                throw ("Wrong branch in {0}: current={1}; expected={2}" -f $meta.Key, $cur, $expectedWork)
             }
         }
         $head = Get-LoomGitRevParse -ProjectRoot $meta.Path -Rev 'HEAD'
@@ -493,11 +550,13 @@ function Get-LoomShipRepoStatesFromDisk {
             throw ("Target branch '{0}' missing in repo '{1}'. Fetch or create it before pack/ship." -f $target, $meta.Key)
         }
         $tip = [string]$tipParse.Stdout.Trim()
-        $base = Get-LoomShipMergeBaseSha -ProjectRoot $meta.Path -TargetBranch $target -WorkBranch $(if ($WorkBranch) { $WorkBranch } else { 'HEAD' })
+        $base = Get-LoomShipMergeBaseSha -ProjectRoot $meta.Path -TargetBranch $target `
+            -WorkBranch $(if ($expectedWork) { $expectedWork } else { 'HEAD' })
         $rangeHash = Get-LoomShipRangeHash -ProjectRoot $meta.Path -BaseSha $base -HeadSha $head
         $priorPush = 'pending'
         $states += (New-LoomShipRepoStateObject -Key $meta.Key -RelativePath $meta.RelativePath -TargetBranch $target `
-                -TargetTipSha $tip -BaseSha $base -HeadSha $head -RangeHash $rangeHash -PushStatus $priorPush)
+                -WorkBranch $expectedWork -TargetTipSha $tip -BaseSha $base -HeadSha $head -RangeHash $rangeHash `
+                -PushStatus $priorPush)
     }
     return @($states)
 }
@@ -914,11 +973,13 @@ function Start-LoomShipBranch {
     $slug = ($Name.ToLowerInvariant() -replace '[^\w]+', '-').Trim('-')
     $biteId = ($Bite.Trim() -replace '[^\w\.-]+', '-').Trim('-').ToLowerInvariant()
     if ([string]::IsNullOrWhiteSpace($biteId)) { throw '-Bite is required.' }
-    $branch = ('bite/{0}/{1}' -f $slug, $biteId).Replace('\', '/')
 
     $repoRoots = @(Resolve-LoomShipRepoRoots -ProjectRoot $root -Repos $Repos)
+    $multiRepo = (@($repoRoots).Count -gt 1)
+    $primaryWork = Get-LoomShipWorkBranchName -ProjectSlug $slug -BiteId $biteId -RepoKey 'root' -MultiRepo:$multiRepo
     $repoStates = @()
     foreach ($repo in $repoRoots) {
+        $branch = Get-LoomShipWorkBranchName -ProjectSlug $slug -BiteId $biteId -RepoKey $repo.Key -MultiRepo:$multiRepo
         $repoTarget = Resolve-LoomShipRepoTarget -Key $repo.Key -Policy $policy -OverrideTarget $(
             if ($repo.Key -eq 'root') { $TargetBranch } else { '' }
         )
@@ -950,12 +1011,12 @@ function Start-LoomShipBranch {
         $base = Get-LoomShipMergeBaseSha -ProjectRoot $repo.Path -TargetBranch $repoTarget -WorkBranch $branch
         $head = Get-LoomGitRevParse -ProjectRoot $repo.Path -Rev 'HEAD'
         $repoStates += (New-LoomShipRepoStateObject -Key $repo.Key -RelativePath $repo.RelativePath -TargetBranch $repoTarget `
-                -TargetTipSha $tip -BaseSha $base -HeadSha $head -PushStatus 'pending')
+                -WorkBranch $branch -TargetTipSha $tip -BaseSha $base -HeadSha $head -PushStatus 'pending')
     }
 
     $rootState = @($repoStates | Where-Object { $_.key -eq 'root' })[0]
     if (-not $rootState) { throw 'Internal error: root repo state missing after bite start.' }
-    $state = New-LoomShipStateObject -Project $Name -WorkBranch $branch -TargetBranch ([string]$rootState.targetBranch) `
+    $state = New-LoomShipStateObject -Project $Name -WorkBranch $primaryWork -TargetBranch ([string]$rootState.targetBranch) `
         -BaseSha ([string]$rootState.baseSha) -HeadSha ([string]$rootState.headSha) -BiteId $biteId `
         -Repos @($repoRoots | ForEach-Object { $_.Key }) -PrimaryRepoKey 'root' -RepoStates $repoStates -ShipPhase 'active'
     Save-LoomShipState -State $state | Out-Null
@@ -964,7 +1025,7 @@ function Start-LoomShipBranch {
         ok             = $true
         project        = $Name
         biteId         = $biteId
-        workBranch     = $branch
+        workBranch     = $primaryWork
         primaryRepoKey = 'root'
         targetBranch   = [string]$rootState.targetBranch
         baseSha        = [string]$rootState.baseSha
@@ -988,10 +1049,11 @@ function Invoke-LoomShipCommit {
     $root = Resolve-LoomShipProjectRoot -Name $Name -ProjectRoot $ProjectRoot
     $state = Get-LoomShipState -Project $Name
     if (-not $state) { throw "No ship state for $Name. Run bite start first." }
-    $branch = [string]$state.workBranch
+    $primaryBranch = [string]$state.workBranch
     $cur = Get-LoomGitCurrentBranchName -ProjectRoot $root
-    if ($cur -ne $branch) {
-        throw ("Wrong branch for ship commit: current={0}; expected={1}" -f $cur, $branch)
+    $rootExpected = Get-LoomShipRepoWorkBranch -State $state -RepoKey 'root'
+    if ($cur -ne $rootExpected) {
+        throw ("Wrong branch for ship commit: current={0}; expected={1}" -f $cur, $rootExpected)
     }
     if (-not (Test-LoomWorkBranchName -Branch $cur)) {
         throw "Ship commit refused on non-work branch: $cur"
@@ -1006,6 +1068,7 @@ function Invoke-LoomShipCommit {
 
     # Validate all repos before mutating any (no partial multi-repo commits).
     foreach ($repo in $repos) {
+        $branch = Get-LoomShipRepoWorkBranch -State $state -RepoKey $repo.Key
         $repoCur = Get-LoomGitCurrentBranchName -ProjectRoot $repo.Path
         if ($repoCur -ne $branch) {
             throw ("Wrong branch for ship commit in {0}: current={1}; expected={2}" -f $repo.Key, $repoCur, $branch)
@@ -1021,10 +1084,11 @@ function Invoke-LoomShipCommit {
     $committed = @()
     $any = $false
     foreach ($repo in $repos) {
+        $branch = Get-LoomShipRepoWorkBranch -State $state -RepoKey $repo.Key
         $status = Invoke-LoomGit -ProjectRoot $repo.Path -GitArgs @('status', '--porcelain', '-uall')
         if ($status.ExitCode -ne 0) { throw (Get-LoomGitErrorDetail $status) }
         if ([string]::IsNullOrWhiteSpace([string]$status.Stdout)) {
-            $committed += [PSCustomObject]@{ key = $repo.Key; skipped = $true }
+            $committed += [PSCustomObject]@{ key = $repo.Key; skipped = $true; workBranch = $branch }
             continue
         }
         $add = Invoke-LoomGit -ProjectRoot $repo.Path -GitArgs @('add', '-A')
@@ -1033,7 +1097,7 @@ function Invoke-LoomShipCommit {
         if ($commit.ExitCode -ne 0) { throw ("git commit failed in {0}: {1}" -f $repo.Key, (Get-LoomGitErrorDetail $commit)) }
         $any = $true
         $repoHead = Get-LoomGitRevParse -ProjectRoot $repo.Path -Rev 'HEAD'
-        $committed += [PSCustomObject]@{ key = $repo.Key; skipped = $false; headSha = $repoHead }
+        $committed += [PSCustomObject]@{ key = $repo.Key; skipped = $false; headSha = $repoHead; workBranch = $branch }
         if (-not $NoPush) {
             $push = Invoke-LoomGit -ProjectRoot $repo.Path -GitArgs @('push', '-u', 'origin', $branch)
             if ($push.ExitCode -ne 0) {
@@ -1043,7 +1107,7 @@ function Invoke-LoomShipCommit {
     }
 
     if (-not $any) {
-        return [PSCustomObject]@{ ok = $true; skipped = $true; reason = 'nothing-to-commit'; branch = $branch; repos = $committed }
+        return [PSCustomObject]@{ ok = $true; skipped = $true; reason = 'nothing-to-commit'; branch = $primaryBranch; repos = $committed }
     }
 
     $head = Get-LoomGitRevParse -ProjectRoot $root -Rev 'HEAD'
@@ -1065,7 +1129,7 @@ function Invoke-LoomShipCommit {
     return [PSCustomObject]@{
         ok            = $true
         project       = $Name
-        branch        = $branch
+        branch        = $primaryBranch
         headSha       = $head
         message       = $msg
         reviewCleared = $true
@@ -1126,7 +1190,7 @@ function Invoke-LoomShipPack {
     $state = Get-LoomShipState -Project $Name
     if (-not $state) { throw "No ship state for $Name. Run bite start first." }
 
-    $work = [string]$state.workBranch
+    $work = Get-LoomShipRepoWorkBranch -State $state -RepoKey 'root'
     $cur = Get-LoomGitCurrentBranchName -ProjectRoot $root
     if ($cur -ne $work) { throw ("Wrong branch for pack: current={0}; expected={1}" -f $cur, $work) }
 
@@ -1142,8 +1206,12 @@ function Invoke-LoomShipPack {
     }
     $repoKeys = @($(Get-LoomProp -Object $state -Name 'repos' -Default @('root')))
     $legacyRootTarget = [string](Get-LoomProp -Object $state -Name 'targetBranch' -Default '')
+    $workByKey = @{}
+    foreach ($k in $repoKeys) {
+        $workByKey[[string]$k] = Get-LoomShipRepoWorkBranch -State $state -RepoKey ([string]$k)
+    }
     $repoStates = @(Get-LoomShipRepoStatesFromDisk -ProjectRoot $root -Repos $repoKeys -Policy $policy `
-            -OverrideRootTarget $legacyRootTarget -WorkBranch $work)
+            -OverrideRootTarget $legacyRootTarget -WorkBranchByKey $workByKey)
     $pathsByKey = @{}
     foreach ($meta in @(Resolve-LoomShipRepoRoots -ProjectRoot $root -Repos $repoKeys)) {
         $pathsByKey[$meta.Key] = $meta.Path
@@ -1410,8 +1478,10 @@ function Test-LoomShipReady {
                     # Already shipped remote; skip work-branch SHA checks for resume (B2).
                     continue
                 }
+                $repoWork = Get-LoomShipRepoWorkBranch -State $state -RepoKey $key
+                if ([string]::IsNullOrWhiteSpace($repoWork)) { $repoWork = $work }
                 $curBranch = Get-LoomGitCurrentBranchName -ProjectRoot $path
-                if ($curBranch -ne $work -and $shipPhase -ne 'partialShip') {
+                if ($curBranch -ne $repoWork -and $shipPhase -ne 'partialShip') {
                     [void]$reasons.Add(('wrong-work-branch:{0}' -f $key))
                 }
                 $liveHead = Get-LoomGitRevParse -ProjectRoot $path -Rev 'HEAD'
@@ -1420,7 +1490,7 @@ function Test-LoomShipReady {
                     [void]$reasons.Add(('head-sha-mismatch:{0}' -f $key))
                 }
                 if ($shipPhase -ne 'partialShip') {
-                    $liveBase = Get-LoomShipMergeBaseSha -ProjectRoot $path -TargetBranch $rsTarget -WorkBranch $work
+                    $liveBase = Get-LoomShipMergeBaseSha -ProjectRoot $path -TargetBranch $rsTarget -WorkBranch $repoWork
                     if ($liveBase -ne $rsBase) {
                         [void]$reasons.Add(('base-sha-mismatch:{0}' -f $key))
                     }
@@ -1556,6 +1626,7 @@ function Invoke-LoomShip {
         # Ensure repoStates exist (legacy v1 -> synthesize root-only).
         if (@($repoStates).Count -eq 0) {
             $repoStates = @(New-LoomShipRepoStateObject -Key 'root' -RelativePath '.' -TargetBranch $target `
+                    -WorkBranch $work `
                     -TargetTipSha (Get-LoomGitRevParse -ProjectRoot $root -Rev $target) `
                     -BaseSha ([string]$state.baseSha) -HeadSha $headSha -PushStatus 'pending')
             $state.repoStates = $repoStates
@@ -1578,10 +1649,12 @@ function Invoke-LoomShip {
             if (-not (Test-LoomGitWorkingTreeClean -ProjectRoot $path)) {
                 throw ("Dirty worktree in {0}" -f $key)
             }
+            $repoWork = Get-LoomShipRepoWorkBranch -State $state -RepoKey $key
+            if ([string]::IsNullOrWhiteSpace($repoWork)) { $repoWork = $work }
             if ([string](Get-LoomProp -Object $rs -Name 'pushStatus' -Default 'pending') -ne 'pushed') {
-                $verify = Invoke-LoomGit -ProjectRoot $path -GitArgs @('rev-parse', '--verify', $work)
+                $verify = Invoke-LoomGit -ProjectRoot $path -GitArgs @('rev-parse', '--verify', $repoWork)
                 if ($verify.ExitCode -ne 0 -and $shipPhase -ne 'partialShip') {
-                    throw ("Work branch {0} missing in {1}" -f $work, $key)
+                    throw ("Work branch {0} missing in {1}" -f $repoWork, $key)
                 }
             }
             if (-not $NoPush) {
@@ -1623,9 +1696,11 @@ function Invoke-LoomShip {
                 $path = [string]$byKey[$key].Path
                 $rsTarget = [string]$rs.targetBranch
                 $pushStatus = [string](Get-LoomProp -Object $rs -Name 'pushStatus' -Default 'pending')
+                $repoWorkEarly = Get-LoomShipRepoWorkBranch -State $state -RepoKey $key
+                if ([string]::IsNullOrWhiteSpace($repoWorkEarly)) { $repoWorkEarly = $work }
                 if ($pushStatus -eq 'pushed') {
                     [void]$mergeShas.Add([PSCustomObject]@{
-                            repo = $key; path = $path; target = $rsTarget
+                            repo = $key; path = $path; target = $rsTarget; workBranch = $repoWorkEarly
                             mergeSha = [string]$rs.mergeCommitSha; pushStatus = 'pushed'
                         })
                     continue
@@ -1635,18 +1710,20 @@ function Invoke-LoomShip {
                     $onTarget = Invoke-LoomGit -ProjectRoot $path -GitArgs @('rev-parse', $rsTarget)
                     if ($onTarget.ExitCode -eq 0 -and [string]$onTarget.Stdout.Trim() -eq $existingMerge) {
                         [void]$mergeShas.Add([PSCustomObject]@{
-                                repo = $key; path = $path; target = $rsTarget
+                                repo = $key; path = $path; target = $rsTarget; workBranch = $repoWorkEarly
                                 mergeSha = $existingMerge; pushStatus = 'pending'
                             })
                         continue
                     }
                 }
 
+                $repoWork = Get-LoomShipRepoWorkBranch -State $state -RepoKey $key
+                if ([string]::IsNullOrWhiteSpace($repoWork)) { $repoWork = $work }
                 $co = Invoke-LoomGit -ProjectRoot $path -GitArgs @('checkout', $rsTarget)
                 if ($co.ExitCode -ne 0) {
                     throw ("checkout {0} failed in {1}: {2}" -f $rsTarget, $key, (Get-LoomGitErrorDetail $co))
                 }
-                $merge = Invoke-LoomGit -ProjectRoot $path -GitArgs @('merge', '--no-ff', $work, '-m', $msg)
+                $merge = Invoke-LoomGit -ProjectRoot $path -GitArgs @('merge', '--no-ff', $repoWork, '-m', $msg)
                 if ($merge.ExitCode -ne 0) {
                     Invoke-LoomGit -ProjectRoot $path -GitArgs @('merge', '--abort') | Out-Null
                     throw ("merge --no-ff failed in {0}: {1}" -f $key, (Get-LoomGitErrorDetail $merge))
@@ -1655,7 +1732,7 @@ function Invoke-LoomShip {
                 $rs.mergeCommitSha = $mergeSha
                 $rs.pushStatus = 'pending'
                 $entry = [PSCustomObject]@{
-                    repo = $key; path = $path; target = $rsTarget
+                    repo = $key; path = $path; target = $rsTarget; workBranch = $repoWork
                     mergeSha = $mergeSha; pushStatus = 'pending'
                     priorTip = [string](Get-LoomProp -Object $rs -Name 'targetTipSha' -Default '')
                 }
@@ -1668,8 +1745,9 @@ function Invoke-LoomShip {
             foreach ($m in @($mergedThisRun)) {
                 $prior = [string]$m.priorTip
                 if ([string]::IsNullOrWhiteSpace($prior)) { continue }
+                $rollbackWork = [string](Get-LoomProp -Object $m -Name 'workBranch' -Default $work)
                 Invoke-LoomGit -ProjectRoot $m.path -GitArgs @('checkout', '-B', [string]$m.target, $prior) | Out-Null
-                Invoke-LoomGit -ProjectRoot $m.path -GitArgs @('checkout', $work) | Out-Null
+                Invoke-LoomGit -ProjectRoot $m.path -GitArgs @('checkout', $rollbackWork) | Out-Null
                 foreach ($rs in $repoStates) {
                     if ($rs.key -eq $m.repo) {
                         $rs.mergeCommitSha = ''
@@ -1749,9 +1827,14 @@ function Invoke-LoomShip {
         # Phase 4: delete work branches only after every push succeeds (B2).
         if ($deleteWork -and -not $partial) {
             foreach ($m in $mergeShas) {
-                Invoke-LoomGit -ProjectRoot $m.path -GitArgs @('branch', '-d', $work) | Out-Null
+                $delWork = [string](Get-LoomProp -Object $m -Name 'workBranch' -Default '')
+                if ([string]::IsNullOrWhiteSpace($delWork)) {
+                    $delWork = Get-LoomShipRepoWorkBranch -State $state -RepoKey ([string]$m.repo)
+                }
+                if ([string]::IsNullOrWhiteSpace($delWork)) { $delWork = $work }
+                Invoke-LoomGit -ProjectRoot $m.path -GitArgs @('branch', '-d', $delWork) | Out-Null
                 if (-not $NoPush) {
-                    Invoke-LoomGit -ProjectRoot $m.path -GitArgs @('push', 'origin', '--delete', $work) | Out-Null
+                    Invoke-LoomGit -ProjectRoot $m.path -GitArgs @('push', 'origin', '--delete', $delWork) | Out-Null
                 }
             }
         }
