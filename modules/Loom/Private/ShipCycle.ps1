@@ -614,6 +614,14 @@ function Publish-LoomShipBingEvidencePack {
         throw ("Composite review body missing: {0}" -f $CompositeBodyPath)
     }
     $compositeBody = Get-Content -LiteralPath $CompositeBodyPath -Raw -Encoding UTF8
+    $fileHits = [regex]::Matches([string]$compositeBody, '(?m)^[AMDCRT]\t(.+)$')
+    $fileList = @(
+        foreach ($hit in $fileHits) {
+            $p = [string]$hit.Groups[1].Value.Trim()
+            if (-not [string]::IsNullOrWhiteSpace($p)) { $p }
+        }
+    ) | Select-Object -Unique
+    $filesHeader = if (@($fileList).Count -eq 0) { '(none)' } else { (@($fileList) -join ', ') }
     $sb = New-Object System.Text.StringBuilder
     [void]$sb.AppendLine('# Metra Inspect pack (Bing comparison lane)')
     [void]$sb.AppendLine('')
@@ -622,6 +630,7 @@ function Publish-LoomShipBingEvidencePack {
     [void]$sb.AppendLine(('Project: {0}' -f $Project))
     [void]$sb.AppendLine(('contentHash: {0}' -f $CompositeHash))
     [void]$sb.AppendLine(('PackedAtUtc: {0}' -f [datetime]::UtcNow.ToString('o')))
+    [void]$sb.AppendLine(('Files: {0}' -f $filesHeader))
     [void]$sb.AppendLine('')
     [void]$sb.AppendLine('## Ship evidence (authoritative)')
     [void]$sb.AppendLine('')
@@ -1690,6 +1699,7 @@ function Invoke-LoomShip {
         # On failure: reset earlier local merges back to packed targetTipSha and return to work branch.
         $mergeShas = New-Object System.Collections.Generic.List[object]
         $mergedThisRun = New-Object System.Collections.Generic.List[object]
+        $activeMerge = $null
         try {
             foreach ($rs in $repoStates) {
                 $key = [string]$rs.key
@@ -1719,13 +1729,20 @@ function Invoke-LoomShip {
 
                 $repoWork = Get-LoomShipRepoWorkBranch -State $state -RepoKey $key
                 if ([string]::IsNullOrWhiteSpace($repoWork)) { $repoWork = $work }
+                $priorTip = [string](Get-LoomProp -Object $rs -Name 'targetTipSha' -Default '')
                 $co = Invoke-LoomGit -ProjectRoot $path -GitArgs @('checkout', $rsTarget)
                 if ($co.ExitCode -ne 0) {
                     throw ("checkout {0} failed in {1}: {2}" -f $rsTarget, $key, (Get-LoomGitErrorDetail $co))
                 }
+                # Track active protected checkout so catch restores work branch even before mergeShas entry.
+                $activeMerge = [PSCustomObject]@{
+                    repo = $key; path = $path; target = $rsTarget; workBranch = $repoWork; priorTip = $priorTip
+                }
                 $merge = Invoke-LoomGit -ProjectRoot $path -GitArgs @('merge', '--no-ff', $repoWork, '-m', $msg)
                 if ($merge.ExitCode -ne 0) {
                     Invoke-LoomGit -ProjectRoot $path -GitArgs @('merge', '--abort') | Out-Null
+                    Invoke-LoomGit -ProjectRoot $path -GitArgs @('checkout', $repoWork) | Out-Null
+                    $activeMerge = $null
                     throw ("merge --no-ff failed in {0}: {1}" -f $key, (Get-LoomGitErrorDetail $merge))
                 }
                 $mergeSha = Get-LoomGitHeadCommit -ProjectRoot $path
@@ -1734,14 +1751,21 @@ function Invoke-LoomShip {
                 $entry = [PSCustomObject]@{
                     repo = $key; path = $path; target = $rsTarget; workBranch = $repoWork
                     mergeSha = $mergeSha; pushStatus = 'pending'
-                    priorTip = [string](Get-LoomProp -Object $rs -Name 'targetTipSha' -Default '')
+                    priorTip = $priorTip
                 }
                 [void]$mergeShas.Add($entry)
                 [void]$mergedThisRun.Add($entry)
+                $activeMerge = $null
                 $keepLock = $true
             }
         }
         catch {
+            if ($null -ne $activeMerge) {
+                $failWork = [string]$activeMerge.workBranch
+                if (-not [string]::IsNullOrWhiteSpace($failWork)) {
+                    Invoke-LoomGit -ProjectRoot $activeMerge.path -GitArgs @('checkout', $failWork) | Out-Null
+                }
+            }
             foreach ($m in @($mergedThisRun)) {
                 $prior = [string]$m.priorTip
                 if ([string]::IsNullOrWhiteSpace($prior)) { continue }

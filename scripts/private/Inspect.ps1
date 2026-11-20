@@ -7739,25 +7739,36 @@ function Invoke-MetraInspectPrepareForBing {
             $live = Get-MetraInspectCurrentDiffInput -ProjectContext $ctx -Base $baseForLive
             $assess = Get-MetraInspectSlotDiffAssess -SlotKey $slotKey
             if ($null -ne $assess -and $live.inputHash -eq $assess.inputHash) {
-                Write-Host 'Prepare-for-Bing: reusing completed loop session - refreshing pack...' -ForegroundColor Cyan
-                $packResult = Invoke-MetraInspectAutoPack -Name $slotKey -Base $baseForLive -NoClipboard
-                return [PSCustomObject]@{
-                    readyForBing      = $true
-                    project           = $slotKey
-                    phase             = 'bing'
-                    critical          = [int]$existing.CriticalCount
-                    high              = [int]$existing.HighCount
-                    medium            = [int]$existing.MediumCount
-                    low               = [int]$existing.LowCount
-                    terminationReason = [string]$existing.TerminationReason
-                    packPath          = [string]$packResult.packPath
-                    packBuilt         = [bool]$packResult.ok
-                    reusedSession     = $true
-                    base              = $baseForLive
+                $term = [string]$existing.TerminationReason
+                $c = [int]$existing.CriticalCount
+                $h = [int]$existing.HighCount
+                $m = [int]$existing.MediumCount
+                $goalOk = ($term -eq 'Goal achieved') -or ($c -eq 0 -and $h -eq 0 -and $m -le 2)
+                if ($goalOk) {
+                    Write-Host 'Prepare-for-Bing: reusing completed loop session - refreshing pack...' -ForegroundColor Cyan
+                    $packResult = Invoke-MetraInspectAutoPack -Name $slotKey -Base $baseForLive -NoClipboard
+                    return [PSCustomObject]@{
+                        readyForBing      = $true
+                        project           = $slotKey
+                        phase             = 'bing'
+                        critical          = $c
+                        high              = $h
+                        medium            = $m
+                        low               = [int]$existing.LowCount
+                        terminationReason = $term
+                        packPath          = [string]$packResult.packPath
+                        packBuilt         = [bool]$packResult.ok
+                        reusedSession     = $true
+                        base              = $baseForLive
+                    }
                 }
+                Write-Host ("Prepare-for-Bing: prior session not goal-ready (term={0}; C={1} H={2} M={3}) - re-assessing..." -f $term, $c, $h, $m) -ForegroundColor Yellow
+                $Reset = $true
             }
-            Write-Host 'Prepare-for-Bing: working tree changed since completed session - re-assessing...' -ForegroundColor Yellow
-            $Reset = $true
+            else {
+                Write-Host 'Prepare-for-Bing: working tree changed since completed session - re-assessing...' -ForegroundColor Yellow
+                $Reset = $true
+            }
         }
     }
 
@@ -7964,14 +7975,16 @@ function Invoke-MetraInspectPreCommitHook {
     <#
     .SYNOPSIS
         Git pre-commit: branch-class aware (work safety / protected refuse / legacy Bing).
+        -RepoRoot is the active nested worktree (e.g. CDM chef/); -Name is the registry project.
     #>
     [CmdletBinding()]
     param(
-        [string]$Name
+        [string]$Name,
+        [string]$RepoRoot
     )
 
-    if ($env:METRA_SKIP_BING_GATE -eq '1' -or $env:METRA_SKIP_INSPECT_HOOK -eq '1') {
-        Write-Host 'Pre-commit hook skipped (METRA_SKIP_BING_GATE or METRA_SKIP_INSPECT_HOOK=1).' -ForegroundColor Yellow
+    if ($env:METRA_SKIP_INSPECT_HOOK -eq '1') {
+        Write-Host 'Pre-commit hook skipped (METRA_SKIP_INSPECT_HOOK=1).' -ForegroundColor Yellow
         return [PSCustomObject]@{ ok = $true; skipped = $true; reason = 'env-skip' }
     }
 
@@ -7979,7 +7992,18 @@ function Invoke-MetraInspectPreCommitHook {
     if (-not $ctx.Ok) { throw $ctx.Error }
     $slotKey = [string]$ctx.Project
     if ([string]::IsNullOrWhiteSpace($slotKey)) { $slotKey = 'default' }
-    $root = [string]$ctx.Root
+    if ([string]::IsNullOrWhiteSpace($RepoRoot)) {
+        $top = [string](@(& git rev-parse --show-toplevel 2>$null) | Select-Object -First 1)
+        if (-not [string]::IsNullOrWhiteSpace($top)) {
+            $RepoRoot = $top.Trim()
+        }
+    }
+    if (-not [string]::IsNullOrWhiteSpace($RepoRoot)) {
+        $root = [System.IO.Path]::GetFullPath($RepoRoot.Trim())
+    }
+    else {
+        $root = [string]$ctx.Root
+    }
 
     $branch = [string](@(& git -C $root rev-parse --abbrev-ref HEAD 2>$null) | Select-Object -First 1).Trim()
     $policyProtected = @()
@@ -8042,6 +8066,12 @@ function Invoke-MetraInspectPreCommitHook {
     }
 
     # Legacy path: projects without protectedBranches keep Bing affirm gate.
+    # METRA_SKIP_BING_GATE only skips this legacy affirm check - not work/protected gates above.
+    if ($env:METRA_SKIP_BING_GATE -eq '1') {
+        Write-Host 'Pre-commit: Bing gate skipped (METRA_SKIP_BING_GATE=1); work/protected checks already ran.' -ForegroundColor Yellow
+        return [PSCustomObject]@{ ok = $true; skipped = $true; reason = 'bing-gate-skip'; branch = $branch; repoRoot = $root }
+    }
+
     $live = Get-MetraInspectCurrentDiffInput -ProjectContext $ctx
     if ($live.empty) {
         Write-Host 'Pre-commit: no inspectable diff - OK.'
@@ -8132,6 +8162,7 @@ function Show-MetraInspectCli {
     $reviewClipboard = $false
     $reviewText = $null
     $remoteBranches = [System.Collections.Generic.List[string]]::new()
+    $repoRootFromRest = $null
 
     $i = 0
     if ($argsRest.Count -gt 0 -and $argsRest[0] -ieq 'budget') {
@@ -8237,6 +8268,11 @@ function Show-MetraInspectCli {
         }
         if ($mode -eq 'pre-push' -and $tok -ieq '-RemoteBranch' -and ($i + 1) -lt $argsRest.Count) {
             [void]$remoteBranches.Add([string]$argsRest[$i + 1])
+            $i += 2
+            continue
+        }
+        if ($mode -eq 'pre-commit' -and $tok -ieq '-RepoRoot' -and ($i + 1) -lt $argsRest.Count) {
+            $repoRootFromRest = [string]$argsRest[$i + 1]
             $i += 2
             continue
         }
@@ -8409,7 +8445,11 @@ function Show-MetraInspectCli {
             return Invoke-MetraInspectBudget -Name $projectName -Base $baseRev @common
         }
         'pre-commit' {
-            return Invoke-MetraInspectPreCommitHook -Name $projectName
+            $preCommitParams = @{ Name = $projectName }
+            if (-not [string]::IsNullOrWhiteSpace($repoRootFromRest)) {
+                $preCommitParams.RepoRoot = $repoRootFromRest
+            }
+            return Invoke-MetraInspectPreCommitHook @preCommitParams
         }
         'pre-push' {
             $prePushParams = @{ Name = $projectName }

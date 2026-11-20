@@ -1,10 +1,11 @@
 # Metra pre-commit: require Bing affirm for the assessed report (live drift warns only).
 # Install: .\metra.ps1 inspect hooks install  (sets git config metra.root)
-# Emergency skip: METRA_SKIP_BING_GATE=1 git commit ...
+# Full hook skip: METRA_SKIP_INSPECT_HOOK=1. Bing-gate-only skip is handled in-process
+# (METRA_SKIP_BING_GATE=1) so work-branch safety and protected-branch refuse still run.
 
 $ErrorActionPreference = 'Stop'
 
-if ($env:METRA_SKIP_BING_GATE -eq '1' -or $env:METRA_SKIP_INSPECT_HOOK -eq '1') {
+if ($env:METRA_SKIP_INSPECT_HOOK -eq '1') {
     exit 0
 }
 
@@ -65,7 +66,7 @@ try {
     $cfgProject = Get-MetraHookConfiguredProject -RepoRoot $repoRoot
     $projName = Resolve-MetraHookProjectName -RepoRoot $repoRoot -ConfiguredProject $cfgProject `
         -FolderLeaf (Split-Path -Leaf $repoRoot) -IsMetraRoot:$isMetraRoot
-    & $metra inspect pre-commit -Name $projName
+    & $metra inspect pre-commit -Name $projName -RepoRoot $repoRoot
     if (-not $?) {
         exit 1
     }
