@@ -27,6 +27,12 @@ Entry shape:
 - Why: CDM-shaped multi-git projects need one desk/Loom ship cycle without blind nested diffs or silent partial remotes. Bing L1 (2026-11-19) required B1 full per-repo diffs and B2 partial-push recovery before implementation.
 - See: `modules/Loom/Private/ShipCycle.ps1`; [docs/playbooks/loom.md](playbooks/loom.md); Decisions 2026-11-18. CDM registry not flipped in this bite.
 
+## 2026-11-20 - ColleagueDataMover registry flipped to multi-repo bite
+
+- Decision: ColleagueDataMover local registry now sets `protectedBranches` (`main`, `master`, `chef/master`), `biteRepos` (`root`, `chef`), and `biteRepoTargets` (`root`→`main`, `chef`→`chef/master`). Meaningful root + Kitchen work uses `bite start|commit|pack|ship`. Cookbook stays out of default `biteRepos` unless a bite needs it. Metra hooks installed on portfolio root and nested `chef/` git.
+- Why: Multi-repo pack/ship landed (2026-11-19); CDM was the motivating consumer and must stop landing straight on `main` / `chef/master`.
+- See: `projects.local.json` (ColleagueDataMover); CDM `AGENTS.md` Ship model ceiling; Decisions 2026-11-19.
+
 ## 2026-11-18 - Loom ship-cycle owns protected landing; desk bite façade
 
 - Decision: Meaningful code lands on protected branches only through **Loom ship-cycle** (`Invoke-LoomShip`). Desk agents use `.\metra.ps1 bite start|commit|pack|ship|status` as a thin façade over the same helpers and **bypass Yarn scheduler** (Pulse/Daily), not governance. Yarn/Surveyor Approve remains required for unattended Loom queue ingest only - not for desk bite.
