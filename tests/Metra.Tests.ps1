@@ -6699,6 +6699,9 @@ Describe 'Ops Ask sidecar stability (reach)' {
         # Scar: nested chef must prefer metra.project over folder leaf (CDM 2026-11-20).
         $prePush | Should -Match 'HookProjectName\.ps1'
         $prePush | Should -Match 'Resolve-MetraHookProjectName'
+        # Scar: forward local-sha as -HeadSha so ship-lock authorizedHeadShas bind merge tip (Bing L1 B1).
+        $prePush | Should -Match "-HeadSha"
+        $prePush | Should -Match '\$headShas'
         $hookName = Get-Content -LiteralPath (Join-Path $root 'scripts\githooks\HookProjectName.ps1') -Raw
         . (Join-Path $root 'scripts\githooks\HookProjectName.ps1')
         Resolve-MetraHookProjectName -RepoRoot 'C:\x\chef' -ConfiguredProject 'ColleagueDataMover' -FolderLeaf 'chef' |

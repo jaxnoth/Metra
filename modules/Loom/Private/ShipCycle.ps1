@@ -1026,6 +1026,12 @@ function Start-LoomShipBranch {
         if ($callerRepos.Count -eq 0) {
             throw ("bite start refused: project policy unresolved for '{0}'. Pass -Repos explicitly or fix registry entry." -f $Name)
         }
+        # Multi-repo without registry biteRepoTargets cannot resolve nested landing branches.
+        $nestedCaller = @($callerRepos | Where-Object { -not [string]::Equals([string]$_, 'root', [StringComparison]::OrdinalIgnoreCase) })
+        if ($nestedCaller.Count -gt 0) {
+            throw ("bite start refused: project policy unresolved for '{0}' with nested repos ({1}). Register biteRepos + biteRepoTargets in the project registry (or pass only root)." -f `
+                    $Name, ($nestedCaller -join ', '))
+        }
         $policy = [PSCustomObject]@{
             protectedBranches = @()
             ownerAffirmPaths  = @()
@@ -1931,7 +1937,37 @@ function Invoke-LoomShip {
             }
         }
 
-        # Successful local merges (with or without push) clear the ephemeral ship lock.
+        $mergeArr = @()
+        foreach ($m in $mergeShas) { $mergeArr += $m }
+
+        # -NoPush: local merges done; keep state + ship lock so a later bite ship / -Resume can push.
+        if ($NoPush) {
+            foreach ($rs in $repoStates) {
+                $ps = [string](Get-LoomProp -Object $rs -Name 'pushStatus' -Default 'pending')
+                if ($ps -ne 'pushed') { $rs.pushStatus = 'pending' }
+            }
+            $state.repoStates = @($repoStates)
+            $state.shipPhase = 'mergedLocal'
+            $keepLock = $true
+            Save-LoomShipState -State $state | Out-Null
+            return [PSCustomObject]@{
+                ok          = $true
+                shipped     = $false
+                partialShip = $false
+                project     = $Name
+                message     = $msg
+                merges      = $mergeArr
+                tuple       = $tuple
+                noPush      = $true
+                lockKept    = $true
+                shipPhase   = 'mergedLocal'
+                repoStates  = @($repoStates)
+                detail      = 'Local merge complete; ship lock retained. Push with bite ship -Resume (or bite ship without -NoPush).'
+                recovery    = ('.\metra.ps1 bite ship -Name {0} -Resume' -f $Name)
+            }
+        }
+
+        # Successful push path: clear ephemeral ship lock after remotes are updated.
         $keepLock = $false
 
         # Phase 4: delete work branches only after every push succeeds (B2).
@@ -1943,21 +1979,15 @@ function Invoke-LoomShip {
                 }
                 if ([string]::IsNullOrWhiteSpace($delWork)) { $delWork = $work }
                 Invoke-LoomGit -ProjectRoot $m.path -GitArgs @('branch', '-d', $delWork) | Out-Null
-                if (-not $NoPush) {
-                    Invoke-LoomGit -ProjectRoot $m.path -GitArgs @('push', 'origin', '--delete', $delWork) | Out-Null
-                }
+                Invoke-LoomGit -ProjectRoot $m.path -GitArgs @('push', 'origin', '--delete', $delWork) | Out-Null
             }
         }
 
-        $mergeArr = @()
-        foreach ($m in $mergeShas) { $mergeArr += $m }
-        if (-not $keepLock) {
-            $state.shipPhase = 'shipped'
-            Save-LoomShipState -State $state | Out-Null
-            $statePath = Get-LoomShipStatePath -Project $Name
-            if (Test-Path -LiteralPath $statePath) {
-                Remove-Item -LiteralPath $statePath -Force -ErrorAction SilentlyContinue
-            }
+        $state.shipPhase = 'shipped'
+        Save-LoomShipState -State $state | Out-Null
+        $statePath = Get-LoomShipStatePath -Project $Name
+        if (Test-Path -LiteralPath $statePath) {
+            Remove-Item -LiteralPath $statePath -Force -ErrorAction SilentlyContinue
         }
         return [PSCustomObject]@{
             ok         = $true
@@ -1966,8 +1996,8 @@ function Invoke-LoomShip {
             message    = $msg
             merges     = $mergeArr
             tuple      = $tuple
-            noPush     = [bool]$NoPush
-            lockKept   = [bool]$keepLock
+            noPush     = $false
+            lockKept   = $false
             shipPhase  = 'shipped'
             repoStates = @($repoStates)
         }

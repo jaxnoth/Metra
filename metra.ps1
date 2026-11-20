@@ -1409,9 +1409,12 @@ switch ($Command) {
         if ($Rest.Count -gt 1) {
             $subArgs = @($Rest[1..($Rest.Count - 1)])
         }
-        # Top-level -WhatIf binds on metra.ps1 and is stripped from RemainingArguments.
+        # Top-level -WhatIf / -Confirm bind on metra.ps1 and are stripped from RemainingArguments.
         if ($WhatIf.IsPresent -and ($subArgs -notcontains '-WhatIf')) {
             $subArgs = @($subArgs) + @('-WhatIf')
+        }
+        if ($Confirm.IsPresent -and ($subArgs -notcontains '-Confirm')) {
+            $subArgs = @($subArgs) + @('-Confirm')
         }
         $result = Invoke-MetraBiteCommand -Subcommand $sub -ArgsRest $subArgs -Name $Name
         if ($null -eq $result) { return }

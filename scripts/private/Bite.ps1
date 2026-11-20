@@ -22,6 +22,7 @@ function ConvertFrom-MetraBiteArgs {
         OwnerAffirm    = $false
         Resume         = $false
         WhatIf         = $false
+        Confirm        = $false
     }
 
     for ($i = 0; $i -lt @($ArgsRest).Count; $i++) {
@@ -72,6 +73,7 @@ function ConvertFrom-MetraBiteArgs {
             '^(?i)-OwnerAffirm$' { $map.OwnerAffirm = $true }
             '^(?i)-Resume$' { $map.Resume = $true }
             '^(?i)-WhatIf$' { $map.WhatIf = $true }
+            '^(?i)-Confirm$' { $map.Confirm = $true }
             default { }
         }
     }
@@ -156,7 +158,8 @@ function Invoke-MetraBiteCommand {
             if ($parsed.OwnerAffirm) { $p.OwnerAffirm = $true }
             if ($parsed.Resume) { $p.Resume = $true }
             if ($parsed.WhatIf) { $p.WhatIf = $true }
-            # WhatIf maps to SupportsShouldProcess on Invoke-LoomShip.
+            if ($parsed.Confirm) { $p.Confirm = $true }
+            # WhatIf/Confirm map to SupportsShouldProcess on Invoke-LoomShip.
             return Invoke-LoomShip @p
         }
         'status' {

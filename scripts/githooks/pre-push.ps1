@@ -75,18 +75,25 @@ if ([string]::IsNullOrWhiteSpace($remoteUrl) -and -not [string]::IsNullOrWhiteSp
 $effectiveRemote = if (-not [string]::IsNullOrWhiteSpace($remoteUrl)) { $remoteUrl } else { $remoteName }
 
 # Read stdin ref tuples (<local-ref> <local-sha> <remote-ref> <remote-sha>) before skip/exit.
+# Forward local-sha as HeadSha so ship-lock authorizedHeadShas can bind the merge tip.
 $pushLines = @($input)
 $remoteBranches = New-Object System.Collections.Generic.List[string]
+$headShas = New-Object System.Collections.Generic.List[string]
 foreach ($line in $pushLines) {
     $parts = @(([string]$line).Trim() -split '\s+')
     if ($parts.Count -lt 3) { continue }
+    $localSha = if ($parts.Count -ge 2) { [string]$parts[1] } else { '' }
     $remoteRef = [string]$parts[2]
+    $branchName = ''
     if ($remoteRef -match '^refs/heads/(.+)$') {
-        [void]$remoteBranches.Add($Matches[1])
+        $branchName = [string]$Matches[1]
     }
     elseif ($remoteRef -and $remoteRef -ne '(delete)') {
-        [void]$remoteBranches.Add(($remoteRef -replace '^refs/heads/', ''))
+        $branchName = ($remoteRef -replace '^refs/heads/', '')
     }
+    if ([string]::IsNullOrWhiteSpace($branchName)) { continue }
+    [void]$remoteBranches.Add($branchName)
+    [void]$headShas.Add($(if ($localSha -match '^[0-9a-fA-F]{7,40}$') { $localSha } else { '' }))
 }
 
 $metra = Resolve-MetraPrePushScript -RepoRoot $repoRoot
@@ -112,9 +119,13 @@ try {
     $projName = Resolve-MetraHookProjectName -RepoRoot $repoRoot -ConfiguredProject $cfgProject `
         -FolderLeaf (Split-Path -Leaf $repoRoot) -IsMetraRoot:$isMetraRoot
     $prePushArgs = @('-NoProfile', '-File', $metra, 'inspect', 'pre-push', '-Name', $projName, '-RepoRoot', $repoRoot)
-    foreach ($rb in @($remoteBranches | Select-Object -Unique)) {
-        if (-not [string]::IsNullOrWhiteSpace([string]$rb)) {
-            $prePushArgs += @('-RemoteBranch', [string]$rb)
+    for ($ri = 0; $ri -lt @($remoteBranches).Count; $ri++) {
+        $rb = [string]$remoteBranches[$ri]
+        if ([string]::IsNullOrWhiteSpace($rb)) { continue }
+        $prePushArgs += @('-RemoteBranch', $rb)
+        $hs = if ($ri -lt @($headShas).Count) { [string]$headShas[$ri] } else { '' }
+        if (-not [string]::IsNullOrWhiteSpace($hs)) {
+            $prePushArgs += @('-HeadSha', $hs)
         }
     }
     # External process so exit codes are not masked by in-process & of metra.ps1.

@@ -246,6 +246,16 @@ Describe 'Loom ship-cycle temp repo start/pack/ship happy path' {
                 & git -C $tmp add a.txt
                 & git -C $tmp commit -m 'init' | Out-Null
 
+                Mock Get-LoomShipProjectPolicy {
+                    [PSCustomObject]@{
+                        protectedBranches = @('main')
+                        ownerAffirmPaths  = @()
+                        biteRepos         = @('root')
+                        biteRepoTargets   = @{ root = 'main' }
+                        resolved          = $true
+                    }
+                }
+
                 $start = Start-LoomShipBranch -Name $proj -Bite 'e2e' -ProjectRoot $tmp -Repos @('root') -TargetBranch 'main' -NoPush
                 $start.ok | Should -BeTrue
                 $start.workBranch | Should -Be 'bite/happyship/e2e'
@@ -277,7 +287,11 @@ Describe 'Loom ship-cycle temp repo start/pack/ship happy path' {
                 Set-LoomShipReviewEvidence -Name $proj -Verdict 'approve' -ContentHash $pack.contentHash -ContractShape | Out-Null
                 $ship = Invoke-LoomShip -Name $proj -ProjectRoot $tmp -Summary 'e2e' -SkipFullTests -NoPush -NoDeleteBranch
                 $ship.ok | Should -BeTrue
-                $ship.shipped | Should -BeTrue
+                $ship.shipped | Should -BeFalse
+                $ship.shipPhase | Should -Be 'mergedLocal'
+                $ship.lockKept | Should -BeTrue
+                Test-Path -LiteralPath (Get-LoomShipStatePath -Project $proj) | Should -BeTrue
+                Test-Path -LiteralPath (Get-LoomShipLockPath -Project $proj) | Should -BeTrue
 
                 $branch = (Invoke-LoomGit -ProjectRoot $tmp -GitArgs @('rev-parse', '--abbrev-ref', 'HEAD')).Stdout.Trim()
                 $branch | Should -Be 'main'
@@ -365,7 +379,9 @@ Describe 'Loom ship-cycle temp repo start/pack/ship happy path' {
                 Set-LoomShipReviewEvidence -Name $proj -Verdict 'approve' -ContentHash $pack.contentHash -ContractShape | Out-Null
                 $ship = Invoke-LoomShip -Name $proj -ProjectRoot $tmp -Summary 'multi' -SkipFullTests -NoPush -NoDeleteBranch
                 $ship.ok | Should -BeTrue
-                $ship.shipped | Should -BeTrue
+                $ship.shipped | Should -BeFalse
+                $ship.shipPhase | Should -Be 'mergedLocal'
+                $ship.lockKept | Should -BeTrue
 
                 (Invoke-LoomGit -ProjectRoot $tmp -GitArgs @('rev-parse', '--abbrev-ref', 'HEAD')).Stdout.Trim() | Should -Be 'main'
                 (Invoke-LoomGit -ProjectRoot $chef -GitArgs @('rev-parse', '--abbrev-ref', 'HEAD')).Stdout.Trim() | Should -Be 'master'

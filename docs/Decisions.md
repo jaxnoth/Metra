@@ -30,10 +30,12 @@ Entry shape:
 ## 2026-11-20 - Ship lock authorizes merge SHA; Daily target must match
 
 - Decision: After Phase 2 `merge --no-ff`, `Invoke-LoomShip` updates the short-lived ship lock `authorizedHeadShas` to the generated merge commit SHAs (same token) before Phase 3 protected push. Hooks still fail closed on unrelated HEADs; work-branch SHAs alone do not authorize the protected tip.
+- Decision: Git pre-push must forward stdin `<local-sha>` as `-HeadSha` into `Invoke-MetraInspectPrePushHook` / `Test-LoomShipHookBypassAllowed`. Omitting HeadSha on a protected tip fails closed (otherwise the authorizedHeadShas list is never checked).
+- Decision: `-NoPush` ship keeps `shipPhase=mergedLocal`, state.json, and the ship lock until a later push/`-Resume` succeeds; it does not mark `shipped` or clear the lock after local merge only.
 - Decision: `Invoke-LoomDailyMerge` may delegate to ShipCycle only when `shipState.workBranch` and `shipState.targetBranch` (and root `repoState.targetBranch` when present) match Daily's `$Branch` / `$TargetBranch`. Mismatch fails closed (`ship-target-mismatch`) without calling `Invoke-LoomShip`.
-- Decision (nonblocking follow-ups): `Resolve-LoomShipProjectRoot` containment-checks Name under the portfolio parent; non-protected Daily push failure resets the local target to the pre-merge tip; hook target compare normalizes `refs/heads/`.
-- Why: Bing L1 on contentHash `9128fd9d…` (changes-requested): lock authorized reviewed work HEAD so post-merge push could fail its own pre-push check; Daily could silently land on a different protected target than the one it validated.
-- See: `Update-LoomShipLockAuthorizedHeads`, `Test-LoomShipHookBypassAllowed`, `Invoke-LoomShip` in `modules/Loom/Private/ShipCycle.ps1`; `Invoke-LoomDailyMerge` in `modules/Loom/Private/Daily.ps1`; `tests/Loom/Loom.ShipCycle.Tests.ps1`; `tests/Loom/Loom.Daily.Tests.ps1`
+- Decision (nonblocking follow-ups): `Resolve-LoomShipProjectRoot` containment-checks Name under the portfolio parent; non-protected Daily push failure resets the local target to the pre-merge tip; hook target compare normalizes `refs/heads/`; `metra.ps1 bite` forwards top-level `-Confirm`.
+- Why: Bing L1 on contentHash `9128fd9d…` (changes-requested): lock authorized reviewed work HEAD so post-merge push could fail its own pre-push check; Daily could silently land on a different protected target than the one it validated. Follow-up assess: HeadSha was never forwarded from the hook, so B1 would not bind at push time; `-NoPush` cleared lock/state after local merge.
+- See: `Update-LoomShipLockAuthorizedHeads`, `Test-LoomShipHookBypassAllowed`, `Invoke-LoomShip` in `modules/Loom/Private/ShipCycle.ps1`; `scripts/githooks/pre-push.ps1`; `Invoke-MetraInspectPrePushHook`; `Invoke-LoomDailyMerge` in `modules/Loom/Private/Daily.ps1`; `tests/Loom/Loom.ShipCycle.Tests.ps1`; `tests/Loom/Loom.Daily.Tests.ps1`
 
 ## 2026-11-20 - Multi-repo bite scars (CDM shared remotes + nested hook name)
 

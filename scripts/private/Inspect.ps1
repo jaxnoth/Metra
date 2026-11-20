@@ -7741,6 +7741,7 @@ function Invoke-MetraInspectAutoPack {
     [CmdletBinding()]
     param(
         [string]$Name,
+        # Retained for call-site compatibility; pack Base always comes from assess report provenance.
         [string]$Base,
         [switch]$NoClipboard
     )
@@ -7754,8 +7755,10 @@ function Invoke-MetraInspectAutoPack {
         if (-not [string]::IsNullOrWhiteSpace($Name)) {
             $packParams.Name = $Name.Trim()
         }
-        # Invoke-MetraInspectPack reads Base from the assess report provenance; do not pass -Base.
-        $null = $Base
+        # Assess provenance owns pack Base; callers may still pass -Base but it is intentionally unused.
+        if (-not [string]::IsNullOrWhiteSpace($Base)) {
+            Write-Verbose ("Invoke-MetraInspectAutoPack: ignoring -Base '{0}' (pack uses assess provenance)." -f $Base)
+        }
         $pack = Invoke-MetraInspectPack @packParams
         $resolvedSlot = [string](Get-MetraProp -Object $pack -Name 'SlotKey' -Default $fallbackSlot)
         if ([string]::IsNullOrWhiteSpace($resolvedSlot)) { $resolvedSlot = $fallbackSlot }
@@ -7956,11 +7959,13 @@ function Invoke-MetraInspectPrePushHook {
     .SYNOPSIS
         Git pre-push: refuse protected destination refs unless valid ship lock is present.
         -RepoRoot is the active nested worktree (e.g. CDM chef/); -Name is the registry project.
+        -HeadSha is parallel to -RemoteBranch (local SHA being pushed); required for protected tips.
     #>
     [CmdletBinding()]
     param(
         [string]$Name,
         [string[]]$RemoteBranch,
+        [string[]]$HeadSha,
         [string]$RepoRoot
     )
 
@@ -7986,17 +7991,29 @@ function Invoke-MetraInspectPrePushHook {
         $root = [string]$ctx.Root
     }
 
-    $targets = New-Object System.Collections.Generic.List[string]
-    foreach ($rb in @($RemoteBranch)) {
-        $t = [string]$rb
+    $branchSha = @{}
+    $rbList = @($RemoteBranch)
+    $hsList = @($HeadSha)
+    for ($ti = 0; $ti -lt $rbList.Count; $ti++) {
+        $t = [string]$rbList[$ti]
         if ([string]::IsNullOrWhiteSpace($t)) { continue }
         $t = $t.Trim() -replace '^refs/heads/', ''
-        if (-not [string]::IsNullOrWhiteSpace($t)) { [void]$targets.Add($t) }
+        if ([string]::IsNullOrWhiteSpace($t)) { continue }
+        $sha = if ($ti -lt $hsList.Count) { [string]$hsList[$ti] } else { '' }
+        if (-not $branchSha.ContainsKey($t) -or (-not [string]::IsNullOrWhiteSpace($sha))) {
+            $branchSha[$t] = $sha
+        }
     }
+    $targets = New-Object System.Collections.Generic.List[string]
+    foreach ($k in @($branchSha.Keys)) { [void]$targets.Add([string]$k) }
     if ($targets.Count -eq 0) {
         $headRaw = @(& git -C $root rev-parse --abbrev-ref HEAD 2>$null) | Select-Object -First 1
         $headBranch = if ($null -eq $headRaw) { '' } else { ([string]$headRaw).Trim() }
-        if (-not [string]::IsNullOrWhiteSpace($headBranch)) { [void]$targets.Add($headBranch) }
+        if (-not [string]::IsNullOrWhiteSpace($headBranch)) {
+            [void]$targets.Add($headBranch)
+            $shaRaw = @(& git -C $root rev-parse HEAD 2>$null) | Select-Object -First 1
+            $branchSha[$headBranch] = if ($null -eq $shaRaw) { '' } else { ([string]$shaRaw).Trim() }
+        }
     }
 
     $policyProtected = @()
@@ -8043,14 +8060,22 @@ function Invoke-MetraInspectPrePushHook {
     if (Get-Command Test-LoomShipHookBypassAllowed -ErrorAction SilentlyContinue) {
         $bypass = $true
         foreach ($hit in @($protectedHits)) {
-            if (-not (Test-LoomShipHookBypassAllowed -Project $slotKey -RepoRoot $root -TargetBranch ([string]$hit))) {
+            $hitSha = if ($branchSha.ContainsKey([string]$hit)) { [string]$branchSha[[string]$hit] } else { '' }
+            $okHit = if (-not [string]::IsNullOrWhiteSpace($hitSha)) {
+                Test-LoomShipHookBypassAllowed -Project $slotKey -RepoRoot $root -TargetBranch ([string]$hit) -HeadSha $hitSha
+            }
+            else {
+                # Fail closed on protected push without a local SHA (cannot bind merge tip).
+                $false
+            }
+            if (-not $okHit) {
                 $bypass = $false
                 break
             }
         }
     }
     if (-not $bypass) {
-        throw ('Pre-push blocked: protected branch ({0}) requires Invoke-LoomShip lock (bare METRA_LOOM_SHIP=1 is not authorization).' -f ($protectedHits -join ','))
+        throw ('Pre-push blocked: protected branch ({0}) requires Invoke-LoomShip lock with authorized merge SHA (bare METRA_LOOM_SHIP=1 is not authorization).' -f ($protectedHits -join ','))
     }
     Write-Host ('Pre-push: protected branch ship lock OK ({0}).' -f ($protectedHits -join ',')) -ForegroundColor Green
     return [PSCustomObject]@{ ok = $true; reason = 'ship-lock'; branch = ($protectedHits -join ',') }
@@ -8247,6 +8272,7 @@ function Show-MetraInspectCli {
     $reviewClipboard = $false
     $reviewText = $null
     $remoteBranches = [System.Collections.Generic.List[string]]::new()
+    $headShas = [System.Collections.Generic.List[string]]::new()
     $repoRootFromRest = $null
 
     $i = 0
@@ -8353,6 +8379,11 @@ function Show-MetraInspectCli {
         }
         if ($mode -eq 'pre-push' -and $tok -ieq '-RemoteBranch' -and ($i + 1) -lt $argsRest.Count) {
             [void]$remoteBranches.Add([string]$argsRest[$i + 1])
+            $i += 2
+            continue
+        }
+        if ($mode -eq 'pre-push' -and $tok -ieq '-HeadSha' -and ($i + 1) -lt $argsRest.Count) {
+            [void]$headShas.Add([string]$argsRest[$i + 1])
             $i += 2
             continue
         }
@@ -8539,6 +8570,7 @@ function Show-MetraInspectCli {
         'pre-push' {
             $prePushParams = @{ Name = $projectName }
             if ($remoteBranches.Count -gt 0) { $prePushParams.RemoteBranch = @($remoteBranches.ToArray()) }
+            if ($headShas.Count -gt 0) { $prePushParams.HeadSha = @($headShas.ToArray()) }
             if (-not [string]::IsNullOrWhiteSpace($repoRootFromRest)) {
                 $prePushParams.RepoRoot = $repoRootFromRest
             }
