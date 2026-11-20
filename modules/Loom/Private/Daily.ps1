@@ -994,9 +994,42 @@ function Invoke-LoomDailyMerge {
     }
 
     # Prefer full ship-cycle when desk/queue left ready ship state for this branch.
+    # Fail closed if persisted target differs from Daily's validated TargetBranch (Bing L1 B2).
     $shipState = $null
     try { $shipState = Get-LoomShipState -Project $RegistryName } catch { $shipState = $null }
     if ($shipState -and [string]$shipState.workBranch -eq $Branch) {
+        $shipTarget = [string](Get-LoomProp -Object $shipState -Name 'targetBranch' -Default '')
+        $wantTarget = Normalize-LoomShipBranchRef -Branch $TargetBranch
+        $haveTarget = Normalize-LoomShipBranchRef -Branch $shipTarget
+        if ([string]::IsNullOrWhiteSpace($haveTarget) -or
+            -not [string]::Equals($wantTarget, $haveTarget, [StringComparison]::OrdinalIgnoreCase)) {
+            return [PSCustomObject]@{
+                attempted    = $true
+                succeeded    = $false
+                mergeCommit  = $null
+                error        = 'ship-target-mismatch'
+                detail       = ("ship state targetBranch={0} does not match Daily TargetBranch={1}" -f `
+                        $(if ($shipTarget) { $shipTarget } else { 'missing' }), $TargetBranch)
+                viaShipCycle = $true
+            }
+        }
+        foreach ($rs in @($(Get-LoomProp -Object $shipState -Name 'repoStates' -Default @()))) {
+            $rsKey = [string](Get-LoomProp -Object $rs -Name 'key' -Default '')
+            if (-not [string]::Equals($rsKey, 'root', [StringComparison]::OrdinalIgnoreCase)) { continue }
+            $rsTarget = Normalize-LoomShipBranchRef -Branch ([string](Get-LoomProp -Object $rs -Name 'targetBranch' -Default ''))
+            if (-not [string]::IsNullOrWhiteSpace($rsTarget) -and
+                -not [string]::Equals($wantTarget, $rsTarget, [StringComparison]::OrdinalIgnoreCase)) {
+                return [PSCustomObject]@{
+                    attempted    = $true
+                    succeeded    = $false
+                    mergeCommit  = $null
+                    error        = 'ship-target-mismatch'
+                    detail       = ("root repoState targetBranch={0} does not match Daily TargetBranch={1}" -f `
+                            $rsTarget, $TargetBranch)
+                    viaShipCycle = $true
+                }
+            }
+        }
         $verdict = [string]$shipState.reviewVerdict
         if ($verdict -ne 'approve') {
             return [PSCustomObject]@{
@@ -1075,6 +1108,7 @@ function Invoke-LoomDailyMerge {
     }
 
     $originalBranch = (Invoke-LoomGit -ProjectRoot $ProjectRoot -GitArgs @('rev-parse', '--abbrev-ref', 'HEAD')).Stdout.Trim()
+    $preMergeTargetSha = ''
     try {
         $checkout = Invoke-LoomGit -ProjectRoot $ProjectRoot -GitArgs @('checkout', $TargetBranch)
         if ($checkout.ExitCode -ne 0) {
@@ -1087,6 +1121,7 @@ function Invoke-LoomDailyMerge {
             }
         }
 
+        $preMergeTargetSha = Get-LoomGitHeadCommit -ProjectRoot $ProjectRoot
         $merge = Invoke-LoomGit -ProjectRoot $ProjectRoot -GitArgs @('merge', '--no-ff', $Branch, '-m', "loom: merge $Branch")
         if ($merge.ExitCode -ne 0) {
             Invoke-LoomGit -ProjectRoot $ProjectRoot -GitArgs @('merge', '--abort') | Out-Null
@@ -1105,12 +1140,17 @@ function Invoke-LoomDailyMerge {
         if ($Push) {
             $pushResult = Invoke-LoomGit -ProjectRoot $ProjectRoot -GitArgs @('push', 'origin', $TargetBranch)
             if ($pushResult.ExitCode -ne 0) {
+                # Restore pre-merge target tip so a failed push does not leave a surprising local main.
+                if (-not [string]::IsNullOrWhiteSpace($preMergeTargetSha)) {
+                    Invoke-LoomGit -ProjectRoot $ProjectRoot -GitArgs @('reset', '--hard', $preMergeTargetSha) | Out-Null
+                }
                 return [PSCustomObject]@{
                     attempted   = $true
                     succeeded   = $false
-                    mergeCommit = $sha
+                    mergeCommit = $null
                     error       = 'push-failed'
                     detail      = (Get-LoomGitErrorDetail $pushResult)
+                    restoredTip = $preMergeTargetSha
                 }
             }
         }

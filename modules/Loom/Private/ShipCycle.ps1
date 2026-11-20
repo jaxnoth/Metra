@@ -231,9 +231,14 @@ function Resolve-LoomShipProjectRoot {
         return $hostRoot
     }
     $parent = Split-Path -Parent $hostRoot
-    $candidate = Join-Path $parent $Name
+    $parentFull = [System.IO.Path]::GetFullPath($parent)
+    $candidate = [System.IO.Path]::GetFullPath((Join-Path $parentFull $Name))
+    # Containment before Test-Path: Name with .. or absolute escape must not leave portfolio parent.
+    if (-not (Test-LoomPathWithinRoot -Path $candidate -Root $parentFull)) {
+        throw ("Cannot resolve project root for '{0}': path escapes portfolio parent '{1}'." -f $Name, $parentFull)
+    }
     if (Test-Path -LiteralPath $candidate) {
-        return [System.IO.Path]::GetFullPath($candidate)
+        return $candidate
     }
     throw "Cannot resolve project root for '$Name'. Pass -ProjectRoot."
 }
@@ -820,6 +825,67 @@ function Clear-LoomShipLock {
     Remove-Item Env:\METRA_LOOM_SHIP_PROJECT -ErrorAction SilentlyContinue
 }
 
+function Normalize-LoomShipBranchRef {
+    <#
+    .SYNOPSIS
+        Canonical branch name for ship-lock compares (strip refs/heads/ and remote-tracking prefix).
+    #>
+    [CmdletBinding()]
+    param([AllowEmptyString()][string]$Branch)
+
+    $b = [string]$Branch
+    if ([string]::IsNullOrWhiteSpace($b)) { return '' }
+    $b = $b.Trim()
+    if ($b.StartsWith('refs/heads/', [StringComparison]::OrdinalIgnoreCase)) {
+        return $b.Substring('refs/heads/'.Length)
+    }
+    if ($b.StartsWith('refs/remotes/origin/', [StringComparison]::OrdinalIgnoreCase)) {
+        return $b.Substring('refs/remotes/origin/'.Length)
+    }
+    if ($b.StartsWith('origin/', [StringComparison]::OrdinalIgnoreCase)) {
+        return $b.Substring('origin/'.Length)
+    }
+    return $b
+}
+
+function Update-LoomShipLockAuthorizedHeads {
+    <#
+    .SYNOPSIS
+        After merge --no-ff, replace authorizedHeadShas with the merge commit SHAs (keep token).
+        Protected push must authorize the post-merge tip, not the reviewed work-branch HEAD.
+    #>
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory)][string]$Project,
+        [Parameter(Mandatory)][string[]]$AuthorizedHeadShas,
+        [string]$PrimaryHeadSha = ''
+    )
+
+    $path = Get-LoomShipLockPath -Project $Project
+    if (-not (Test-Path -LiteralPath $path -PathType Leaf)) {
+        throw ("Update-LoomShipLockAuthorizedHeads: ship.lock missing for {0}" -f $Project)
+    }
+    $lock = Get-Content -LiteralPath $path -Raw -Encoding UTF8 | ConvertFrom-Json
+    $heads = @()
+    foreach ($h in @($AuthorizedHeadShas)) {
+        if (-not [string]::IsNullOrWhiteSpace($h)) { $heads += $h.Trim() }
+    }
+    $heads = @($heads | Select-Object -Unique)
+    if ($heads.Count -eq 0) {
+        throw 'Update-LoomShipLockAuthorizedHeads: AuthorizedHeadShas must not be empty.'
+    }
+    $primary = [string]$PrimaryHeadSha
+    if ([string]::IsNullOrWhiteSpace($primary)) { $primary = [string]$heads[0] }
+    if ($heads -notcontains $primary) { $heads = @($primary) + $heads }
+
+    $lock.authorizedHeadShas = $heads
+    $lock.headSha = $primary
+    # Refresh expiry window for the push phase without rotating the token (hooks already hold env).
+    $lock.expiresAtUtc = ([datetime]::UtcNow.AddMinutes(15)).ToString('o')
+    Write-LoomAtomicUtf8Text -Path $path -Text ($lock | ConvertTo-Json -Depth 5)
+    return $lock
+}
+
 function Test-LoomShipHookBypassAllowed {
     <#
     .SYNOPSIS
@@ -867,17 +933,19 @@ function Test-LoomShipHookBypassAllowed {
         return $false
     }
     if (-not [string]::IsNullOrWhiteSpace($TargetBranch)) {
+        $want = Normalize-LoomShipBranchRef -Branch $TargetBranch
         $authorized = @()
         foreach ($t in @(Get-LoomProp -Object $lock -Name 'authorizedTargetBranches' -Default @())) {
-            if (-not [string]::IsNullOrWhiteSpace([string]$t)) { $authorized += [string]$t.Trim() }
+            $nt = Normalize-LoomShipBranchRef -Branch ([string]$t)
+            if (-not [string]::IsNullOrWhiteSpace($nt)) { $authorized += $nt }
         }
-        $lockTarget = [string](Get-LoomProp -Object $lock -Name 'targetBranch' -Default '')
+        $lockTarget = Normalize-LoomShipBranchRef -Branch ([string](Get-LoomProp -Object $lock -Name 'targetBranch' -Default ''))
         if (-not [string]::IsNullOrWhiteSpace($lockTarget) -and ($authorized -notcontains $lockTarget)) {
-            $authorized += $lockTarget.Trim()
+            $authorized += $lockTarget
         }
         $match = $false
         foreach ($t in $authorized) {
-            if ([string]::Equals($TargetBranch.Trim(), $t, [StringComparison]::OrdinalIgnoreCase)) {
+            if ([string]::Equals($want, $t, [StringComparison]::OrdinalIgnoreCase)) {
                 $match = $true
                 break
             }
@@ -1782,6 +1850,28 @@ function Invoke-LoomShip {
         }
         $state.repoStates = @($repoStates)
         Save-LoomShipState -State $state | Out-Null
+
+        # After Phase 2: replace lock authorizedHeadShas with merge --no-ff tips (Bing L1 B1).
+        # Protected push must authorize the merge SHA, not the reviewed work-branch HEAD.
+        $mergeHeads = @()
+        $primaryMerge = ''
+        foreach ($m in $mergeShas) {
+            $ms = [string]$m.mergeSha
+            if ([string]::IsNullOrWhiteSpace($ms)) { continue }
+            $mergeHeads += $ms
+            if ([string]::Equals([string]$m.repo, 'root', [StringComparison]::OrdinalIgnoreCase)) {
+                $primaryMerge = $ms
+            }
+        }
+        $mergeHeads = @($mergeHeads | Select-Object -Unique)
+        if ($mergeHeads.Count -eq 0) {
+            throw 'Ship refused: Phase 2 produced no mergeCommitSha values to authorize for push.'
+        }
+        if ([string]::IsNullOrWhiteSpace($primaryMerge)) { $primaryMerge = [string]$mergeHeads[0] }
+        if ($null -ne $lock) {
+            $lock = Update-LoomShipLockAuthorizedHeads -Project $Name -AuthorizedHeadShas $mergeHeads `
+                -PrimaryHeadSha $primaryMerge
+        }
 
         # Phase 3: push in declared order; any push failure after local merges => partialShip (B2).
         # Local merges already mutated targets, so even the first push failure must be recoverable.

@@ -80,6 +80,50 @@ Describe 'Loom ship-cycle state and adversarial lock' {
         }
     }
 
+    It 'ship lock authorizes merge SHA for protected push and refuses unrelated SHA (Bing L1 B1)' {
+        InModuleScope Loom {
+            $proj = 'ShipMergeLock-' + [guid]::NewGuid().ToString('n').Substring(0, 8)
+            $workHead = ('a' * 40)
+            $mergeSha = ('b' * 40)
+            $unrelated = ('c' * 40)
+            $tuple = [PSCustomObject]@{
+                targetBranch = 'main'
+                workBranch   = 'bite/metra/x'
+                baseSha      = ('1' * 40)
+                headSha      = $workHead
+                contentHash  = 'abc'
+            }
+            try {
+                $null = New-LoomShipLock -Project $proj -ReviewedTuple $tuple `
+                    -AuthorizedTargetBranches @('main') -AuthorizedHeadShas @($workHead)
+                Test-LoomShipHookBypassAllowed -Project $proj -TargetBranch 'main' -HeadSha $workHead | Should -BeTrue
+                Test-LoomShipHookBypassAllowed -Project $proj -TargetBranch 'main' -HeadSha $mergeSha | Should -BeFalse
+                $updated = Update-LoomShipLockAuthorizedHeads -Project $proj -AuthorizedHeadShas @($mergeSha) `
+                    -PrimaryHeadSha $mergeSha
+                @($updated.authorizedHeadShas) | Should -Contain $mergeSha
+                @($updated.authorizedHeadShas) | Should -Not -Contain $workHead
+                Test-LoomShipHookBypassAllowed -Project $proj -TargetBranch 'main' -HeadSha $mergeSha | Should -BeTrue
+                Test-LoomShipHookBypassAllowed -Project $proj -TargetBranch 'refs/heads/main' -HeadSha $mergeSha | Should -BeTrue
+                Test-LoomShipHookBypassAllowed -Project $proj -TargetBranch 'main' -HeadSha $workHead | Should -BeFalse
+                Test-LoomShipHookBypassAllowed -Project $proj -TargetBranch 'main' -HeadSha $unrelated | Should -BeFalse
+            }
+            finally {
+                Clear-LoomShipLock -Project $proj
+                Remove-Item -LiteralPath (Get-LoomShipStateRoot -Project $proj) -Recurse -Force -ErrorAction SilentlyContinue
+            }
+        }
+    }
+
+    It 'Resolve-LoomShipProjectRoot containment-checks Name under portfolio parent (Bing L1 N1)' {
+        InModuleScope Loom {
+            { Resolve-LoomShipProjectRoot -Name '..' } | Should -Throw '*escapes portfolio parent*'
+            { Resolve-LoomShipProjectRoot -Name '..\Windows' } | Should -Throw '*escapes portfolio parent*'
+            $hostRoot = Get-LoomHostRoot
+            $ok = Resolve-LoomShipProjectRoot -ProjectRoot $hostRoot -Name 'ignored'
+            $ok | Should -Be ([System.IO.Path]::GetFullPath($hostRoot))
+        }
+    }
+
     It 'blocks ship when verdict is changes-requested even if prose would say affirm' {
         InModuleScope Loom {
             $proj = 'ShipVerdict-' + [guid]::NewGuid().ToString('n').Substring(0, 8)

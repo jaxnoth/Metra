@@ -1386,6 +1386,9 @@ function Convert-MetraAskCursorResponse {
         elseif ([string]::IsNullOrWhiteSpace($retryClass)) {
             $retryClass = 'sdk_run_error'
         }
+        # Prefer structured sidecar codes (ask_timeout, cursor_auth_error) over a generic label
+        # so Inspect recovery and operator messages stay machine-readable.
+        $errorLabel = if (-not [string]::IsNullOrWhiteSpace($errorCode)) { $errorCode } else { 'engine_request_failed' }
         return [PSCustomObject]@{
             ok               = $false
             message          = $errMsg
@@ -1394,7 +1397,7 @@ function Convert-MetraAskCursorResponse {
             resolvedModel    = $resolvedModel
             sessionId        = [string](Get-MetraProp -Object $Response -Name 'sessionId' -Default $SessionId)
             status           = $status
-            error            = 'engine_request_failed'
+            error            = $errorLabel
             errorCode        = $errorCode
             errorDetail      = $errorDetail
             retryClass       = $retryClass
@@ -1727,7 +1730,8 @@ function Test-MetraAskSidecarRestartableFailure {
     .NOTES
         Auth, usage, and model-pin failures are not restartable - see Test-MetraAskCredentialFailure.
         Inspect/opaque recovery must use Restart-MetraAskEngine -SidecarOnly so Ops desk stays up.
-        ask_timeout after a successful Run.cancel() is soft-retry only (not blunt-restartable).
+        ask_timeout after a successful Run.cancel() is soft-retry only on the *first* failure
+        (Inspect escalates a second timeout to SidecarOnly even when cancelSucceeded).
     #>
     [CmdletBinding()]
     param($EngineResult)
@@ -1741,7 +1745,8 @@ function Test-MetraAskSidecarRestartableFailure {
     $errorCode = [string](Get-MetraProp -Object $EngineResult -Name 'errorCode' -Default '')
     $retryClass = [string](Get-MetraProp -Object $EngineResult -Name 'retryClass' -Default '')
     if ($errorCode -eq 'ask_timeout' -or $retryClass -eq 'transport_timeout') {
-        # Cancel cleared the wait in-process - retry without killing Node.
+        # Cancel cleared the wait in-process - first recovery is soft-retry without killing Node.
+        # Invoke-MetraInspectEngine escalates a second timeout to SidecarOnly itself.
         if (Test-MetraAskTimeoutCancelCleared -EngineResult $EngineResult) { return $false }
         return $true
     }

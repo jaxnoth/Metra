@@ -2339,7 +2339,10 @@ function Invoke-MetraInspectEngine {
     param(
         [Parameter(Mandatory)][string]$Prompt,
         [Parameter(Mandatory)][string]$Cwd,
-        [string]$MetraRoot = (Get-MetraRoot)
+        [string]$MetraRoot = (Get-MetraRoot),
+        # Optional pre-prompt payload estimate (Measure estimatedTotalChars). Timeout band uses
+        # Max(prompt.Length, this) so Scope PRUNE/WARN cannot silently fall to GREEN 300s.
+        [int]$EstimatedPayloadChars = -1
     )
 
     $retrySuffix = @'
@@ -2358,53 +2361,96 @@ If no issues: {"findings":[]}. No markdown. No prose outside JSON.
     $model = ''
     $resolvedModel = $null
     $engineProvenance = $null
+    $softRetryUsed = $false
+    $sidecarRecycleUsed = $false
+    $shapeRetryUsed = $false
+    $lastTimeoutSec = 0
+    $askCalls = 0
+    # initial + soft-retry + SidecarOnly retry (+ optional shape retry) - Decision 2026-11-20
+    $maxAskCalls = 4
 
-    for ($attempt = 0; $attempt -lt 2; $attempt++) {
+    while ($askCalls -lt $maxAskCalls) {
+        $askCalls++
         # Band-dependent client budget (Decision 2026-11-17): GREEN 300s; WARN/PRUNE 900s.
-        # History: flat 900s masked wedged Agent.wait() while /health stayed green (2026-11-06
-        # moved Inspect to 300s); large PRUNE-band CDM assesses later needed a longer pass.
-        # Soft-retry / Run.cancel() still apply; timeout remains recycle-eligible (sidecar-only)
-        # for a single retry. Ops Ask default budget stays 180s.
-        $timeoutSec = Get-MetraInspectAssessTimeoutSec -EstimatedPromptChars $currentPrompt.Length
+        # Sidecar timeoutSec = client - 15 (AskEngine); GREEN 300 -> message "~285s".
+        $charsForBand = [int]$currentPrompt.Length
+        if ($EstimatedPayloadChars -gt $charsForBand) { $charsForBand = $EstimatedPayloadChars }
+        $timeoutSec = Get-MetraInspectAssessTimeoutSec -EstimatedPromptChars $charsForBand
+        $lastTimeoutSec = $timeoutSec
+        $band = Get-MetraInspectPayloadBand -EstimatedTotalChars $charsForBand
+        if ($askCalls -eq 1) {
+            Write-Host ("Inspect assess budget: band={0} timeoutSec={1} promptChars={2}" -f `
+                    $band, $timeoutSec, $charsForBand) -ForegroundColor DarkGray
+        }
+
         $engineResult = Invoke-MetraAskEngine -Prompt $currentPrompt -Cwd $Cwd -MetraRoot $MetraRoot `
             -Context @{ purpose = 'metra-inspect' } -TimeoutSec $timeoutSec `
             -Engine $selection.Engine -Model $selection.RequestedModel
-        if (-not $engineResult.ok -and $attempt -eq 0) {
-            # Prefer soft retry when sidecar already Run.cancel()'d a wedged wait.
-            if (Test-MetraAskTimeoutCancelCleared -EngineResult $engineResult) {
+
+        if (-not $engineResult.ok) {
+            $failCode = [string](Get-MetraProp -Object $engineResult -Name 'errorCode' -Default '')
+            $failClass = [string](Get-MetraProp -Object $engineResult -Name 'retryClass' -Default '')
+            $cancelSucceeded = [bool](Get-MetraProp -Object $engineResult -Name 'cancelSucceeded' -Default $false)
+            $isTimeout = ($failCode -eq 'ask_timeout' -or $failClass -eq 'transport_timeout')
+            $cancelCleared = Test-MetraAskTimeoutCancelCleared -EngineResult $engineResult
+            $credentialFail = Test-MetraAskCredentialFailure -EngineResult $engineResult
+            $restartable = Test-MetraAskSidecarRestartableFailure -EngineResult $engineResult
+
+            # Soft-retry once when Run.cancel() cleared the wait (no desk/sidecar recycle).
+            if ($isTimeout -and $cancelCleared -and -not $softRetryUsed -and -not $credentialFail) {
+                $softRetryUsed = $true
                 Write-Host 'Inspect: Ask timed out; run.cancel() cleared wait - retrying once without sidecar recycle...' -ForegroundColor Yellow
                 continue
             }
-            if (Test-MetraAskSidecarRestartableFailure -EngineResult $engineResult) {
-                $failCode = [string](Get-MetraProp -Object $engineResult -Name 'errorCode' -Default '')
-                $failClass = [string](Get-MetraProp -Object $engineResult -Name 'retryClass' -Default '')
-                Write-Host ("Inspect: Ask engine failed ({0}/{1}) - restarting sidecar (sidecar-only) and retrying once..." -f `
+
+            # SidecarOnly once: uncleared timeout, opaque transport, OR second timeout after soft-retry.
+            # Never Restart-MetraOpsDesk from Inspect - desk recycle races MetraHost.
+            $escalateSidecar = (-not $sidecarRecycleUsed) -and (-not $credentialFail) -and (
+                $restartable -or
+                ($isTimeout -and $softRetryUsed)
+            )
+            if ($escalateSidecar) {
+                $sidecarRecycleUsed = $true
+                Write-Host ("Inspect: Ask engine failed ({0}/{1}; cancelSucceeded={2}) - restarting sidecar (sidecar-only) and retrying once..." -f `
                         $(if ($failCode) { $failCode } else { 'error' }), `
-                        $(if ($failClass) { $failClass } else { 'restartable' })) -ForegroundColor Yellow
-                # Never Restart-MetraOpsDesk from Inspect - desk recycle races MetraHost and amplifies SDK blips.
+                        $(if ($failClass) { $failClass } else { 'restartable' }), `
+                        $cancelSucceeded) -ForegroundColor Yellow
                 $null = Restart-MetraAskEngine -MetraRoot $MetraRoot -SidecarOnly -Confirm:$false
                 continue
             }
-        }
-        if (-not $engineResult.ok) {
+
             $msg = [string](Get-MetraProp -Object $engineResult -Name 'message' -Default 'Ask engine failed.')
             $err = [string](Get-MetraProp -Object $engineResult -Name 'error' -Default 'engine_error')
+            if ([string]::IsNullOrWhiteSpace($err) -or $err -eq 'engine_request_failed') {
+                if ($failCode) { $err = $failCode }
+            }
             $resolvedModel = Get-MetraProp -Object $engineResult -Name 'resolvedModel' -Default $null
             if ($null -ne $resolvedModel -and [string]::IsNullOrWhiteSpace([string]$resolvedModel)) { $resolvedModel = $null }
             $engineProvenance = New-MetraInspectEngineProvenance -Selection $selection -ResolvedModel $resolvedModel -CodingModel ''
+            $structured = ("errorCode={0}; retryClass={1}; cancelSucceeded={2}; timeoutSec={3}; attempts={4}; softRetry={5}; sidecarRecycle={6}" -f `
+                    $(if ($failCode) { $failCode } else { 'none' }), `
+                    $(if ($failClass) { $failClass } else { 'none' }), `
+                    $cancelSucceeded, $lastTimeoutSec, $askCalls, $softRetryUsed, $sidecarRecycleUsed)
             return [PSCustomObject]@{
-                Ok               = $false
-                Message          = $msg
-                Error            = $err
-                Excerpt          = $null
-                Engine           = [string](Get-MetraProp -Object $engineResult -Name 'engine' -Default $selection.Engine)
-                Model            = [string](Get-MetraProp -Object $engineResult -Name 'model' -Default $selection.RequestedModel)
-                ResolvedModel    = $resolvedModel
-                EngineProvenance = $engineProvenance
-                Selection        = $selection
-                Findings         = @()
-                ShapeMismatch    = $false
-                RetryAttempt     = $attempt
+                Ok                  = $false
+                Message             = ("{0} ({1})" -f $msg, $structured)
+                Error               = $err
+                ErrorCode           = $failCode
+                RetryClass          = $failClass
+                CancelSucceeded     = $cancelSucceeded
+                TimeoutSec          = $lastTimeoutSec
+                Attempts            = $askCalls
+                SoftRetryUsed       = $softRetryUsed
+                SidecarRecycleUsed  = $sidecarRecycleUsed
+                Excerpt             = $null
+                Engine              = [string](Get-MetraProp -Object $engineResult -Name 'engine' -Default $selection.Engine)
+                Model               = [string](Get-MetraProp -Object $engineResult -Name 'model' -Default $selection.RequestedModel)
+                ResolvedModel       = $resolvedModel
+                EngineProvenance    = $engineProvenance
+                Selection           = $selection
+                Findings            = @()
+                ShapeMismatch       = $false
+                RetryAttempt        = [Math]::Max(0, $askCalls - 1)
             }
         }
 
@@ -2416,24 +2462,32 @@ If no issues: {"findings":[]}. No markdown. No prose outside JSON.
         $parsed = ConvertTo-MetraInspectFindings -Message ([string]$engineResult.message)
         if ($parsed.Ok) {
             return [PSCustomObject]@{
-                Ok               = $true
-                Message          = [string]$engineResult.message
-                Error            = $null
-                Excerpt          = $null
-                Engine           = $engine
-                Model            = $model
-                ResolvedModel    = $resolvedModel
-                EngineProvenance = $engineProvenance
-                Selection        = $selection
-                Findings         = @($parsed.Findings)
-                ShapeMismatch    = $false
-                RetryAttempt     = $attempt
+                Ok                 = $true
+                Message            = [string]$engineResult.message
+                Error              = $null
+                ErrorCode          = $null
+                RetryClass         = $null
+                CancelSucceeded    = $false
+                TimeoutSec         = $lastTimeoutSec
+                Attempts           = $askCalls
+                SoftRetryUsed      = $softRetryUsed
+                SidecarRecycleUsed = $sidecarRecycleUsed
+                Excerpt            = $null
+                Engine             = $engine
+                Model              = $model
+                ResolvedModel      = $resolvedModel
+                EngineProvenance   = $engineProvenance
+                Selection          = $selection
+                Findings           = @($parsed.Findings)
+                ShapeMismatch      = $false
+                RetryAttempt       = [Math]::Max(0, $askCalls - 1)
             }
         }
 
         $lastParse = $parsed
-        if ($attempt -eq 0 -and $parsed.ShapeMismatch) {
+        if ($parsed.ShapeMismatch -and -not $shapeRetryUsed) {
             Write-Verbose 'Inspect engine returned wrong JSON shape; retrying with findings-only prompt.'
+            $shapeRetryUsed = $true
             $currentPrompt = $Prompt + "`n`n" + $retrySuffix
             continue
         }
@@ -2441,18 +2495,25 @@ If no issues: {"findings":[]}. No markdown. No prose outside JSON.
     }
 
     return [PSCustomObject]@{
-        Ok               = $false
-        Message          = [string]$lastParse.Error
-        Error            = 'parse_failed'
-        Excerpt          = [string]$lastParse.Excerpt
-        Engine           = $engine
-        Model            = $model
-        ResolvedModel    = $resolvedModel
-        EngineProvenance = $engineProvenance
-        Selection        = $selection
-        Findings         = @()
-        ShapeMismatch    = [bool]$lastParse.ShapeMismatch
-        RetryAttempt     = 1
+        Ok                 = $false
+        Message            = [string]$lastParse.Error
+        Error              = 'parse_failed'
+        ErrorCode          = 'parse_failed'
+        RetryClass         = $null
+        CancelSucceeded    = $false
+        TimeoutSec         = $lastTimeoutSec
+        Attempts           = $askCalls
+        SoftRetryUsed      = $softRetryUsed
+        SidecarRecycleUsed = $sidecarRecycleUsed
+        Excerpt            = [string]$lastParse.Excerpt
+        Engine             = $engine
+        Model              = $model
+        ResolvedModel      = $resolvedModel
+        EngineProvenance   = $engineProvenance
+        Selection          = $selection
+        Findings           = @()
+        ShapeMismatch      = [bool]$lastParse.ShapeMismatch
+        RetryAttempt       = [Math]::Max(0, $askCalls - 1)
     }
 }
 
@@ -2561,7 +2622,8 @@ function Invoke-MetraInspectDiff {
     ) -join "`n`n"
 
     $prompt = Build-MetraInspectPrompt -Mode diff -AgentsText $agents -Payload $payload -VerifyPass:$VerifyPass
-    $engine = Invoke-MetraInspectEngine -Prompt $prompt -Cwd $ctx.Root
+    $engine = Invoke-MetraInspectEngine -Prompt $prompt -Cwd $ctx.Root `
+        -EstimatedPayloadChars ([int]$budgetParts.estimatedTotalChars)
     if (-not $engine.Ok) {
         if ($engine.Excerpt) {
             throw ("Inspect failed: {0}`nExcerpt:`n{1}" -f $engine.Message, $engine.Excerpt)
@@ -2699,7 +2761,7 @@ function Invoke-MetraInspectPlan {
 
     $prompt = Build-MetraInspectPrompt -Mode plan -AgentsText $agents -Payload $text -ContextLimited:$ctx.ContextLimited
     $cwd = if ($ctx.Root) { $ctx.Root } else { (Get-MetraRoot) }
-    $engine = Invoke-MetraInspectEngine -Prompt $prompt -Cwd $cwd
+    $engine = Invoke-MetraInspectEngine -Prompt $prompt -Cwd $cwd -EstimatedPayloadChars $prompt.Length
     if (-not $engine.Ok) {
         if ($engine.Excerpt) {
             throw ("Inspect failed: {0}`nExcerpt:`n{1}" -f $engine.Message, $engine.Excerpt)

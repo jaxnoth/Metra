@@ -42,7 +42,7 @@ Serve / campus hosts: [tailscale-campus.md](tailscale-campus.md).
 | Layer | Budget / rule |
 |-------|----------------|
 | Engine `Invoke-MetraAskEngine` | 180s default; sidecar `Agent.wait()` hard-stops via `timeoutSec` (slightly under client) |
-| Inspect assess | Band-dependent client budget: GREEN **300s**, WARN/PRUNE **900s** (+ sidecar `timeoutSec`); hang → `ask_timeout` → try `Run.cancel()`; soft-retry if cancel cleared wait, else one **sidecar-only** recycle + retry |
+| Inspect assess | Band-dependent client budget: GREEN **300s**, WARN/PRUNE **900s** (band from `Max(prompt, EstimatedPayloadChars)`; sidecar `timeoutSec` = client-15, so GREEN shows **~285s**). Hang → `ask_timeout` → soft-retry if `cancelSucceeded`; if retry still times out (or cancel did not clear) → one **SidecarOnly** recycle + one more assess; then structured fail (`errorCode` / `retryClass` / `cancelSucceeded` / `timeoutSec` / `attempts`). Never Ops desk recycle from Inspect; auth/usage not restartable |
 | iOS `OpsAskClient` | 195s; `timedOut` ≠ offline; one early-reachability retry only; **409 `askBusy` → `AskClientError.askBusy`** (not offline) |
 | Ops accept-loop Ask poll | 45s from prior poll **completion** + Ensure |
 | Ensure / opaque Restart | Named mutex `ask-sidecar-ensure` (cross-runspace; poll + worker Restart share it) |

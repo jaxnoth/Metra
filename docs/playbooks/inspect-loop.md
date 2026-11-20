@@ -54,6 +54,12 @@ Inspect findings are strongest when implementation and review use different mode
 
 Independence of review matters more than the specific model. The safety net is inspect + verify + operator judgment, not any single LLM.
 
+## Ask timeout recovery (assess)
+
+Band budgets: GREEN **300s**, WARN/PRUNE **900s** (`Max(prompt chars, EstimatedPayloadChars)`; sidecar wait is client-15, so GREEN surfaces as **~285s**). Console prints `Inspect assess budget: band=... timeoutSec=...`.
+
+On hang: soft-retry once after successful `Run.cancel()`; if the retry still times out (or cancel did not clear), one **SidecarOnly** recycle + one more assess; then structured fail (`errorCode`, `retryClass`, `cancelSucceeded`, `timeoutSec`, `attempts`). Inspect never recycles Ops desk; auth/usage/model are not restartable. Detail: [ops-ask-reach.md](ops-ask-reach.md); Decision 2026-11-20.
+
 ## Commands
 
 ```powershell
