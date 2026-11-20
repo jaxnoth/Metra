@@ -1009,10 +1009,20 @@ function Invoke-LoomDailyMerge {
             }
         }
         $ship = Invoke-LoomShip -Name $RegistryName -ProjectRoot $ProjectRoot -NoPush:(-not $Push) -SkipFullTests
+        $rootMerge = $null
+        foreach ($m in @($ship.merges)) {
+            if ([string]::Equals([string]$m.repo, 'root', [StringComparison]::OrdinalIgnoreCase)) {
+                $rootMerge = [string]$m.mergeSha
+                break
+            }
+        }
+        if ([string]::IsNullOrWhiteSpace($rootMerge) -and $ship.merges -and @($ship.merges).Count -gt 0) {
+            $rootMerge = [string]$ship.merges[-1].mergeSha
+        }
         return [PSCustomObject]@{
             attempted   = $true
             succeeded   = [bool]$ship.ok
-            mergeCommit = if ($ship.merges -and @($ship.merges).Count -gt 0) { [string]$ship.merges[0].mergeSha } else { $null }
+            mergeCommit = $rootMerge
             error       = if ($ship.ok) { $null } else { 'ship-cycle-refused' }
             detail      = $(
                 $joined = (@($ship.reasons) | Where-Object { $_ } | ForEach-Object { [string]$_ }) -join ';'

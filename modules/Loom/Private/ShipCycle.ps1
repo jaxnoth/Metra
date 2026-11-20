@@ -614,7 +614,7 @@ function Publish-LoomShipBingEvidencePack {
         throw ("Composite review body missing: {0}" -f $CompositeBodyPath)
     }
     $compositeBody = Get-Content -LiteralPath $CompositeBodyPath -Raw -Encoding UTF8
-    $fileHits = [regex]::Matches([string]$compositeBody, '(?m)^[AMDCRT]\t(.+)$')
+    $fileHits = [regex]::Matches([string]$compositeBody, '(?m)^(?:[AMDT]|[RC]\d*)\t(?:.*\t)?(.+)$')
     $fileList = @(
         foreach ($hit in $fileHits) {
             $p = [string]$hit.Groups[1].Value.Trim()

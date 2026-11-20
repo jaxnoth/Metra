@@ -112,7 +112,7 @@ try {
     $cfgProject = Get-MetraHookConfiguredProject -RepoRoot $repoRoot
     $projName = Resolve-MetraHookProjectName -RepoRoot $repoRoot -ConfiguredProject $cfgProject `
         -FolderLeaf (Split-Path -Leaf $repoRoot) -IsMetraRoot:$isMetraRoot
-    $prePushArgs = @('inspect', 'pre-push', '-Name', $projName)
+    $prePushArgs = @('inspect', 'pre-push', '-Name', $projName, '-RepoRoot', $repoRoot)
     foreach ($rb in @($remoteBranches | Select-Object -Unique)) {
         if (-not [string]::IsNullOrWhiteSpace([string]$rb)) {
             $prePushArgs += @('-RemoteBranch', [string]$rb)

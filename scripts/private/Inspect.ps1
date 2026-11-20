@@ -7825,12 +7825,18 @@ function Invoke-MetraInspectPrepareForBing {
     }
 
     if (-not $active) {
-        Write-Host ("Prepare-for-Bing: ready. Bing pack: {0}" -f $packPath) -ForegroundColor Green
-        Write-Host ("  Agent queue (not pack body): {0}" -f $fixQueuePath) -ForegroundColor DarkGray
+        if ($goalMet) {
+            Write-Host ("Prepare-for-Bing: ready. Bing pack: {0}" -f $packPath) -ForegroundColor Green
+            Write-Host ("  Agent queue (not pack body): {0}" -f $fixQueuePath) -ForegroundColor DarkGray
+        }
+        else {
+            Write-Host ("Prepare-for-Bing: loop ended without goal (term={0}; C={1} H={2} M={3}). Pack built; not ready for Bing." -f $term, $critical, $high, $medium) -ForegroundColor Yellow
+            Write-Host ("  Fix queue: {0}" -f $fixQueuePath) -ForegroundColor DarkGray
+        }
         return [PSCustomObject]@{
-            readyForBing       = $true
+            readyForBing       = [bool]$goalMet
             project            = $slotKey
-            phase              = 'bing'
+            phase              = $(if ($goalMet) { 'bing' } else { 'unresolved' })
             critical           = $critical
             high               = $high
             medium             = $medium
@@ -7885,11 +7891,13 @@ function Invoke-MetraInspectPrePushHook {
     <#
     .SYNOPSIS
         Git pre-push: refuse protected destination refs unless valid ship lock is present.
+        -RepoRoot is the active nested worktree (e.g. CDM chef/); -Name is the registry project.
     #>
     [CmdletBinding()]
     param(
         [string]$Name,
-        [string[]]$RemoteBranch
+        [string[]]$RemoteBranch,
+        [string]$RepoRoot
     )
 
     # METRA_SKIP_SECURITY_PUSH does not bypass ship-lock; only METRA_SKIP_INSPECT_HOOK does.
@@ -7900,7 +7908,18 @@ function Invoke-MetraInspectPrePushHook {
     $ctx = Resolve-MetraInspectProjectContext -Name $Name -Mode diff
     if (-not $ctx.Ok) { throw $ctx.Error }
     $slotKey = [string]$ctx.Project
-    $root = [string]$ctx.Root
+    if ([string]::IsNullOrWhiteSpace($RepoRoot)) {
+        $top = [string](@(& git rev-parse --show-toplevel 2>$null) | Select-Object -First 1)
+        if (-not [string]::IsNullOrWhiteSpace($top)) {
+            $RepoRoot = $top.Trim()
+        }
+    }
+    if (-not [string]::IsNullOrWhiteSpace($RepoRoot)) {
+        $root = [System.IO.Path]::GetFullPath($RepoRoot.Trim())
+    }
+    else {
+        $root = [string]$ctx.Root
+    }
 
     $targets = New-Object System.Collections.Generic.List[string]
     foreach ($rb in @($RemoteBranch)) {
@@ -8271,7 +8290,7 @@ function Show-MetraInspectCli {
             $i += 2
             continue
         }
-        if ($mode -eq 'pre-commit' -and $tok -ieq '-RepoRoot' -and ($i + 1) -lt $argsRest.Count) {
+        if (($mode -eq 'pre-commit' -or $mode -eq 'pre-push') -and $tok -ieq '-RepoRoot' -and ($i + 1) -lt $argsRest.Count) {
             $repoRootFromRest = [string]$argsRest[$i + 1]
             $i += 2
             continue
@@ -8454,6 +8473,9 @@ function Show-MetraInspectCli {
         'pre-push' {
             $prePushParams = @{ Name = $projectName }
             if ($remoteBranches.Count -gt 0) { $prePushParams.RemoteBranch = @($remoteBranches.ToArray()) }
+            if (-not [string]::IsNullOrWhiteSpace($repoRootFromRest)) {
+                $prePushParams.RepoRoot = $repoRootFromRest
+            }
             return Invoke-MetraInspectPrePushHook @prePushParams
         }
         'review' {
