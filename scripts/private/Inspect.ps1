@@ -984,9 +984,16 @@ function Get-MetraInspectAssessTimeoutSec {
     <#
     .SYNOPSIS
         Client TimeoutSec for Inspect assess by payload band (GREEN 300s; WARN/PRUNE 900s).
+        Optional override: METRA_INSPECT_ASSESS_TIMEOUT_SEC (30-900).
     #>
     [CmdletBinding()]
     param([Parameter(Mandatory)][int]$EstimatedPromptChars)
+
+    $overrideRaw = [string]$env:METRA_INSPECT_ASSESS_TIMEOUT_SEC
+    if ($overrideRaw -match '^\d+$') {
+        $override = [int]$overrideRaw
+        return [Math]::Min(900, [Math]::Max(30, $override))
+    }
 
     $band = Get-MetraInspectPayloadBand -EstimatedTotalChars $EstimatedPromptChars
     if ($band -eq 'GREEN') { return 300 }
@@ -2332,7 +2339,10 @@ function Invoke-MetraInspectEngine {
     param(
         [Parameter(Mandatory)][string]$Prompt,
         [Parameter(Mandatory)][string]$Cwd,
-        [string]$MetraRoot = (Get-MetraRoot)
+        [string]$MetraRoot = (Get-MetraRoot),
+        # Optional pre-prompt payload estimate (Measure estimatedTotalChars). Timeout band uses
+        # Max(prompt.Length, this) so Scope PRUNE/WARN cannot silently fall to GREEN 300s.
+        [int]$EstimatedPayloadChars = -1
     )
 
     $retrySuffix = @'
@@ -2351,53 +2361,96 @@ If no issues: {"findings":[]}. No markdown. No prose outside JSON.
     $model = ''
     $resolvedModel = $null
     $engineProvenance = $null
+    $softRetryUsed = $false
+    $sidecarRecycleUsed = $false
+    $shapeRetryUsed = $false
+    $lastTimeoutSec = 0
+    $askCalls = 0
+    # initial + soft-retry + SidecarOnly retry (+ optional shape retry) - Decision 2026-11-20
+    $maxAskCalls = 4
 
-    for ($attempt = 0; $attempt -lt 2; $attempt++) {
+    while ($askCalls -lt $maxAskCalls) {
+        $askCalls++
         # Band-dependent client budget (Decision 2026-11-17): GREEN 300s; WARN/PRUNE 900s.
-        # History: flat 900s masked wedged Agent.wait() while /health stayed green (2026-11-06
-        # moved Inspect to 300s); large PRUNE-band CDM assesses later needed a longer pass.
-        # Soft-retry / Run.cancel() still apply; timeout remains recycle-eligible (sidecar-only)
-        # for a single retry. Ops Ask default budget stays 180s.
-        $timeoutSec = Get-MetraInspectAssessTimeoutSec -EstimatedPromptChars $currentPrompt.Length
+        # Sidecar timeoutSec = client - 15 (AskEngine); GREEN 300 -> message "~285s".
+        $charsForBand = [int]$currentPrompt.Length
+        if ($EstimatedPayloadChars -gt $charsForBand) { $charsForBand = $EstimatedPayloadChars }
+        $timeoutSec = Get-MetraInspectAssessTimeoutSec -EstimatedPromptChars $charsForBand
+        $lastTimeoutSec = $timeoutSec
+        $band = Get-MetraInspectPayloadBand -EstimatedTotalChars $charsForBand
+        if ($askCalls -eq 1) {
+            Write-Host ("Inspect assess budget: band={0} timeoutSec={1} promptChars={2}" -f `
+                    $band, $timeoutSec, $charsForBand) -ForegroundColor DarkGray
+        }
+
         $engineResult = Invoke-MetraAskEngine -Prompt $currentPrompt -Cwd $Cwd -MetraRoot $MetraRoot `
             -Context @{ purpose = 'metra-inspect' } -TimeoutSec $timeoutSec `
             -Engine $selection.Engine -Model $selection.RequestedModel
-        if (-not $engineResult.ok -and $attempt -eq 0) {
-            # Prefer soft retry when sidecar already Run.cancel()'d a wedged wait.
-            if (Test-MetraAskTimeoutCancelCleared -EngineResult $engineResult) {
+
+        if (-not $engineResult.ok) {
+            $failCode = [string](Get-MetraProp -Object $engineResult -Name 'errorCode' -Default '')
+            $failClass = [string](Get-MetraProp -Object $engineResult -Name 'retryClass' -Default '')
+            $cancelSucceeded = [bool](Get-MetraProp -Object $engineResult -Name 'cancelSucceeded' -Default $false)
+            $isTimeout = ($failCode -eq 'ask_timeout' -or $failClass -eq 'transport_timeout')
+            $cancelCleared = Test-MetraAskTimeoutCancelCleared -EngineResult $engineResult
+            $credentialFail = Test-MetraAskCredentialFailure -EngineResult $engineResult
+            $restartable = Test-MetraAskSidecarRestartableFailure -EngineResult $engineResult
+
+            # Soft-retry once when Run.cancel() cleared the wait (no desk/sidecar recycle).
+            if ($isTimeout -and $cancelCleared -and -not $softRetryUsed -and -not $credentialFail) {
+                $softRetryUsed = $true
                 Write-Host 'Inspect: Ask timed out; run.cancel() cleared wait - retrying once without sidecar recycle...' -ForegroundColor Yellow
                 continue
             }
-            if (Test-MetraAskSidecarRestartableFailure -EngineResult $engineResult) {
-                $failCode = [string](Get-MetraProp -Object $engineResult -Name 'errorCode' -Default '')
-                $failClass = [string](Get-MetraProp -Object $engineResult -Name 'retryClass' -Default '')
-                Write-Host ("Inspect: Ask engine failed ({0}/{1}) - restarting sidecar (sidecar-only) and retrying once..." -f `
+
+            # SidecarOnly once: uncleared timeout, opaque transport, OR second timeout after soft-retry.
+            # Never Restart-MetraOpsDesk from Inspect - desk recycle races MetraHost.
+            $escalateSidecar = (-not $sidecarRecycleUsed) -and (-not $credentialFail) -and (
+                $restartable -or
+                ($isTimeout -and $softRetryUsed)
+            )
+            if ($escalateSidecar) {
+                $sidecarRecycleUsed = $true
+                Write-Host ("Inspect: Ask engine failed ({0}/{1}; cancelSucceeded={2}) - restarting sidecar (sidecar-only) and retrying once..." -f `
                         $(if ($failCode) { $failCode } else { 'error' }), `
-                        $(if ($failClass) { $failClass } else { 'restartable' })) -ForegroundColor Yellow
-                # Never Restart-MetraOpsDesk from Inspect - desk recycle races MetraHost and amplifies SDK blips.
+                        $(if ($failClass) { $failClass } else { 'restartable' }), `
+                        $cancelSucceeded) -ForegroundColor Yellow
                 $null = Restart-MetraAskEngine -MetraRoot $MetraRoot -SidecarOnly -Confirm:$false
                 continue
             }
-        }
-        if (-not $engineResult.ok) {
+
             $msg = [string](Get-MetraProp -Object $engineResult -Name 'message' -Default 'Ask engine failed.')
             $err = [string](Get-MetraProp -Object $engineResult -Name 'error' -Default 'engine_error')
+            if ([string]::IsNullOrWhiteSpace($err) -or $err -eq 'engine_request_failed') {
+                if ($failCode) { $err = $failCode }
+            }
             $resolvedModel = Get-MetraProp -Object $engineResult -Name 'resolvedModel' -Default $null
             if ($null -ne $resolvedModel -and [string]::IsNullOrWhiteSpace([string]$resolvedModel)) { $resolvedModel = $null }
             $engineProvenance = New-MetraInspectEngineProvenance -Selection $selection -ResolvedModel $resolvedModel -CodingModel ''
+            $structured = ("errorCode={0}; retryClass={1}; cancelSucceeded={2}; timeoutSec={3}; attempts={4}; softRetry={5}; sidecarRecycle={6}" -f `
+                    $(if ($failCode) { $failCode } else { 'none' }), `
+                    $(if ($failClass) { $failClass } else { 'none' }), `
+                    $cancelSucceeded, $lastTimeoutSec, $askCalls, $softRetryUsed, $sidecarRecycleUsed)
             return [PSCustomObject]@{
-                Ok               = $false
-                Message          = $msg
-                Error            = $err
-                Excerpt          = $null
-                Engine           = [string](Get-MetraProp -Object $engineResult -Name 'engine' -Default $selection.Engine)
-                Model            = [string](Get-MetraProp -Object $engineResult -Name 'model' -Default $selection.RequestedModel)
-                ResolvedModel    = $resolvedModel
-                EngineProvenance = $engineProvenance
-                Selection        = $selection
-                Findings         = @()
-                ShapeMismatch    = $false
-                RetryAttempt     = $attempt
+                Ok                  = $false
+                Message             = ("{0} ({1})" -f $msg, $structured)
+                Error               = $err
+                ErrorCode           = $failCode
+                RetryClass          = $failClass
+                CancelSucceeded     = $cancelSucceeded
+                TimeoutSec          = $lastTimeoutSec
+                Attempts            = $askCalls
+                SoftRetryUsed       = $softRetryUsed
+                SidecarRecycleUsed  = $sidecarRecycleUsed
+                Excerpt             = $null
+                Engine              = [string](Get-MetraProp -Object $engineResult -Name 'engine' -Default $selection.Engine)
+                Model               = [string](Get-MetraProp -Object $engineResult -Name 'model' -Default $selection.RequestedModel)
+                ResolvedModel       = $resolvedModel
+                EngineProvenance    = $engineProvenance
+                Selection           = $selection
+                Findings            = @()
+                ShapeMismatch       = $false
+                RetryAttempt        = [Math]::Max(0, $askCalls - 1)
             }
         }
 
@@ -2409,24 +2462,32 @@ If no issues: {"findings":[]}. No markdown. No prose outside JSON.
         $parsed = ConvertTo-MetraInspectFindings -Message ([string]$engineResult.message)
         if ($parsed.Ok) {
             return [PSCustomObject]@{
-                Ok               = $true
-                Message          = [string]$engineResult.message
-                Error            = $null
-                Excerpt          = $null
-                Engine           = $engine
-                Model            = $model
-                ResolvedModel    = $resolvedModel
-                EngineProvenance = $engineProvenance
-                Selection        = $selection
-                Findings         = @($parsed.Findings)
-                ShapeMismatch    = $false
-                RetryAttempt     = $attempt
+                Ok                 = $true
+                Message            = [string]$engineResult.message
+                Error              = $null
+                ErrorCode          = $null
+                RetryClass         = $null
+                CancelSucceeded    = $false
+                TimeoutSec         = $lastTimeoutSec
+                Attempts           = $askCalls
+                SoftRetryUsed      = $softRetryUsed
+                SidecarRecycleUsed = $sidecarRecycleUsed
+                Excerpt            = $null
+                Engine             = $engine
+                Model              = $model
+                ResolvedModel      = $resolvedModel
+                EngineProvenance   = $engineProvenance
+                Selection          = $selection
+                Findings           = @($parsed.Findings)
+                ShapeMismatch      = $false
+                RetryAttempt       = [Math]::Max(0, $askCalls - 1)
             }
         }
 
         $lastParse = $parsed
-        if ($attempt -eq 0 -and $parsed.ShapeMismatch) {
+        if ($parsed.ShapeMismatch -and -not $shapeRetryUsed) {
             Write-Verbose 'Inspect engine returned wrong JSON shape; retrying with findings-only prompt.'
+            $shapeRetryUsed = $true
             $currentPrompt = $Prompt + "`n`n" + $retrySuffix
             continue
         }
@@ -2434,18 +2495,25 @@ If no issues: {"findings":[]}. No markdown. No prose outside JSON.
     }
 
     return [PSCustomObject]@{
-        Ok               = $false
-        Message          = [string]$lastParse.Error
-        Error            = 'parse_failed'
-        Excerpt          = [string]$lastParse.Excerpt
-        Engine           = $engine
-        Model            = $model
-        ResolvedModel    = $resolvedModel
-        EngineProvenance = $engineProvenance
-        Selection        = $selection
-        Findings         = @()
-        ShapeMismatch    = [bool]$lastParse.ShapeMismatch
-        RetryAttempt     = 1
+        Ok                 = $false
+        Message            = [string]$lastParse.Error
+        Error              = 'parse_failed'
+        ErrorCode          = 'parse_failed'
+        RetryClass         = $null
+        CancelSucceeded    = $false
+        TimeoutSec         = $lastTimeoutSec
+        Attempts           = $askCalls
+        SoftRetryUsed      = $softRetryUsed
+        SidecarRecycleUsed = $sidecarRecycleUsed
+        Excerpt            = [string]$lastParse.Excerpt
+        Engine             = $engine
+        Model              = $model
+        ResolvedModel      = $resolvedModel
+        EngineProvenance   = $engineProvenance
+        Selection          = $selection
+        Findings           = @()
+        ShapeMismatch      = [bool]$lastParse.ShapeMismatch
+        RetryAttempt       = [Math]::Max(0, $askCalls - 1)
     }
 }
 
@@ -2554,7 +2622,8 @@ function Invoke-MetraInspectDiff {
     ) -join "`n`n"
 
     $prompt = Build-MetraInspectPrompt -Mode diff -AgentsText $agents -Payload $payload -VerifyPass:$VerifyPass
-    $engine = Invoke-MetraInspectEngine -Prompt $prompt -Cwd $ctx.Root
+    $engine = Invoke-MetraInspectEngine -Prompt $prompt -Cwd $ctx.Root `
+        -EstimatedPayloadChars ([int]$budgetParts.estimatedTotalChars)
     if (-not $engine.Ok) {
         if ($engine.Excerpt) {
             throw ("Inspect failed: {0}`nExcerpt:`n{1}" -f $engine.Message, $engine.Excerpt)
@@ -2564,9 +2633,23 @@ function Invoke-MetraInspectDiff {
 
     $parsed = [PSCustomObject]@{ Ok = $true; Findings = @($engine.Findings) }
 
-    $inputHash = Get-MetraInspectInputHash -Parts @(
+    # Hash the same live reduced scrub pack uses (Get-MetraInspectReviewWorkingTreeInputHash).
+    # Pre-engine scrub can drift while Ask runs (long WARN/PRUNE budgets); packing against
+    # the pre-Ask hash then false-alarms "inputHash differs" and blocks Bing L1 (CDM E4a).
+    $promptInputHash = Get-MetraInspectInputHash -Parts @(
         $scrubbedFiles | ForEach-Object { [PSCustomObject]@{ path = $_.path; content = $_.content } }
     )
+    $baseForHash = $(if ($diff.Base) { [string]$diff.Base } elseif ($Base) { $Base } else { '' })
+    $inputHash = Get-MetraInspectReviewWorkingTreeInputHash -Root $ctx.Root -Base $baseForHash
+    if ($inputHash -ne $promptInputHash) {
+        Write-Host 'WARNING: Working tree inputHash changed during Ask assess; report hash uses post-Ask disk (pack-aligned). Findings were produced from the pre-Ask scrub.' -ForegroundColor Yellow
+    }
+
+    # Refresh reduce/scrub metadata from post-Ask disk using the same reduce as the pack hash
+    # path (no KeepPaths). Verify KeepPaths only narrows the Ask prompt, not the stored hash.
+    $diffAfter = Get-MetraInspectGitDiffFiles -Root $ctx.Root -Base $Base
+    $reducedAfter = Reduce-MetraInspectDiffFiles -Files @($diffAfter.Files)
+    $scrubbedAfter = @(ConvertTo-MetraInspectScrubbedDiffParts -Files $reducedAfter.Files)
 
     $stateRoot = Get-MetraInspectStateRoot
     $safeSlot = (($ctx.Project -replace '[^\w\.-]', '_').Trim('_'))
@@ -2580,18 +2663,18 @@ function Invoke-MetraInspectDiff {
         inspectedAtUtc      = [datetime]::UtcNow.ToString('o')
         project             = $ctx.Project
         root                = $ctx.Root
-        gitHead             = [string]$diff.GitHead
-        fileCount           = [int]$reduced.FileCount
-        reducedFileCount    = [int]$reduced.ReducedFileCount
-        skippedFileCount    = [int]$reduced.SkippedFileCount
-        truncated           = [bool]$reduced.Truncated
+        gitHead             = [string]$diffAfter.GitHead
+        fileCount           = [int]$reducedAfter.FileCount
+        reducedFileCount    = [int]$reducedAfter.ReducedFileCount
+        skippedFileCount    = [int]$reducedAfter.SkippedFileCount
+        truncated           = [bool]$reducedAfter.Truncated
         inputHash           = $inputHash
         contextLimited      = $false
-        base                = $(if ($diff.Base) { [string]$diff.Base } elseif ($Base) { $Base } else { '' })
-        baseMode            = [string](Get-MetraProp -Object $diff -Name 'BaseMode' -Default 'working-tree')
-        untrackedFileCount  = [int](Get-MetraProp -Object $diff -Name 'UntrackedCount' -Default 0)
-        workingTreeDirty    = [bool](Get-MetraProp -Object $diff -Name 'WorkingTreeDirty' -Default $false)
-        assessedFiles       = @($scrubbedFiles | ForEach-Object { $_.path })
+        base                = $baseForHash
+        baseMode            = [string](Get-MetraProp -Object $diffAfter -Name 'BaseMode' -Default 'working-tree')
+        untrackedFileCount  = [int](Get-MetraProp -Object $diffAfter -Name 'UntrackedCount' -Default 0)
+        workingTreeDirty    = [bool](Get-MetraProp -Object $diffAfter -Name 'WorkingTreeDirty' -Default $false)
+        assessedFiles       = @($scrubbedAfter | ForEach-Object { $_.path })
         reportPath          = $reportPath
     }
 
@@ -2678,7 +2761,7 @@ function Invoke-MetraInspectPlan {
 
     $prompt = Build-MetraInspectPrompt -Mode plan -AgentsText $agents -Payload $text -ContextLimited:$ctx.ContextLimited
     $cwd = if ($ctx.Root) { $ctx.Root } else { (Get-MetraRoot) }
-    $engine = Invoke-MetraInspectEngine -Prompt $prompt -Cwd $cwd
+    $engine = Invoke-MetraInspectEngine -Prompt $prompt -Cwd $cwd -EstimatedPayloadChars $prompt.Length
     if (-not $engine.Ok) {
         if ($engine.Excerpt) {
             throw ("Inspect failed: {0}`nExcerpt:`n{1}" -f $engine.Message, $engine.Excerpt)
@@ -3714,6 +3797,33 @@ function Write-MetraInspectPackArtifact {
         LocalManifest     = $localManifest
         LocalReviewState  = $localReviewState
     }
+}
+
+function Publish-MetraInspectBingPackFromText {
+    <#
+    .SYNOPSIS
+        Publish an already-built pack body as the Bing contract set (pack-diff + handoff +
+        manifest + review-state + Share mirror) bound to an explicit contentHash.
+        Used by Loom ship-cycle so composite multi-repo evidence is what Bing reviews.
+    #>
+    [CmdletBinding(SupportsShouldProcess)]
+    param(
+        [Parameter(Mandatory)][string]$Name,
+        [Parameter(Mandatory)][string]$PackText,
+        [Parameter(Mandatory)][string]$ContentHash,
+        [switch]$NoClipboard
+    )
+
+    if ([string]::IsNullOrWhiteSpace($Name)) { throw 'Publish-MetraInspectBingPackFromText requires -Name.' }
+    if ([string]::IsNullOrWhiteSpace($PackText)) { throw 'Publish-MetraInspectBingPackFromText requires non-empty -PackText.' }
+    if ([string]::IsNullOrWhiteSpace($ContentHash)) { throw 'Publish-MetraInspectBingPackFromText requires -ContentHash.' }
+
+    return Write-MetraInspectPackArtifact `
+        -PackText $PackText `
+        -SlotKey $Name.Trim() `
+        -Mode diff `
+        -ContentHash $ContentHash.Trim() `
+        -NoClipboard:$NoClipboard
 }
 
 function Invoke-MetraInspectPackOnly {
@@ -5754,11 +5864,13 @@ function Install-MetraGitHooks {
     <#
     .SYNOPSIS
         Point this repo at Metra git hooks (auto inspect loop + Bing gate).
+        Sets metra.root and, when -ProjectName is supplied, metra.project (nested bite repos).
     #>
     [CmdletBinding(SupportsShouldProcess)]
     param(
         [string]$RepoRoot,
-        [string]$MetraRoot
+        [string]$MetraRoot,
+        [string]$ProjectName
     )
 
     if ([string]::IsNullOrWhiteSpace($MetraRoot)) {
@@ -5810,13 +5922,15 @@ function Install-MetraGitHooks {
         throw "Missing pre-push shim: $prePush"
     }
     $hooksPathValue = ($hooksPathValue -replace '\\', '/')
-    if (-not $PSCmdlet.ShouldProcess($RepoRoot, "Set core.hooksPath=$hooksPathValue and metra.root=$MetraRoot")) {
+    $projLabel = if ([string]::IsNullOrWhiteSpace($ProjectName)) { '(none)' } else { $ProjectName }
+    if (-not $PSCmdlet.ShouldProcess($RepoRoot, ("Set core.hooksPath={0}; metra.root={1}; metra.project={2}" -f $hooksPathValue, $MetraRoot, $projLabel))) {
         return [PSCustomObject]@{
-            ok        = $false
-            skipped   = $true
-            repoRoot  = $RepoRoot
-            hooksPath = $hooksPathValue
-            metraRoot = $MetraRoot
+            ok          = $false
+            skipped     = $true
+            repoRoot    = $RepoRoot
+            hooksPath   = $hooksPathValue
+            metraRoot   = $MetraRoot
+            projectName = $ProjectName
         }
     }
     Push-Location $RepoRoot
@@ -5829,17 +5943,94 @@ function Install-MetraGitHooks {
         if ($LASTEXITCODE -ne 0) {
             throw 'git config metra.root failed.'
         }
+        if (-not [string]::IsNullOrWhiteSpace($ProjectName)) {
+            & git config metra.project $ProjectName
+            if ($LASTEXITCODE -ne 0) {
+                throw 'git config metra.project failed.'
+            }
+        }
     }
     finally {
         Pop-Location
     }
     return [PSCustomObject]@{
-        ok        = $true
-        repoRoot  = $RepoRoot
-        hooksPath = $hooksPathValue
-        metraRoot = $MetraRoot
-        preCommit = $preCommit
-        prePush   = $prePush
+        ok          = $true
+        repoRoot    = $RepoRoot
+        hooksPath   = $hooksPathValue
+        metraRoot   = $MetraRoot
+        projectName = $ProjectName
+        preCommit   = $preCommit
+        prePush     = $prePush
+    }
+}
+
+function Install-MetraGitHooksForBiteRepos {
+    <#
+    .SYNOPSIS
+        Install Metra hooks on portfolio root and nested biteRepos git worktrees.
+        Always sets metra.project to the registry project name (CDM chef scar).
+    #>
+    [CmdletBinding(SupportsShouldProcess)]
+    param(
+        [Parameter(Mandatory)][string]$ProjectName,
+        [Parameter(Mandatory)][string]$ProjectRoot,
+        [string]$MetraRoot
+    )
+
+    if ([string]::IsNullOrWhiteSpace($MetraRoot)) {
+        $MetraRoot = Get-MetraRoot
+    }
+    $repos = @('root')
+    if (Get-Command Get-LoomShipProjectPolicy -ErrorAction SilentlyContinue) {
+        try {
+            $policy = Get-LoomShipProjectPolicy -RegistryName $ProjectName
+            if ($null -ne $policy -and @($policy.biteRepos).Count -gt 0) {
+                $repos = @($policy.biteRepos)
+            }
+        }
+        catch { }
+    }
+    $results = New-Object System.Collections.Generic.List[object]
+    $resolved = @()
+    if (Get-Command Resolve-LoomShipRepoRoots -ErrorAction SilentlyContinue) {
+        $resolved = @(Resolve-LoomShipRepoRoots -ProjectRoot $ProjectRoot -Repos $repos)
+    }
+    else {
+        $resolved = @([PSCustomObject]@{ Key = 'root'; Path = $ProjectRoot })
+        foreach ($key in $repos) {
+            if ($key -eq 'root') { continue }
+            $nested = Join-Path $ProjectRoot $key
+            if (Test-Path -LiteralPath (Join-Path $nested '.git')) {
+                $resolved += [PSCustomObject]@{ Key = $key; Path = $nested }
+            }
+        }
+    }
+    foreach ($repo in $resolved) {
+        $installParams = @{
+            RepoRoot    = [string]$repo.Path
+            MetraRoot   = $MetraRoot
+            ProjectName = $ProjectName
+        }
+        if ($PSBoundParameters.ContainsKey('WhatIf')) {
+            $installParams.WhatIf = [bool]$PSBoundParameters['WhatIf']
+        }
+        if ($PSBoundParameters.ContainsKey('Confirm')) {
+            $installParams.Confirm = [bool]$PSBoundParameters['Confirm']
+        }
+        $one = Install-MetraGitHooks @installParams
+        $results.Add([PSCustomObject]@{
+                key         = [string]$repo.Key
+                ok          = [bool]$one.ok
+                skipped     = [bool](Get-MetraProp -Object $one -Name 'skipped' -Default $false)
+                repoRoot    = [string]$one.repoRoot
+                projectName = [string](Get-MetraProp -Object $one -Name 'projectName' -Default $ProjectName)
+                hooksPath   = [string](Get-MetraProp -Object $one -Name 'hooksPath' -Default '')
+            }) | Out-Null
+    }
+    return [PSCustomObject]@{
+        ok          = -not (@($results | Where-Object { -not $_.ok -and -not $_.skipped }).Count -gt 0)
+        projectName = $ProjectName
+        installs    = @($results)
     }
 }
 
@@ -7235,6 +7426,30 @@ function Import-MetraInspectExternalReview {
         Write-Warning ("Bing share review.md writeback skipped: {0}" -f $_.Exception.Message)
     }
 
+    # Mirror into Loom ship-cycle state when an active bite pack matches this contentHash
+    # so bite ship / Test-LoomShipReady see reviewVerdict without a second review-set.
+    $shipEvidenceSynced = $false
+    if ((Get-Command Get-LoomShipState -ErrorAction SilentlyContinue) -and
+        (Get-Command Set-LoomShipReviewEvidence -ErrorAction SilentlyContinue)) {
+        try {
+            $shipState = Get-LoomShipState -Project $slotKey
+            $shipHash = if ($shipState) { [string](Get-MetraProp -Object $shipState -Name 'contentHash' -Default '') } else { '' }
+            if ($shipState -and -not [string]::IsNullOrWhiteSpace($shipHash) -and $shipHash -eq $parsed.ContentHash) {
+                $ev = @($parsed.EvidenceInspected | Where-Object { -not [string]::IsNullOrWhiteSpace([string]$_) })
+                if ($ev.Count -eq 0) { $ev = @('pack') }
+                $depth = [string]$parsed.ReviewDepth
+                if ([string]::IsNullOrWhiteSpace($depth)) { $depth = 'L1' }
+                $null = Set-LoomShipReviewEvidence -Name $slotKey -Verdict $parsed.Verdict `
+                    -ContentHash $parsed.ContentHash -ContractShape `
+                    -ReviewDepth $depth -EvidenceInspected $ev
+                $shipEvidenceSynced = $true
+            }
+        }
+        catch {
+            Write-Warning ("Loom ship-state review sync skipped: {0}" -f $_.Exception.Message)
+        }
+    }
+
     Write-Host ("External review imported for {0}: verdict={1}; contentHash={2}; reviewDepth={3} (gate not affirmed)." -f $slotKey, $parsed.Verdict, $parsed.ContentHash, $(if ($parsed.ReviewDepth) { $parsed.ReviewDepth } else { '(none)' }))
 
     return [PSCustomObject]@{
@@ -7251,6 +7466,7 @@ function Import-MetraInspectExternalReview {
         reviewStatePath    = $contractPaths.ReviewStatePath
         shareReview        = $shareReview
         gateAffirmed       = $false
+        shipEvidenceSynced = $shipEvidenceSynced
     }
 }
 
@@ -7553,6 +7769,8 @@ function Invoke-MetraInspectAutoPack {
     [CmdletBinding()]
     param(
         [string]$Name,
+        # Retained for call-site compatibility; pack Base always comes from assess report provenance.
+        [string]$Base,
         [switch]$NoClipboard
     )
     $fallbackSlot = if ([string]::IsNullOrWhiteSpace($Name)) { 'default' } else { $Name.Trim() }
@@ -7564,6 +7782,10 @@ function Invoke-MetraInspectAutoPack {
         }
         if (-not [string]::IsNullOrWhiteSpace($Name)) {
             $packParams.Name = $Name.Trim()
+        }
+        # Assess provenance owns pack Base; callers may still pass -Base but it is intentionally unused.
+        if (-not [string]::IsNullOrWhiteSpace($Base)) {
+            Write-Verbose ("Invoke-MetraInspectAutoPack: ignoring -Base '{0}' (pack uses assess provenance)." -f $Base)
         }
         $pack = Invoke-MetraInspectPack @packParams
         $resolvedSlot = [string](Get-MetraProp -Object $pack -Name 'SlotKey' -Default $fallbackSlot)
@@ -7594,6 +7816,7 @@ function Invoke-MetraInspectPrepareForBing {
     [CmdletBinding()]
     param(
         [string]$Name,
+        [string]$Base,
         [switch]$Reset
     )
 
@@ -7603,31 +7826,44 @@ function Invoke-MetraInspectPrepareForBing {
     if ([string]::IsNullOrWhiteSpace($slotKey)) { $slotKey = 'default' }
 
     $fixQueuePath = Join-Path (Resolve-MetraInspectReviewSlotRoot -SlotKey $slotKey).SlotRoot 'fix-queue.json'
+    $baseForLive = $Base
 
     if (-not $Reset) {
         $existing = Get-MetraInspectReviewLoopState -SlotKey $slotKey
         if ($null -ne $existing -and $existing.active -eq $false -and -not [string]::IsNullOrWhiteSpace([string]$existing.TerminationReason)) {
-            $live = Get-MetraInspectCurrentDiffInput -ProjectContext $ctx
+            $live = Get-MetraInspectCurrentDiffInput -ProjectContext $ctx -Base $baseForLive
             $assess = Get-MetraInspectSlotDiffAssess -SlotKey $slotKey
             if ($null -ne $assess -and $live.inputHash -eq $assess.inputHash) {
-                Write-Host 'Prepare-for-Bing: reusing completed loop session - refreshing pack...' -ForegroundColor Cyan
-                $packResult = Invoke-MetraInspectAutoPack -Name $slotKey -NoClipboard
-                return [PSCustomObject]@{
-                    readyForBing      = $true
-                    project           = $slotKey
-                    phase             = 'bing'
-                    critical          = [int]$existing.CriticalCount
-                    high              = [int]$existing.HighCount
-                    medium            = [int]$existing.MediumCount
-                    low               = [int]$existing.LowCount
-                    terminationReason = [string]$existing.TerminationReason
-                    packPath          = [string]$packResult.packPath
-                    packBuilt         = [bool]$packResult.ok
-                    reusedSession     = $true
+                $term = [string]$existing.TerminationReason
+                $c = [int]$existing.CriticalCount
+                $h = [int]$existing.HighCount
+                $m = [int]$existing.MediumCount
+                $goalOk = ($term -eq 'Goal achieved') -or ($c -eq 0 -and $h -eq 0 -and $m -le 2)
+                if ($goalOk) {
+                    Write-Host 'Prepare-for-Bing: reusing completed loop session - refreshing pack...' -ForegroundColor Cyan
+                    $packResult = Invoke-MetraInspectAutoPack -Name $slotKey -Base $baseForLive -NoClipboard
+                    return [PSCustomObject]@{
+                        readyForBing      = $true
+                        project           = $slotKey
+                        phase             = 'bing'
+                        critical          = $c
+                        high              = $h
+                        medium            = $m
+                        low               = [int]$existing.LowCount
+                        terminationReason = $term
+                        packPath          = [string]$packResult.packPath
+                        packBuilt         = [bool]$packResult.ok
+                        reusedSession     = $true
+                        base              = $baseForLive
+                    }
                 }
+                Write-Host ("Prepare-for-Bing: prior session not goal-ready (term={0}; C={1} H={2} M={3}) - re-assessing..." -f $term, $c, $h, $m) -ForegroundColor Yellow
+                $Reset = $true
             }
-            Write-Host 'Prepare-for-Bing: working tree changed since completed session - re-assessing...' -ForegroundColor Yellow
-            $Reset = $true
+            else {
+                Write-Host 'Prepare-for-Bing: working tree changed since completed session - re-assessing...' -ForegroundColor Yellow
+                $Reset = $true
+            }
         }
     }
 
@@ -7638,6 +7874,7 @@ function Invoke-MetraInspectPrepareForBing {
             MaxLoops = 5
         }
         if ($Reset) { $loopParams.Reset = $true }
+        if (-not [string]::IsNullOrWhiteSpace($Base)) { $loopParams.Base = $Base }
         $state = Invoke-MetraInspectReviewLoop @loopParams
     }
     catch {
@@ -7662,7 +7899,7 @@ function Invoke-MetraInspectPrepareForBing {
     $goalMet = ($critical -eq 0 -and $high -eq 0 -and $medium -le 2)
 
     Write-Host 'Prepare-for-Bing: auto-building Bing pack...' -ForegroundColor Cyan
-    $packResult = Invoke-MetraInspectAutoPack -Name $slotKey -NoClipboard
+    $packResult = Invoke-MetraInspectAutoPack -Name $slotKey -Base $baseForLive -NoClipboard
     $packPath = [string]$packResult.packPath
 
     if ($active -and $phase -eq 'AwaitingFix') {
@@ -7678,16 +7915,23 @@ function Invoke-MetraInspectPrepareForBing {
             packPath           = $packPath
             packBuilt          = [bool]$packResult.ok
             grade              = [string](Get-MetraProp -Object $state -Name 'FinalGrade' -Default '')
+            base               = $baseForLive
         }
     }
 
     if (-not $active) {
-        Write-Host ("Prepare-for-Bing: ready. Bing pack: {0}" -f $packPath) -ForegroundColor Green
-        Write-Host ("  Agent queue (not pack body): {0}" -f $fixQueuePath) -ForegroundColor DarkGray
+        if ($goalMet) {
+            Write-Host ("Prepare-for-Bing: ready. Bing pack: {0}" -f $packPath) -ForegroundColor Green
+            Write-Host ("  Agent queue (not pack body): {0}" -f $fixQueuePath) -ForegroundColor DarkGray
+        }
+        else {
+            Write-Host ("Prepare-for-Bing: loop ended without goal (term={0}; C={1} H={2} M={3}). Pack built; not ready for Bing." -f $term, $critical, $high, $medium) -ForegroundColor Yellow
+            Write-Host ("  Fix queue: {0}" -f $fixQueuePath) -ForegroundColor DarkGray
+        }
         return [PSCustomObject]@{
-            readyForBing       = $true
+            readyForBing       = [bool]$goalMet
             project            = $slotKey
-            phase              = 'bing'
+            phase              = $(if ($goalMet) { 'bing' } else { 'unresolved' })
             critical           = $critical
             high               = $high
             medium             = $medium
@@ -7697,6 +7941,7 @@ function Invoke-MetraInspectPrepareForBing {
             packPath           = $packPath
             packBuilt          = [bool]$packResult.ok
             fixQueuePath       = $fixQueuePath
+            base               = $baseForLive
         }
     }
 
@@ -7706,6 +7951,7 @@ function Invoke-MetraInspectPrepareForBing {
         phase        = [string]$phase
         critical     = $critical
         high         = $high
+        base         = $baseForLive
         medium       = $medium
         low          = $low
         fixQueuePath = $fixQueuePath
@@ -7714,18 +7960,171 @@ function Invoke-MetraInspectPrepareForBing {
     }
 }
 
-function Invoke-MetraInspectPreCommitHook {
+function Test-MetraInspectFastSafetyStaged {
+    [CmdletBinding()]
+    param([Parameter(Mandatory)][string]$Root)
+
+    # Exclude deletions: removing a restricted path is not a safety violation.
+    $names = @(& git -C $Root diff --cached --diff-filter=d --name-only 2>$null)
+    $hits = New-Object System.Collections.Generic.List[string]
+    foreach ($n in @($names)) {
+        $rel = ([string]$n -replace '\\', '/')
+        if ([string]::IsNullOrWhiteSpace($rel)) { continue }
+        if ($rel -match '(?i)(^|/)generated/restricted(/|$)') { [void]$hits.Add($rel) }
+        if ($rel -match '(?i)(^|/)\.authoring(/|$)') { [void]$hits.Add($rel) }
+        if ($rel -match '(?i)(^|/)\.runtime\.properties$') { [void]$hits.Add($rel) }
+        $full = Join-Path $Root $rel
+        if (Test-Path -LiteralPath $full -PathType Leaf) {
+            $len = (Get-Item -LiteralPath $full).Length
+            if ($len -gt 5MB) { [void]$hits.Add(("{0} (oversized {1} bytes)" -f $rel, $len)) }
+        }
+    }
+    return @($hits | Select-Object -Unique)
+}
+
+function Invoke-MetraInspectPrePushHook {
     <#
     .SYNOPSIS
-        Git pre-commit: require Bing affirm for the assessed report; live tree drift warns only.
+        Git pre-push: refuse protected destination refs unless valid ship lock is present.
+        -RepoRoot is the active nested worktree (e.g. CDM chef/); -Name is the registry project.
+        -HeadSha is parallel to -RemoteBranch (local SHA being pushed); required for protected tips.
     #>
     [CmdletBinding()]
     param(
-        [string]$Name
+        [string]$Name,
+        [AllowEmptyCollection()][string[]]$RemoteBranch = @(),
+        [AllowEmptyCollection()][string[]]$HeadSha = @(),
+        [string]$RepoRoot
     )
 
-    if ($env:METRA_SKIP_BING_GATE -eq '1' -or $env:METRA_SKIP_INSPECT_HOOK -eq '1') {
-        Write-Host 'Pre-commit hook skipped (METRA_SKIP_BING_GATE or METRA_SKIP_INSPECT_HOOK=1).' -ForegroundColor Yellow
+    # METRA_SKIP_SECURITY_PUSH does not bypass ship-lock; only METRA_SKIP_INSPECT_HOOK does.
+    if ($env:METRA_SKIP_INSPECT_HOOK -eq '1') {
+        return [PSCustomObject]@{ ok = $true; skipped = $true; reason = 'env-skip' }
+    }
+
+    $ctx = Resolve-MetraInspectProjectContext -Name $Name -Mode diff
+    if (-not $ctx.Ok) { throw $ctx.Error }
+    $slotKey = [string]$ctx.Project
+    if ([string]::IsNullOrWhiteSpace($RepoRoot)) {
+        $topRaw = @(& git rev-parse --show-toplevel 2>$null) | Select-Object -First 1
+        $top = if ($null -eq $topRaw) { '' } else { ([string]$topRaw).Trim() }
+        if (-not [string]::IsNullOrWhiteSpace($top)) {
+            $RepoRoot = $top
+        }
+    }
+    if (-not [string]::IsNullOrWhiteSpace($RepoRoot)) {
+        $root = [System.IO.Path]::GetFullPath(([string]$RepoRoot).Trim())
+    }
+    else {
+        $root = [string]$ctx.Root
+    }
+
+    $branchSha = @{}
+    # Defaults keep .Count safe under Set-StrictMode when callers omit the arrays.
+    $rbList = @($RemoteBranch)
+    $hsList = @($HeadSha)
+    for ($ti = 0; $ti -lt @($rbList).Count; $ti++) {
+        $t = [string]$rbList[$ti]
+        if ([string]::IsNullOrWhiteSpace($t)) { continue }
+        $t = $t.Trim() -replace '^refs/heads/', ''
+        if ([string]::IsNullOrWhiteSpace($t)) { continue }
+        $sha = if ($ti -lt @($hsList).Count) { [string]$hsList[$ti] } else { '' }
+        if (-not $branchSha.ContainsKey($t) -or (-not [string]::IsNullOrWhiteSpace($sha))) {
+            $branchSha[$t] = $sha
+        }
+    }
+    $targets = New-Object System.Collections.Generic.List[string]
+    foreach ($k in @($branchSha.Keys)) { [void]$targets.Add([string]$k) }
+    if ($targets.Count -eq 0) {
+        $headRaw = @(& git -C $root rev-parse --abbrev-ref HEAD 2>$null) | Select-Object -First 1
+        $headBranch = if ($null -eq $headRaw) { '' } else { ([string]$headRaw).Trim() }
+        if (-not [string]::IsNullOrWhiteSpace($headBranch)) {
+            [void]$targets.Add($headBranch)
+            $shaRaw = @(& git -C $root rev-parse HEAD 2>$null) | Select-Object -First 1
+            $branchSha[$headBranch] = if ($null -eq $shaRaw) { '' } else { ([string]$shaRaw).Trim() }
+        }
+    }
+
+    $policyProtected = @()
+    $policyResolved = $false
+    if (Get-Command Get-LoomShipProjectPolicy -ErrorAction SilentlyContinue) {
+        try {
+            $policy = Get-LoomShipProjectPolicy -RegistryName $slotKey
+            if ($null -ne $policy) {
+                $policyProtected = @($policy.protectedBranches)
+                $policyResolved = $true
+            }
+        }
+        catch { $policyProtected = @() }
+    }
+    if (-not $policyResolved -and (Get-Command Get-MetraProjectRegistry -ErrorAction SilentlyContinue)) {
+        try {
+            $reg = Get-MetraProjectRegistry
+            $entry = @($reg.projects | Where-Object { $_.name -eq $slotKey } | Select-Object -First 1)
+            if ($entry) {
+                $policyProtected = @($entry.protectedBranches)
+                $policyResolved = $true
+            }
+        }
+        catch { }
+    }
+    if (-not $policyResolved) {
+        throw 'Pre-push blocked: protected-branch policy could not be resolved (Loom/registry unavailable). Fail closed.'
+    }
+
+    $protectedHits = New-Object System.Collections.Generic.List[string]
+    foreach ($branch in @($targets)) {
+        foreach ($p in @($policyProtected)) {
+            if ([string]::Equals($branch, [string]$p, [StringComparison]::OrdinalIgnoreCase)) {
+                [void]$protectedHits.Add($branch)
+                break
+            }
+        }
+    }
+    if ($protectedHits.Count -eq 0) {
+        return [PSCustomObject]@{ ok = $true; reason = 'not-protected'; branch = ($targets -join ',') }
+    }
+
+    $bypass = $false
+    if (Get-Command Test-LoomShipHookBypassAllowed -ErrorAction SilentlyContinue) {
+        $bypass = $true
+        foreach ($hit in @($protectedHits)) {
+            $hitSha = if ($branchSha.ContainsKey([string]$hit)) { [string]$branchSha[[string]$hit] } else { '' }
+            if ($hitSha -eq '-') { $hitSha = '' }
+            $okHit = if (-not [string]::IsNullOrWhiteSpace($hitSha)) {
+                Test-LoomShipHookBypassAllowed -Project $slotKey -RepoRoot $root -TargetBranch ([string]$hit) -HeadSha $hitSha
+            }
+            else {
+                # Fail closed on protected push without a local SHA (cannot bind merge tip).
+                $false
+            }
+            if (-not $okHit) {
+                $bypass = $false
+                break
+            }
+        }
+    }
+    if (-not $bypass) {
+        throw ('Pre-push blocked: protected branch ({0}) requires Invoke-LoomShip lock with authorized merge SHA (bare METRA_LOOM_SHIP=1 is not authorization).' -f ($protectedHits -join ','))
+    }
+    Write-Host ('Pre-push: protected branch ship lock OK ({0}).' -f ($protectedHits -join ',')) -ForegroundColor Green
+    return [PSCustomObject]@{ ok = $true; reason = 'ship-lock'; branch = ($protectedHits -join ',') }
+}
+
+function Invoke-MetraInspectPreCommitHook {
+    <#
+    .SYNOPSIS
+        Git pre-commit: branch-class aware (work safety / protected refuse / legacy Bing).
+        -RepoRoot is the active nested worktree (e.g. CDM chef/); -Name is the registry project.
+    #>
+    [CmdletBinding()]
+    param(
+        [string]$Name,
+        [string]$RepoRoot
+    )
+
+    if ($env:METRA_SKIP_INSPECT_HOOK -eq '1') {
+        Write-Host 'Pre-commit hook skipped (METRA_SKIP_INSPECT_HOOK=1).' -ForegroundColor Yellow
         return [PSCustomObject]@{ ok = $true; skipped = $true; reason = 'env-skip' }
     }
 
@@ -7733,6 +8132,85 @@ function Invoke-MetraInspectPreCommitHook {
     if (-not $ctx.Ok) { throw $ctx.Error }
     $slotKey = [string]$ctx.Project
     if ([string]::IsNullOrWhiteSpace($slotKey)) { $slotKey = 'default' }
+    if ([string]::IsNullOrWhiteSpace($RepoRoot)) {
+        $top = [string](@(& git rev-parse --show-toplevel 2>$null) | Select-Object -First 1)
+        if (-not [string]::IsNullOrWhiteSpace($top)) {
+            $RepoRoot = $top.Trim()
+        }
+    }
+    if (-not [string]::IsNullOrWhiteSpace($RepoRoot)) {
+        $root = [System.IO.Path]::GetFullPath($RepoRoot.Trim())
+    }
+    else {
+        $root = [string]$ctx.Root
+    }
+
+    $branch = [string](@(& git -C $root rev-parse --abbrev-ref HEAD 2>$null) | Select-Object -First 1).Trim()
+    $policyProtected = @()
+    $policyResolved = $false
+    if (Get-Command Get-LoomShipProjectPolicy -ErrorAction SilentlyContinue) {
+        try {
+            $policy = Get-LoomShipProjectPolicy -RegistryName $slotKey
+            if ($null -ne $policy) {
+                $policyProtected = @($policy.protectedBranches)
+                $policyResolved = $true
+            }
+        }
+        catch { $policyProtected = @() }
+    }
+    if (-not $policyResolved -and (Get-Command Get-MetraProjectRegistry -ErrorAction SilentlyContinue)) {
+        try {
+            $reg = Get-MetraProjectRegistry
+            $entry = @($reg.projects | Where-Object { $_.name -eq $slotKey } | Select-Object -First 1)
+            if ($entry) {
+                $policyProtected = @($entry.protectedBranches)
+                $policyResolved = $true
+            }
+        }
+        catch { }
+    }
+    if (-not $policyResolved) {
+        throw 'Pre-commit blocked: protected-branch policy could not be resolved (Loom/registry unavailable). Fail closed.'
+    }
+
+    $isWork = $false
+    if (Get-Command Test-LoomWorkBranchName -ErrorAction SilentlyContinue) {
+        $isWork = Test-LoomWorkBranchName -Branch $branch
+    }
+    else {
+        $b = $branch.Replace('\', '/')
+        $isWork = ($b -like 'bite/*' -or $b -like 'loom/*' -or $b -like 'autoprogram/*')
+    }
+
+    $isProtected = $false
+    foreach ($p in @($policyProtected)) {
+        if ([string]::Equals($branch, [string]$p, [StringComparison]::OrdinalIgnoreCase)) { $isProtected = $true; break }
+    }
+
+    if ($isWork) {
+        $hits = @(Test-MetraInspectFastSafetyStaged -Root $root)
+        if ($hits.Count -gt 0) {
+            Write-Host 'COMMIT BLOCKED - work-branch fast safety failed:' -ForegroundColor Red
+            $hits | ForEach-Object { Write-Host ("  - {0}" -f $_) }
+            throw 'Pre-commit blocked: work-branch-safety.'
+        }
+        Write-Host 'Pre-commit: work branch - fast safety OK (no Bing gate).' -ForegroundColor Green
+        return [PSCustomObject]@{ ok = $true; reason = 'work-branch-safety'; branch = $branch }
+    }
+
+    if ($isProtected) {
+        # Ship lands via merge --no-ff (no pre-commit). Direct commits on protected are never allowed.
+        Write-Host 'COMMIT BLOCKED - protected branch refuses direct commits.' -ForegroundColor Red
+        Write-Host '  Use bite ship / Loom ship-cycle (Invoke-LoomShip). Bare METRA_LOOM_SHIP=1 is not enough.' -ForegroundColor DarkYellow
+        throw 'Pre-commit blocked: protected-branch.'
+    }
+
+    # Legacy path: projects without protectedBranches keep Bing affirm gate.
+    # METRA_SKIP_BING_GATE only skips this legacy affirm check - not work/protected gates above.
+    if ($env:METRA_SKIP_BING_GATE -eq '1') {
+        Write-Host 'Pre-commit: Bing gate skipped (METRA_SKIP_BING_GATE=1); work/protected checks already ran.' -ForegroundColor Yellow
+        return [PSCustomObject]@{ ok = $true; skipped = $true; reason = 'bing-gate-skip'; branch = $branch; repoRoot = $root }
+    }
 
     $live = Get-MetraInspectCurrentDiffInput -ProjectContext $ctx
     if ($live.empty) {
@@ -7823,6 +8301,9 @@ function Show-MetraInspectCli {
     $reviewSub = $null
     $reviewClipboard = $false
     $reviewText = $null
+    $remoteBranches = [System.Collections.Generic.List[string]]::new()
+    $headShas = [System.Collections.Generic.List[string]]::new()
+    $repoRootFromRest = $null
 
     $i = 0
     if ($argsRest.Count -gt 0 -and $argsRest[0] -ieq 'budget') {
@@ -7835,6 +8316,10 @@ function Show-MetraInspectCli {
     }
     elseif ($argsRest.Count -gt 0 -and $argsRest[0] -ieq 'pre-commit') {
         $mode = 'pre-commit'
+        $i = 1
+    }
+    elseif ($argsRest.Count -gt 0 -and $argsRest[0] -ieq 'pre-push') {
+        $mode = 'pre-push'
         $i = 1
     }
     elseif ($argsRest.Count -gt 0 -and $argsRest[0] -ieq 'review') {
@@ -7915,6 +8400,26 @@ function Show-MetraInspectCli {
         if ($mode -eq 'prepare-bing' -and $tok -ieq '-Reset') {
             $reset = $true
             $i++
+            continue
+        }
+        if ($mode -eq 'prepare-bing' -and $tok -ieq '-Base' -and ($i + 1) -lt $argsRest.Count) {
+            $baseFromRest = [string]$argsRest[$i + 1]
+            $i += 2
+            continue
+        }
+        if ($mode -eq 'pre-push' -and $tok -ieq '-RemoteBranch' -and ($i + 1) -lt $argsRest.Count) {
+            [void]$remoteBranches.Add([string]$argsRest[$i + 1])
+            $i += 2
+            continue
+        }
+        if ($mode -eq 'pre-push' -and $tok -ieq '-HeadSha' -and ($i + 1) -lt $argsRest.Count) {
+            [void]$headShas.Add([string]$argsRest[$i + 1])
+            $i += 2
+            continue
+        }
+        if (($mode -eq 'pre-commit' -or $mode -eq 'pre-push') -and $tok -ieq '-RepoRoot' -and ($i + 1) -lt $argsRest.Count) {
+            $repoRootFromRest = [string]$argsRest[$i + 1]
+            $i += 2
             continue
         }
         if ($mode -eq 'loop' -and $tok -ieq '-Reset') {
@@ -8075,13 +8580,31 @@ function Show-MetraInspectCli {
             return Invoke-MetraInspectReviewLoopRecordFix @recParams @common
         }
         'prepare-bing' {
-            return Invoke-MetraInspectPrepareForBing -Name $projectName -Reset:$reset
+            $prepParams = @{
+                Name  = $projectName
+                Reset = $reset
+            }
+            if (-not [string]::IsNullOrWhiteSpace($baseRev)) { $prepParams.Base = $baseRev }
+            return Invoke-MetraInspectPrepareForBing @prepParams
         }
         'budget' {
             return Invoke-MetraInspectBudget -Name $projectName -Base $baseRev @common
         }
         'pre-commit' {
-            return Invoke-MetraInspectPreCommitHook -Name $projectName
+            $preCommitParams = @{ Name = $projectName }
+            if (-not [string]::IsNullOrWhiteSpace($repoRootFromRest)) {
+                $preCommitParams.RepoRoot = $repoRootFromRest
+            }
+            return Invoke-MetraInspectPreCommitHook @preCommitParams
+        }
+        'pre-push' {
+            $prePushParams = @{ Name = $projectName }
+            if ($remoteBranches.Count -gt 0) { $prePushParams.RemoteBranch = @($remoteBranches.ToArray()) }
+            if ($headShas.Count -gt 0) { $prePushParams.HeadSha = @($headShas.ToArray()) }
+            if (-not [string]::IsNullOrWhiteSpace($repoRootFromRest)) {
+                $prePushParams.RepoRoot = $repoRootFromRest
+            }
+            return Invoke-MetraInspectPrePushHook @prePushParams
         }
         'review' {
             if ($reviewSub -eq 'import') {
@@ -8114,8 +8637,14 @@ function Show-MetraInspectCli {
             if (-not [string]::IsNullOrWhiteSpace($projectName)) {
                 $hookCtx = Resolve-MetraInspectProjectContext -Name $projectName -Mode diff
                 if (-not $hookCtx.Ok) { throw $hookCtx.Error }
-                $hookParams.RepoRoot = [string]$hookCtx.Root
-                $hookParams.MetraRoot = Get-MetraRoot
+                # Named install: portfolio root + nested biteRepos; always set metra.project.
+                $nestedParams = @{
+                    ProjectName = [string]$hookCtx.Project
+                    ProjectRoot = [string]$hookCtx.Root
+                    MetraRoot   = Get-MetraRoot
+                }
+                if ($common.ContainsKey('WhatIf')) { $nestedParams.WhatIf = $common.WhatIf }
+                return Install-MetraGitHooksForBiteRepos @nestedParams
             }
             return Install-MetraGitHooks @hookParams
         }

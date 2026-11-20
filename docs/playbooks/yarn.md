@@ -88,7 +88,7 @@ Stages inside the Yarn runner (unchanged by Host ownership):
 | Mode | Stages |
 |------|--------|
 | Daily | scan → daily -Reconcile → loom loop (all eligible) |
-| Pulse | scan → loom loop **-ScoutOnly** → **Porter** → **Inspect prep** when handoff `awaiting-prepare-bing` (soft-fail; never Bing-affirm; skips reconcile) |
+| Pulse | scan → loom loop **-ScoutOnly** → **Porter** → **Inspect prep** when handoff `awaiting-prepare-bing` (soft-fail; never Bing-affirm/ship; skips reconcile). When Loom ship-cycle state exists, Porter prep prefers `bite pack` / Base-bound pack. Desk agents bypass Pulse and call `metra bite` directly. |
 
 Exit codes (cadence **health**, not Host process exit): 0 ok/daily-gate, 1 failure, 2 validation blocked, 3 unexpected loom pause, 4 lock held. Logs: `%LOCALAPPDATA%\Metra\yarn\schedule-logs\`.
 

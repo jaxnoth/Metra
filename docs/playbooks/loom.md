@@ -168,8 +168,24 @@ When upgrading from AutoProgram storage layout:
 | When | Prefix |
 |------|--------|
 | New enqueue | `loom/{project}/{date}/{id}` |
+| Desk bite (scheduler bypass) | `bite/{project}/{bite-id}` via `.\metra.ps1 bite *` |
 | Existing in-flight items | `autoprogram/...` preserved in JSON |
-| Runner checkout | Accepts both `loom/` and `autoprogram/` |
+| Runner checkout | Accepts `bite/`, `loom/`, and `autoprogram/` |
+
+## Ship cycle (shared with desk bite)
+
+Loom owns `modules/Loom/Private/ShipCycle.ps1`. Desk `metra bite` and queue `daily approve -Merge` call the same helpers. Protected landing requires `Invoke-LoomShip` after a Base-bound pack and machine `verdict: approve`. See [inspect-loop.md](inspect-loop.md) and Decisions 2026-11-18 / 2026-11-19.
+
+### Multi-repo bites (optional)
+
+- Registry: keep `biteRepos` as string keys (`root`, `chef`, ...). Optional `biteRepoTargets` maps each key to its landing branch. `root` is required; legacy tuple fields always mirror root.
+- `protectedBranches` is the hook deny-list only (union of names across repos). It does not choose targets.
+- Work branches: multi-repo bites use `bite/<slug>/<biteId>/<repoKey>` per repo (including root) so shared remotes (CDM root + chef on one Azure DevOps URL) do not collide. Root-only bites keep `bite/<slug>/<biteId>`. Ship state stores per-repo `workBranch`.
+- Nested hooks: `inspect hooks install -Name <Project>` sets `metra.project` on every biteRepos worktree. pre-push/pre-commit prefer that config over folder leaf (scar: chef leaf → Unknown project `chef`).
+- `bite pack` writes per-repo Base-to-HEAD sections, publishes them into the Bing contract pack (`pack-diff.md` + handoff) bound to the composite `contentHash` (Inspect root prepare is quality appendix only). Hash/review/merge/push share declared repo order.
+- Ship order: nested repos first (cookbook, chef, then others), root last. After Phase 2 `merge --no-ff`, the ship lock's `authorizedHeadShas` are updated to those merge commit SHAs before Phase 3 push (hooks refuse unrelated HEADs; work-branch SHA alone is not enough). After the first successful remote push, a later push failure sets `shipPhase=partialShip`, keeps branches and evidence, and requires `bite ship -Resume` (guarded: already-pushed remotes must still match expected merge SHAs). Never auto-rollback protected branches.
+- Daily `-Merge` may call ShipCycle only when persisted `workBranch` and `targetBranch` match the Daily request; mismatch fails closed (`ship-target-mismatch`).
+- Status surfaces pushed vs pending repos and the resume command.
 
 ## Deprecated CLI
 

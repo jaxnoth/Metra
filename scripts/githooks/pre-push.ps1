@@ -5,10 +5,13 @@
 
 $ErrorActionPreference = 'Stop'
 
-if ($env:METRA_SKIP_SECURITY_PUSH -eq '1' -or $env:METRA_SKIP_INSPECT_HOOK -eq '1') {
-    Write-Host 'pre-push: skipped (METRA_SKIP_SECURITY_PUSH or METRA_SKIP_INSPECT_HOOK=1)'
+# METRA_SKIP_INSPECT_HOOK skips all hook work. METRA_SKIP_SECURITY_PUSH only skips
+# security-audit; protected-branch ship-lock still runs.
+if ($env:METRA_SKIP_INSPECT_HOOK -eq '1') {
+    Write-Host 'pre-push: skipped (METRA_SKIP_INSPECT_HOOK=1)'
     exit 0
 }
+$skipSecurityAuditOnly = ($env:METRA_SKIP_SECURITY_PUSH -eq '1')
 
 function Resolve-MetraPrePushScript {
     param([Parameter(Mandatory)][string]$RepoRoot)
@@ -71,15 +74,26 @@ if ([string]::IsNullOrWhiteSpace($remoteUrl) -and -not [string]::IsNullOrWhiteSp
 # git push <url> may pass the URL as $1 only; treat name as URL when url arg is blank.
 $effectiveRemote = if (-not [string]::IsNullOrWhiteSpace($remoteUrl)) { $remoteUrl } else { $remoteName }
 
-# Drain stdin (required contract for pre-push) even when we skip.
-$null = @($input)
-
-if (-not (Test-MetraPublicGitRemoteUrl -Url $effectiveRemote)) {
-    # Private remotes (e.g. Azure DevOps) are not blocked here; still run audit when this checkout is Metra itself.
-    $isMetraRoot = Test-Path -LiteralPath (Join-Path $repoRoot 'metra.ps1')
-    if (-not $isMetraRoot) {
-        exit 0
+# Read stdin ref tuples (<local-ref> <local-sha> <remote-ref> <remote-sha>) before skip/exit.
+# Forward local-sha as HeadSha so ship-lock authorizedHeadShas can bind the merge tip.
+$pushLines = @($input)
+$remoteBranches = New-Object System.Collections.Generic.List[string]
+$headShas = New-Object System.Collections.Generic.List[string]
+foreach ($line in $pushLines) {
+    $parts = @(([string]$line).Trim() -split '\s+')
+    if ($parts.Count -lt 3) { continue }
+    $localSha = if ($parts.Count -ge 2) { [string]$parts[1] } else { '' }
+    $remoteRef = [string]$parts[2]
+    $branchName = ''
+    if ($remoteRef -match '^refs/heads/(.+)$') {
+        $branchName = [string]$Matches[1]
     }
+    elseif ($remoteRef -and $remoteRef -ne '(delete)') {
+        $branchName = ($remoteRef -replace '^refs/heads/', '')
+    }
+    if ([string]::IsNullOrWhiteSpace($branchName)) { continue }
+    [void]$remoteBranches.Add($branchName)
+    [void]$headShas.Add($(if ($localSha -match '^[0-9a-fA-F]{7,40}$') { $localSha } else { '' }))
 }
 
 $metra = Resolve-MetraPrePushScript -RepoRoot $repoRoot
@@ -88,15 +102,59 @@ if (-not $metra) {
     exit 1
 }
 
-Write-Host ("pre-push: security-audit (public/Metra push gate) remote={0}" -f $(if ($remoteUrl) { $remoteUrl } else { $remoteName }))
+$isPublicRemote = Test-MetraPublicGitRemoteUrl -Url $effectiveRemote
+$isMetraRoot = Test-Path -LiteralPath (Join-Path $repoRoot 'metra.ps1')
+# Protected-branch ship-lock runs for every remote. Public security-audit stays public/Metra-only.
+$runSecurityAudit = $isPublicRemote -or $isMetraRoot
+
+Write-Host ("pre-push: protected-branch check remote={0}" -f $(if ($remoteUrl) { $remoteUrl } else { $remoteName }))
 Push-Location $repoRoot
 try {
     # Prior git probes in this hook (e.g. config --get-all metra.root) may leave
     # $LASTEXITCODE=1. In-process & of metra.ps1 does not always reset it on success.
-    $LASTEXITCODE = 0
-    # -Force maps to FailOnFindings in metra.ps1 security-audit
-    & $metra security-audit -Force -Path $repoRoot
-    if (-not $? -or $LASTEXITCODE -ne 0) {
+    # Prefer git config metra.project (nested bite repos like CDM chef/), then Metra
+    # checkout aliases, then folder leaf. Never adopt METRA_LOOM_SHIP_PROJECT for siblings.
+    . (Join-Path $PSScriptRoot 'HookProjectName.ps1')
+    $cfgProject = Get-MetraHookConfiguredProject -RepoRoot $repoRoot
+    $projName = Resolve-MetraHookProjectName -RepoRoot $repoRoot -ConfiguredProject $cfgProject `
+        -FolderLeaf (Split-Path -Leaf $repoRoot) -IsMetraRoot:$isMetraRoot
+    # Quote path args for WinPS 5.1 Start-Process when Metra/repo roots contain spaces.
+    $quoteArg = {
+        param([string]$Value)
+        if ([string]::IsNullOrEmpty($Value)) { return '""' }
+        if ($Value -match '[\s"]') {
+            return ('"{0}"' -f ($Value -replace '"', '\"'))
+        }
+        return $Value
+    }
+    $metraArg = & $quoteArg $metra
+    $repoRootArg = & $quoteArg $repoRoot
+    $prePushArgs = @('-NoProfile', '-File', $metraArg, 'inspect', 'pre-push', '-Name', $projName, '-RepoRoot', $repoRootArg)
+    for ($ri = 0; $ri -lt @($remoteBranches).Count; $ri++) {
+        $rb = [string]$remoteBranches[$ri]
+        if ([string]::IsNullOrWhiteSpace($rb)) { continue }
+        # Always emit -HeadSha with each -RemoteBranch so positional maps stay 1:1.
+        $hs = if ($ri -lt @($headShas).Count) { [string]$headShas[$ri] } else { '' }
+        if ([string]::IsNullOrWhiteSpace($hs)) { $hs = '-' }
+        $prePushArgs += @('-RemoteBranch', $rb, '-HeadSha', $hs)
+    }
+    # External process so exit codes are not masked by in-process & of metra.ps1.
+    $pwshExe = if (Get-Command pwsh -ErrorAction SilentlyContinue) { (Get-Command pwsh).Source } else { (Get-Command powershell).Source }
+    $prePushProc = Start-Process -FilePath $pwshExe -ArgumentList $prePushArgs -Wait -PassThru -NoNewWindow
+    if ($null -eq $prePushProc -or $prePushProc.ExitCode -ne 0) {
+        Write-Error 'pre-push blocked: protected-branch / ship-lock guard failed.'
+        exit 1
+    }
+    if (-not $runSecurityAudit -or $skipSecurityAuditOnly) {
+        if ($skipSecurityAuditOnly) {
+            Write-Host 'pre-push: security-audit skipped (METRA_SKIP_SECURITY_PUSH=1); ship-lock already checked.'
+        }
+        exit 0
+    }
+    Write-Host ("pre-push: security-audit (public/Metra push gate) remote={0}" -f $(if ($remoteUrl) { $remoteUrl } else { $remoteName }))
+    $auditArgs = @('-NoProfile', '-File', $metraArg, 'security-audit', '-Force', '-Path', $repoRootArg)
+    $auditProc = Start-Process -FilePath $pwshExe -ArgumentList $auditArgs -Wait -PassThru -NoNewWindow
+    if ($null -eq $auditProc -or $auditProc.ExitCode -ne 0) {
         Write-Error 'pre-push blocked: security-audit FAIL. Scrub InternalTopology / RestrictedDataMap (SECURITY.md). Skip only with METRA_SKIP_SECURITY_PUSH=1.'
         exit 1
     }

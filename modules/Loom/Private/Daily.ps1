@@ -977,7 +977,9 @@ function Invoke-LoomDailyMerge {
         [Parameter(Mandatory)][string]$ProjectRoot,
         [Parameter(Mandatory)][string]$Branch,
         [Parameter(Mandatory)][string]$CompletedCommit,
-        [string]$TargetBranch = 'main'
+        [string]$TargetBranch = 'main',
+        [string]$RegistryName = 'Metra',
+        [switch]$Push
     )
 
     $pre = Test-LoomGitMergePreconditions -ProjectRoot $ProjectRoot -Branch $Branch -CompletedCommit $CompletedCommit -TargetBranch $TargetBranch
@@ -991,39 +993,174 @@ function Invoke-LoomDailyMerge {
         }
     }
 
-    $originalBranch = (Invoke-LoomGit -ProjectRoot $ProjectRoot -GitArgs @('rev-parse', '--abbrev-ref', 'HEAD')).Stdout.Trim()
-    $checkout = Invoke-LoomGit -ProjectRoot $ProjectRoot -GitArgs @('checkout', $TargetBranch)
-    if ($checkout.ExitCode -ne 0) {
+    # Prefer full ship-cycle when desk/queue left ready ship state for this branch.
+    # Fail closed if persisted target differs from Daily's validated TargetBranch (Bing L1 B2).
+    $shipState = $null
+    try { $shipState = Get-LoomShipState -Project $RegistryName } catch { $shipState = $null }
+    if ($shipState -and [string]$shipState.workBranch -eq $Branch) {
+        $shipTarget = [string](Get-LoomProp -Object $shipState -Name 'targetBranch' -Default '')
+        $wantTarget = Normalize-LoomShipBranchRef -Branch $TargetBranch
+        $haveTarget = Normalize-LoomShipBranchRef -Branch $shipTarget
+        if ([string]::IsNullOrWhiteSpace($haveTarget) -or
+            -not [string]::Equals($wantTarget, $haveTarget, [StringComparison]::OrdinalIgnoreCase)) {
+            return [PSCustomObject]@{
+                attempted    = $true
+                succeeded    = $false
+                mergeCommit  = $null
+                error        = 'ship-target-mismatch'
+                detail       = ("ship state targetBranch={0} does not match Daily TargetBranch={1}" -f `
+                        $(if ($shipTarget) { $shipTarget } else { 'missing' }), $TargetBranch)
+                viaShipCycle = $true
+            }
+        }
+        foreach ($rs in @($(Get-LoomProp -Object $shipState -Name 'repoStates' -Default @()))) {
+            $rsKey = [string](Get-LoomProp -Object $rs -Name 'key' -Default '')
+            if (-not [string]::Equals($rsKey, 'root', [StringComparison]::OrdinalIgnoreCase)) { continue }
+            $rsTarget = Normalize-LoomShipBranchRef -Branch ([string](Get-LoomProp -Object $rs -Name 'targetBranch' -Default ''))
+            if (-not [string]::IsNullOrWhiteSpace($rsTarget) -and
+                -not [string]::Equals($wantTarget, $rsTarget, [StringComparison]::OrdinalIgnoreCase)) {
+                return [PSCustomObject]@{
+                    attempted    = $true
+                    succeeded    = $false
+                    mergeCommit  = $null
+                    error        = 'ship-target-mismatch'
+                    detail       = ("root repoState targetBranch={0} does not match Daily TargetBranch={1}" -f `
+                            $rsTarget, $TargetBranch)
+                    viaShipCycle = $true
+                }
+            }
+        }
+        $verdict = [string]$shipState.reviewVerdict
+        if ($verdict -ne 'approve') {
+            return [PSCustomObject]@{
+                attempted    = $true
+                succeeded    = $false
+                mergeCommit  = $null
+                error        = 'review-verdict-not-approved'
+                detail       = ("ship state reviewVerdict={0}" -f $(if ($verdict) { $verdict } else { 'missing' }))
+                viaShipCycle = $true
+            }
+        }
+        $ship = Invoke-LoomShip -Name $RegistryName -ProjectRoot $ProjectRoot -NoPush:(-not $Push) -SkipFullTests
+        $rootMerge = $null
+        foreach ($m in @($ship.merges)) {
+            if ([string]::Equals([string]$m.repo, 'root', [StringComparison]::OrdinalIgnoreCase)) {
+                $rootMerge = [string]$m.mergeSha
+                break
+            }
+        }
+        if ([string]::IsNullOrWhiteSpace($rootMerge) -and $ship.merges -and @($ship.merges).Count -gt 0) {
+            $rootMerge = [string]$ship.merges[-1].mergeSha
+        }
         return [PSCustomObject]@{
             attempted   = $true
-            succeeded   = $false
-            mergeCommit = $null
-            error       = 'target-checkout-failed'
-            detail      = (Get-LoomGitErrorDetail $checkout)
+            succeeded   = [bool]$ship.ok
+            mergeCommit = $rootMerge
+            error       = if ($ship.ok) { $null } else { 'ship-cycle-refused' }
+            detail      = $(
+                if ($ship.ok) {
+                    if (-not [string]::IsNullOrWhiteSpace([string]$ship.message)) { [string]$ship.message } else { $null }
+                }
+                else {
+                    $joined = (@($ship.reasons) | Where-Object { $_ } | ForEach-Object { [string]$_ }) -join ';'
+                    if (-not [string]::IsNullOrWhiteSpace($joined)) { $joined }
+                    elseif (-not [string]::IsNullOrWhiteSpace([string]$ship.detail)) { [string]$ship.detail }
+                    elseif (-not [string]::IsNullOrWhiteSpace([string]$ship.pushError)) { [string]$ship.pushError }
+                    else { 'ship-cycle-refused' }
+                }
+            )
+            viaShipCycle = $true
         }
     }
 
-    $merge = Invoke-LoomGit -ProjectRoot $ProjectRoot -GitArgs @('merge', '--no-ff', $Branch, '-m', "loom: merge $Branch")
-    if ($merge.ExitCode -ne 0) {
-        Invoke-LoomGit -ProjectRoot $ProjectRoot -GitArgs @('merge', '--abort') | Out-Null
-        if (-not [string]::IsNullOrWhiteSpace($originalBranch)) {
-            Invoke-LoomGit -ProjectRoot $ProjectRoot -GitArgs @('checkout', $originalBranch) | Out-Null
+    # Protected targets require a reviewed ship-cycle tuple. Do not mint a synthetic lock.
+    $policy = $null
+    if (Get-Command Get-LoomShipProjectPolicy -ErrorAction SilentlyContinue) {
+        try { $policy = Get-LoomShipProjectPolicy -RegistryName $RegistryName } catch { $policy = $null }
+    }
+    if ($null -eq $policy) {
+        return [PSCustomObject]@{
+            attempted    = $true
+            succeeded    = $false
+            mergeCommit  = $null
+            error        = 'policy-unresolved'
+            detail       = 'Cannot resolve protectedBranches; refuse merge without ship-cycle.'
+            viaShipCycle = $false
+        }
+    }
+    # Use the same normalized authority as ShipCycle so refs/heads/main matches main.
+    $targetIsProtected = Test-LoomShipProtectedBranch -Branch $TargetBranch -ProtectedBranches @($policy.protectedBranches)
+    if ($targetIsProtected) {
+        return [PSCustomObject]@{
+            attempted    = $true
+            succeeded    = $false
+            mergeCommit  = $null
+            error        = 'ship-state-required'
+            detail       = 'Protected target merge requires approved ship-cycle state via bite pack/ship.'
+            viaShipCycle = $false
+        }
+    }
+
+    $originalBranch = (Invoke-LoomGit -ProjectRoot $ProjectRoot -GitArgs @('rev-parse', '--abbrev-ref', 'HEAD')).Stdout.Trim()
+    $preMergeTargetSha = ''
+    try {
+        $checkout = Invoke-LoomGit -ProjectRoot $ProjectRoot -GitArgs @('checkout', $TargetBranch)
+        if ($checkout.ExitCode -ne 0) {
+            return [PSCustomObject]@{
+                attempted   = $true
+                succeeded   = $false
+                mergeCommit = $null
+                error       = 'target-checkout-failed'
+                detail      = (Get-LoomGitErrorDetail $checkout)
+            }
+        }
+
+        $preMergeTargetSha = Get-LoomGitHeadCommit -ProjectRoot $ProjectRoot
+        $merge = Invoke-LoomGit -ProjectRoot $ProjectRoot -GitArgs @('merge', '--no-ff', $Branch, '-m', "loom: merge $Branch")
+        if ($merge.ExitCode -ne 0) {
+            Invoke-LoomGit -ProjectRoot $ProjectRoot -GitArgs @('merge', '--abort') | Out-Null
+            if (-not [string]::IsNullOrWhiteSpace($originalBranch)) {
+                Invoke-LoomGit -ProjectRoot $ProjectRoot -GitArgs @('checkout', $originalBranch) | Out-Null
+            }
+            return [PSCustomObject]@{
+                attempted   = $true
+                succeeded   = $false
+                mergeCommit = $null
+                error       = 'merge-conflict'
+                detail      = (Get-LoomGitErrorDetail $merge)
+            }
+        }
+        $sha = Get-LoomGitHeadCommit -ProjectRoot $ProjectRoot
+        if ($Push) {
+            $pushResult = Invoke-LoomGit -ProjectRoot $ProjectRoot -GitArgs @('push', 'origin', $TargetBranch)
+            if ($pushResult.ExitCode -ne 0) {
+                # Restore pre-merge target tip so a failed push does not leave a surprising local main.
+                if (-not [string]::IsNullOrWhiteSpace($preMergeTargetSha)) {
+                    Invoke-LoomGit -ProjectRoot $ProjectRoot -GitArgs @('reset', '--hard', $preMergeTargetSha) | Out-Null
+                }
+                return [PSCustomObject]@{
+                    attempted   = $true
+                    succeeded   = $false
+                    mergeCommit = $null
+                    error       = 'push-failed'
+                    detail      = (Get-LoomGitErrorDetail $pushResult)
+                    restoredTip = $preMergeTargetSha
+                }
+            }
         }
         return [PSCustomObject]@{
             attempted   = $true
-            succeeded   = $false
-            mergeCommit = $null
-            error       = 'merge-conflict'
-            detail      = (Get-LoomGitErrorDetail $merge)
+            succeeded   = $true
+            mergeCommit = $sha
+            error       = $null
+            detail      = $merge.Stdout
+            viaShipCycle = $false
         }
     }
-    $sha = Get-LoomGitHeadCommit -ProjectRoot $ProjectRoot
-    return [PSCustomObject]@{
-        attempted   = $true
-        succeeded   = $true
-        mergeCommit = $sha
-        error       = $null
-        detail      = $merge.Stdout
+    finally {
+        if (-not [string]::IsNullOrWhiteSpace($originalBranch)) {
+            Invoke-LoomGit -ProjectRoot $ProjectRoot -GitArgs @('checkout', $originalBranch) | Out-Null
+        }
     }
 }
 
@@ -1149,7 +1286,15 @@ function Invoke-MetraLoomDailyApprove {
                     $projectRoot = [System.IO.Path]::GetFullPath([string]$act.item.project.root)
                     $branch = [string](Get-LoomProp -Object $act.item.execution -Name 'branch' -Default '')
                     $completed = [string](Get-LoomProp -Object $act.item.execution -Name 'completedCommit' -Default '')
-                    $mergeResult = Invoke-LoomDailyMerge -ProjectRoot $projectRoot -Branch $branch -CompletedCommit $completed
+                    $registryName = $null
+                    if (Get-Command Get-MetraLoomQueueItemProjectKey -ErrorAction SilentlyContinue) {
+                        try { $registryName = Get-MetraLoomQueueItemProjectKey -Item $act.item } catch { $registryName = $null }
+                    }
+                    if ([string]::IsNullOrWhiteSpace($registryName)) {
+                        $registryName = [string](Get-LoomProp -Object $act.item.project -Name 'name' -Default '')
+                    }
+                    if ([string]::IsNullOrWhiteSpace($registryName)) { $registryName = 'Metra' }
+                    $mergeResult = Invoke-LoomDailyMerge -ProjectRoot $projectRoot -Branch $branch -CompletedCommit $completed -RegistryName $registryName
                     if ($rec) {
                         $rec.merge = [PSCustomObject]@{
                             requested   = $true

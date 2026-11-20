@@ -9,7 +9,7 @@ loadWhen:
   - ship calibration
 ceiling:
   - Fail closed when Ask engine unavailable
-  - Bing affirm is the operator manual gate before commit; agent auto-fixes during prepare-bing
+  - Prefer Loom ship-cycle / bite for protected landing; agent auto-fixes during prepare-bing
 ---
 
 > Moved from `AGENTS.md` during A2 desk split. Preserve A1 done-when / On hard stop content unless intentionally revised.
@@ -26,8 +26,9 @@ Always-on rule: [`.cursor/rules/metra-inspect-loop.mdc`](../../.cursor/rules/met
 |-------|---------|------|
 | After every plan revision | `.\metra.ps1 inspect pack-only plan <fragment-or-Path> -Name <Project>` | Agent runs automatically; report pack path + clipboard. Skip only on explicit operator opt-out |
 | Before implement (plan-driven work) | `.\metra.ps1 inspect plan -Latest -Name <Project>` (or fragment / `-Path`) | Optional Ask assess; summarize findings in chat; operator picks fix / defer / reject before coding |
-| After each coherent code batch | `.\metra.ps1 inspect prepare-bing -Name <Project> -Reset` then fix and re-run until `readyForBing=true` | Agent auto-fixes Critical/High/Medium; pack built when loop completes |
-| Before `git commit` | Operator Bing review; optional `inspect review import`; then `inspect gate affirm` | **Only manual gate**; import records Copilot recommendation against contentHash (never affirms). Hook blocks without affirm (or when assess ≠ gate). Live working-tree drift vs affirmed assessment is a warning only. |
+| After each coherent code batch on a **bite/loom work branch** | `.\metra.ps1 bite commit -Name <P> -m '...'` then later `bite pack` | Small commits + push backup; work-branch hook is fast safety only (no Bing). Pack uses `prepare-bing -Base <merge-base>` (committed range). |
+| Before protected landing | Bing review of pack; machine `verdict: approve`; `.\metra.ps1 bite ship -Name <P>` | **`Invoke-LoomShip`** validates persisted reviewed tuple then merge `--no-ff`. Auto-affirm only on machine gates. Bare `METRA_LOOM_SHIP` is not authorization. |
+| Legacy projects without `protectedBranches` | `inspect prepare-bing` / `gate affirm` then commit | Prior Bing pre-commit gate still applies. |
 | After affirmed fixes | `inspect loop` again (same session) | Stop when goal met (Critical=0, High=0, Medium<=2), convergence detected, or MaxLoops=5 fence |
 | Metra executable ship (calibration) | `prepare-bing` auto-builds pack; Bing comparison lane | Re-run prepare-bing after fixes; pack is never manual |
 | A2 desk split external review | `.\metra.ps1 inspect pack-only agents -Name <Project>` | Bing-only stub + playbooks scope; no unrelated working-tree noise |
@@ -52,6 +53,12 @@ Inspect findings are strongest when implementation and review use different mode
 | **Same engine family** | Inspect is first-pass only; ship needs chat affirmation, tests/verify, pack, Bing, or other external evidence |
 
 Independence of review matters more than the specific model. The safety net is inspect + verify + operator judgment, not any single LLM.
+
+## Ask timeout recovery (assess)
+
+Band budgets: GREEN **300s**, WARN/PRUNE **900s** (`Max(prompt chars, EstimatedPayloadChars)`; sidecar wait is client-15, so GREEN surfaces as **~285s**). Console prints `Inspect assess budget: band=... timeoutSec=...`.
+
+On hang: soft-retry once after successful `Run.cancel()`; if the retry still times out (or cancel did not clear), one **SidecarOnly** recycle + one more assess; then structured fail (`errorCode`, `retryClass`, `cancelSucceeded`, `timeoutSec`, `attempts`). Inspect never recycles Ops desk; auth/usage/model are not restartable. Detail: [ops-ask-reach.md](ops-ask-reach.md); Decision 2026-11-20.
 
 ## Commands
 

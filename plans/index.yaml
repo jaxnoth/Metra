@@ -6,6 +6,11 @@ plans:
     authority: repo
     repoPath: ask-conversation-execution.plan.md
     updatedAt: '2026-09-10T14:49:04.5532469Z'
+  - stem: branch-dev-cycle
+    cursorLeaf: branch-dev-cycle_15c85a2b.plan.md
+    authority: repo
+    repoPath: branch-dev-cycle.plan.md
+    updatedAt: '2026-11-18T00:00:00.0000000Z'
   - stem: ios-companion-app
     cursorLeaf: null
     authority: repo

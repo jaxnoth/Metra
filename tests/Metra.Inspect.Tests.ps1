@@ -416,6 +416,142 @@ Describe 'Inspect engine parse retry' {
             Should -Invoke Restart-MetraOpsDesk -Times 0
         }
     }
+
+    It 'second ask_timeout after soft-retry escalates to SidecarOnly once' {
+        InModuleScope Metra {
+            Mock Resolve-MetraInspectEngineSelection {
+                [PSCustomObject]@{
+                    Engine              = 'cursor'
+                    RequestedModel      = 'gemini-3.7-flash'
+                    ConfigurationSource = 'inspect'
+                    Independence        = 'unknown'
+                }
+            }
+            Mock Write-MetraInspectReviewerBanner { }
+            $script:AskCount = 0
+            Mock Invoke-MetraAskEngine {
+                $script:AskCount++
+                if ($script:AskCount -le 2) {
+                    return [PSCustomObject]@{
+                        ok              = $false
+                        status          = 'error'
+                        errorCode       = 'ask_timeout'
+                        retryClass      = 'transport_timeout'
+                        cancelAttempted = $true
+                        cancelSucceeded = $true
+                        cancelDetail    = 'wait_settled_after_cancel'
+                        message         = 'The Ask engine run failed: Ask complete timed out after 285s'
+                        engine          = 'cursor'
+                        model           = 'gemini-3.7-flash'
+                        secretsRefuse   = $false
+                    }
+                }
+                return [PSCustomObject]@{
+                    ok      = $true
+                    message = '{"findings":[]}'
+                    engine  = 'cursor'
+                    model   = 'gemini-3.7-flash'
+                }
+            }
+            Mock Restart-MetraAskEngine {
+                param($SidecarOnly)
+                if (-not $SidecarOnly) { throw 'second-timeout recovery must use -SidecarOnly' }
+                $script:SidecarOnlyRestart = $true
+                return [PSCustomObject]@{ available = $true; engineHealthy = $true }
+            }
+            Mock Restart-MetraOpsDesk { throw 'Inspect must not recycle Ops desk on second ask_timeout' }
+            $script:SidecarOnlyRestart = $false
+            $r = Invoke-MetraInspectEngine -Prompt 'review diff' -Cwd 'C:\Projects\ColleagueDataMover'
+            $r.Ok | Should -BeTrue
+            $script:AskCount | Should -Be 3
+            $script:SidecarOnlyRestart | Should -BeTrue
+            $r.SoftRetryUsed | Should -BeTrue
+            $r.SidecarRecycleUsed | Should -BeTrue
+            Should -Invoke Restart-MetraAskEngine -Times 1
+            Should -Invoke Restart-MetraOpsDesk -Times 0
+        }
+    }
+
+    It 'third ask_timeout after soft-retry and SidecarOnly fails with structured fields' {
+        InModuleScope Metra {
+            Mock Resolve-MetraInspectEngineSelection {
+                [PSCustomObject]@{
+                    Engine              = 'cursor'
+                    RequestedModel      = 'gemini-3.7-flash'
+                    ConfigurationSource = 'inspect'
+                    Independence        = 'unknown'
+                }
+            }
+            Mock Write-MetraInspectReviewerBanner { }
+            Mock Invoke-MetraAskEngine {
+                [PSCustomObject]@{
+                    ok              = $false
+                    status          = 'error'
+                    error           = 'ask_timeout'
+                    errorCode       = 'ask_timeout'
+                    errorDetail     = 'Ask complete timed out after 885s'
+                    retryClass      = 'transport_timeout'
+                    cancelAttempted = $true
+                    cancelSucceeded = $true
+                    cancelDetail    = 'wait_settled_after_cancel'
+                    message         = 'The Ask engine run failed: Ask complete timed out after 885s'
+                    engine          = 'cursor'
+                    model           = 'gemini-3.7-flash'
+                    secretsRefuse   = $false
+                }
+            }
+            Mock Restart-MetraAskEngine {
+                param($SidecarOnly)
+                if (-not $SidecarOnly) { throw 'Inspect must use -SidecarOnly' }
+                return [PSCustomObject]@{ available = $true; engineHealthy = $true }
+            }
+            Mock Restart-MetraOpsDesk { throw 'Inspect must not recycle Ops desk' }
+            $r = Invoke-MetraInspectEngine -Prompt 'review diff' -Cwd 'C:\Projects\ColleagueDataMover' `
+                -EstimatedPayloadChars 60001
+            $r.Ok | Should -BeFalse
+            $r.ErrorCode | Should -Be 'ask_timeout'
+            $r.RetryClass | Should -Be 'transport_timeout'
+            $r.CancelSucceeded | Should -BeTrue
+            $r.TimeoutSec | Should -Be 900
+            $r.Attempts | Should -Be 3
+            $r.SoftRetryUsed | Should -BeTrue
+            $r.SidecarRecycleUsed | Should -BeTrue
+            $r.Message | Should -Match 'errorCode=ask_timeout'
+            $r.Message | Should -Match 'timeoutSec=900'
+            $r.Message | Should -Match 'attempts=3'
+            Should -Invoke Restart-MetraAskEngine -Times 1
+            Should -Invoke Restart-MetraOpsDesk -Times 0
+        }
+    }
+
+    It 'EstimatedPayloadChars lifts short prompt into WARN/PRUNE 900s budget' {
+        InModuleScope Metra {
+            Mock Resolve-MetraInspectEngineSelection {
+                [PSCustomObject]@{
+                    Engine              = 'cursor'
+                    RequestedModel      = 'gemini-3.7-flash'
+                    ConfigurationSource = 'inspect'
+                    Independence        = 'unknown'
+                }
+            }
+            Mock Write-MetraInspectReviewerBanner { }
+            $script:SeenTimeout = 0
+            Mock Invoke-MetraAskEngine {
+                param($TimeoutSec)
+                $script:SeenTimeout = [int]$TimeoutSec
+                return [PSCustomObject]@{
+                    ok      = $true
+                    message = '{"findings":[]}'
+                    engine  = 'cursor'
+                    model   = 'gemini-3.7-flash'
+                }
+            }
+            $r = Invoke-MetraInspectEngine -Prompt 'tiny' -Cwd 'C:\Projects\_meta' -EstimatedPayloadChars 60001
+            $r.Ok | Should -BeTrue
+            $script:SeenTimeout | Should -Be 900
+            $r.TimeoutSec | Should -Be 900
+        }
+    }
 }
 
 Describe 'Inspect report wrapper' {

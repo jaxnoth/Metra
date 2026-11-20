@@ -340,5 +340,5 @@ function Test-LoomExecutionBranchPrefix {
     )
     if ([string]::IsNullOrWhiteSpace($Branch)) { return $false }
     $b = $Branch.Replace('\', '/')
-    return ($b -like 'loom/*' -or $b -like 'autoprogram/*')
+    return ($b -like 'bite/*' -or $b -like 'loom/*' -or $b -like 'autoprogram/*')
 }

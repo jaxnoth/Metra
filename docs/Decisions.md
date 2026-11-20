@@ -18,6 +18,47 @@ Entry shape:
 
 ---
 
+## 2026-11-19 - Multi-repo bite pack/ship (biteRepoTargets); partial-ship recovery
+
+- Decision: Registry keeps string `biteRepos` and adds optional `biteRepoTargets` (map of repo key → landing branch). Do not convert `biteRepos` to objects. `root` is required; legacy `targetBranch` / `baseSha` / `headSha` always mirror the **root** slice (`primaryRepoKey=root`). `protectedBranches` remains a hook-level deny-list union (e.g. main and master protected in every participating repo) and does **not** select landing targets.
+- Decision: One composite Bing pack / one review loop. Every participating repository contributes a reviewable Base-to-HEAD diff section (plus `targetTipSha`, `rangeHash`). Composite `contentHash` binds those exact per-repo slices. No repo may ship code unless its Base-to-HEAD change was available to the reviewer.
+- Decision (Bing L1 follow-up): Writing `pack-multirepo.md` alone is not sufficient. `bite pack` must publish that composite body into the Inspect Bing contract set (`pack-diff.md` + handoff/manifest/review-state) via `Publish-MetraInspectBingPackFromText`, with handoff `contentHash` equal to the ship composite identity. Root Inspect prepare remains a quality appendix, not the ship identity. Hash/review/merge/push use the same declared repo order (cookbook → chef → other → root).
+- Decision: Cross-repo push is not atomic. Ship fetches/validates remote tips before the first push, records expected tips, pushes in declared order (cookbook → chef → other → root), retains all work branches until every push succeeds, and on later failure enters explicit `partialShip` with status (pushed/pending, expected vs actual tips, `-Resume`). Guarded resume only if already-pushed remotes still match expected merge commits. Never auto-rollback protected branches.
+- Why: CDM-shaped multi-git projects need one desk/Loom ship cycle without blind nested diffs or silent partial remotes. Bing L1 (2026-11-19) required B1 full per-repo diffs and B2 partial-push recovery before implementation.
+- See: `modules/Loom/Private/ShipCycle.ps1`; [docs/playbooks/loom.md](playbooks/loom.md); Decisions 2026-11-18. CDM registry not flipped in this bite.
+
+## 2026-11-20 - Ship lock authorizes merge SHA; Daily target must match
+
+- Decision: After Phase 2 `merge --no-ff`, `Invoke-LoomShip` updates the short-lived ship lock `authorizedHeadShas` to the generated merge commit SHAs (same token) before Phase 3 protected push. Hooks still fail closed on unrelated HEADs; work-branch SHAs alone do not authorize the protected tip.
+- Decision: Git pre-push must forward stdin `<local-sha>` as `-HeadSha` into `Invoke-MetraInspectPrePushHook` / `Test-LoomShipHookBypassAllowed`. Omitting HeadSha on a protected tip fails closed (otherwise the authorizedHeadShas list is never checked).
+- Decision: `-NoPush` ship keeps `shipPhase=mergedLocal`, state.json, and the ship lock until a later push/`-Resume` succeeds; it does not mark `shipped` or clear the lock after local merge only.
+- Decision: `Invoke-LoomDailyMerge` may delegate to ShipCycle only when `shipState.workBranch` and `shipState.targetBranch` (and root `repoState.targetBranch` when present) match Daily's `$Branch` / `$TargetBranch`. Mismatch fails closed (`ship-target-mismatch`) without calling `Invoke-LoomShip`.
+- Decision (nonblocking follow-ups): `Resolve-LoomShipProjectRoot` containment-checks Name under the portfolio parent; non-protected Daily push failure resets the local target to the pre-merge tip; hook target compare normalizes `refs/heads/`; `metra.ps1 bite` forwards top-level `-Confirm`.
+- Why: Bing L1 on contentHash `9128fd9d…` (changes-requested): lock authorized reviewed work HEAD so post-merge push could fail its own pre-push check; Daily could silently land on a different protected target than the one it validated. Follow-up assess: HeadSha was never forwarded from the hook, so B1 would not bind at push time; `-NoPush` cleared lock/state after local merge.
+- See: `Update-LoomShipLockAuthorizedHeads`, `Test-LoomShipHookBypassAllowed`, `Invoke-LoomShip` in `modules/Loom/Private/ShipCycle.ps1`; `scripts/githooks/pre-push.ps1`; `Invoke-MetraInspectPrePushHook`; `Invoke-LoomDailyMerge` in `modules/Loom/Private/Daily.ps1`; `tests/Loom/Loom.ShipCycle.Tests.ps1`; `tests/Loom/Loom.Daily.Tests.ps1`
+
+## 2026-11-20 - Multi-repo bite scars (CDM shared remotes + nested hook name)
+
+- Decision: Nested bite repos (e.g. CDM `chef/`) must resolve Metra `-Name` via `git config metra.project`, then Metra checkout aliases (`_meta` / `_metra` / `Metra`), then folder leaf. `inspect hooks install -Name <Project>` installs hooks on every `biteRepos` worktree and sets `metra.project` there. Null config must not call `.Trim()` on null (StrictMode / PS 5.1).
+- Decision: When a bite has more than one repo, each repo gets a unique work/remote branch `bite/<slug>/<biteId>/<repoKey>` (root included). Root-only bites keep legacy `bite/<slug>/<biteId>`. Ship state stores per-repo `workBranch`; `state.workBranch` remains the root slice. Shared remotes (CDM root + chef → one Azure DevOps tip namespace) must not collide on a single `bite/<slug>/<id>` ref.
+- Scar: ship-model-agents (2026-11-20) - chef pre-push resolved `-Name` as folder leaf `chef` → Unknown project; then root and chef pushed the same remote branch name so the second push was non-fast-forward. `partialShip` recovery remained correct; these fixes close the two failure modes.
+- Why: CDM-shaped shared remotes and nested git worktrees are the motivating multi-repo consumer; folder-leaf naming and one shared work-branch tip are not safe there.
+- See: `scripts/githooks/HookProjectName.ps1`; `scripts/githooks/pre-push.ps1`; `modules/Loom/Private/ShipCycle.ps1`; Decisions 2026-11-19.
+
+## 2026-11-20 - ColleagueDataMover registry flipped to multi-repo bite
+
+- Decision: ColleagueDataMover local registry now sets `protectedBranches` (`main`, `master`, `chef/master`), `biteRepos` (`root`, `chef`), and `biteRepoTargets` (`root`→`main`, `chef`→`chef/master`). Meaningful root + Kitchen work uses `bite start|commit|pack|ship`. Cookbook stays out of default `biteRepos` unless a bite needs it. Metra hooks installed on portfolio root and nested `chef/` git.
+- Why: Multi-repo pack/ship landed (2026-11-19); CDM was the motivating consumer and must stop landing straight on `main` / `chef/master`.
+- See: `projects.local.json` (ColleagueDataMover); CDM `AGENTS.md` Ship model ceiling; Decisions 2026-11-19.
+
+## 2026-11-18 - Loom ship-cycle owns protected landing; desk bite façade
+
+- Decision: Meaningful code lands on protected branches only through **Loom ship-cycle** (`Invoke-LoomShip`). Desk agents use `.\metra.ps1 bite start|commit|pack|ship|status` as a thin façade over the same helpers and **bypass Yarn scheduler** (Pulse/Daily), not governance. Yarn/Surveyor Approve remains required for unattended Loom queue ingest only - not for desk bite.
+- Decision: Work branches (`bite/*`, `loom/*`, `autoprogram/*`) use fast safety pre-commit only (no Bing gate). Protected branches (registry `protectedBranches`) refuse direct commits/pushes unless a short-lived ship lock written by `Invoke-LoomShip` is valid for this PID/token. `METRA_LOOM_SHIP=1` alone is **not** authorization.
+- Decision: `bite pack` / prepare-bing `-Base` binds review to the immutable tuple `(targetBranch, workBranch, baseSha, headSha, contentHash)`. Ship auto-affirms only when imported machine `verdict` is `approve`, hashes/SHAs match, contract shape holds, and `ownerAffirmPaths` (if any) were not touched. Reviewer prose never ships. Pulse may call ship pack for Base-bound prep but must not ship.
+- Why: Per-commit Bing affirm forced large commits; working-tree packs went stale mid-review. One Loom-owned path keeps desk and queue consistent.
+- See: `modules/Loom/Private/ShipCycle.ps1`; `scripts/private/Bite.ps1`; [docs/playbooks/inspect-loop.md](playbooks/inspect-loop.md); [plans/branch-dev-cycle.plan.md](../plans/branch-dev-cycle.plan.md). Supersedes "Bing affirm is the operator manual gate before every commit" and "Never auto-affirm" for the ship-cycle path only.
+
 ## 2026-11-12 - Ani originating briefs stay local; working-notes write path
 
 - Decision: Full Ani emotion brief archive is **operator-private** at `docs/Ani-Emotion-Briefs-Originating.local.md` (covered by `docs/*.local.md` gitignore). Tracked `docs/Ani-Emotion-Briefs-Originating.md` is a public index/stub only - no first name, Notion URLs, or local screenshot paths. Presentation links point at the index and name the local archive.
@@ -51,9 +92,16 @@ Entry shape:
 - Why: The numeric dial was written but unread in practice - a costume intensity register. A readable ledger with a live load path and bounded decay is the growth mechanism for presence without attachment theater.
 - See: `scripts/private/OperatorWorkingNotes.ps1`; `scripts/private/ConversationIdentity.ps1`; `scripts/private/DeskFamiliarity.ps1` (retired stub); [docs/Customizing-Metra.md](Customizing-Metra.md); [docs/examples/operator-working-notes.local.example.json](examples/operator-working-notes.local.example.json); golden fixtures `presence-notes-silent`, `notes-*`
 
+## 2026-11-20 - Inspect Ask timeout recovery ladder (soft then SidecarOnly)
+
+- Decision: Extends 2026-11-06 hang/timeout and 2026-11-17 band budgets. On `ask_timeout` / `transport_timeout`: (1) soft-retry once when `Run.cancel()` cleared the wait (`cancelSucceeded`); (2) if that retry still times out - or cancel did not clear - do **one** `Restart-MetraAskEngine -SidecarOnly` and one more assess; (3) then fail loud with structured fields (`errorCode`, `retryClass`, `cancelSucceeded`, `timeoutSec`, `attempts`, soft/sidecar flags). Never recycle Ops desk from Inspect. Auth/usage/model remain non-restartable.
+- Decision: Assess budget band uses `Max(prompt.Length, EstimatedPayloadChars)` so Scope WARN/PRUNE cannot silently land on GREEN **300s** (sidecar message **~285s** = client 300 - 15). Console prints `Inspect assess budget: band=... timeoutSec=...`.
+- Why: Desk saw cancel-cleared soft-retry then immediate unavailable - the old 2-attempt loop only recovered on `$attempt -eq 0`, and cancel-cleared timeouts were never SidecarOnly-restartable, so a second hang never recycled Node.
+- See: `Invoke-MetraInspectEngine` in `scripts/private/Inspect.ps1`; `Test-MetraAskTimeoutCancelCleared` / `Test-MetraAskSidecarRestartableFailure` in `scripts/private/AskEngine.ps1`; [docs/playbooks/ops-ask-reach.md](playbooks/ops-ask-reach.md); [docs/playbooks/inspect-loop.md](playbooks/inspect-loop.md)
+
 ## 2026-11-17 - Inspect assess timeout is band-dependent
 
-- Decision: Supersedes the flat **300s** Inspect assess client budget in the 2026-11-06 hang/timeout scar for payload sizing only. `Invoke-MetraInspectEngine` sets `TimeoutSec` from `Get-MetraInspectAssessTimeoutSec`: **GREEN** prompts stay **300s**; **WARN** and **PRUNE** prompts use **900s** (sidecar `timeoutSec` remains slightly under the client budget via AskEngine). Soft-retry after `Run.cancel()`, then one sidecar-only recycle on uncleared timeout, is unchanged. Ops Ask default remains 180s. Cap on `/v1/complete` remains 900s.
+- Decision: Supersedes the flat **300s** Inspect assess client budget in the 2026-11-06 hang/timeout scar for payload sizing only. `Invoke-MetraInspectEngine` sets `TimeoutSec` from `Get-MetraInspectAssessTimeoutSec`: **GREEN** prompts stay **300s**; **WARN** and **PRUNE** prompts use **900s** (sidecar `timeoutSec` remains slightly under the client budget via AskEngine). Soft-retry after `Run.cancel()`, then one sidecar-only recycle on uncleared timeout, is unchanged. Ops Ask default remains 180s. Cap on `/v1/complete` remains 900s. **Extended 2026-11-20:** recovery ladder + band chars Max(prompt, estimate) - see that scar.
 - Why: Flat 900s masked wedged `Agent.wait()` while `/health` stayed green (2026-11-06). Flat 300s then starved large PRUNE-band ColleagueDataMover assesses (Repair/Deliver/Init + BlackBox). Band-dependent keeps short diffs under a 5-minute wedge ceiling and gives large packs one longer pass (~15 min silent, ~30 min with one retry) without restoring a universal 900s default.
 - See: `Get-MetraInspectAssessTimeoutSec`, `Get-MetraInspectPayloadBand`, `Invoke-MetraInspectEngine` in `scripts/private/Inspect.ps1`; [docs/playbooks/ops-ask-reach.md](playbooks/ops-ask-reach.md); `engines/cursor/server.mjs`
 

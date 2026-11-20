@@ -1,6 +1,6 @@
 # Project lane (Metra Cursor Project continuity)
 
-Metra-product continuous implement lane via the long-lived Cursor **Project**, with Porter transport and Handoff state. Does not replace Yarn Approve, Loom queue (when claimed), Inspect evidence, or operator Bing affirm.
+Metra-product continuous implement lane via the long-lived Cursor **Project**, with Porter transport and Handoff state. Does not replace Yarn Approve, Loom queue (when claimed), Inspect evidence, or Loom ship-cycle / Bing machine gates.
 
 ## Triggers
 
@@ -18,7 +18,7 @@ Metra-product continuous implement lane via the long-lived Cursor **Project**, w
 | Continuity transport + handoff **file storage** | Porter |
 | Handoff status semantics | Handoff concept (`awaiting-prepare-bing` / `ready-for-bing` / `cleared` / `stale`) |
 | Evidence generation | Inspect (Pulse may invoke prepare-bing) |
-| Ship judgment | Operator Bing affirm (or declared emergency skip) |
+| Ship judgment | Loom `bite ship` / `Invoke-LoomShip` machine gates (or legacy Bing affirm / emergency skip) |
 
 Porter coordinates state files; it does **not** authorize lifecycle, ship, or Bing.
 
@@ -82,7 +82,7 @@ Operator is **not** the prepare-bing button-pusher on the happy path.
 ```text
 Approve leaf -> Porter refresh/publish -> Project implement (Context sync)
   -> handoff set -> Pulse Inspect prep -> ready-for-bing
-  -> operator Bing affirm -> git ship -> handoff clear
+  -> bite pack / Bing review -> bite ship (or legacy gate affirm) -> handoff clear
 ```
 
 ## Commands

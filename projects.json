@@ -81,6 +81,13 @@
         "TicketTracker",
         "Trivia",
         "Solarwinds"
+      ],
+      "protectedBranches": [
+        "main"
+      ],
+      "ownerAffirmPaths": [],
+      "biteRepos": [
+        "root"
       ]
     },
     {

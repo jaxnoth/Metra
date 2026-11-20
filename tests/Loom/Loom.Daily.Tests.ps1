@@ -334,3 +334,89 @@ Describe 'Loom project key' {
         }
     }
 }
+
+Describe 'Loom Daily merge ship-cycle target guard' {
+    It 'refuses ShipCycle delegation when persisted target differs from TargetBranch (Bing L1 B2)' {
+        InModuleScope Loom {
+            $proj = 'DailyTarget-' + [guid]::NewGuid().ToString('n').Substring(0, 8)
+            $tmp = Join-Path ([IO.Path]::GetTempPath()) ('daily-tgt-' + [guid]::NewGuid().ToString('n'))
+            try {
+                New-Item -ItemType Directory -Path $tmp -Force | Out-Null
+                & git -C $tmp init -b main 2>$null | Out-Null
+                & git -C $tmp config user.email 'daily@test.local'
+                & git -C $tmp config user.name 'Daily Test'
+                Set-Content -LiteralPath (Join-Path $tmp 'README.md') -Value 'x' -Encoding UTF8
+                & git -C $tmp add README.md
+                & git -C $tmp commit -m 'init' 2>$null | Out-Null
+                $head = (& git -C $tmp rev-parse HEAD).Trim()
+                & git -C $tmp checkout -b 'bite/metra/daily-tgt' 2>$null | Out-Null
+                Set-Content -LiteralPath (Join-Path $tmp 'README.md') -Value 'y' -Encoding UTF8
+                & git -C $tmp add README.md
+                & git -C $tmp commit -m 'work' 2>$null | Out-Null
+                $workHead = (& git -C $tmp rev-parse HEAD).Trim()
+
+                $state = New-LoomShipStateObject -Project $proj -WorkBranch 'bite/metra/daily-tgt' -TargetBranch 'master' `
+                    -BaseSha $head -HeadSha $workHead -ContentHash 'deadbeef' -BiteId 'daily-tgt'
+                $state.reviewVerdict = 'approve'
+                Save-LoomShipState -State $state | Out-Null
+
+                Mock Get-LoomShipState { param($Project) if ($Project -eq $proj) { return $state }; return $null }
+                Mock Invoke-LoomShip { throw 'Daily must not Invoke-LoomShip on target mismatch' }
+                Mock Get-LoomShipProjectPolicy {
+                    [PSCustomObject]@{ protectedBranches = @('main', 'master'); ownerAffirmPaths = @() }
+                }
+
+                $r = Invoke-LoomDailyMerge -ProjectRoot $tmp -Branch 'bite/metra/daily-tgt' `
+                    -CompletedCommit $workHead -TargetBranch 'main' -RegistryName $proj
+                $r.succeeded | Should -BeFalse
+                $r.error | Should -Be 'ship-target-mismatch'
+                $r.viaShipCycle | Should -BeTrue
+                $r.detail | Should -Match 'master'
+                Should -Invoke Invoke-LoomShip -Times 0
+            }
+            finally {
+                Remove-Item -LiteralPath $tmp -Recurse -Force -ErrorAction SilentlyContinue
+                Remove-Item -LiteralPath (Get-LoomShipStateRoot -Project $proj) -Recurse -Force -ErrorAction SilentlyContinue
+            }
+        }
+    }
+
+    It 'treats refs/heads/main as protected and refuses direct Daily merge without reviewed ShipCycle state' {
+        InModuleScope Loom {
+            $proj = 'DailyProt-' + [guid]::NewGuid().ToString('n').Substring(0, 8)
+            $tmp = Join-Path ([IO.Path]::GetTempPath()) ('daily-prot-' + [guid]::NewGuid().ToString('n'))
+            try {
+                New-Item -ItemType Directory -Path $tmp -Force | Out-Null
+                & git -C $tmp init -b main 2>$null | Out-Null
+                & git -C $tmp config user.email 'daily@test.local'
+                & git -C $tmp config user.name 'Daily Test'
+                Set-Content -LiteralPath (Join-Path $tmp 'README.md') -Value 'x' -Encoding UTF8
+                & git -C $tmp add README.md
+                & git -C $tmp commit -m 'init' 2>$null | Out-Null
+                & git -C $tmp checkout -b 'bite/metra/daily-prot' 2>$null | Out-Null
+                Set-Content -LiteralPath (Join-Path $tmp 'README.md') -Value 'y' -Encoding UTF8
+                & git -C $tmp add README.md
+                & git -C $tmp commit -m 'work' 2>$null | Out-Null
+                $workHead = (& git -C $tmp rev-parse HEAD).Trim()
+
+                Mock Get-LoomShipState { return $null }
+                Mock Invoke-LoomShip { throw 'Daily must not Invoke-LoomShip without reviewed state' }
+                Mock Get-LoomShipProjectPolicy {
+                    [PSCustomObject]@{ protectedBranches = @('main', 'master'); ownerAffirmPaths = @() }
+                }
+
+                $r = Invoke-LoomDailyMerge -ProjectRoot $tmp -Branch 'bite/metra/daily-prot' `
+                    -CompletedCommit $workHead -TargetBranch 'refs/heads/main' -RegistryName $proj
+                $r.succeeded | Should -BeFalse
+                $r.error | Should -Be 'ship-state-required'
+                $r.viaShipCycle | Should -BeFalse
+                $r.detail | Should -Match 'Protected target'
+                Should -Invoke Invoke-LoomShip -Times 0
+            }
+            finally {
+                Remove-Item -LiteralPath $tmp -Recurse -Force -ErrorAction SilentlyContinue
+                Remove-Item -LiteralPath (Get-LoomShipStateRoot -Project $proj) -Recurse -Force -ErrorAction SilentlyContinue
+            }
+        }
+    }
+}

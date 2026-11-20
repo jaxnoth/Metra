@@ -15,6 +15,7 @@ $script:LoomHostRootOverride = $null
 . (Join-Path $PSScriptRoot 'Private\Daily.ps1')
 . (Join-Path $PSScriptRoot 'Private\Review.ps1')
 . (Join-Path $PSScriptRoot 'Private\Runner.ps1')
+. (Join-Path $PSScriptRoot 'Private\ShipCycle.ps1')
 . (Join-Path $PSScriptRoot 'Private\Domain.ps1')
 . (Join-Path $PSScriptRoot 'Private\Loop.ps1')
 . (Join-Path $PSScriptRoot 'Private\Lane.ps1')
@@ -93,6 +94,18 @@ $export = @(
     'Get-LoomUtf8NoBomEncoding'
     'Test-LoomPathWithinRoot'
     'Test-LoomExecutionBranchPrefix'
+    'Test-LoomWorkBranchName'
+    'Start-LoomShipBranch'
+    'Invoke-LoomShipCommit'
+    'Invoke-LoomShipPack'
+    'Invoke-LoomShip'
+    'Get-LoomShipStatus'
+    'Get-LoomShipState'
+    'Set-LoomShipReviewEvidence'
+    'Test-LoomShipReady'
+    'Test-LoomShipHookBypassAllowed'
+    'Get-LoomShipProjectPolicy'
+    'Invoke-LoomShipCycleCommand'
     'Get-MetraLoomLaneHoldingStatuses'
     'Test-MetraLoomStatusHoldsLane'
     'Get-MetraLoomQueueItemProjectKey'

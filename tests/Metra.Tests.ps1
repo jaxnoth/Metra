@@ -6696,6 +6696,27 @@ Describe 'Ops Ask sidecar stability (reach)' {
         $prePush | Should -Match '\$LASTEXITCODE = 0'
         $prePush | Should -Match '-not \$\? -or \$LASTEXITCODE -ne 0'
         $prePush | Should -Match '\$effectiveRemote'
+        # Scar: nested chef must prefer metra.project over folder leaf (CDM 2026-11-20).
+        $prePush | Should -Match 'HookProjectName\.ps1'
+        $prePush | Should -Match 'Resolve-MetraHookProjectName'
+        # Scar: forward local-sha as -HeadSha so ship-lock authorizedHeadShas bind merge tip (Bing L1 B1).
+        $prePush | Should -Match "-HeadSha"
+        $prePush | Should -Match '\$headShas'
+        # Scar: quote -File / -RepoRoot / -Path for WinPS Start-Process when roots contain spaces.
+        $prePush | Should -Match '\$quoteArg'
+        $prePush | Should -Match '\$metraArg'
+        $prePush | Should -Match '\$repoRootArg'
+        $hookName = Get-Content -LiteralPath (Join-Path $root 'scripts\githooks\HookProjectName.ps1') -Raw
+        . (Join-Path $root 'scripts\githooks\HookProjectName.ps1')
+        Resolve-MetraHookProjectName -RepoRoot 'C:\x\chef' -ConfiguredProject 'ColleagueDataMover' -FolderLeaf 'chef' |
+            Should -Be 'ColleagueDataMover'
+        Resolve-MetraHookProjectName -RepoRoot 'C:\x\chef' -ConfiguredProject $null -FolderLeaf 'chef' |
+            Should -Be 'chef'
+        Resolve-MetraHookProjectName -RepoRoot 'C:\Projects\_meta' -ConfiguredProject $null -FolderLeaf '_meta' -IsMetraRoot |
+            Should -Be 'Metra'
+        Resolve-MetraHookProjectName -RepoRoot 'C:\x\chef' -ConfiguredProject '  ' -FolderLeaf 'chef' |
+            Should -Be 'chef'
+        $hookName | Should -Match 'if \(\$null -eq \$raw\)'
         # Scar: worker runtime liveness fails closed without parseable startedUtc.
         $workerBridge = Get-Content -LiteralPath (Join-Path $root 'host\MetraHost\CursorWorkerBridge.cs') -Raw
         $workerBridge | Should -Match 'Fail closed: ledger identity requires a parseable startedUtc'

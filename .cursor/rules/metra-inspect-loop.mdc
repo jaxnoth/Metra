@@ -26,24 +26,28 @@ After meaningful code changes, the **agent** runs the full inspect loop with **a
 
 1. `.\metra.ps1 inspect prepare-bing -Name <Project> -Reset` — assess (starts or continues `-RunAll` session).
 2. While `readyForBing=false`: read fix queue, **apply fixes in code**, then `prepare-bing` again (same session; do not `-Reset` unless starting over).
-3. When `readyForBing=true`: pack already built at `packPath`. Operator only reviews in Bing and runs `inspect gate affirm`.
-4. Operator commits (git hook refreshes pack if needed; **blocks only on missing Bing affirm**).
+3. When `readyForBing=true`: pack already built at `packPath`. Operator reviews in Bing.
+4. Prefer **`bite ship`** / Loom ship-cycle for projects with `protectedBranches` (machine gates may auto-affirm). Legacy projects without protected branches still use `inspect gate affirm` then commit.
 
 Fix priority: Critical and High first, then actionable Medium until goal (Critical=0, High=0, Medium<=2), convergence, or MaxLoops fence.
 
 ## Loop rhythm (detail)
 
-1. **Assess:** `inspect loop` or `prepare-bing` (wraps loop + pack when done).
+1. **Assess:** `inspect loop` or `prepare-bing` (wraps loop + pack when done). Prefer `prepare-bing -Base <merge-base>` / `bite pack` on work branches.
 2. **Fix:** Agent applies fixes for Critical/High/actionable Medium **without** waiting for per-finding chat affirmation during prepare-for-Bing.
 3. **Verify:** `prepare-bing` again (same session) — regression revert applies per existing rules.
 4. **Pack:** Always built automatically by `prepare-bing` (never run `inspect pack` manually).
-5. **Bing:** Operator reviews the auto-built pack; `inspect gate affirm` is the only manual step before commit.
+5. **Bing:** Operator reviews the pack; protected landing goes through `bite ship` / `Invoke-LoomShip` (not prose "affirm").
 
 ## Pre-commit hook (git)
 
 Install once: `.\metra.ps1 inspect hooks install`.
 
-On `git commit` the hook runs `inspect pre-commit`: **blocks only** when Bing gate is missing or the current assessment hash does not match the affirmation (`assess-gate-mismatch`). Live working-tree drift vs the affirmed assessment is a **warning** only (same policy as affirm/pack). Inspect severity does **not** block commit (agent should have fixed during prepare-bing).
+On `git commit` the hook runs `inspect pre-commit`:
+
+- **Work branches** (`bite/*`, `loom/*`, `autoprogram/*`): fast safety only (no Bing gate).
+- **Protected branches** (registry `protectedBranches`): refuse unless a valid ship lock from `Invoke-LoomShip` is present (`METRA_LOOM_SHIP` alone is not enough).
+- **Legacy** (no protectedBranches): Bing gate missing or `assess-gate-mismatch` blocks; live drift warns only.
 
 Emergency skip: `METRA_SKIP_BING_GATE=1`.
 
