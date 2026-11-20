@@ -1088,14 +1088,8 @@ function Invoke-LoomDailyMerge {
             viaShipCycle = $false
         }
     }
-    $protected = @($policy.protectedBranches)
-    $targetIsProtected = $false
-    foreach ($p in $protected) {
-        if ([string]::Equals([string]$p, $TargetBranch, [StringComparison]::OrdinalIgnoreCase)) {
-            $targetIsProtected = $true
-            break
-        }
-    }
+    # Use the same normalized authority as ShipCycle so refs/heads/main matches main.
+    $targetIsProtected = Test-LoomShipProtectedBranch -Branch $TargetBranch -ProtectedBranches @($policy.protectedBranches)
     if ($targetIsProtected) {
         return [PSCustomObject]@{
             attempted    = $true

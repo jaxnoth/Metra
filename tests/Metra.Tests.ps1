@@ -6702,6 +6702,10 @@ Describe 'Ops Ask sidecar stability (reach)' {
         # Scar: forward local-sha as -HeadSha so ship-lock authorizedHeadShas bind merge tip (Bing L1 B1).
         $prePush | Should -Match "-HeadSha"
         $prePush | Should -Match '\$headShas'
+        # Scar: quote -File / -RepoRoot / -Path for WinPS Start-Process when roots contain spaces.
+        $prePush | Should -Match '\$quoteArg'
+        $prePush | Should -Match '\$metraArg'
+        $prePush | Should -Match '\$repoRootArg'
         $hookName = Get-Content -LiteralPath (Join-Path $root 'scripts\githooks\HookProjectName.ps1') -Raw
         . (Join-Path $root 'scripts\githooks\HookProjectName.ps1')
         Resolve-MetraHookProjectName -RepoRoot 'C:\x\chef' -ConfiguredProject 'ColleagueDataMover' -FolderLeaf 'chef' |

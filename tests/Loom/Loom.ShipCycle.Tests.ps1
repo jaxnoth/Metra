@@ -124,6 +124,13 @@ Describe 'Loom ship-cycle state and adversarial lock' {
         }
     }
 
+    It 'refuses Start-LoomShipBranch when Name sanitizes to an empty slug' {
+        InModuleScope Loom {
+            { Start-LoomShipBranch -Name '!!!' -Bite 'x' -ProjectRoot (Get-LoomHostRoot) -Repos @('root') } |
+                Should -Throw '*valid bite branch slug*'
+        }
+    }
+
     It 'blocks ship when verdict is changes-requested even if prose would say affirm' {
         InModuleScope Loom {
             $proj = 'ShipVerdict-' + [guid]::NewGuid().ToString('n').Substring(0, 8)

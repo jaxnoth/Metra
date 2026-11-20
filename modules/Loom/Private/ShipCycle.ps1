@@ -1049,6 +1049,9 @@ function Start-LoomShipBranch {
 
     $slug = ($Name.ToLowerInvariant() -replace '[^\w]+', '-').Trim('-')
     $biteId = ($Bite.Trim() -replace '[^\w\.-]+', '-').Trim('-').ToLowerInvariant()
+    if ([string]::IsNullOrWhiteSpace($slug)) {
+        throw 'Project name cannot produce a valid bite branch slug.'
+    }
     if ([string]::IsNullOrWhiteSpace($biteId)) { throw '-Bite is required.' }
 
     $repoRoots = @(Resolve-LoomShipRepoRoots -ProjectRoot $root -Repos $Repos)

@@ -118,7 +118,18 @@ try {
     $cfgProject = Get-MetraHookConfiguredProject -RepoRoot $repoRoot
     $projName = Resolve-MetraHookProjectName -RepoRoot $repoRoot -ConfiguredProject $cfgProject `
         -FolderLeaf (Split-Path -Leaf $repoRoot) -IsMetraRoot:$isMetraRoot
-    $prePushArgs = @('-NoProfile', '-File', $metra, 'inspect', 'pre-push', '-Name', $projName, '-RepoRoot', $repoRoot)
+    # Quote path args for WinPS 5.1 Start-Process when Metra/repo roots contain spaces.
+    $quoteArg = {
+        param([string]$Value)
+        if ([string]::IsNullOrEmpty($Value)) { return '""' }
+        if ($Value -match '[\s"]') {
+            return ('"{0}"' -f ($Value -replace '"', '\"'))
+        }
+        return $Value
+    }
+    $metraArg = & $quoteArg $metra
+    $repoRootArg = & $quoteArg $repoRoot
+    $prePushArgs = @('-NoProfile', '-File', $metraArg, 'inspect', 'pre-push', '-Name', $projName, '-RepoRoot', $repoRootArg)
     for ($ri = 0; $ri -lt @($remoteBranches).Count; $ri++) {
         $rb = [string]$remoteBranches[$ri]
         if ([string]::IsNullOrWhiteSpace($rb)) { continue }
@@ -141,7 +152,7 @@ try {
         exit 0
     }
     Write-Host ("pre-push: security-audit (public/Metra push gate) remote={0}" -f $(if ($remoteUrl) { $remoteUrl } else { $remoteName }))
-    $auditArgs = @('-NoProfile', '-File', $metra, 'security-audit', '-Force', '-Path', $repoRoot)
+    $auditArgs = @('-NoProfile', '-File', $metraArg, 'security-audit', '-Force', '-Path', $repoRootArg)
     $auditProc = Start-Process -FilePath $pwshExe -ArgumentList $auditArgs -Wait -PassThru -NoNewWindow
     if ($null -eq $auditProc -or $auditProc.ExitCode -ne 0) {
         Write-Error 'pre-push blocked: security-audit FAIL. Scrub InternalTopology / RestrictedDataMap (SECURITY.md). Skip only with METRA_SKIP_SECURITY_PUSH=1.'

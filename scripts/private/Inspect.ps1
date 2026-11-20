@@ -6014,6 +6014,9 @@ function Install-MetraGitHooksForBiteRepos {
         if ($PSBoundParameters.ContainsKey('WhatIf')) {
             $installParams.WhatIf = [bool]$PSBoundParameters['WhatIf']
         }
+        if ($PSBoundParameters.ContainsKey('Confirm')) {
+            $installParams.Confirm = [bool]$PSBoundParameters['Confirm']
+        }
         $one = Install-MetraGitHooks @installParams
         $results.Add([PSCustomObject]@{
                 key         = [string]$repo.Key
