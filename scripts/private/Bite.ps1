@@ -20,6 +20,7 @@ function ConvertFrom-MetraBiteArgs {
         NoPush         = $false
         NoDeleteBranch = $false
         OwnerAffirm    = $false
+        Resume         = $false
         WhatIf         = $false
     }
 
@@ -69,6 +70,7 @@ function ConvertFrom-MetraBiteArgs {
             '^(?i)-NoPush$' { $map.NoPush = $true }
             '^(?i)-NoDeleteBranch$' { $map.NoDeleteBranch = $true }
             '^(?i)-OwnerAffirm$' { $map.OwnerAffirm = $true }
+            '^(?i)-Resume$' { $map.Resume = $true }
             '^(?i)-WhatIf$' { $map.WhatIf = $true }
             default { }
         }
@@ -152,6 +154,7 @@ function Invoke-MetraBiteCommand {
             if ($parsed.NoPush) { $p.NoPush = $true }
             if ($parsed.NoDeleteBranch) { $p.NoDeleteBranch = $true }
             if ($parsed.OwnerAffirm) { $p.OwnerAffirm = $true }
+            if ($parsed.Resume) { $p.Resume = $true }
             if ($parsed.WhatIf) { $p.WhatIf = $true }
             # WhatIf maps to SupportsShouldProcess on Invoke-LoomShip.
             return Invoke-LoomShip @p

@@ -18,6 +18,15 @@ Entry shape:
 
 ---
 
+## 2026-11-19 - Multi-repo bite pack/ship (biteRepoTargets); partial-ship recovery
+
+- Decision: Registry keeps string `biteRepos` and adds optional `biteRepoTargets` (map of repo key → landing branch). Do not convert `biteRepos` to objects. `root` is required; legacy `targetBranch` / `baseSha` / `headSha` always mirror the **root** slice (`primaryRepoKey=root`). `protectedBranches` remains a hook-level deny-list union (e.g. main and master protected in every participating repo) and does **not** select landing targets.
+- Decision: One composite Bing pack / one review loop. Every participating repository contributes a reviewable Base-to-HEAD diff section (plus `targetTipSha`, `rangeHash`). Composite `contentHash` binds those exact per-repo slices. No repo may ship code unless its Base-to-HEAD change was available to the reviewer.
+- Decision (Bing L1 follow-up): Writing `pack-multirepo.md` alone is not sufficient. `bite pack` must publish that composite body into the Inspect Bing contract set (`pack-diff.md` + handoff/manifest/review-state) via `Publish-MetraInspectBingPackFromText`, with handoff `contentHash` equal to the ship composite identity. Root Inspect prepare remains a quality appendix, not the ship identity. Hash/review/merge/push use the same declared repo order (cookbook → chef → other → root).
+- Decision: Cross-repo push is not atomic. Ship fetches/validates remote tips before the first push, records expected tips, pushes in declared order (cookbook → chef → other → root), retains all work branches until every push succeeds, and on later failure enters explicit `partialShip` with status (pushed/pending, expected vs actual tips, `-Resume`). Guarded resume only if already-pushed remotes still match expected merge commits. Never auto-rollback protected branches.
+- Why: CDM-shaped multi-git projects need one desk/Loom ship cycle without blind nested diffs or silent partial remotes. Bing L1 (2026-11-19) required B1 full per-repo diffs and B2 partial-push recovery before implementation.
+- See: `modules/Loom/Private/ShipCycle.ps1`; [docs/playbooks/loom.md](playbooks/loom.md); Decisions 2026-11-18. CDM registry not flipped in this bite.
+
 ## 2026-11-18 - Loom ship-cycle owns protected landing; desk bite façade
 
 - Decision: Meaningful code lands on protected branches only through **Loom ship-cycle** (`Invoke-LoomShip`). Desk agents use `.\metra.ps1 bite start|commit|pack|ship|status` as a thin façade over the same helpers and **bypass Yarn scheduler** (Pulse/Daily), not governance. Yarn/Surveyor Approve remains required for unattended Loom queue ingest only - not for desk bite.

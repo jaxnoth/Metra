@@ -3737,6 +3737,33 @@ function Write-MetraInspectPackArtifact {
     }
 }
 
+function Publish-MetraInspectBingPackFromText {
+    <#
+    .SYNOPSIS
+        Publish an already-built pack body as the Bing contract set (pack-diff + handoff +
+        manifest + review-state + Share mirror) bound to an explicit contentHash.
+        Used by Loom ship-cycle so composite multi-repo evidence is what Bing reviews.
+    #>
+    [CmdletBinding(SupportsShouldProcess)]
+    param(
+        [Parameter(Mandatory)][string]$Name,
+        [Parameter(Mandatory)][string]$PackText,
+        [Parameter(Mandatory)][string]$ContentHash,
+        [switch]$NoClipboard
+    )
+
+    if ([string]::IsNullOrWhiteSpace($Name)) { throw 'Publish-MetraInspectBingPackFromText requires -Name.' }
+    if ([string]::IsNullOrWhiteSpace($PackText)) { throw 'Publish-MetraInspectBingPackFromText requires non-empty -PackText.' }
+    if ([string]::IsNullOrWhiteSpace($ContentHash)) { throw 'Publish-MetraInspectBingPackFromText requires -ContentHash.' }
+
+    return Write-MetraInspectPackArtifact `
+        -PackText $PackText `
+        -SlotKey $Name.Trim() `
+        -Mode diff `
+        -ContentHash $ContentHash.Trim() `
+        -NoClipboard:$NoClipboard
+}
+
 function Invoke-MetraInspectPackOnly {
     [CmdletBinding(SupportsShouldProcess)]
     param(

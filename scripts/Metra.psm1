@@ -99,6 +99,7 @@ $script:MetraCompatibilityFunctions = @(
     'Show-MetraInspectCli',
     'Invoke-MetraInspectReviewLoop',
     'Invoke-MetraInspectPackOnly',
+    'Publish-MetraInspectBingPackFromText',
     'Show-MetraUnblockCli',
     'Show-MetraTailscaleCli',
     'Show-MetraSecurityAuditCli',

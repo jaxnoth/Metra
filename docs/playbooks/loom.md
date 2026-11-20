@@ -174,7 +174,15 @@ When upgrading from AutoProgram storage layout:
 
 ## Ship cycle (shared with desk bite)
 
-Loom owns `modules/Loom/Private/ShipCycle.ps1`. Desk `metra bite` and queue `daily approve -Merge` call the same helpers. Protected landing requires `Invoke-LoomShip` after a Base-bound pack and machine `verdict: approve`. See [inspect-loop.md](inspect-loop.md) and Decisions 2026-11-18.
+Loom owns `modules/Loom/Private/ShipCycle.ps1`. Desk `metra bite` and queue `daily approve -Merge` call the same helpers. Protected landing requires `Invoke-LoomShip` after a Base-bound pack and machine `verdict: approve`. See [inspect-loop.md](inspect-loop.md) and Decisions 2026-11-18 / 2026-11-19.
+
+### Multi-repo bites (optional)
+
+- Registry: keep `biteRepos` as string keys (`root`, `chef`, ...). Optional `biteRepoTargets` maps each key to its landing branch. `root` is required; legacy tuple fields always mirror root.
+- `protectedBranches` is the hook deny-list only (union of names across repos). It does not choose targets.
+- `bite pack` writes per-repo Base-to-HEAD sections, publishes them into the Bing contract pack (`pack-diff.md` + handoff) bound to the composite `contentHash` (Inspect root prepare is quality appendix only). Hash/review/merge/push share declared repo order.
+- Ship order: nested repos first (cookbook, chef, then others), root last. After the first successful remote push, a later push failure sets `shipPhase=partialShip`, keeps branches and evidence, and requires `bite ship -Resume` (guarded: already-pushed remotes must still match expected merge SHAs). Never auto-rollback protected branches.
+- Status surfaces pushed vs pending repos and the resume command.
 
 ## Deprecated CLI
 
