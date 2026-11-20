@@ -1419,7 +1419,11 @@ switch ($Command) {
         if ($result -is [System.Management.Automation.PSObject] -and
             ($result.PSObject.Properties.Name -contains 'ok') -and
             -not [bool]$result.ok) {
-            exit 1
+            $isWhatIf = ($result.PSObject.Properties.Name -contains 'whatIf') -and [bool]$result.whatIf
+            $isSkipped = ($result.PSObject.Properties.Name -contains 'skipped') -and [bool]$result.skipped
+            if (-not $isWhatIf -and -not $isSkipped) {
+                exit 1
+            }
         }
     }
 

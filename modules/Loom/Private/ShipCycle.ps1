@@ -882,11 +882,8 @@ function Test-LoomShipHookBypassAllowed {
                 break
             }
         }
-        if (-not $match -and @($authorized).Count -gt 0) { return $false }
-        if (-not $match -and -not [string]::IsNullOrWhiteSpace($lockTarget) -and
-            -not [string]::Equals($TargetBranch.Trim(), $lockTarget.Trim(), [StringComparison]::OrdinalIgnoreCase)) {
-            return $false
-        }
+        # Fail closed: TargetBranch must match an authorized branch (empty authorized list is not a wildcard).
+        if (-not $match) { return $false }
     }
     if (-not [string]::IsNullOrWhiteSpace($HeadSha)) {
         $authorizedHeads = @()
@@ -904,11 +901,8 @@ function Test-LoomShipHookBypassAllowed {
                 break
             }
         }
-        if (-not $headMatch -and @($authorizedHeads).Count -gt 0) { return $false }
-        if (-not $headMatch -and -not [string]::IsNullOrWhiteSpace($lockHead) -and
-            -not [string]::Equals($HeadSha.Trim(), $lockHead.Trim(), [StringComparison]::OrdinalIgnoreCase)) {
-            return $false
-        }
+        # Fail closed: HeadSha must match an authorized head (empty list is not a wildcard).
+        if (-not $headMatch) { return $false }
     }
     return $true
 }
@@ -959,11 +953,15 @@ function Start-LoomShipBranch {
 
     $root = Resolve-LoomShipProjectRoot -Name $Name -ProjectRoot $ProjectRoot
     $policy = Get-LoomShipProjectPolicy -RegistryName $Name
-    if ($null -eq $policy) {
+    $callerRepos = @($Repos | Where-Object { -not [string]::IsNullOrWhiteSpace([string]$_) })
+    if ($null -eq $policy -or -not [bool](Get-LoomProp -Object $policy -Name 'resolved' -Default $false)) {
+        if ($callerRepos.Count -eq 0) {
+            throw ("bite start refused: project policy unresolved for '{0}'. Pass -Repos explicitly or fix registry entry." -f $Name)
+        }
         $policy = [PSCustomObject]@{
             protectedBranches = @()
             ownerAffirmPaths  = @()
-            biteRepos         = @('root')
+            biteRepos         = @($callerRepos)
             biteRepoTargets   = @{}
             resolved          = $false
         }
@@ -1426,7 +1424,8 @@ function Test-LoomShipReady {
     }
 
     $policy = Get-LoomShipProjectPolicy -RegistryName $Name
-    if ($null -eq $policy) {
+    if ($null -eq $policy -or -not [bool](Get-LoomProp -Object $policy -Name 'resolved' -Default $false)) {
+        [void]$reasons.Add('policy-unresolved')
         $policy = [PSCustomObject]@{
             protectedBranches = @()
             ownerAffirmPaths  = @()
@@ -1600,8 +1599,9 @@ function Invoke-LoomShip {
     $targetSummary = (@($repoStates | ForEach-Object { '{0}:{1}' -f $_.key, $_.targetBranch }) -join ', ')
     if ([string]::IsNullOrWhiteSpace($targetSummary)) { $targetSummary = ('root:{0}' -f $target) }
     if (-not $PSCmdlet.ShouldProcess($Name, ("ship {0} -> [{1}]" -f $work, $targetSummary))) {
+        # Dry-run preview is success for CLI exit codes; callers must check shipped/whatIf.
         return [PSCustomObject]@{
-            ok      = $false
+            ok      = $true
             skipped = $true
             whatIf  = $true
             shipped = $false

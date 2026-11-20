@@ -1025,11 +1025,16 @@ function Invoke-LoomDailyMerge {
             mergeCommit = $rootMerge
             error       = if ($ship.ok) { $null } else { 'ship-cycle-refused' }
             detail      = $(
-                $joined = (@($ship.reasons) | Where-Object { $_ } | ForEach-Object { [string]$_ }) -join ';'
-                if (-not [string]::IsNullOrWhiteSpace($joined)) { $joined }
-                elseif (-not [string]::IsNullOrWhiteSpace([string]$ship.detail)) { [string]$ship.detail }
-                elseif (-not [string]::IsNullOrWhiteSpace([string]$ship.pushError)) { [string]$ship.pushError }
-                else { 'ship-cycle-refused' }
+                if ($ship.ok) {
+                    if (-not [string]::IsNullOrWhiteSpace([string]$ship.message)) { [string]$ship.message } else { $null }
+                }
+                else {
+                    $joined = (@($ship.reasons) | Where-Object { $_ } | ForEach-Object { [string]$_ }) -join ';'
+                    if (-not [string]::IsNullOrWhiteSpace($joined)) { $joined }
+                    elseif (-not [string]::IsNullOrWhiteSpace([string]$ship.detail)) { [string]$ship.detail }
+                    elseif (-not [string]::IsNullOrWhiteSpace([string]$ship.pushError)) { [string]$ship.pushError }
+                    else { 'ship-cycle-refused' }
+                }
             )
             viaShipCycle = $true
         }
