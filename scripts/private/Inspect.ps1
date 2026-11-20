@@ -7423,6 +7423,30 @@ function Import-MetraInspectExternalReview {
         Write-Warning ("Bing share review.md writeback skipped: {0}" -f $_.Exception.Message)
     }
 
+    # Mirror into Loom ship-cycle state when an active bite pack matches this contentHash
+    # so bite ship / Test-LoomShipReady see reviewVerdict without a second review-set.
+    $shipEvidenceSynced = $false
+    if ((Get-Command Get-LoomShipState -ErrorAction SilentlyContinue) -and
+        (Get-Command Set-LoomShipReviewEvidence -ErrorAction SilentlyContinue)) {
+        try {
+            $shipState = Get-LoomShipState -Project $slotKey
+            $shipHash = if ($shipState) { [string](Get-MetraProp -Object $shipState -Name 'contentHash' -Default '') } else { '' }
+            if ($shipState -and -not [string]::IsNullOrWhiteSpace($shipHash) -and $shipHash -eq $parsed.ContentHash) {
+                $ev = @($parsed.EvidenceInspected | Where-Object { -not [string]::IsNullOrWhiteSpace([string]$_) })
+                if ($ev.Count -eq 0) { $ev = @('pack') }
+                $depth = [string]$parsed.ReviewDepth
+                if ([string]::IsNullOrWhiteSpace($depth)) { $depth = 'L1' }
+                $null = Set-LoomShipReviewEvidence -Name $slotKey -Verdict $parsed.Verdict `
+                    -ContentHash $parsed.ContentHash -ContractShape `
+                    -ReviewDepth $depth -EvidenceInspected $ev
+                $shipEvidenceSynced = $true
+            }
+        }
+        catch {
+            Write-Warning ("Loom ship-state review sync skipped: {0}" -f $_.Exception.Message)
+        }
+    }
+
     Write-Host ("External review imported for {0}: verdict={1}; contentHash={2}; reviewDepth={3} (gate not affirmed)." -f $slotKey, $parsed.Verdict, $parsed.ContentHash, $(if ($parsed.ReviewDepth) { $parsed.ReviewDepth } else { '(none)' }))
 
     return [PSCustomObject]@{
@@ -7439,6 +7463,7 @@ function Import-MetraInspectExternalReview {
         reviewStatePath    = $contractPaths.ReviewStatePath
         shareReview        = $shareReview
         gateAffirmed       = $false
+        shipEvidenceSynced = $shipEvidenceSynced
     }
 }
 
@@ -8061,6 +8086,7 @@ function Invoke-MetraInspectPrePushHook {
         $bypass = $true
         foreach ($hit in @($protectedHits)) {
             $hitSha = if ($branchSha.ContainsKey([string]$hit)) { [string]$branchSha[[string]$hit] } else { '' }
+            if ($hitSha -eq '-') { $hitSha = '' }
             $okHit = if (-not [string]::IsNullOrWhiteSpace($hitSha)) {
                 Test-LoomShipHookBypassAllowed -Project $slotKey -RepoRoot $root -TargetBranch ([string]$hit) -HeadSha $hitSha
             }

@@ -122,11 +122,10 @@ try {
     for ($ri = 0; $ri -lt @($remoteBranches).Count; $ri++) {
         $rb = [string]$remoteBranches[$ri]
         if ([string]::IsNullOrWhiteSpace($rb)) { continue }
-        $prePushArgs += @('-RemoteBranch', $rb)
+        # Always emit -HeadSha with each -RemoteBranch so positional maps stay 1:1.
         $hs = if ($ri -lt @($headShas).Count) { [string]$headShas[$ri] } else { '' }
-        if (-not [string]::IsNullOrWhiteSpace($hs)) {
-            $prePushArgs += @('-HeadSha', $hs)
-        }
+        if ([string]::IsNullOrWhiteSpace($hs)) { $hs = '-' }
+        $prePushArgs += @('-RemoteBranch', $rb, '-HeadSha', $hs)
     }
     # External process so exit codes are not masked by in-process & of metra.ps1.
     $pwshExe = if (Get-Command pwsh -ErrorAction SilentlyContinue) { (Get-Command pwsh).Source } else { (Get-Command powershell).Source }

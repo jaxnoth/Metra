@@ -1479,11 +1479,12 @@ function Test-LoomShipReady {
     if ([string]::IsNullOrWhiteSpace($baseSha) -or [string]::IsNullOrWhiteSpace($headSha) -or [string]::IsNullOrWhiteSpace($hash)) {
         [void]$reasons.Add('missing-reviewed-tuple')
     }
-    if ($verdict -ne 'approve' -and $shipPhase -ne 'partialShip') {
+    $postMergePhase = ($shipPhase -eq 'partialShip' -or $shipPhase -eq 'mergedLocal')
+    if ($verdict -ne 'approve' -and -not $postMergePhase) {
         [void]$reasons.Add(('review-verdict-{0}' -f $(if ($verdict) { $verdict } else { 'missing' })))
     }
-    if ($shipPhase -eq 'partialShip' -and $verdict -ne 'approve') {
-        [void]$reasons.Add('partial-ship-requires-prior-approve')
+    if ($postMergePhase -and $verdict -ne 'approve') {
+        [void]$reasons.Add('post-merge-requires-prior-approve')
     }
 
     $prov = Get-LoomProp -Object $state -Name 'reviewProvenance' -Default $null
@@ -1557,15 +1558,15 @@ function Test-LoomShipReady {
                 $repoWork = Get-LoomShipRepoWorkBranch -State $state -RepoKey $key
                 if ([string]::IsNullOrWhiteSpace($repoWork)) { $repoWork = $work }
                 $curBranch = Get-LoomGitCurrentBranchName -ProjectRoot $path
-                if ($curBranch -ne $repoWork -and $shipPhase -ne 'partialShip') {
+                if ($curBranch -ne $repoWork -and -not $postMergePhase) {
                     [void]$reasons.Add(('wrong-work-branch:{0}' -f $key))
                 }
                 $liveHead = Get-LoomGitRevParse -ProjectRoot $path -Rev 'HEAD'
-                # After local merge in partialShip, HEAD may be merge commit; require packed head only pre-merge.
-                if ($shipPhase -ne 'partialShip' -and $liveHead -ne $rsHead) {
+                # After local merge (partialShip / mergedLocal), HEAD may be merge commit; require packed head only pre-merge.
+                if (-not $postMergePhase -and $liveHead -ne $rsHead) {
                     [void]$reasons.Add(('head-sha-mismatch:{0}' -f $key))
                 }
-                if ($shipPhase -ne 'partialShip') {
+                if (-not $postMergePhase) {
                     $liveBase = Get-LoomShipMergeBaseSha -ProjectRoot $path -TargetBranch $rsTarget -WorkBranch $repoWork
                     if ($liveBase -ne $rsBase) {
                         [void]$reasons.Add(('base-sha-mismatch:{0}' -f $key))
@@ -1635,13 +1636,18 @@ function Invoke-LoomShip {
         }
     }
     $shipPhase = [string](Get-LoomProp -Object $state -Name 'shipPhase' -Default 'active')
-    if ($shipPhase -eq 'partialShip' -and -not $Resume) {
+    if (($shipPhase -eq 'partialShip' -or $shipPhase -eq 'mergedLocal') -and -not $Resume) {
         return [PSCustomObject]@{
             ok           = $false
             shipped      = $false
-            shipPhase    = 'partialShip'
-            reasons      = @('partial-ship-resume-required')
-            detail       = 'Partial ship in progress. Re-run with -Resume after fixing the failed remote.'
+            shipPhase    = $shipPhase
+            reasons      = @('post-merge-resume-required')
+            detail       = $(if ($shipPhase -eq 'mergedLocal') {
+                    'Local merge complete (-NoPush). Re-run with -Resume to push protected tips.'
+                }
+                else {
+                    'Partial ship in progress. Re-run with -Resume after fixing the failed remote.'
+                })
             recovery     = ('.\metra.ps1 bite ship -Name {0} -Resume' -f $Name)
             statusHint   = 'bite status'
         }
@@ -1732,7 +1738,7 @@ function Invoke-LoomShip {
             if ([string]::IsNullOrWhiteSpace($repoWork)) { $repoWork = $work }
             if ([string](Get-LoomProp -Object $rs -Name 'pushStatus' -Default 'pending') -ne 'pushed') {
                 $verify = Invoke-LoomGit -ProjectRoot $path -GitArgs @('rev-parse', '--verify', $repoWork)
-                if ($verify.ExitCode -ne 0 -and $shipPhase -ne 'partialShip') {
+                if ($verify.ExitCode -ne 0 -and $shipPhase -ne 'partialShip' -and $shipPhase -ne 'mergedLocal') {
                     throw ("Work branch {0} missing in {1}" -f $repoWork, $key)
                 }
             }
@@ -1786,7 +1792,7 @@ function Invoke-LoomShip {
                     continue
                 }
                 $existingMerge = [string](Get-LoomProp -Object $rs -Name 'mergeCommitSha' -Default '')
-                if ($shipPhase -eq 'partialShip' -and -not [string]::IsNullOrWhiteSpace($existingMerge)) {
+                if (($shipPhase -eq 'partialShip' -or $shipPhase -eq 'mergedLocal') -and -not [string]::IsNullOrWhiteSpace($existingMerge)) {
                     $onTarget = Invoke-LoomGit -ProjectRoot $path -GitArgs @('rev-parse', $rsTarget)
                     if ($onTarget.ExitCode -eq 0 -and [string]$onTarget.Stdout.Trim() -eq $existingMerge) {
                         [void]$mergeShas.Add([PSCustomObject]@{

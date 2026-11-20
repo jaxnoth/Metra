@@ -451,6 +451,50 @@ Describe 'Loom ship-cycle temp repo start/pack/ship happy path' {
         }
     }
 
+    It 'requires -Resume when shipPhase is mergedLocal after -NoPush' {
+        InModuleScope Loom {
+            $proj = 'MergedLocalResume-' + [guid]::NewGuid().ToString('n').Substring(0, 8)
+            $tmp = Join-Path ([IO.Path]::GetTempPath()) ('ship-ml-' + [guid]::NewGuid().ToString('n'))
+            try {
+                New-Item -ItemType Directory -Path $tmp -Force | Out-Null
+                & git -C $tmp init -b main | Out-Null
+                & git -C $tmp config user.email 'ship@test.local'
+                & git -C $tmp config user.name 'Ship Test'
+                Set-Content -LiteralPath (Join-Path $tmp 'a.txt') -Value 'one' -Encoding UTF8
+                & git -C $tmp add a.txt
+                & git -C $tmp commit -m 'init' | Out-Null
+                Mock Get-LoomShipProjectPolicy {
+                    [PSCustomObject]@{
+                        protectedBranches = @('main')
+                        ownerAffirmPaths  = @()
+                        biteRepos         = @('root')
+                        biteRepoTargets   = @{ root = 'main' }
+                        resolved          = $true
+                    }
+                }
+                $null = Start-LoomShipBranch -Name $proj -Bite 'ml' -ProjectRoot $tmp -Repos @('root') -TargetBranch 'main' -NoPush
+                Set-Content -LiteralPath (Join-Path $tmp 'a.txt') -Value 'two' -Encoding UTF8
+                $null = Invoke-LoomShipCommit -Name $proj -Message 'c' -ProjectRoot $tmp -SkipQuickCheck -NoPush
+                $pack = Invoke-LoomShipPack -Name $proj -ProjectRoot $tmp -SkipInspectEngine
+                Set-LoomShipReviewEvidence -Name $proj -Verdict 'approve' -ContentHash $pack.contentHash -ContractShape | Out-Null
+                $ship = Invoke-LoomShip -Name $proj -ProjectRoot $tmp -Summary 'ml' -SkipFullTests -NoPush -NoDeleteBranch
+                $ship.ok | Should -BeTrue
+                $ship.shipPhase | Should -Be 'mergedLocal'
+                $blocked = Invoke-LoomShip -Name $proj -ProjectRoot $tmp -Summary 'ml' -SkipFullTests -NoDeleteBranch
+                $blocked.ok | Should -BeFalse
+                ($blocked.reasons -join ',') | Should -Match 'post-merge-resume-required'
+                $ready = Test-LoomShipReady -Name $proj -ProjectRoot $tmp -SkipFullTests
+                $ready.ok | Should -BeTrue
+            }
+            finally {
+                Clear-LoomShipLock -Project $proj -ErrorAction SilentlyContinue
+                Remove-Item -LiteralPath (Get-LoomShipStateRoot -Project $proj) -Recurse -Force -ErrorAction SilentlyContinue
+                Remove-Item -LiteralPath (Join-Path $env:LOCALAPPDATA ("Metra\inspect\{0}" -f $proj)) -Recurse -Force -ErrorAction SilentlyContinue
+                Remove-Item -LiteralPath $tmp -Recurse -Force -ErrorAction SilentlyContinue
+            }
+        }
+    }
+
     It 'requires -Resume when shipPhase is partialShip' {
         InModuleScope Loom {
             $proj = 'PartialShip-' + [guid]::NewGuid().ToString('n').Substring(0, 8)
@@ -476,7 +520,7 @@ Describe 'Loom ship-cycle temp repo start/pack/ship happy path' {
                 $blocked = Invoke-LoomShip -Name $proj -ProjectRoot $tmp -SkipFullTests -NoPush
                 $blocked.ok | Should -BeFalse
                 $blocked.shipPhase | Should -Be 'partialShip'
-                ($blocked.reasons -join ',') | Should -Match 'partial-ship-resume-required'
+                ($blocked.reasons -join ',') | Should -Match 'post-merge-resume-required'
             }
             finally {
                 Clear-LoomShipLock -Project $proj -ErrorAction SilentlyContinue
