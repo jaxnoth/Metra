@@ -5949,7 +5949,9 @@ function Install-MetraGitHooksForBiteRepos {
             MetraRoot   = $MetraRoot
             ProjectName = $ProjectName
         }
-        if ($PSBoundParameters.ContainsKey('WhatIf')) { $installParams.WhatIf = $WhatIf }
+        if ($PSBoundParameters.ContainsKey('WhatIf')) {
+            $installParams.WhatIf = [bool]$PSBoundParameters['WhatIf']
+        }
         $one = Install-MetraGitHooks @installParams
         $results.Add([PSCustomObject]@{
                 key         = [string]$repo.Key
@@ -7909,13 +7911,14 @@ function Invoke-MetraInspectPrePushHook {
     if (-not $ctx.Ok) { throw $ctx.Error }
     $slotKey = [string]$ctx.Project
     if ([string]::IsNullOrWhiteSpace($RepoRoot)) {
-        $top = [string](@(& git rev-parse --show-toplevel 2>$null) | Select-Object -First 1)
+        $topRaw = @(& git rev-parse --show-toplevel 2>$null) | Select-Object -First 1
+        $top = if ($null -eq $topRaw) { '' } else { ([string]$topRaw).Trim() }
         if (-not [string]::IsNullOrWhiteSpace($top)) {
-            $RepoRoot = $top.Trim()
+            $RepoRoot = $top
         }
     }
     if (-not [string]::IsNullOrWhiteSpace($RepoRoot)) {
-        $root = [System.IO.Path]::GetFullPath($RepoRoot.Trim())
+        $root = [System.IO.Path]::GetFullPath(([string]$RepoRoot).Trim())
     }
     else {
         $root = [string]$ctx.Root
@@ -7929,7 +7932,8 @@ function Invoke-MetraInspectPrePushHook {
         if (-not [string]::IsNullOrWhiteSpace($t)) { [void]$targets.Add($t) }
     }
     if ($targets.Count -eq 0) {
-        $headBranch = [string](@(& git -C $root rev-parse --abbrev-ref HEAD 2>$null) | Select-Object -First 1).Trim()
+        $headRaw = @(& git -C $root rev-parse --abbrev-ref HEAD 2>$null) | Select-Object -First 1
+        $headBranch = if ($null -eq $headRaw) { '' } else { ([string]$headRaw).Trim() }
         if (-not [string]::IsNullOrWhiteSpace($headBranch)) { [void]$targets.Add($headBranch) }
     }
 

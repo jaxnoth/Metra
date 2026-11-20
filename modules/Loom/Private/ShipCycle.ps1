@@ -99,13 +99,6 @@ function Get-LoomShipProjectPolicy {
     [CmdletBinding()]
     param([Parameter(Mandatory)][string]$RegistryName)
 
-    $empty = [PSCustomObject]@{
-        protectedBranches = @()
-        ownerAffirmPaths  = @()
-        biteRepos         = @('root')
-        biteRepoTargets   = @{}
-        resolved          = $true
-    }
     $cmd = Get-Command Get-MetraProjectRegistry -ErrorAction SilentlyContinue
     if (-not $cmd) {
         try {
@@ -140,7 +133,8 @@ function Get-LoomShipProjectPolicy {
             break
         }
     }
-    if (-not $entry) { return $empty }
+    # Unknown registry name: fail closed (do not invent resolved=true with empty protectedBranches).
+    if (-not $entry) { return $null }
     $protected = @()
     foreach ($b in @(Get-LoomProp -Object $entry -Name 'protectedBranches' -Default @())) {
         $t = [string]$b
@@ -1607,8 +1601,10 @@ function Invoke-LoomShip {
     if ([string]::IsNullOrWhiteSpace($targetSummary)) { $targetSummary = ('root:{0}' -f $target) }
     if (-not $PSCmdlet.ShouldProcess($Name, ("ship {0} -> [{1}]" -f $work, $targetSummary))) {
         return [PSCustomObject]@{
-            ok      = $true
+            ok      = $false
+            skipped = $true
             whatIf  = $true
+            shipped = $false
             message = $msg
             tuple   = $ready.reviewedTuple
         }

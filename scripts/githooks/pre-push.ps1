@@ -105,21 +105,22 @@ Push-Location $repoRoot
 try {
     # Prior git probes in this hook (e.g. config --get-all metra.root) may leave
     # $LASTEXITCODE=1. In-process & of metra.ps1 does not always reset it on success.
-    $LASTEXITCODE = 0
     # Prefer git config metra.project (nested bite repos like CDM chef/), then Metra
     # checkout aliases, then folder leaf. Never adopt METRA_LOOM_SHIP_PROJECT for siblings.
     . (Join-Path $PSScriptRoot 'HookProjectName.ps1')
     $cfgProject = Get-MetraHookConfiguredProject -RepoRoot $repoRoot
     $projName = Resolve-MetraHookProjectName -RepoRoot $repoRoot -ConfiguredProject $cfgProject `
         -FolderLeaf (Split-Path -Leaf $repoRoot) -IsMetraRoot:$isMetraRoot
-    $prePushArgs = @('inspect', 'pre-push', '-Name', $projName, '-RepoRoot', $repoRoot)
+    $prePushArgs = @('-NoProfile', '-File', $metra, 'inspect', 'pre-push', '-Name', $projName, '-RepoRoot', $repoRoot)
     foreach ($rb in @($remoteBranches | Select-Object -Unique)) {
         if (-not [string]::IsNullOrWhiteSpace([string]$rb)) {
             $prePushArgs += @('-RemoteBranch', [string]$rb)
         }
     }
-    & $metra @prePushArgs
-    if (-not $? -or $LASTEXITCODE -ne 0) {
+    # External process so exit codes are not masked by in-process & of metra.ps1.
+    $pwshExe = if (Get-Command pwsh -ErrorAction SilentlyContinue) { (Get-Command pwsh).Source } else { (Get-Command powershell).Source }
+    $prePushProc = Start-Process -FilePath $pwshExe -ArgumentList $prePushArgs -Wait -PassThru -NoNewWindow
+    if ($null -eq $prePushProc -or $prePushProc.ExitCode -ne 0) {
         Write-Error 'pre-push blocked: protected-branch / ship-lock guard failed.'
         exit 1
     }
@@ -130,9 +131,9 @@ try {
         exit 0
     }
     Write-Host ("pre-push: security-audit (public/Metra push gate) remote={0}" -f $(if ($remoteUrl) { $remoteUrl } else { $remoteName }))
-    # -Force maps to FailOnFindings in metra.ps1 security-audit
-    & $metra security-audit -Force -Path $repoRoot
-    if (-not $? -or $LASTEXITCODE -ne 0) {
+    $auditArgs = @('-NoProfile', '-File', $metra, 'security-audit', '-Force', '-Path', $repoRoot)
+    $auditProc = Start-Process -FilePath $pwshExe -ArgumentList $auditArgs -Wait -PassThru -NoNewWindow
+    if ($null -eq $auditProc -or $auditProc.ExitCode -ne 0) {
         Write-Error 'pre-push blocked: security-audit FAIL. Scrub InternalTopology / RestrictedDataMap (SECURITY.md). Skip only with METRA_SKIP_SECURITY_PUSH=1.'
         exit 1
     }
