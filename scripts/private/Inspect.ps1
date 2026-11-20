@@ -7989,8 +7989,8 @@ function Invoke-MetraInspectPrePushHook {
     [CmdletBinding()]
     param(
         [string]$Name,
-        [string[]]$RemoteBranch,
-        [string[]]$HeadSha,
+        [AllowEmptyCollection()][string[]]$RemoteBranch = @(),
+        [AllowEmptyCollection()][string[]]$HeadSha = @(),
         [string]$RepoRoot
     )
 
@@ -8017,14 +8017,15 @@ function Invoke-MetraInspectPrePushHook {
     }
 
     $branchSha = @{}
+    # Defaults keep .Count safe under Set-StrictMode when callers omit the arrays.
     $rbList = @($RemoteBranch)
     $hsList = @($HeadSha)
-    for ($ti = 0; $ti -lt $rbList.Count; $ti++) {
+    for ($ti = 0; $ti -lt @($rbList).Count; $ti++) {
         $t = [string]$rbList[$ti]
         if ([string]::IsNullOrWhiteSpace($t)) { continue }
         $t = $t.Trim() -replace '^refs/heads/', ''
         if ([string]::IsNullOrWhiteSpace($t)) { continue }
-        $sha = if ($ti -lt $hsList.Count) { [string]$hsList[$ti] } else { '' }
+        $sha = if ($ti -lt @($hsList).Count) { [string]$hsList[$ti] } else { '' }
         if (-not $branchSha.ContainsKey($t) -or (-not [string]::IsNullOrWhiteSpace($sha))) {
             $branchSha[$t] = $sha
         }

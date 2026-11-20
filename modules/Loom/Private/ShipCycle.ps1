@@ -753,9 +753,11 @@ function Test-LoomShipProtectedBranch {
         [Parameter(Mandatory)][string]$Branch,
         [string[]]$ProtectedBranches
     )
-    if ([string]::IsNullOrWhiteSpace($Branch)) { return $false }
+    $want = Normalize-LoomShipBranchRef -Branch $Branch
+    if ([string]::IsNullOrWhiteSpace($want)) { return $false }
     foreach ($p in @($ProtectedBranches)) {
-        if ([string]::Equals($Branch, [string]$p, [StringComparison]::OrdinalIgnoreCase)) { return $true }
+        $have = Normalize-LoomShipBranchRef -Branch ([string]$p)
+        if ([string]::Equals($want, $have, [StringComparison]::OrdinalIgnoreCase)) { return $true }
     }
     return $false
 }
