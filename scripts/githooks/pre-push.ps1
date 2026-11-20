@@ -107,10 +107,16 @@ try {
     # $LASTEXITCODE=1. In-process & of metra.ps1 does not always reset it on success.
     $LASTEXITCODE = 0
     $projLeaf = Split-Path -Leaf $repoRoot
+    # Prefer explicit git config metra.project (nested bite repos like CDM chef/).
     # Prefer registry name when folder leaf is a Metra checkout alias (_meta / Metra / _metra).
     # Never adopt METRA_LOOM_SHIP_PROJECT for sibling repos - that would check the wrong lock/policy.
+    $cfgProjectRaw = @(& git -C $repoRoot config --get metra.project 2>$null) | Select-Object -First 1
+    $cfgProject = if ($null -eq $cfgProjectRaw) { '' } else { ([string]$cfgProjectRaw).Trim() }
     $projName = $projLeaf
-    if ($projLeaf -match '^(?i)(_meta|_metra|metra)$' -or $isMetraRoot) {
+    if (-not [string]::IsNullOrWhiteSpace($cfgProject)) {
+        $projName = $cfgProject
+    }
+    elseif ($projLeaf -match '^(?i)(_meta|_metra|metra)$' -or $isMetraRoot) {
         $projName = 'Metra'
     }
     $prePushArgs = @('inspect', 'pre-push', '-Name', $projName)
