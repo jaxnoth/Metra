@@ -8,7 +8,7 @@ WinForms `NotifyIcon` host with a distinct process identity (`MetraHost.exe`), n
 
 When MetraHost is running it owns desk supervision (adopt + atomic `recycle-desk`). Ops owns Ask. Desk lifecycle is serialized with CLI via named mutex `ops-desk-lifecycle` - do not split Host recovery into separate `stop-desk` then `start-child` bridge calls.
 
-Cold start uses one `host-bootstrap` bridge call (single `Import-Module`) for assert, port, session, and desk adopt/start. Start Menu shortcut refresh runs on the first tray timer tick.
+Cold start uses one `host-bootstrap` bridge call (single `Import-Module`) for assert, port, session, and desk adopt/start. Host waits up to **240s** for that call (Import-Module plus optional desk spawn can exceed 120s on a loaded jumpbox). Browser open is detached after the bootstrap JSON returns so Tailscale/ShareUrl resolution cannot hold the bridge. Start Menu shortcut refresh runs on the first tray timer tick.
 
 Pattern for sibling Host concerns:
 

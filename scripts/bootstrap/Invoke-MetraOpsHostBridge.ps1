@@ -130,16 +130,15 @@ try {
                 $childPid = [int]$child.Id
             }
 
-            if ($OpenBrowser) {
-                Invoke-MetraHostBridgePrivate { param($p, $root) Open-MetraOpsDeskBrowser -Port $p -MetraRoot $root } $Port $MetraRoot
-            }
-
             $startupEnabled = $false
             try {
                 $startupEnabled = [bool](Invoke-MetraHostBridgePrivate { Test-MetraOpsHostStartupEnabled })
             }
             catch { }
 
+            # Emit JSON before any browser open. ShareUrl/Tailscale resolution can stall under
+            # jumpbox load and hold MetraHost WaitForExit past the bootstrap budget (scar:
+            # Ops bridge timed out after 120000ms (host-bootstrap) while desk was already up).
             Write-MetraHostBridgeJson ([pscustomobject]@{
                     ok              = $true
                     port            = $Port
@@ -150,6 +149,27 @@ try {
                     enabled         = $startupEnabled
                     shortcutsDeferred = $true
                 })
+
+            if ($OpenBrowser) {
+                try {
+                    $shellExe = (Get-Process -Id $PID -ErrorAction Stop).Path
+                    if ([string]::IsNullOrWhiteSpace($shellExe)) {
+                        $shellExe = 'pwsh'
+                    }
+                    $openArgs = @(
+                        '-NoProfile'
+                        '-ExecutionPolicy', 'Bypass'
+                        '-File', $PSCommandPath
+                        '-Action', 'open-browser'
+                        '-Port', "$Port"
+                        '-MetraRoot', $MetraRoot
+                    )
+                    Start-Process -FilePath $shellExe -ArgumentList $openArgs -WorkingDirectory $MetraRoot -WindowStyle Hidden | Out-Null
+                }
+                catch {
+                    # Best-effort only - Host tray Open Desk remains available.
+                }
+            }
             return
         }
         'resolve-port' {

@@ -156,7 +156,9 @@ internal sealed class TrayApp : ApplicationContext
             extra["-OpenBrowser"] = string.Empty;
         }
 
-        var boot = bridge.Invoke("host-bootstrap", port, extra);
+        // Cold start = Import-Module + optional desk start (up to ~45s) under jumpbox load.
+        // Default OpsBridge 120s is too tight when the desk must be spawned (scar: host-bootstrap timeout).
+        var boot = bridge.Invoke("host-bootstrap", port, extra, timeoutMs: 240_000);
         if (!boot.Ok || boot.Port is null or <= 0)
         {
             try
