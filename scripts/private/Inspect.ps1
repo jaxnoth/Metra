@@ -6037,12 +6037,34 @@ function Install-MetraGitHooksForBiteRepos {
 function Get-MetraInspectDiffContentHash {
     <#
     .SYNOPSIS
-        Central assess inputHash for pack contentHash, review import, and Bing gate affirm.
+        Central contentHash for pack publish, review import, and Bing gate affirm.
+        Prefer an active Loom bite pack identity (composite Base...HEAD) when Bing evidence
+        was bound to that hash; otherwise the root assess inputHash (quality appendix).
     #>
     [CmdletBinding()]
     param(
         [Parameter(Mandatory)][string]$SlotKey
     )
+
+    # Multi-repo bite packs publish a composite ship hash that differs from the root-only
+    # assess inputHash. Review import / affirm must bind to the same identity Bing reviewed.
+    if (Get-Command Get-LoomShipState -ErrorAction SilentlyContinue) {
+        try {
+            $ship = Get-LoomShipState -Project $SlotKey
+            if ($ship) {
+                $shipHash = [string](Get-MetraProp -Object $ship -Name 'contentHash' -Default '')
+                $phase = [string](Get-MetraProp -Object $ship -Name 'shipPhase' -Default '')
+                $packId = Get-MetraProp -Object $ship -Name 'packIdentity' -Default $null
+                $bound = [bool](Get-MetraProp -Object $packId -Name 'bingEvidenceBound' -Default $false)
+                if ($phase -eq 'active' -and $bound -and -not [string]::IsNullOrWhiteSpace($shipHash)) {
+                    return $shipHash
+                }
+            }
+        }
+        catch {
+            # Fall through to assess hash when Loom ship state is unavailable.
+        }
+    }
 
     $assess = Get-MetraInspectSlotDiffAssess -SlotKey $SlotKey
     if (-not $assess) { return '' }
